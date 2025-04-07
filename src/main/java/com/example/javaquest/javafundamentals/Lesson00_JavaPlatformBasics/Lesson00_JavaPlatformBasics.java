@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson00_JavaPlatformBasics;
 
-public class JavaPlatformBasics {
+public class Lesson00_JavaPlatformBasics {
 
     /*
      * ===================================================
