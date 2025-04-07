@@ -1,74 +1,120 @@
 package com.example.javaquest.variables01;
 
+import java.util.Arrays;
+
 public class Lesson01_Variables {
 
-    // ========================
-    // ZMIENNE INSTANCYJNE (GLOBALNE)
-    // ========================
-    // Zmienna instancyjna - należy do obiektu klasy
-    String globalText = "To jest zmienna globalna (instancyjna)";
+    // ==========================================================
+    // ZMIENNE INSTANCYJNE (POLA KLASY, tzw. "globalne")
+    // ==========================================================
 
-    // Zmienna statyczna - współdzielona przez wszystkie obiekty klasy
+    // Zmienna instancyjna - należy do obiektu klasy, nie jest statyczna
+    String globalText = "To jest zmienna instancyjna (czyli należąca do obiektu)";
+
+    // Zmienna statyczna - wspólna dla wszystkich obiektów tej klasy
     static int globalCounter = 0;
+
+    // Zmienna stała - niezmienna wartość, dobra praktyka: UPPER_SNAKE_CASE
+    static final double PI = 3.14159;
 
     public static void main(String[] args) {
 
-        // ========================
+        // ==========================================================
         // ZMIENNE LOKALNE
-        // ========================
-        // Są widoczne tylko w obrębie metody/bloku, w którym zostały zadeklarowane
-        int localNumber = 10;
+        // ==========================================================
+
+        int localNumber = 10; // tylko w tym bloku (metodzie main)
         String localMessage = "To jest zmienna lokalna";
 
-        // ========================
-        // TYPY PRYMITYWNE
-        // ========================
-
-        // Całkowite:
-        byte smallNumber = 100;              // 1 bajt, zakres: -128 do 127
-        short shortNumber = 10000;           // 2 bajty
-        int integerNumber = 100000;          // 4 bajty (najczęściej używany)
-        long longNumber = 1000000000L;       // 8 bajtów (L na końcu oznacza long)
-
-        // Zmiennoprzecinkowe:
-        float floatNumber = 5.75f;           // 4 bajty (f na końcu)
-        double doubleNumber = 19.99;         // 8 bajtów (domyślny typ dla liczb zmiennoprzecinkowych)
-
-        // Pojedynczy znak:
-        char letter = 'A';                   // Używany do przechowywania znaków Unicode
-
-        // Logiczny:
-        boolean isJavaFun = true;            // true/false
-
-        // ========================
-        // TYPY ZŁOŻONE (REFERENCYJNE)
-        // ========================
-
-        String name = "Przemek";             // Obiekt typu String (klasa wbudowana w JDK)
-        int[] numbers = {1, 2, 3};           // Tablica (referencyjny typ danych)
-
-        // ========================
-        // WYŚWIETLANIE WARTOŚCI
-        // ========================
-
         System.out.println("Zmienna lokalna: " + localMessage);
-        System.out.println("Liczba całkowita: " + integerNumber);
-        System.out.println("Zmienna logiczna: " + isJavaFun);
-        System.out.println("Tablica: " + numbers[0]);
+        System.out.println("Stała PI: " + PI);
 
-        // ========================
-        // DOSTĘP DO ZMIENNYCH INSTANCYJNYCH
-        // ========================
+        // ==========================================================
+        // TYPY PRYMITYWNE (niewielkie, szybkie, przechowują wartość)
+        // ==========================================================
 
-        Lesson01_Variables lesson = new Lesson01_Variables(); // tworzenie obiektu klasy
+        // Całkowite
+        byte aByte = 127;              // zakres: -128 do 127
+        short aShort = 32_000;
+        int anInt = 1_000_000;
+        long aLong = 1_000_000_000L;
+
+        // Zmiennoprzecinkowe
+        float aFloat = 3.14f;
+        double aDouble = 3.1415926535;
+
+        // Znak i logiczny
+        char aChar = 'Z';
+        boolean isAdult = true;
+
+        System.out.println("Przykład prymitywnego boolean: " + isAdult);
+        System.out.println("Przykład prymitywnego double: " + aDouble);
+
+        // ==========================================================
+        // TYPY REFERENCYJNE (np. String, tablice, klasy)
+        // ==========================================================
+
+        String name = "Przemek";  // String to obiekt (referencyjny)
+        int[] scores = {90, 80, 70}; // tablica to też typ referencyjny
+
+        System.out.println("Imię: " + name);
+        System.out.println("Pierwszy element tablicy scores: " + scores[0]);
+
+        // Tablica jako obiekt ma metodę toString w klasie Arrays:
+        System.out.println("Wszystkie elementy tablicy: " + Arrays.toString(scores));
+
+        // ==========================================================
+        // AUTObOXING i UNBOXING (int → Integer, boolean → Boolean itd.)
+        // ==========================================================
+
+        Integer boxedInt = anInt;           // autoboxing
+        int unboxedInt = boxedInt;          // unboxing
+
+        Boolean isOk = Boolean.TRUE;
+        if (isOk) {
+            System.out.println("Autoboxing działa: Boolean.TRUE");
+        }
+
+        // ==========================================================
+        // VAR - skrócona deklaracja zmiennej (od Javy 10)
+        // ==========================================================
+
+        var city = "Otwock";     // typ inferred: String
+        var age = 35;            // typ inferred: int
+        System.out.println("Miasto: " + city + ", wiek: " + age);
+
+        // ==========================================================
+        // NULL - brak referencji (dotyczy tylko typów referencyjnych)
+        // ==========================================================
+
+        String undefined = null;
+        if (undefined == null) {
+            System.out.println("Zmienna 'undefined' nie wskazuje na żaden obiekt.");
+        }
+
+        // ==========================================================
+        // PORÓWNYWANIE: == vs .equals()
+        // ==========================================================
+
+        String s1 = "Hello";
+        String s2 = new String("Hello");
+
+        System.out.println("== (czy ten sam obiekt?): " + (s1 == s2));           // false
+        System.out.println(".equals (czy takie same dane?): " + s1.equals(s2));  // true
+
+        // ==========================================================
+        // TWORZENIE OBIEKTU I DOSTĘP DO POLA INSTANCYJNEGO
+        // ==========================================================
+
+        Lesson01_Variables lesson = new Lesson01_Variables(); // obiekt klasy
         lesson.showGlobalVariable(); // wywołanie metody instancyjnej
 
-        // Dostęp do zmiennej statycznej
-        System.out.println("Zmienna statyczna (globalna): " + Lesson01_Variables.globalCounter);
+        // Statyczna zmienna (może być użyta bez tworzenia obiektu)
+        System.out.println("Zmienna statyczna (globalCounter): " + Lesson01_Variables.globalCounter);
     }
 
-    // Metoda instancyjna - ma dostęp do zmiennych obiektowych (nie statycznych)
+    // Metoda instancyjna – dostęp do pól instancyjnych (czyli "nie-static")
     void showGlobalVariable() {
-        System.out.println("Zmienna globalna (instancyjna): " + globalText);
+        System.out.println("Zmienna instancyjna: " + globalText);
     }
 }
