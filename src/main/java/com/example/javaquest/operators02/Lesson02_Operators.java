@@ -4,9 +4,9 @@ public class Lesson02_Operators {
 
     public static void main(String[] args) {
 
-        // ========================
-        // OPERATORY ARYTMETYCZNE
-        // ========================
+        // =====================================================
+        // 🔢 OPERATORY ARYTMETYCZNE
+        // =====================================================
         int a = 10;
         int b = 3;
 
@@ -14,21 +14,44 @@ public class Lesson02_Operators {
         System.out.println("Odejmowanie: " + (a - b));      // 7
         System.out.println("Mnożenie: " + (a * b));         // 30
         System.out.println("Dzielenie: " + (a / b));        // 3 (dzielenie całkowite)
-        System.out.println("Modulo: " + (a % b));           // 1 (reszta z dzielenia)
+        System.out.println("Modulo (reszta): " + (a % b));  // 1
 
-        // ========================
-        // OPERATORY PRZYPISANIA
-        // ========================
-        int x = 5;
-        x += 3;  // x = x + 3
-        System.out.println("x po += 3: " + x); // 8
+        double dzielenie = 10.0 / 3.0;
+        System.out.println("Dzielenie zmiennoprzecinkowe: " + dzielenie);
 
-        x *= 2;  // x = x * 2
-        System.out.println("x po *= 2: " + x); // 16
+        // =====================================================
+        // 🔄 INKREMENTACJA / DEKREMENTACJA
+        // =====================================================
 
-        // ========================
-        // OPERATORY PORÓWNANIA
-        // ========================
+        int n = 5;
+
+        System.out.println("Post-inkrementacja: " + (n++)); // 5 (najpierw używa, potem zwiększa)
+        System.out.println("Po inkrementacji: " + n);       // 6
+
+        System.out.println("Pre-inkrementacja: " + (++n));  // 7 (najpierw zwiększa, potem używa)
+
+        System.out.println("Post-dekrementacja: " + (n--)); // 7
+        System.out.println("Po dekrementacji: " + n);       // 6
+
+        System.out.println("Pre-dekrementacja: " + (--n));  // 5
+
+        // =====================================================
+        // 🟰 OPERATORY PRZYPISANIA
+        // =====================================================
+
+        int x = 4;
+        x += 2;  // x = x + 2 → 6
+        x *= 3;  // x = x * 3 → 18
+        x -= 5;  // x = x - 5 → 13
+        x /= 2;  // x = x / 2 → 6
+        x %= 4;  // x = x % 4 → 2
+
+        System.out.println("Wynik po różnych przypisaniach: " + x);
+
+        // =====================================================
+        // 🧮 OPERATORY PORÓWNANIA
+        // =====================================================
+
         int p = 10;
         int q = 20;
 
@@ -39,40 +62,68 @@ public class Lesson02_Operators {
         System.out.println("p >= q: " + (p >= q));  // false
         System.out.println("p <= q: " + (p <= q));  // true
 
-        // ========================
-        // OPERATORY LOGICZNE
-        // ========================
+        // =====================================================
+        // ⚙️ OPERATORY LOGICZNE (bool)
+        // =====================================================
+
         boolean isSunny = true;
         boolean isWarm = false;
 
-        System.out.println("isSunny && isWarm: " + (isSunny && isWarm));  // false
-        System.out.println("isSunny || isWarm: " + (isSunny || isWarm)); // true
-        System.out.println("!isSunny: " + (!isSunny));                   // false
+        System.out.println("AND (&&): " + (isSunny && isWarm));   // false
+        System.out.println("OR  (||): " + (isSunny || isWarm));   // true
+        System.out.println("NOT (!): " + (!isSunny));             // false
 
-        // ========================
-        // OPERATOR TERNARNY
-        // ========================
-        int age = 18;
-        String result = (age >= 18) ? "Pełnoletni" : "Niepełnoletni";
-        System.out.println("Wynik ternarny: " + result); // "Pełnoletni"
+        // Operatory bitowe (działają też logicznie dla boolean)
+        System.out.println("AND (&): " + (isSunny & isWarm));     // false
+        System.out.println("OR  (|): " + (isSunny | isWarm));     // true
+        System.out.println("XOR (^): " + (isSunny ^ isWarm));     // true
 
-        // ========================
-        // INKREMENTACJA / DEKREMENTACJA
-        // ========================
-        int n = 5;
+        // Przykład logiczny:
+        int age = 25;
+        boolean hasId = true;
+        if (age >= 18 && hasId) {
+            System.out.println("Osoba może wejść.");
+        }
 
-        // Post-inkrementacja: wartość zostaje użyta, a potem zwiększona
-        System.out.println("n (post-inkrementacja): " + (n++)); // 5
-        System.out.println("n po post-inkrementacji: " + n);   // 6
+        // =====================================================
+        // 🎭 OPERATOR TERNARNY
+        // =====================================================
 
-        // Pre-inkrementacja: wartość zostaje najpierw zwiększona, a potem użyta
-        System.out.println("n (pre-inkrementacja): " + (++n)); // 7
+        int points = 85;
+        String grade = (points >= 90) ? "Celujący" :
+                (points >= 75) ? "Bardzo dobry" :
+                        (points >= 60) ? "Dobry" : "Dostateczny";
 
-        // Post-dekrementacja: wartość zostaje użyta, a potem zmniejszona
-        System.out.println("n (post-dekrementacja): " + (n--)); // 7
-        System.out.println("n po post-dekrementacji: " + n);    // 6
+        System.out.println("Ocena końcowa: " + grade);
 
-        // Pre-dekrementacja: wartość zostaje najpierw zmniejszona, a potem użyta
-        System.out.println("n (pre-dekrementacja): " + (--n)); // 5
+        // =====================================================
+        // 🔎 OPERATOR instanceof (sprawdzenie typu obiektu)
+        // =====================================================
+
+        Object test = "To jest tekst";
+        if (test instanceof String) {
+            System.out.println("Zmienna 'test' to String.");
+        }
+
+        // =====================================================
+        // 🧪 EKSPERYMENTALNE PRZYKŁADY
+        // =====================================================
+
+        // Czy liczba jest parzysta?
+        int number = 8;
+        boolean isEven = (number % 2 == 0);
+        System.out.println("Czy " + number + " jest parzysta? " + isEven);
+
+        // Czy wartość mieści się w przedziale?
+        int temperature = 22;
+        if (temperature >= 20 && temperature <= 25) {
+            System.out.println("Temperatura jest komfortowa.");
+        }
+
+        // Negacja warunku
+        boolean isClosed = false;
+        if (!isClosed) {
+            System.out.println("Drzwi są otwarte.");
+        }
     }
 }
