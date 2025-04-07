@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson07_DateAndTime;
+package com.example.javaquest.javafundamentals.Lesson07_DateAndTime;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;

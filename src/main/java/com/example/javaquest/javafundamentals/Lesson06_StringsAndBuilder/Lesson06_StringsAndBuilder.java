@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson06_StringsAndBuilder;
+package com.example.javaquest.javafundamentals.Lesson06_StringsAndBuilder;
 
 import java.util.Arrays;
 
@@ -17,6 +17,32 @@ public class Lesson06_StringsAndBuilder {
 
         String text = "Java Programming";
 
+        /*
+         * =====================================================================
+         * 🧠 STRING POOL — JAK TO DZIAŁA?
+         * =====================================================================
+         * - String Pool to specjalna część pamięci w JVM, w której przechowywane są literalne łańcuchy znaków.
+         * - Kiedy tworzysz String jako literał (np. String a = "Hello"), Java najpierw sprawdza, czy taki String już istnieje w puli.
+         *   → Jeśli tak, to zwraca istniejący obiekt.
+         *   → Jeśli nie, to tworzy nowy i dodaje do puli.
+         * - Dzięki temu oszczędza się pamięć i przyspiesza porównania (można porównywać przez ==).
+         *
+         * Przykład:
+         */
+        String a = "test";
+        String b = "test";
+        String c = new String("test");
+        String d = c.intern();
+
+        System.out.println("a == b: " + (a == b));           // true (ten sam obiekt z puli)
+        System.out.println("a == c: " + (a == c));           // false (new String tworzy nowy obiekt)
+        System.out.println("a == d (c.intern()): " + (a == d)); // true (intern() dodaje do puli lub zwraca z puli)
+        System.out.println("a.equals(c): " + a.equals(c));   // true (porównanie zawartości)
+
+        // intern() warto znać np. przy dużej liczbie powtarzających się Stringów
+
+
+
         // =============================
         // METODY ANALITYCZNE I DOSTĘPOWE
         // =============================
@@ -26,13 +52,13 @@ public class Lesson06_StringsAndBuilder {
         // =============================
         // PORÓWNYWANIE STRINGÓW
         // =============================
-        String a = "test";
-        String b = "test";
-        String c = new String("test");
+        String aa = "test";
+        String bb = "test";
+        String cc = new String("test");
 
-        System.out.println("a == b: " + (a == b)); // true, bo to ten sam obiekt z puli
-        System.out.println("a == c: " + (a == c)); // false, bo c to nowy obiekt
-        System.out.println("a.equals(c): " + a.equals(c)); // true, bo zawartość taka sama
+        System.out.println("aa == bb: " + (a == b)); // true, bo to ten sam obiekt z puli
+        System.out.println("aa == cc: " + (a == c)); // false, bo c to nowy obiekt
+        System.out.println("aa.equals(cc): " + a.equals(c)); // true, bo zawartość taka sama
         System.out.println("equalsIgnoreCase(): " + "JAVA".equalsIgnoreCase("java")); // ignoruje wielkość liter
 
         // =============================

@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson10_HeapAndStack;
+package com.example.javaquest.javafundamentals.Lesson10_HeapAndStack;
 
 public class Lesson10_HeapAndStack {
 

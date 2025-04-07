@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson01_Variables;
+package com.example.javaquest.javafundamentals.Lesson01_Variables;
 
 import java.util.Arrays;
 
@@ -33,17 +33,12 @@ public class Lesson01_Variables {
         // TYPY PRYMITYWNE (niewielkie, szybkie, przechowują wartość)
         // ==========================================================
 
-        // Całkowite
-        byte aByte = 127;              // zakres: -128 do 127
+        byte aByte = 127;
         short aShort = 32_000;
         int anInt = 1_000_000;
         long aLong = 1_000_000_000L;
-
-        // Zmiennoprzecinkowe
         float aFloat = 3.14f;
         double aDouble = 3.1415926535;
-
-        // Znak i logiczny
         char aChar = 'Z';
         boolean isAdult = true;
 
@@ -51,40 +46,79 @@ public class Lesson01_Variables {
         System.out.println("Przykład prymitywnego double: " + aDouble);
 
         // ==========================================================
-        // TYPY REFERENCYJNE (np. String, tablice, klasy)
+        // TYPY REFERENCYJNE
         // ==========================================================
 
-        String name = "Przemek";  // String to obiekt (referencyjny)
-        int[] scores = {90, 80, 70}; // tablica to też typ referencyjny
-
+        String name = "Przemek";
+        int[] scores = {90, 80, 70};
         System.out.println("Imię: " + name);
-        System.out.println("Pierwszy element tablicy scores: " + scores[0]);
-
-        // Tablica jako obiekt ma metodę toString w klasie Arrays:
-        System.out.println("Wszystkie elementy tablicy: " + Arrays.toString(scores));
+        System.out.println("Pierwszy element tablicy: " + scores[0]);
+        System.out.println("Cała tablica: " + Arrays.toString(scores));
 
         // ==========================================================
-        // AUTObOXING i UNBOXING (int → Integer, boolean → Boolean itd.)
+        // WRAPPER CLASSES – obiektowe odpowiedniki typów prostych
         // ==========================================================
 
-        Integer boxedInt = anInt;           // autoboxing
-        int unboxedInt = boxedInt;          // unboxing
+        // Każdy prymitywny typ ma swój odpowiednik klasowy:
+        // byte    → Byte
+        // short   → Short
+        // int     → Integer
+        // long    → Long
+        // float   → Float
+        // double  → Double
+        // char    → Character
+        // boolean → Boolean
+
+        Integer intWrapper = Integer.valueOf(anInt);     // zamiana int na Integer
+        Double doubleWrapper = Double.valueOf(aDouble);  // zamiana double na Double
+        Boolean boolWrapper = Boolean.valueOf(isAdult);  // zamiana boolean na Boolean
+        Character charWrapper = Character.valueOf(aChar); // char → Character
+
+        System.out.println("Integer wrapper: " + intWrapper);
+        System.out.println("Double wrapper: " + doubleWrapper);
+        System.out.println("Boolean wrapper: " + boolWrapper);
+        System.out.println("Character wrapper: " + charWrapper);
+
+        // Przykłady użycia metod klas wrapper:
+        System.out.println("Maksymalna wartość Integer: " + Integer.MAX_VALUE);
+        System.out.println("Minimalna wartość Short: " + Short.MIN_VALUE);
+        System.out.println("Zamiana tekstu na int: " + Integer.parseInt("123"));
+        System.out.println("Zamiana tekstu na boolean: " + Boolean.parseBoolean("true"));
+        System.out.println("Zamiana int na tekst: " + Integer.toString(999));
+
+        // Użycie Character:
+        char znak = '7';
+        System.out.println("Czy '7' to cyfra? " + Character.isDigit(znak));
+        System.out.println("Czy 'a' to litera? " + Character.isLetter('a'));
+
+        // ==========================================================
+        // AUTOBOXING i UNBOXING
+        // ==========================================================
+
+        Integer boxedInt = anInt;       // autoboxing: int → Integer
+        int unboxedInt = boxedInt;      // unboxing: Integer → int
+
+        Double boxedDouble = 5.5;        // autoboxing
+        double unboxedDouble = boxedDouble; // unboxing
 
         Boolean isOk = Boolean.TRUE;
         if (isOk) {
-            System.out.println("Autoboxing działa: Boolean.TRUE");
+            System.out.println("Autoboxing działa – wartość Boolean.TRUE");
         }
 
+        // Można także używać wrapperów w kolekcjach (np. List<Integer>)
+        // bo kolekcje w Javie nie obsługują typów prymitywnych
+
         // ==========================================================
-        // VAR - skrócona deklaracja zmiennej (od Javy 10)
+        // VAR – skrócona deklaracja zmiennej (od Javy 10)
         // ==========================================================
 
-        var city = "Otwock";     // typ inferred: String
-        var age = 35;            // typ inferred: int
+        var city = "Otwock";
+        var age = 35;
         System.out.println("Miasto: " + city + ", wiek: " + age);
 
         // ==========================================================
-        // NULL - brak referencji (dotyczy tylko typów referencyjnych)
+        // NULL – brak referencji
         // ==========================================================
 
         String undefined = null;
@@ -98,22 +132,18 @@ public class Lesson01_Variables {
 
         String s1 = "Hello";
         String s2 = new String("Hello");
-
-        System.out.println("== (czy ten sam obiekt?): " + (s1 == s2));           // false
-        System.out.println(".equals (czy takie same dane?): " + s1.equals(s2));  // true
+        System.out.println("== (czy ten sam obiekt?): " + (s1 == s2));
+        System.out.println(".equals (czy te same dane?): " + s1.equals(s2));
 
         // ==========================================================
-        // TWORZENIE OBIEKTU I DOSTĘP DO POLA INSTANCYJNEGO
+        // DOSTĘP DO POLA INSTANCYJNEGO I STATYCZNEGO
         // ==========================================================
 
-        Lesson01_Variables lesson = new Lesson01_Variables(); // obiekt klasy
-        lesson.showGlobalVariable(); // wywołanie metody instancyjnej
-
-        // Statyczna zmienna (może być użyta bez tworzenia obiektu)
+        Lesson01_Variables lesson = new Lesson01_Variables();
+        lesson.showGlobalVariable();
         System.out.println("Zmienna statyczna (globalCounter): " + Lesson01_Variables.globalCounter);
     }
 
-    // Metoda instancyjna – dostęp do pól instancyjnych (czyli "nie-static")
     void showGlobalVariable() {
         System.out.println("Zmienna instancyjna: " + globalText);
     }

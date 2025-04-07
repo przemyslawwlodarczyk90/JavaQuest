@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson09_BigNumberTypes;
+package com.example.javaquest.javafundamentals.Lesson09_BigNumberTypes;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;

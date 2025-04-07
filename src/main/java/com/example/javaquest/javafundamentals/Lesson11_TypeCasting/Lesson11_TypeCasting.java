@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson11_TypeCasting;
+package com.example.javaquest.javafundamentals.Lesson11_TypeCasting;
 
 public class Lesson11_TypeCasting {
 

@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson08_MathOperations;
+package com.example.javaquest.javafundamentals.Lesson08_MathOperations;
 
 public class Lesson08_MathOperations {
 

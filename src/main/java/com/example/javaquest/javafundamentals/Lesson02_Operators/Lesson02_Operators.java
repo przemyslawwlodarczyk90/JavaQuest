@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson02_Operators;
+package com.example.javaquest.javafundamentals.Lesson02_Operators;
 
 public class Lesson02_Operators {
 

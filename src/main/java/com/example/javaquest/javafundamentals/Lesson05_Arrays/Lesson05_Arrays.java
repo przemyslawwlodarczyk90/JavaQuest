@@ -1,4 +1,4 @@
-package com.example.javaquest.Lesson05_Arrays;
+package com.example.javaquest.javafundamentals.Lesson05_Arrays;
 
 import java.util.Arrays;
 
