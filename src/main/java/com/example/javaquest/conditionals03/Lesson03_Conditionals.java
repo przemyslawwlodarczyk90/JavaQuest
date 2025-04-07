@@ -4,46 +4,56 @@ public class Lesson03_Conditionals {
 
     public static void main(String[] args) {
 
-        // ========================
-        // INSTRUKCJE WARUNKOWE IF / ELSE IF / ELSE
-        // ========================
+        /*
+         * ============================================================
+         * IF / ELSE IF / ELSE – KLASYKA WARUNKÓW
+         * ============================================================
+         *
+         * Używamy, gdy chcemy sprawdzić logiczne warunki:
+         * - warunek może być prosty (number > 10)
+         * - może być też złożony (a > 5 && b < 10)
+         */
 
         int number = 15;
 
-        // Instrukcja if sprawdza, czy dany warunek jest prawdziwy.
-        // Jeśli tak, wykonywany jest blok kodu wewnątrz if-a.
         if (number > 20) {
             System.out.println("Liczba jest większa niż 20");
-        }
-        // Instrukcja else if umożliwia sprawdzenie innego warunku,
-        // jeśli pierwszy nie został spełniony.
-        else if (number == 20) {
+        } else if (number == 20) {
             System.out.println("Liczba jest równa 20");
-        }
-        // Instrukcja else wykona się, jeśli żaden wcześniejszy warunek nie był prawdziwy.
-        else {
+        } else {
             System.out.println("Liczba jest mniejsza niż 20");
         }
 
-        // ========================
-        // OPERATOR TERNARNY (SKRÓT IF/ELSE)
-        // ========================
+        /*
+         * Uwaga:
+         * - `else if` pozwala sprawdzać kolejne przypadki
+         * - `else` zawsze pasuje do każdego innego przypadku, jeśli nic wyżej nie pasowało
+         * - Możemy też używać pojedynczego `if` bez `else` – wtedy kod może wykonać się lub nie
+         */
 
-        int age = 17;
+        // =====================================================
+        // 🎭  TERNARNY
+        // =====================================================
 
-        // Operator ternarny pozwala na przypisanie wartości do zmiennej
-        // w zależności od spełnienia warunku. Składnia:
-        // warunek ? wartość_jeśli_prawda : wartość_jeśli_fałsz
-        String access = (age >= 18) ? "Dostęp przyznany" : "Brak dostępu";
-        System.out.println("Wynik ternarny: " + access);
+        int points = 85;
+        String grade = (points >= 90) ? "Celujący" :
+                (points >= 75) ? "Bardzo dobry" :
+                        (points >= 60) ? "Dobry" : "Dostateczny";
 
-        // ========================
-        // INSTRUKCJA SWITCH (STARA SYNTAXA - dostępna od Javy 1.0)
-        // ========================
+        System.out.println("Ocena końcowa: " + grade);
+
+
+
+        /*
+         * ============================================================
+         * SWITCH – WIELE OPCJI DLA TEJ SAMEJ ZMIENNEJ (OD JDK 1.0)
+         * ============================================================
+         */
+
+
 
         String day = "Środa";
 
-        // Klasyczna wersja switch:
         switch (day) {
             case "Poniedziałek":
                 System.out.println("To jest pierwszy dzień tygodnia");
@@ -56,12 +66,19 @@ public class Lesson03_Conditionals {
                 break;
             default:
                 System.out.println("To nie jest konkretny dzień roboczy");
-                break;
         }
 
-        // ========================
-        // INSTRUKCJA SWITCH (NOWA SYNTAXA - dostępna od Javy 14 w trybie preview, od Javy 17 oficjalnie)
-        // ========================
+        /*
+         * Uwaga:
+         * - każda `case` kończy się `break`, aby nie przechodzić dalej (tzw. fall-through)
+         * - `default` działa jak `else` – wyłapuje przypadki niespełnione
+         */
+
+        /*
+         * ============================================================
+         * NOWA SYNTAXA SWITCH (JDK 14+ → JDK 17: stabilna)
+         * ============================================================
+         */
 
         String result = switch (day) {
             case "Poniedziałek" -> "Pierwszy dzień tygodnia";
@@ -72,23 +89,101 @@ public class Lesson03_Conditionals {
 
         System.out.println("Nowy switch: " + result);
 
-        // ========================
-        // ZAGNIEŻDŻONE IF-y
-        // ========================
+        /*
+         * Zalety nowego switcha:
+         * - bardziej czytelny
+         * - bez `break`
+         * - zwraca wartość
+         */
+
+        /*
+         * ============================================================
+         * SWITCH Z `yield` – JEŚLI TRZEBA WYKONAĆ WIĘCEJ KODU
+         * ============================================================
+         */
+
+        int hour = 14;
+
+        String timeOfDay = switch (hour) {
+            case 6, 7, 8, 9, 10, 11 -> "Poranek";
+            case 12, 13, 14, 15, 16 -> {
+                System.out.println("Witaj w ciągu dnia!");
+                yield "Popołudnie";
+            }
+            case 17, 18, 19 -> "Wieczór";
+            default -> "Noc";
+        };
+
+        System.out.println("Pora dnia: " + timeOfDay);
+
+        /*
+         * yield → działa jak return w bloku switch
+         * pozwala wykonać kod przed zwróceniem wyniku
+         */
+
+        /*
+         * ============================================================
+         * PORÓWNANIE: IF vs SWITCH
+         * ============================================================
+         * - if/else if – idealne dla złożonych, dynamicznych warunków (np. a > b && c < d)
+         * - switch – idealny dla sprawdzania jednej zmiennej z wieloma możliwymi wartościami
+         *           (np. dzień tygodnia, status zamówienia, typ użytkownika)
+         */
+
+        /*
+         * ============================================================
+         * SWITCH A ENUMY – KOMBINACJA IDEALNA
+         * ============================================================
+         * Switch działa świetnie z enumami – np. DzienTygodnia.PONIEDZIALEK
+         * Ale to temat na osobną lekcję w OOP.
+         */
+
+        /*
+         * ============================================================
+         * ZAGNIEŻDŻONE IF-y – LOGIKA W LOGICE
+         * ============================================================
+         */
 
         int temperature = 25;
         boolean isRaining = false;
+        boolean isWindy = false;
 
-        // Zagnieżdżony if to sytuacja, gdy w jednym if-ie znajduje się inny if.
-        // To pozwala na dokładniejsze sprawdzanie zależnych warunków.
         if (temperature > 20) {
             if (!isRaining) {
-                System.out.println("Jest ciepło i nie pada - idealna pogoda!");
+                if (!isWindy) {
+                    System.out.println("Idealna pogoda – ciepło, sucho i spokojnie.");
+                } else {
+                    System.out.println("Ciepło i sucho, ale wietrznie.");
+                }
             } else {
-                System.out.println("Jest ciepło, ale pada deszcz.");
+                System.out.println("Ciepło, ale pada deszcz.");
             }
         } else {
             System.out.println("Jest chłodno.");
         }
+
+        /*
+         * Uwaga:
+         * - zagnieżdżanie ifów jest możliwe, ale lepiej nie przesadzać
+         * - warto wyciągać logikę do metod pomocniczych przy skomplikowanych warunkach
+         */
+
+        /*
+         * ============================================================
+         * NULL-SAFE SWITCH (od Javy 17)
+         * ============================================================
+         */
+
+        String language = null;
+
+        // W Javie 17+ switch z null rzuca NullPointerException, chyba że dodamy case null:
+        String languageResult = switch (language) {
+            case "Java" -> "To język JVM!";
+            case "Python" -> "Popularny w data science.";
+//            case null -> "Brak danych o języku.";                 to dostepne dopier w jdk powyzej 18
+            default -> "Inny język.";
+        };
+
+        System.out.println("Język: " + languageResult);
     }
 }

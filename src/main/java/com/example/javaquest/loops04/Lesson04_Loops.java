@@ -4,39 +4,61 @@ public class Lesson04_Loops {
 
     public static void main(String[] args) {
 
-        // ========================
-        // PĘTLA WHILE
-        // ========================
-        // Wykonuje blok kodu, dopóki warunek jest prawdziwy.
+        /*
+         * ========================================================
+         * PĘTLA WHILE
+         * ========================================================
+         * Pętla typu „dopóki warunek jest spełniony”
+         * - Sprawdza warunek przed pierwszym wykonaniem.
+         * - Może nie wykonać się ani razu.
+         */
+
         int i = 0;
         while (i < 5) {
             System.out.println("while: i = " + i);
-            i++; // inkrementacja
+            i++;
         }
 
-        // ========================
-        // PĘTLA DO-WHILE
-        // ========================
-        // Najpierw wykonuje blok kodu, potem sprawdza warunek.
-        // Gwarantuje przynajmniej jedno wykonanie.
+        /*
+         * ========================================================
+         * PĘTLA DO-WHILE
+         * ========================================================
+         * - Wykonuje blok przynajmniej raz, a dopiero potem sprawdza warunek.
+         * - Używana, gdy chcemy "zawsze wykonać minimum jedną iterację"
+         */
+
         int j = 0;
         do {
             System.out.println("do-while: j = " + j);
             j++;
         } while (j < 5);
 
-        // ========================
-        // PĘTLA FOR
-        // ========================
-        // Używana, gdy wiemy ile razy chcemy coś powtórzyć.
+        /*
+         * ========================================================
+         * PĘTLA FOR
+         * ========================================================
+         * - Klasyczna pętla z licznikiem.
+         * - Zawiera wszystko w jednym miejscu: inicjalizacja; warunek; krok.
+         * - Idealna do pętli o ustalonej liczbie kroków.
+         */
+
         for (int k = 0; k < 5; k++) {
             System.out.println("for: k = " + k);
         }
 
-        // ========================
-        // PĘTLA FOR - INKREMENTACJA I DEKREMENTACJA
-        // ========================
-        // Przykład inkrementacji i dekrementacji w pętli:
+        /*
+         * Pętla nieskończona (uwaga! zatrzymaj ją ręcznie)
+         * for (;;) {
+         *     System.out.println("To działa bez końca");
+         * }
+         */
+
+        /*
+         * ========================================================
+         * INKREMENTACJA I DEKREMENTACJA W FOR
+         * ========================================================
+         */
+
         System.out.println("Inkrementacja:");
         for (int x = 1; x <= 5; x++) {
             System.out.println("x = " + x);
@@ -47,73 +69,106 @@ public class Lesson04_Loops {
             System.out.println("x = " + x);
         }
 
-        // Można też inkrementować o więcej niż 1:
         System.out.println("Inkrementacja co 2:");
         for (int x = 0; x <= 10; x += 2) {
             System.out.println("x = " + x);
         }
 
-        // ========================
-        // PĘTLA FOREACH (dla kolekcji/array)
-        // ========================
-        // Służy do prostego przechodzenia po elementach tablicy lub kolekcji
+        /*
+         * ========================================================
+         * FOREACH (ENHANCED FOR LOOP)
+         * ========================================================
+         * - Idealna do przechodzenia przez tablice i kolekcje.
+         * - Nie nadaje się do modyfikacji indeksów.
+         */
+
         int[] numbers = {10, 20, 30, 40, 50};
         for (int number : numbers) {
             System.out.println("foreach: number = " + number);
         }
 
-        // ========================
-        // PRZYKŁAD ZŁOŻONY: SUMOWANIE LICZB W TABLICY
-        // ========================
+        /*
+         * ========================================================
+         * SUMOWANIE ELEMENTÓW Z TABLICY (ZŁOŻONY PRZYKŁAD)
+         * ========================================================
+         */
+
         int sum = 0;
         for (int number : numbers) {
-            sum += number; // sumowanie wartości z tablicy
+            sum += number;
         }
         System.out.println("Suma liczb z tablicy: " + sum);
 
-        // ========================
-        // UŻYCIE BREAK I CONTINUE
-        // ========================
+        /*
+         * ========================================================
+         * BREAK I CONTINUE – PRZERYWANIE I POMIJANIE ITERACJI
+         * ========================================================
+         */
 
-        // continue – pomija daną iterację i przechodzi do następnej
         System.out.println("Przykład continue:");
         for (int n = 0; n < 5; n++) {
-            if (n == 2) continue; // pomiń, jeśli n == 2
+            if (n == 2) continue; // pomiń tylko tę iterację
             System.out.println("n = " + n);
         }
 
-        // break – przerywa całkowicie pętlę
         System.out.println("Przykład break:");
         for (int n = 0; n < 5; n++) {
-            if (n == 3) break; // zakończ, jeśli n == 3
+            if (n == 3) break; // zakończ całą pętlę
             System.out.println("n = " + n);
         }
 
-        // ========================
-        // ZAGNIEŻDŻONE PĘTLE (np. tablica 2D)
-        // ========================
+        /*
+         * continue – pomija tylko jedną iterację i przechodzi dalej
+         * break – przerywa całkowicie wykonywanie pętli
+         */
+
+        /*
+         * ========================================================
+         * ZAGNIEŻDŻONE PĘTLE – TABLICA DWUWYMIAROWA
+         * ========================================================
+         * Dla struktur typu matrix, plansza, macierz.
+         */
+
         int[][] matrix = {
                 {1, 2, 3},
                 {4, 5, 6},
                 {7, 8, 9}
         };
 
-        System.out.println("Zagnieżdżona pętla - wypisanie tablicy 2D:");
+        System.out.println("Zagnieżdżona pętla - tablica 2D:");
         for (int row = 0; row < matrix.length; row++) {
             for (int col = 0; col < matrix[row].length; col++) {
                 System.out.print(matrix[row][col] + " ");
             }
-            System.out.println(); // nowa linia po każdej kolumnie
+            System.out.println(); // nowa linia po każdym wierszu
         }
 
-        // ========================
-        // PODSUMOWANIE
-        // ========================
-        System.out.println("\nPętle w Javie pozwalają powtarzać fragmenty kodu:");
-        System.out.println("- while/do-while: dopóki warunek jest spełniony");
-        System.out.println("- for: licznik iteracji");
-        System.out.println("- foreach: przechodzenie przez kolekcję/tablicę");
-        System.out.println("- break: zakończ pętlę");
-        System.out.println("- continue: pomiń tę iterację");
+        /*
+         * Uwaga:
+         * - Pamiętaj o kolejności: najpierw rzędy, potem kolumny.
+         * - Można to sobie „narysować w głowie” albo na kartce.
+         * - Przy bardziej złożonych strukturach lepiej dodać komentarze.
+         */
+
+        /*
+         * ========================================================
+         * PODSUMOWANIE
+         * ========================================================
+         */
+
+        System.out.println("\n📌 Pętle w Javie pozwalają powtarzać fragmenty kodu:");
+
+        System.out.println("- while: dopóki warunek jest spełniony (na początku)");
+        System.out.println("- do-while: gwarantuje przynajmniej 1 wykonanie");
+        System.out.println("- for: najczęściej do iteracji liczbowych");
+        System.out.println("- foreach: uproszczona forma dla kolekcji/tablic");
+        System.out.println("- break: przerywa pętlę całkowicie");
+        System.out.println("- continue: pomija daną iterację i idzie dalej");
+
+        System.out.println("\n🧠 Zasada: wybieraj pętlę w zależności od celu, np.:");
+        System.out.println("- for → licznik");
+        System.out.println("- foreach → przegląd danych");
+        System.out.println("- while → czekasz na warunek");
+        System.out.println("- do-while → co najmniej 1 raz coś się wydarzy");
     }
 }

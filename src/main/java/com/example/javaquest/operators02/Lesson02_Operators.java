@@ -85,25 +85,7 @@ public class Lesson02_Operators {
             System.out.println("Osoba może wejść.");
         }
 
-        // =====================================================
-        // 🎭 OPERATOR TERNARNY
-        // =====================================================
 
-        int points = 85;
-        String grade = (points >= 90) ? "Celujący" :
-                (points >= 75) ? "Bardzo dobry" :
-                        (points >= 60) ? "Dobry" : "Dostateczny";
-
-        System.out.println("Ocena końcowa: " + grade);
-
-        // =====================================================
-        // 🔎 OPERATOR instanceof (sprawdzenie typu obiektu)
-        // =====================================================
-
-        Object test = "To jest tekst";
-        if (test instanceof String) {
-            System.out.println("Zmienna 'test' to String.");
-        }
 
         // =====================================================
         // 🧪 EKSPERYMENTALNE PRZYKŁADY
