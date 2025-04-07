@@ -1,4 +1,4 @@
-package com.example.javaquest.loops04;
+package com.example.javaquest.Lesson04_Loops;
 
 public class Lesson04_Loops {
 

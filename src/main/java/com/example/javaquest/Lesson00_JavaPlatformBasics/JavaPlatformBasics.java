@@ -1,4 +1,4 @@
-package com.example.javaquest.basic00;
+package com.example.javaquest.Lesson00_JavaPlatformBasics;
 
 public class JavaPlatformBasics {
 

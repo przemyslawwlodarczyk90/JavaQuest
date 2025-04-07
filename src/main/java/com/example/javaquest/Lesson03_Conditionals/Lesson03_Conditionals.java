@@ -1,4 +1,4 @@
-package com.example.javaquest.conditionals03;
+package com.example.javaquest.Lesson03_Conditionals;
 
 public class Lesson03_Conditionals {
 
