@@ -1,4 +1,4 @@
-package com.example.javaquest.variables01;
+package com.example.javaquest.Lesson01_Variables;
 
 import java.util.Arrays;
 
