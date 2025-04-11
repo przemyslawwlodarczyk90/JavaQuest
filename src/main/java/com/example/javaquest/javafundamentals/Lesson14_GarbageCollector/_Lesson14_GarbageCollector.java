@@ -2,7 +2,7 @@ package com.example.javaquest.javafundamentals.Lesson14_GarbageCollector;
 
 import java.lang.ref.WeakReference;
 
-public class Lesson14_GarbageCollector {
+public class _Lesson14_GarbageCollector {
     public static void main(String[] args) {
 
         /*

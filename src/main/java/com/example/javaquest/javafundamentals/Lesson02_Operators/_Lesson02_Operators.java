@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson02_Operators;
 
-public class Lesson02_Operators {
+public class _Lesson02_Operators {
 
     public static void main(String[] args) {
 

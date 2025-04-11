@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson12_BinaryAndHex;
 
-public class Lesson12_BinaryAndHex {
+public class _Lesson12_BinaryAndHex {
     public static void main(String[] args) {
 
         /*

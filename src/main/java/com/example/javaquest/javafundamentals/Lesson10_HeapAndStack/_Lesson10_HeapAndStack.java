@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson10_HeapAndStack;
 
-public class Lesson10_HeapAndStack {
+public class _Lesson10_HeapAndStack {
 
     /**
      * ========================================================================

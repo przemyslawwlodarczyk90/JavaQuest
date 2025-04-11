@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
 
-public class Lesson09_BigNumberTypes {
+public class _Lesson09_BigNumberTypes {
 
     public static void main(String[] args) {
 

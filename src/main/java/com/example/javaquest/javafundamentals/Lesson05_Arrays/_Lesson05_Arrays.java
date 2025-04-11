@@ -2,7 +2,7 @@ package com.example.javaquest.javafundamentals.Lesson05_Arrays;
 
 import java.util.Arrays;
 
-public class Lesson05_Arrays {
+public class _Lesson05_Arrays {
 
     public static void main(String[] args) {
 

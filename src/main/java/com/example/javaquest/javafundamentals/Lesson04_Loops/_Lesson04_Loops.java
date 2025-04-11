@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson04_Loops;
 
-public class Lesson04_Loops {
+public class _Lesson04_Loops {
 
     public static void main(String[] args) {
 

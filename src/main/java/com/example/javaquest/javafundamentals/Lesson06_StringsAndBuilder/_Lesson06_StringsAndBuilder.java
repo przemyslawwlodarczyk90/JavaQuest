@@ -2,7 +2,7 @@ package com.example.javaquest.javafundamentals.Lesson06_StringsAndBuilder;
 
 import java.util.Arrays;
 
-public class Lesson06_StringsAndBuilder {
+public class _Lesson06_StringsAndBuilder {
 
     public static void main(String[] args) {
 

@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson08_MathOperations;
 
-public class Lesson08_MathOperations {
+public class _Lesson08_MathOperations {
 
     public static void main(String[] args) {
 

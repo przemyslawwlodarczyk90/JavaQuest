@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson13_BitwiseOperators;
 
-public class Lesson13_BitwiseOperators {
+public class _Lesson13_BitwiseOperators {
     public static void main(String[] args) {
 
         /*

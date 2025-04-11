@@ -1,6 +1,6 @@
 package com.example.javaquest.javafundamentals.Lesson03_Conditionals;
 
-public class Lesson03_Conditionals {
+public class _Lesson03_Conditionals {
 
     public static void main(String[] args) {
 
