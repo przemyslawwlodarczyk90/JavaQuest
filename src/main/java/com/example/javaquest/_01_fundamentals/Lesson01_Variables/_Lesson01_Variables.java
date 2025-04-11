@@ -2,7 +2,7 @@ package com.example.javaquest._01_fundamentals.Lesson01_Variables;
 
 import java.util.Arrays;
 
-public class Lesson01_Variables {
+public class _Lesson01_Variables {
 
     // ==========================================================
     // ZMIENNE INSTANCYJNE (POLA KLASY, tzw. "globalne")
@@ -139,9 +139,9 @@ public class Lesson01_Variables {
         // DOSTĘP DO POLA INSTANCYJNEGO I STATYCZNEGO
         // ==========================================================
 
-        Lesson01_Variables lesson = new Lesson01_Variables();
+        _Lesson01_Variables lesson = new _Lesson01_Variables();
         lesson.showGlobalVariable();
-        System.out.println("Zmienna statyczna (globalCounter): " + Lesson01_Variables.globalCounter);
+        System.out.println("Zmienna statyczna (globalCounter): " + _Lesson01_Variables.globalCounter);
     }
 
     void showGlobalVariable() {
