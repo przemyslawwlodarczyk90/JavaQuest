@@ -1,4 +1,4 @@
-package com.example.javaquest._01_fundamentals.exercises.lesson00;
+package com.example.javaquest._01_fundamentals.Lesson00_JavaPlatformBasics;
 
 public class Exercise001_JdkJreJvm {
     public static void main(String[] args) {
@@ -8,5 +8,10 @@ public class Exercise001_JdkJreJvm {
         // - java.home
         // - os.name
         // 👇 Dodaj kod tutaj
+
+        System.out.println(System.getProperty("java.version"));
+        System.out.println(System.getProperty("java.vm.name"));
+        System.out.println(System.getProperty("java.home"));
+        System.out.println(System.getProperty("os.name"));
     }
 }

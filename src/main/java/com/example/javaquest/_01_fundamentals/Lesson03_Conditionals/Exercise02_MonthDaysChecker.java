@@ -1,4 +1,4 @@
-package com.example.javaquest._01_fundamentals.Lesson03_Conditionals.exercises;
+package com.example.javaquest._01_fundamentals.Lesson03_Conditionals;
 
 public class Exercise02_MonthDaysChecker {
     public static void main(String[] args) {
@@ -9,4 +9,6 @@ public class Exercise02_MonthDaysChecker {
          * Użyj switch i case grupowych.
          */
     }
+
+
 }
