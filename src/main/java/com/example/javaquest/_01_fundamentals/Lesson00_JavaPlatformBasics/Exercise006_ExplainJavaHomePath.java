@@ -1,4 +1,4 @@
-package com.example.javaquest._01_fundamentals.exercises.lesson00;
+package com.example.javaquest._01_fundamentals.Lesson00_JavaPlatformBasics;
 
 public class Exercise006_ExplainJavaHomePath {
     public static void main(String[] args) {
