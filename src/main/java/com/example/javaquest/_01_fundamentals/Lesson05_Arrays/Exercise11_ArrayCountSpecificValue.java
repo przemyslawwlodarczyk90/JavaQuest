@@ -9,5 +9,16 @@ public class Exercise11_ArrayCountSpecificValue {
          * Zlicz, ile razy liczba 3 występuje w tablicy:
          * int[] numbers = {1, 3, 5, 3, 3, 7};
          */
+
+        int[] numbers = {1, 3, 5, 3, 3, 7};
+
+        int sum = 0;
+        for (int num : numbers){
+            if(num == 3){
+                sum++;
+            }
+        }
+
+        System.out.println(sum);
     }
 }
