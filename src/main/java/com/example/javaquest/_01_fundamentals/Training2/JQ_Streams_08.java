@@ -31,8 +31,9 @@ public class JQ_Streams_08 {
     }
 
     public static Optional<User> findByEmail(List<User> users, String email) {
-        // TODO: filter + findFirst
-        return Optional.empty();
+        return users.stream()
+                .filter(e -> e.email.equals(email)) // używamy argumentu metody
+                .findFirst();
     }
 
     public static void main(String[] args) {
