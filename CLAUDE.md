@@ -47,5 +47,27 @@ tematycznie:
 Dodatkowo rozdział wykracza poza sylabus Codenga o tematy: iterację, metody kolekcji, Comparator,
 Streams (4 lekcje), Optional, Comparable vs Comparator, kolekcje współbieżne, Queue, mapy specjalne.
 
-Stan na 2026-07-03: lekcje 01–05 mają komplet (teoria + 30 ćwiczeń). Lekcje 06–23 mają teorię;
-ćwiczenia są uzupełniane.
+Stan na 2026-07-03: wszystkie 23 lekcje (01–23) mają komplet (teoria + 30 ćwiczeń). Rozdział
+celowo NIE ma osobnej lekcji "mini projekt" (decyzja użytkownika — zostaje jak jest, 23 lekcje).
+
+## Rozdział _04_io ("Input/Output i praca z plikami")
+
+24 lekcje, na razie tylko teoria (bez ćwiczeń — dochodzą w kolejnym kroku, tak jak to było
+w `_03_collections`). Numeracja lekcji nie odpowiada numeracji z oryginalnego sylabusu (tam
+tematy były numerowane 206–226 w ramach większej, wspólnej listy tematów kursu) — tu numeracja
+zaczyna się od 01 zgodnie z konwencją folderów per-rozdział.
+
+Mapowanie na oryginalny sylabus + dodane przez Claude tematy (oznaczone jako DODANE, bo sylabus
+ich nie miał, a uznane za brakujące do kompletu):
+
+1. IOIntroduction (206), 2. FileReaderWriter (207), 3. BufferedReaderWriter (208),
+4. BufferedStreams (209), 5. DataStreams (210), 6. PrintWriterAndStream (DODANE),
+7. Scanner (211), 8. FileClass (212), 9. PathAndPaths (213), 10. FilesClass (214),
+11. RandomAccessFile (DODANE), 12. Charset (215), 13. TryWithResources (216),
+14. FileExceptions (217), 15. NioChannelsAndBuffers (DODANE), 16. ObjectSerialization (218),
+17. SerialVersionUID (219), 18. TransientKeyword (220), 19. JsonIntro (221), 20. Gson (222),
+21. Jackson (223), 22. SerializableVsJson (224), 23. CSV (225), 24. ZIP (226).
+
+Zależności: Jackson jest dostępny przez `spring-boot-starter-web` (transitywnie), Gson dodany
+ręcznie do `pom.xml` (`com.google.code.gson:gson`). CSV/ZIP używają tylko czystej biblioteki
+standardowej (bez Apache Commons CSV itp. — wspomniane w komentarzach jako alternatywa).

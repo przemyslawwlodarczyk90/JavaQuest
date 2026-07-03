@@ -102,7 +102,7 @@ public class _Lesson05_Inheritance {
 
         System.out.println(dog.getClass().getName()); // pełna nazwa klasy
         System.out.println(dog instanceof Dog);        // true
-        System.out.println(dog instanceof AnimalBase); // true (przez dziedziczenie)
+        System.out.println(dog instanceof Animal);     // true (przez dziedziczenie)
 
         /*
          * ============================================================
