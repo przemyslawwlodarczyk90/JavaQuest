@@ -124,3 +124,93 @@ zamykany (`shutdown()`+`awaitTermination`).
 
 Stan na 2026-07-04: rozdział kompletny (teoria + 30 ćwiczeń) dla wszystkich 37 lekcji, zweryfikowane
 pełną kompilacją projektu (`mvn compile` / `mvnw.cmd compile`).
+
+## Rozdział _06_networking ("Programowanie sieciowe")
+
+14 lekcji, komplet (teoria + 30 ćwiczeń każda), stan na 2026-07-04. Pierwszy z dwóch rozdziałów
+poświęconych sieci/webowi (drugi to `_07_servlets`) — świadomie rozdzielone na dwa osobne rozdziały
+zamiast jednego (decyzja użytkownika: "duży blok" = osobny kurs Codenga, a materiał sieciowy +
+servletowy razem był policzony na ~49 lekcji, zbyt dużo na jeden rozdział). Blok "Przejście do
+Spring Boot" (adnotacje @Controller/@RestController itd.) świadomie NIE wchodzi w skład żadnego
+z tych dwóch rozdziałów — Spring Boot będzie osobnym, ostatnim rozdziałem całego kursu.
+
+Mapowanie lekcja → temat z pierwotnego sylabusu (numeracja 272-285 w ramach wspólnej listy tematów):
+1. NetworkingIntroduction (272), 2. InetAddress (273), 3. Socket (274), 4. SocketWhois (275),
+5. SocketHttpDownload (276), 6. ServerSocket (277), 7. ServerSocketMultithreaded (278), 8. URL (279),
+9. URLConnection (280), 10. HttpURLConnection (281), 11. HttpProtocol (282),
+12. JsonOverNetwork (283), 13. XmlParsing (284), 14. HtmlUnit (285).
+
+Decyzje techniczne ważne przy rozszerzaniu tego rozdziału:
+- Lekcje 4 (WHOIS) i 5 (surowe HTTP przez Socket) oraz 14 (HtmlUnit) świadomie łączą się z REALNYMI
+  zewnętrznymi hostami (whois.iana.org, example.com) — to jest sens tych lekcji. Zawsze z
+  `setSoTimeout`/timeoutem i try-catch z czytelnym komunikatem "brak internetu", żeby `main()`
+  kończył się samoistnie w kilka sekund nawet bez połączenia z siecią.
+- Lekcje 9, 10, 12 (URLConnection, HttpURLConnection, JSON przez sieć) celowo NIE zależą od
+  prawdziwego internetu — używają lokalnego `com.sun.net.httpserver.HttpServer` (wbudowany w JDK,
+  port 0) jako serwera testowego, dla niezawodności/szybkości demo.
+- Lekcja 3 (Socket) jest samowystarczalna: lokalny `ServerSocket` na wątku daemon + klient w tym
+  samym `main()`, bez zależności od sieci — prawdziwe zewnętrzne połączenia są zarezerwowane dla
+  lekcji 4/5.
+- Zależność `org.htmlunit:htmlunit:4.4.0` dodana do `pom.xml` (lekcja 14 to jedyne jej użycie).
+- Ta sama zasada bezpieczeństwa demo co w `_05_multithreading`: `main()` musi kończyć się
+  samoistnie w kilka sekund (bounded accept(), CountDownLatch zamiast sleepów, wątki
+  daemon/joinowane z timeoutem, zawsze zamykane sockety).
+
+## Rozdział _07_servlets ("Servlety – Java Web bez Spring Boot")
+
+19 lekcji, komplet (teoria + 30 ćwiczeń każda), stan na 2026-07-04. Drugi z dwóch rozdziałów
+sieciowych (patrz `_06_networking` wyżej dla kontekstu podziału). Uczy surowego Servlet API
+(bez Springa) — Spring Boot będzie osobnym, ostatnim rozdziałem kursu.
+
+Mapowanie lekcja → temat z pierwotnego sylabusu (numeracja 286-304):
+1. ServletApiIntroduction (286), 2. ServletContainers (287), 3. ServletProjectSetup (288),
+4. HttpServlet (289), 5. HttpServletRequest (290), 6. HttpServletResponse (291),
+7. GetAndPost (292), 8. OtherHttpMethods (293), 9. FormParameters (294), 10. Cookies (295),
+11. HttpSession (296), 12. ServletConfig (297), 13. ServletContext (298), 14. Filters (299),
+15. Listeners (300), 16. ServletAnnotations (301), 17. ForwardAndRedirect (302),
+18. FileUpload (303), 19. JSP (304).
+
+Kluczowa decyzja techniczna: żaden zewnętrzny kontener (Tomcat/Jetty) nie jest instalowany —
+każda lekcja uruchamia **embedded Apache Tomcat programowo wewnątrz `main()`**. To działa bez
+dodawania żadnej nowej zależności, bo `tomcat-embed-core:10.1.39` (razem z pełnym API
+`jakarta.servlet.*`, Jakarta EE 10) jest już obecne transytywnie przez istniejącą zależność
+`spring-boot-starter-web`. Kanoniczny wzorzec (powtarzany w każdej lekcji, wyjaśniony szczegółowo
+w Lekcji 3):
+
+```java
+Tomcat tomcat = new Tomcat();
+tomcat.setBaseDir(Files.createTempDirectory("lessonXX").toString());
+tomcat.getConnector().setPort(0); // 0 = system wybiera wolny port
+Context context = tomcat.addContext("", null);
+Tomcat.addServlet(context, "nazwa", new MojServlet());
+context.addServletMappingDecoded("/sciezka", "nazwa");
+try {
+    tomcat.start();
+    int port = tomcat.getConnector().getLocalPort();
+    // żądanie(a) przez java.net.http.HttpClient na http://localhost:<port>/...
+} finally {
+    tomcat.stop();
+    tomcat.destroy();
+}
+```
+
+Inne ważne decyzje przy tej implementacji:
+- Lekcja 8 (PUT/DELETE/PATCH): `HttpServlet` obsługuje `doPut`/`doDelete` przez zwykłe przesłonięcia,
+  ale NIE ma `doPatch()` — PATCH wymaga ręcznego przesłonięcia `service()` i sprawdzenia
+  `request.getMethod()`.
+- Lekcje 10 (Cookies) i 11 (HttpSession) wymagają `HttpClient` zbudowanego z
+  `.cookieHandler(new CookieManager())`, inaczej ciasteczka/sesja nie przetrwają między kolejnymi
+  żądaniami — zweryfikowane działającym demo (te same ID sesji między żądaniami, invalidate()
+  tworzy nowe ID).
+- Lekcja 16 (adnotacje @WebServlet/@WebFilter/@WebListener): bez skanowania adnotacji w gołym
+  embedded Tomcacie (wymagałoby pełnej struktury WEB-INF/classes) — serwlet ma adnotację DLA
+  DOKUMENTACJI, ale rejestracja nadal odbywa się ręcznie przez `Tomcat.addServlet`, z jawnym
+  komentarzem tłumaczącym tę rozbieżność.
+- Lekcja 18 (upload plików): `MultipartConfigElement` ustawiany na `Wrapper` (zwróconym przez
+  `Tomcat.addServlet`) PRZED `tomcat.start()`; klient buduje treść `multipart/form-data` ręcznie
+  bajt po bajcie (`HttpClient` nie ma wbudowanego wsparcia dla multipart).
+- Lekcja 19 (JSP): celowo BEZ realnego silnika JSP (wymagałoby `tomcat-embed-jasper` + fizycznych
+  plików `.jsp` na dysku) — czysto koncepcyjna lekcja z przykładami jako Java text blocks, zgodnie
+  z ramowaniem "JSP dziś rzadziej używane".
+- Ta sama zasada bezpieczeństwa demo co w `_05_multithreading`/`_06_networking`: `main()` musi
+  kończyć się samoistnie w kilka sekund, port zawsze 0, Tomcat zawsze zatrzymywany w `finally`.
