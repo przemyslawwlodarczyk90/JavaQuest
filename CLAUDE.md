@@ -30,6 +30,15 @@ W każdym podpakiecie lekcji są dokładnie **2 pliki**:
 Ta konwencja (2 pliki/lekcja, 30 ćwiczeń/plik) obowiązuje we wszystkich rozdziałach i musi być
 zachowana przy dodawaniu nowych lekcji lub całych rozdziałów.
 
+## Rozdział _01_fundamentals ("Podstawy Javy")
+
+16 lekcji (00–15) + `Lesson16_Exceptions` dopisana 2026-07-04 (decyzja użytkownika: brakowało
+porządnej, ogólnej lekcji o wyjątkach — try-catch-finally, checked vs unchecked, throw/throws,
+własne wyjątki, łańcuchowanie/cause, stack trace; dotąd wyjątki były tylko przy okazji
+`_04_io/Lesson14_FileExceptions`, który jest wąsko scoped do I/O). Dodana na KOŃCU numeracji jako
+Lesson16 (a nie wstawiona np. po Lesson04_Loops), żeby nie przenumerowywać istniejących 16 lekcji —
+świadomy kompromis między kolejnością dydaktyczną a stabilnością numeracji.
+
 ## Rozdział _03_collections ("Java - Kolekcje")
 
 Odpowiada kursowi Codenga "Java - Kolekcje". Oryginalny sylabus Codenga (moduły): ArrayList,
@@ -113,5 +122,5 @@ Zagrożenia (deadlock/livelock/starvation) demonstrowane przez wątki daemon + o
 `join()`/pętlę, nigdy przez faktyczne zawieszenie JVM. Każdy ExecutorService musi być jawnie
 zamykany (`shutdown()`+`awaitTermination`).
 
-Stan na 2026-07-04: wszystkie 37 lekcji mają teorię (zweryfikowane kompilacją całego projektu
-i przez agentów uruchamiających poszczególne lekcje). Ćwiczenia jeszcze nie napisane.
+Stan na 2026-07-04: rozdział kompletny (teoria + 30 ćwiczeń) dla wszystkich 37 lekcji, zweryfikowane
+pełną kompilacją projektu (`mvn compile` / `mvnw.cmd compile`).
