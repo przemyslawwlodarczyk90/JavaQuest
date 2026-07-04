@@ -52,8 +52,8 @@ celowo NIE ma osobnej lekcji "mini projekt" (decyzja użytkownika — zostaje ja
 
 ## Rozdział _04_io ("Input/Output i praca z plikami")
 
-24 lekcje, na razie tylko teoria (bez ćwiczeń — dochodzą w kolejnym kroku, tak jak to było
-w `_03_collections`). Numeracja lekcji nie odpowiada numeracji z oryginalnego sylabusu (tam
+24 lekcje, komplet (teoria + 30 ćwiczeń każda), stan na 2026-07-03. Numeracja lekcji nie
+odpowiada numeracji z oryginalnego sylabusu (tam
 tematy były numerowane 206–226 w ramach większej, wspólnej listy tematów kursu) — tu numeracja
 zaczyna się od 01 zgodnie z konwencją folderów per-rozdział.
 
@@ -71,3 +71,47 @@ ich nie miał, a uznane za brakujące do kompletu):
 Zależności: Jackson jest dostępny przez `spring-boot-starter-web` (transitywnie), Gson dodany
 ręcznie do `pom.xml` (`com.google.code.gson:gson`). CSV/ZIP używają tylko czystej biblioteki
 standardowej (bez Apache Commons CSV itp. — wspomniane w komentarzach jako alternatywa).
+
+Ćwiczenia (30/lekcję) dopisane 2026-07-03 — rozdział kompletny (teoria + ćwiczenia).
+
+## Rozdział _05_multithreading ("Multithreading / Wątki w Javie")
+
+37 lekcji, na razie tylko teoria (ćwiczenia dochodzą w kolejnym kroku, tak jak przy poprzednich
+rozdziałach). Oryginalny sylabus numerował tematy 190–233 (44 tematy) w ramach wspólnej listy
+tematów kursu — tu numeracja lekcji zaczyna się od 01. Kilka bardzo wąskich podtematów sylabusu
+scalono w jedną lekcję (żeby uniknąć rozdrabniania), a jeden moduł dodano od siebie:
+
+- 193+194 (Runnable jako klasa anonimowa / jako lambda) → `Lesson04_RunnableAnonymousAndLambda`
+- 196–202 (cykl życia + wszystkie 6 stanów Thread.State: NEW/RUNNABLE/BLOCKED/WAITING/
+  TIMED_WAITING/TERMINATED) → jedna lekcja `Lesson06_ThreadLifecycleAndStates`
+- 219+220 (Concurrent collections + BlockingQueue) → `Lesson24_ConcurrentCollectionsAndBlockingQueue`,
+  celowo NIE powtarza API z `_03_collections/Lesson20_ConcurrentCollections`, tylko pokazuje kąt
+  poprawności wątkowej (dlaczego zwykłe kolekcje zawodzą współbieżnie) i wzorzec producer-consumer
+  z poison pill
+- `Lesson20_Synchronizers` (DODANE — CountDownLatch, CyclicBarrier, Semaphore) — sylabus tego nie
+  miał, ale to standardowe narzędzia z java.util.concurrent często spotykane w praktyce, brakowało
+  ich obok Lock/ReadWriteLock
+
+Pełne mapowanie lekcja → temat z sylabusu:
+1. ThreadsIntroduction (190), 2. ThreadClass (191), 3. Runnable (192),
+4. RunnableAnonymousAndLambda (193,194), 5. ThreadBasicMethods (195),
+6. ThreadLifecycleAndStates (196-202), 7. RaceCondition (203), 8. VisibilityProblem (204),
+9. Atomicity (205), 10. ThreadSafety (206), 11. Synchronized (207), 12. Monitor (208),
+13. CriticalSection (209), 14. Volatile (210), 15. WaitNotifyNotifyAll (211),
+16. SpuriousWakeup (212), 17. AtomicClasses (213), 18. LockAndReentrantLock (214),
+19. ReadWriteLock (215), 20. Synchronizers (DODANE), 21. ExecutorService (216),
+22. CallableAndFuture (217), 23. ScheduledExecutorService (218),
+24. ConcurrentCollectionsAndBlockingQueue (219,220), 25. Deadlock (221), 26. Livelock (222),
+27. Starvation (223), 28. Interrupt (224), 29. DaemonThreads (225), 30. ThreadLocal (226),
+31. ForkJoinPool (227), 32. CompletableFuture (228), 33. VirtualThreads (229),
+34. ThreadDebugging (230), 35. SafeThreadTermination (231), 36. BestPractices (232),
+37. CommonMistakes (233).
+
+Zasada bezpieczeństwa demo (ważne przy rozszerzaniu tego rozdziału): KAŻDA lekcja musi kończyć
+`main()` samoistnie w ciągu kilku sekund — żadnych realnych deadlocków/nieskończonych pętli.
+Zagrożenia (deadlock/livelock/starvation) demonstrowane przez wątki daemon + ograniczony czasowo
+`join()`/pętlę, nigdy przez faktyczne zawieszenie JVM. Każdy ExecutorService musi być jawnie
+zamykany (`shutdown()`+`awaitTermination`).
+
+Stan na 2026-07-04: wszystkie 37 lekcji mają teorię (zweryfikowane kompilacją całego projektu
+i przez agentów uruchamiających poszczególne lekcje). Ćwiczenia jeszcze nie napisane.
