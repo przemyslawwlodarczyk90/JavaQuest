@@ -217,17 +217,34 @@ Inne ważne decyzje przy tej implementacji:
 
 ## Rozdział _11_buildtools ("Build Tools w Javie – Ant, Maven, Gradle")
 
-22 lekcje, dodane 2026-07-05 jako duży, samodzielny moduł (na życzenie użytkownika — w firmie
+30 lekcji, dodane 2026-07-05 jako duży, samodzielny moduł (na życzenie użytkownika — w firmie
 używa dużo Anta, więc build toole to nie "dodatek", a fundament). Dołożony na KOŃCU numeracji
 jako `_11_buildtools` (ta sama zasada stabilności numeracji co przy `Lesson16_Exceptions` w
 `_01_fundamentals` — bez przenumerowywania `_08_sql`/`_09_jdbc`/`_10_dao`).
 
-Mapowanie 21 ROZDZIAŁ z oryginalnego brief-u użytkownika + końcowy egzamin praktyczny → 22 lekcje:
+Historia dwóch rund rozszerzania (ważne, jeśli trzeba będzie coś tu jeszcze zmieniać): pierwotny
+brief użytkownika (21 ROZDZIAŁ + końcowy egzamin) dał bazowe 22 lekcje, z Gradle jako tylko
+2 lekcje (16-17). Runda 1: użytkownik ocenił Gradle jako zbyt skromny względem Anta (8 lekcji) →
+dodano 5 nowych lekcji Gradle, Gradle urósł do 7 (16-22), ogon (porównanie/migracje/praktyka/
+troubleshooting/capstone) przesunięty na 23-27. Runda 2: użytkownik zażądał, żeby WSZYSTKIE 3
+bloki (Ant/Maven/Gradle) miały ten samą rozszerzony zakres → Maven (miał tylko 5 lekcji) dostał
+3 nowe lekcje, urósł do 8 (tyle co Ant), Gradle+ogon przesunięte o kolejne +3. Finalny stan —
+**8 lekcji Ant (03-10), 8 lekcji Maven (11-18), 8 lekcji Gradle (19-26)** + 2 lekcje fundamentów
+(01-02) + 4 lekcje zbiorcze (27-30) = 30 lekcji razem:
+
 01_WhyBuildTools, 02_JavacJavaJarClasspath, 03_AntBasics, 04_AntProjectStructure, 05_AntClasspath,
 06_AntTesting, 07_AntPackaging, 08_AntAdvanced, 09_AntIvy, 10_AntDebugging, 11_MavenBasics,
-12_MavenDependencies, 13_MavenPlugins, 14_MavenAdvanced, 15_MavenWebAndDatabase, 16_GradleBasics,
-17_GradleAdvanced, 18_AntMavenGradleComparison, 19_BuildMigrations, 20_BuildToolsInPractice,
-21_BuildToolsTroubleshooting, 22_CapstoneBuildLab (= "JavaQuest Build Lab" z brief-u).
+12_MavenDependencies, 13_MavenPlugins, 14_MavenAdvanced, 15_MavenWebAndDatabase,
+16_MavenTestingAndCoverage, 17_MavenPublishing, 18_MavenTroubleshootingAndPerformance,
+19_GradleBasics, 20_GradleAdvanced, 21_GradleDependencyManagement, 22_GradleTestingAndCoverage,
+23_GradlePluginsEcosystem, 24_GradlePublishing, 25_GradleTroubleshootingAndPerformance,
+26_AntMavenGradleComparison, 27_BuildMigrations, 28_BuildToolsInPractice,
+29_BuildToolsTroubleshooting, 30_CapstoneBuildLab (= "JavaQuest Build Lab" z brief-u).
+
+Zauważ symetrię między blokami — każdy z 3 narzędzi ma teraz odpowiedniki: podstawy, dependency
+management, testing/coverage, plugins/publishing, troubleshooting/performance (Maven i Gradle
+ściśle równolegle: 16/17/18 ↔ 22/24/25; Ant pokrywa te tematy inaczej rozłożone w 03-10, bo od
+początku był projektowany gęściej ze względu na embedding).
 
 Kluczowy problem projektowy: cała reszta kursu ma `main()`, który faktycznie coś RUNs (woła
 Java API). Ant/Maven/Gradle to zewnętrzne narzędzia + pliki XML/Groovy/Kotlin DSL, które nie
@@ -237,38 +254,50 @@ mieszczą się w tym wzorcu 1:1. Rozwiązanie — 4 różne strategie wykonania 
   zależności — `ToolProvider.getSystemJavaCompiler()`/`javax.tools.JavaCompiler` kompiluje
   wygenerowany kod źródłowy w locie do temp dir, `URLClassLoader`/`ProcessBuilder` go odpala,
   `java.util.jar.JarOutputStream`+`Manifest` buduje i odpala realne JAR-y. Te sztuczki są też
-  reużyte w lekcji 21 (troubleshooting), żeby NAPRAWDĘ wywołać `ClassNotFoundException` /
+  reużyte w lekcji 29 (troubleshooting), żeby NAPRAWDĘ wywołać `ClassNotFoundException` /
   `NoClassDefFoundError` / `UnsupportedClassVersionError`, a nie tylko o nich mówić.
-- **Lekcje 03–10 (Ant)**: embedowany PRAWDZIWY silnik Ant w procesie (ten sam wzorzec co
-  embedowany Tomcat w `_07_servlets` — `Project`/`ProjectHelper`/`DefaultLogger` z
+- **Lekcje 03–10 (Ant, 8 lekcji)**: embedowany PRAWDZIWY silnik Ant w procesie (ten sam wzorzec
+  co embedowany Tomcat w `_07_servlets` — `Project`/`ProjectHelper`/`DefaultLogger` z
   `org.apache.tools.ant`). Każda lekcja generuje realny `build.xml` (text block), zapisuje go do
   `Files.createTempDirectory(...)`, konfiguruje `Project`, wykonuje target i wypisuje REALNY
   output Anta. Dzięki temu ćwiczenia z tych lekcji też są w pełni wykonywalne w `main()` (pisz
   kod embedujący Anta), nie tylko opisowe. Wymagało dodania zależności `org.apache.ant:ant` +
   `org.apache.ant:ant-junit` (task `<junit>`, lekcja 06) do `pom.xml`.
-- **Lekcje 11–15 (Maven)**: Maven 3 nie ma czystego API do embedowania w jednym procesie (w
-  odróżnieniu od Anta), a odpalanie `mvnw`/`mvnw.cmd` cross-platform z wewnątrz demo byłoby
-  kruche. `main()` generuje realną treść `pom.xml` (także multi-module, lekcja 14) jako text
-  block, zapisuje na dysk, wypisuje/omawia strukturę — ale NIE odpala realnego `mvn`. Ćwiczenia w
-  tych lekcjach są HYBRYDOWE: `main()` zostaje pusty jak wszędzie, a treść zadania (komentarz
-  `🧪 Zadanie N`) prosi o utworzenie realnego projektu i odpalenie prawdziwych komend `mvn` w
-  terminalu — to jedyne miejsce w kursie, gdzie zamierzenie część pracy dzieje się poza JVM-em
-  demo, bo to dokładnie odzwierciedla realną pracę z Mavenem (a i tak cały ten kurs jest
-  budowany Mavenem przez `mvnw.cmd`).
-- **Lekcje 16–17 (Gradle)**: analogicznie do Mavena — generowanie `build.gradle`/`settings.gradle`
-  jako text block + opis, bez embedowanego silnika Gradle (żaden wrapper Gradle NIE został
-  dodany do tego repo — to osobne środowisko, niezwiązane z własnym build-em kursu opartym o
-  Maven). Ćwiczenia równie hybrydowe (plik + realne komendy `gradle`/`./gradlew` w terminalu).
-- **Lekcje 18–22 (porównanie, migracje, praktyka, troubleshooting, capstone)**: koncepcyjne/
-  porównawcze — tabele porównawcze i przykładowe configi jako text blocki, a lekcja 21
+- **Lekcje 11–18 (Maven, 8 lekcji)**: Maven 3 nie ma czystego API do embedowania w jednym
+  procesie (w odróżnieniu od Anta), a odpalanie `mvnw`/`mvnw.cmd` cross-platform z wewnątrz demo
+  byłoby kruche. `main()` generuje realną treść `pom.xml` (także multi-module, lekcja 14) jako
+  text block, zapisuje na dysk, wypisuje/omawia strukturę — ale NIE odpala realnego `mvn`.
+  Ćwiczenia w tych lekcjach są HYBRYDOWE: `main()` zostaje pusty jak wszędzie, a treść zadania
+  (komentarz `🧪 Zadanie N`) prosi o utworzenie realnego projektu i odpalenie prawdziwych komend
+  `mvn` w terminalu — to jedyne miejsce w kursie, gdzie zamierzenie część pracy dzieje się poza
+  JVM-em demo, bo to dokładnie odzwierciedla realną pracę z Mavenem (a i tak cały ten kurs jest
+  budowany Mavenem przez `mvnw.cmd`). Lekcje 16-18 (Testing/Coverage, Publishing,
+  Troubleshooting/Performance) dodane w rundzie 2, równoległe tematycznie do Gradle 22/24/25.
+- **Lekcje 19–25 (Gradle, 7 lekcji)**: analogicznie do Mavena — generowanie `build.gradle`/
+  `settings.gradle`/`libs.versions.toml` jako text block + opis, bez embedowanego silnika Gradle
+  (żaden wrapper Gradle NIE został dodany do tego repo — to osobne środowisko, niezwiązane z
+  własnym build-em kursu opartym o Maven). Ćwiczenia równie hybrydowe (plik + realne komendy
+  `gradle`/`./gradlew` w terminalu).
+- **Lekcje 26–30 (porównanie, migracje, praktyka, troubleshooting, capstone)**: koncepcyjne/
+  porównawcze — tabele porównawcze i przykładowe configi jako text blocki, a lekcja 29
   (troubleshooting) faktycznie wywołuje klasyczne błędy JVM/build przy pomocy sztuczek z
-  lekcji 01–02. Lekcja 22 (capstone, "JavaQuest Build Lab") prowadzi przez budowę tego samego
-  mini-projektu w 3 wersjach (Ant/Maven/Gradle) z brief-u użytkownika.
+  lekcji 01–02. Lekcja 30 (capstone, "JavaQuest Build Lab") prowadzi przez budowę tego samego
+  mini-projektu w 3 wersjach (Ant/Maven/Gradle) z brief-u użytkownika, z bogatszą częścią
+  Gradle/Maven odzwierciedlającą rundy rozszerzeń.
 
 Trzecia nowa zależność w `pom.xml`: `org.apache.ivy:ivy` (lekcja 09, Ant+Ivy) — realne
 rozwiązywanie zależności przez Ivy, uderza w prawdziwe Maven Central. Ta sama zasada co w
 `_06_networking` (real external interaction): timeout + przyjazny fallback komunikat, jeśli
 brak internetu, żeby `main()` i tak kończył się samoistnie w kilka sekund.
+
+Stan na 2026-07-05: rozdział kompletny — wszystkie 30 lekcji mają teorię + 30 ćwiczeń każda,
+zweryfikowane pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem uruchomieniowym lekcji
+16-18 (`mvnw.cmd exec:java`). Ostatnie brakujące elementy dopisane w tym kroku: ćwiczenia do
+Lesson16_MavenTestingAndCoverage oraz kompletne Lesson17_MavenPublishing (distributionManagement,
+settings.xml/servers, maven-deploy-plugin, GPG signing, central-publishing-maven-plugin) i
+Lesson18_MavenTroubleshootingAndPerformance (-e/-X, dependency:tree conflict resolution,
+help:effective-pom, -o/-U, -T równoległe buildy, MAVEN_OPTS) — obie lekcje w tym samym hybrydowym
+stylu ćwiczeń co reszta bloku Maven (plik + realne komendy `mvn` w terminalu).
 
 ## Rozdziały _08_sql, _09_jdbc, _10_dao ("SQL", "JDBC", "DAO")
 
@@ -281,3 +310,58 @@ pełną kompilacją (`mvnw.cmd compile`). Wszystkie zadania SQL/JDBC korzystają
 teoria też jest czysto obiektowa; `_10_dao/Lesson25_DatabaseMigrations` (Flyway) ma ćwiczenia
 oparte na mechanice plików migracji (`V<wersja>__<opis>.sql`, `flyway_schema_history`) miast na
 wzorcu "napisz DAO", bo taka jest specyfika tej lekcji.
+
+## Rozdział _12_hibernate ("Hibernate – ORM i JPA w praktyce")
+
+Dodany 2026-07-05 jako kolejny duży, samodzielny blok (na życzenie użytkownika, bezpośrednia
+kontynuacja `_08_sql`/`_09_jdbc`/`_10_dao` — ten sam H2 in-memory, ale przez pryzmat ORM zamiast
+ręcznego SQL/JDBC). 30 lekcji, ta sama skala co `_11_buildtools`. Stan na 2026-07-05: **struktura
+gotowa** (pakiet `_12_hibernate`, 30 podpakietów lekcji ze szkieletowymi plikami — `package` +
+klasa + pusty/skeletonowy `main()` z komentarzem TODO opisującym zakres) + wpis w
+`_TableOfContents.java` + zależności w `pom.xml`. **Treść (teoria + 30 ćwiczeń) do napisania w
+kolejnym kroku** — ten rozdział, w odróżnieniu od `_11_buildtools`, będzie w PEŁNI wykonywalny
+(`main()` naprawdę tworzy `SessionFactory`/`EntityManagerFactory` na H2 in-memory i wykonuje
+operacje — decyzja użytkownika, potwierdzona explicité, żeby zachować spójność z
+`_08_sql`/`_09_jdbc`/`_10_dao`, w przeciwieństwie do Mavena/Gradle, gdzie `main()` tylko generował
+pliki konfiguracyjne).
+
+Mapowanie lekcja → temat (30 lekcji):
+1. OrmIntroduction (impedance mismatch, po co ORM, alternatywy: MyBatis/jOOQ),
+2. HibernateArchitecture (SessionFactory/Session, Configuration, ServiceRegistry),
+3. ProjectSetupAndConfiguration (zależności Maven, `hibernate.cfg.xml` vs JPA `persistence.xml`,
+   `StandardServiceRegistryBuilder` vs `Persistence.createEntityManagerFactory`),
+4. FirstEntityAndBasicMapping (`@Entity`/`@Table`/`@Id`/`@Column`, pierwszy zapis/odczyt),
+5. PrimaryKeyGeneration (`@GeneratedValue`: IDENTITY/SEQUENCE/TABLE/UUID/assigned),
+6. CrudOperations (`persist`/`find`/`merge`/`remove` JPA vs `save`/`get`/`update`/`delete` Session),
+7. SessionVsEntityManager (natywne API Hibernate vs standard JPA, kiedy czego używać),
+8. Transactions (Transaction API, `EntityTransaction`, granice transakcji),
+9. EmbeddableTypes (`@Embeddable`/`@Embedded`, value objects),
+10. EnumsAndAttributeConverters (`@Enumerated` ORDINAL/STRING, `@Temporal`, `@Converter`),
+11. OneToOneAssociation (uni/bidirectional, `mappedBy`, współdzielony PK vs FK),
+12. OneToManyAndManyToOne (bidirectional, `mappedBy`, `orphanRemoval`),
+13. ManyToManyAssociation (tabela pośrednicząca, przejście na jawną encję łączącą),
+14. CascadeTypes (ALL/PERSIST/MERGE/REMOVE/REFRESH/DETACH, pułapki kaskadowania),
+15. FetchTypesAndNPlusOne (LAZY vs EAGER, demo problemu N+1, fetch join jako naprawa),
+16. EntityLifecycle (transient/persistent/detached/removed, `@PrePersist` itp.),
+17. DirtyCheckingAndFlush (automatyczne dirty checking, `FlushMode`, flush vs commit),
+18. HqlBasics (SELECT/WHERE/ORDER BY, parametry),
+19. HqlAdvanced (joiny, funkcje agregujące, GROUP BY, podzapytania, projekcje DTO),
+20. CriteriaApi (`CriteriaBuilder`, zapytania typowane, wzmianka o metamodelu),
+21. NativeSqlQueries (`createNativeQuery`, `@SqlResultSetMapping`),
+22. NamedQueries (`@NamedQuery`/`@NamedNativeQuery`),
+23. FirstLevelCache (cache sesji, identity map, zasięg per-sesja),
+24. SecondLevelCacheAndQueryCache (L2 cache przez `hibernate-jcache`+Ehcache, `@Cacheable`, query cache),
+25. OptimisticLocking (`@Version`, `OptimisticLockException`),
+26. PessimisticLocking (`LockModeType`, SELECT FOR UPDATE),
+27. InheritanceMapping (SINGLE_TABLE/JOINED/TABLE_PER_CLASS, `@MappedSuperclass`),
+28. BeanValidationIntegration (Jakarta Bean Validation + Hibernate Validator, walidacja przy persist),
+29. HibernateEnvers (audytowanie `@Audited`, odczyt historii rewizji),
+30. BestPracticesAndCapstone (typowe pułapki, wydajność, projekt podsumowujący).
+
+Zależności dodane do `pom.xml` (wersje zarządzane przez `spring-boot-starter-parent` BOM, bez
+jawnego numeru wersji — zweryfikowane `mvn dependency:resolve`, rozwiązały się na
+`hibernate-core`/`hibernate-envers`/`hibernate-jcache` 6.6.11.Final i `ehcache` 3.10.8):
+`org.hibernate.orm:hibernate-core`, `org.hibernate.orm:hibernate-envers`,
+`org.hibernate.orm:hibernate-jcache`, `org.ehcache:ehcache`. `jakarta.persistence-api` przychodzi
+transytywnie z `hibernate-core`. `hibernate-validator` (lekcja 28) już jest obecny transytywnie
+przez istniejącą zależność `spring-boot-starter-validation` — NIE dodawaj go ponownie.

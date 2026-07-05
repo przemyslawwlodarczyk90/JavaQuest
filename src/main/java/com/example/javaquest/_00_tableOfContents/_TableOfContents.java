@@ -113,9 +113,26 @@ public class _TableOfContents {
                     "04_AntProjectStructure", "05_AntClasspath", "06_AntTesting", "07_AntPackaging",
                     "08_AntAdvanced", "09_AntIvy", "10_AntDebugging", "11_MavenBasics",
                     "12_MavenDependencies", "13_MavenPlugins", "14_MavenAdvanced",
-                    "15_MavenWebAndDatabase", "16_GradleBasics", "17_GradleAdvanced",
-                    "18_AntMavenGradleComparison", "19_BuildMigrations", "20_BuildToolsInPractice",
-                    "21_BuildToolsTroubleshooting", "22_CapstoneBuildLab"
+                    "15_MavenWebAndDatabase", "16_MavenTestingAndCoverage", "17_MavenPublishing",
+                    "18_MavenTroubleshootingAndPerformance", "19_GradleBasics", "20_GradleAdvanced",
+                    "21_GradleDependencyManagement", "22_GradleTestingAndCoverage",
+                    "23_GradlePluginsEcosystem", "24_GradlePublishing",
+                    "25_GradleTroubleshootingAndPerformance", "26_AntMavenGradleComparison",
+                    "27_BuildMigrations", "28_BuildToolsInPractice",
+                    "29_BuildToolsTroubleshooting", "30_CapstoneBuildLab"
+            )),
+
+            new Chapter("_12_hibernate", "Hibernate – ORM i JPA w praktyce", List.of(
+                    "01_OrmIntroduction", "02_HibernateArchitecture", "03_ProjectSetupAndConfiguration",
+                    "04_FirstEntityAndBasicMapping", "05_PrimaryKeyGeneration", "06_CrudOperations",
+                    "07_SessionVsEntityManager", "08_Transactions", "09_EmbeddableTypes",
+                    "10_EnumsAndAttributeConverters", "11_OneToOneAssociation",
+                    "12_OneToManyAndManyToOne", "13_ManyToManyAssociation", "14_CascadeTypes",
+                    "15_FetchTypesAndNPlusOne", "16_EntityLifecycle", "17_DirtyCheckingAndFlush",
+                    "18_HqlBasics", "19_HqlAdvanced", "20_CriteriaApi", "21_NativeSqlQueries",
+                    "22_NamedQueries", "23_FirstLevelCache", "24_SecondLevelCacheAndQueryCache",
+                    "25_OptimisticLocking", "26_PessimisticLocking", "27_InheritanceMapping",
+                    "28_BeanValidationIntegration", "29_HibernateEnvers", "30_BestPracticesAndCapstone"
             ))
     );
 
