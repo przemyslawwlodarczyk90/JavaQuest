@@ -106,6 +106,16 @@ public class _TableOfContents {
                     "21_ValidationBeforeSave", "22_PaginationInJdbc", "23_DynamicSorting",
                     "24_DynamicFiltering", "25_DatabaseMigrations", "26_TestingDao", "27_SqlLogging",
                     "28_JdbcBestPractices"
+            )),
+
+            new Chapter("_11_buildtools", "Build Tools w Javie – Ant, Maven, Gradle", List.of(
+                    "01_WhyBuildTools", "02_JavacJavaJarClasspath", "03_AntBasics",
+                    "04_AntProjectStructure", "05_AntClasspath", "06_AntTesting", "07_AntPackaging",
+                    "08_AntAdvanced", "09_AntIvy", "10_AntDebugging", "11_MavenBasics",
+                    "12_MavenDependencies", "13_MavenPlugins", "14_MavenAdvanced",
+                    "15_MavenWebAndDatabase", "16_GradleBasics", "17_GradleAdvanced",
+                    "18_AntMavenGradleComparison", "19_BuildMigrations", "20_BuildToolsInPractice",
+                    "21_BuildToolsTroubleshooting", "22_CapstoneBuildLab"
             ))
     );
 

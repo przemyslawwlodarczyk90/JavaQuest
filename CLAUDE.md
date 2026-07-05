@@ -214,3 +214,70 @@ Inne ważne decyzje przy tej implementacji:
   z ramowaniem "JSP dziś rzadziej używane".
 - Ta sama zasada bezpieczeństwa demo co w `_05_multithreading`/`_06_networking`: `main()` musi
   kończyć się samoistnie w kilka sekund, port zawsze 0, Tomcat zawsze zatrzymywany w `finally`.
+
+## Rozdział _11_buildtools ("Build Tools w Javie – Ant, Maven, Gradle")
+
+22 lekcje, dodane 2026-07-05 jako duży, samodzielny moduł (na życzenie użytkownika — w firmie
+używa dużo Anta, więc build toole to nie "dodatek", a fundament). Dołożony na KOŃCU numeracji
+jako `_11_buildtools` (ta sama zasada stabilności numeracji co przy `Lesson16_Exceptions` w
+`_01_fundamentals` — bez przenumerowywania `_08_sql`/`_09_jdbc`/`_10_dao`).
+
+Mapowanie 21 ROZDZIAŁ z oryginalnego brief-u użytkownika + końcowy egzamin praktyczny → 22 lekcje:
+01_WhyBuildTools, 02_JavacJavaJarClasspath, 03_AntBasics, 04_AntProjectStructure, 05_AntClasspath,
+06_AntTesting, 07_AntPackaging, 08_AntAdvanced, 09_AntIvy, 10_AntDebugging, 11_MavenBasics,
+12_MavenDependencies, 13_MavenPlugins, 14_MavenAdvanced, 15_MavenWebAndDatabase, 16_GradleBasics,
+17_GradleAdvanced, 18_AntMavenGradleComparison, 19_BuildMigrations, 20_BuildToolsInPractice,
+21_BuildToolsTroubleshooting, 22_CapstoneBuildLab (= "JavaQuest Build Lab" z brief-u).
+
+Kluczowy problem projektowy: cała reszta kursu ma `main()`, który faktycznie coś RUNs (woła
+Java API). Ant/Maven/Gradle to zewnętrzne narzędzia + pliki XML/Groovy/Kotlin DSL, które nie
+mieszczą się w tym wzorcu 1:1. Rozwiązanie — 4 różne strategie wykonania w zależności od lekcji:
+
+- **Lekcje 01–02 (javac/java/jar/classpath)**: w pełni embedowalne, tylko JDK, bez nowej
+  zależności — `ToolProvider.getSystemJavaCompiler()`/`javax.tools.JavaCompiler` kompiluje
+  wygenerowany kod źródłowy w locie do temp dir, `URLClassLoader`/`ProcessBuilder` go odpala,
+  `java.util.jar.JarOutputStream`+`Manifest` buduje i odpala realne JAR-y. Te sztuczki są też
+  reużyte w lekcji 21 (troubleshooting), żeby NAPRAWDĘ wywołać `ClassNotFoundException` /
+  `NoClassDefFoundError` / `UnsupportedClassVersionError`, a nie tylko o nich mówić.
+- **Lekcje 03–10 (Ant)**: embedowany PRAWDZIWY silnik Ant w procesie (ten sam wzorzec co
+  embedowany Tomcat w `_07_servlets` — `Project`/`ProjectHelper`/`DefaultLogger` z
+  `org.apache.tools.ant`). Każda lekcja generuje realny `build.xml` (text block), zapisuje go do
+  `Files.createTempDirectory(...)`, konfiguruje `Project`, wykonuje target i wypisuje REALNY
+  output Anta. Dzięki temu ćwiczenia z tych lekcji też są w pełni wykonywalne w `main()` (pisz
+  kod embedujący Anta), nie tylko opisowe. Wymagało dodania zależności `org.apache.ant:ant` +
+  `org.apache.ant:ant-junit` (task `<junit>`, lekcja 06) do `pom.xml`.
+- **Lekcje 11–15 (Maven)**: Maven 3 nie ma czystego API do embedowania w jednym procesie (w
+  odróżnieniu od Anta), a odpalanie `mvnw`/`mvnw.cmd` cross-platform z wewnątrz demo byłoby
+  kruche. `main()` generuje realną treść `pom.xml` (także multi-module, lekcja 14) jako text
+  block, zapisuje na dysk, wypisuje/omawia strukturę — ale NIE odpala realnego `mvn`. Ćwiczenia w
+  tych lekcjach są HYBRYDOWE: `main()` zostaje pusty jak wszędzie, a treść zadania (komentarz
+  `🧪 Zadanie N`) prosi o utworzenie realnego projektu i odpalenie prawdziwych komend `mvn` w
+  terminalu — to jedyne miejsce w kursie, gdzie zamierzenie część pracy dzieje się poza JVM-em
+  demo, bo to dokładnie odzwierciedla realną pracę z Mavenem (a i tak cały ten kurs jest
+  budowany Mavenem przez `mvnw.cmd`).
+- **Lekcje 16–17 (Gradle)**: analogicznie do Mavena — generowanie `build.gradle`/`settings.gradle`
+  jako text block + opis, bez embedowanego silnika Gradle (żaden wrapper Gradle NIE został
+  dodany do tego repo — to osobne środowisko, niezwiązane z własnym build-em kursu opartym o
+  Maven). Ćwiczenia równie hybrydowe (plik + realne komendy `gradle`/`./gradlew` w terminalu).
+- **Lekcje 18–22 (porównanie, migracje, praktyka, troubleshooting, capstone)**: koncepcyjne/
+  porównawcze — tabele porównawcze i przykładowe configi jako text blocki, a lekcja 21
+  (troubleshooting) faktycznie wywołuje klasyczne błędy JVM/build przy pomocy sztuczek z
+  lekcji 01–02. Lekcja 22 (capstone, "JavaQuest Build Lab") prowadzi przez budowę tego samego
+  mini-projektu w 3 wersjach (Ant/Maven/Gradle) z brief-u użytkownika.
+
+Trzecia nowa zależność w `pom.xml`: `org.apache.ivy:ivy` (lekcja 09, Ant+Ivy) — realne
+rozwiązywanie zależności przez Ivy, uderza w prawdziwe Maven Central. Ta sama zasada co w
+`_06_networking` (real external interaction): timeout + przyjazny fallback komunikat, jeśli
+brak internetu, żeby `main()` i tak kończył się samoistnie w kilka sekund.
+
+## Rozdziały _08_sql, _09_jdbc, _10_dao ("SQL", "JDBC", "DAO")
+
+Stan na 2026-07-05: wszystkie 3 rozdziały kompletne (teoria + 30 ćwiczeń w każdej lekcji):
+`_08_sql` (20 lekcji), `_09_jdbc` (20 lekcji), `_10_dao` (28 lekcji) — łącznie 68 lekcji.
+Ćwiczenia dopisane w tym kroku (teoria była już gotowa wcześniej) — cały projekt zweryfikowany
+pełną kompilacją (`mvnw.cmd compile`). Wszystkie zadania SQL/JDBC korzystają z bazy H2 in-memory
+(`jdbc:h2:mem:...;DB_CLOSE_DELAY=-1`), zgodnie z wzorcem z `_08_sql/Lesson01`. Wyjątek: lekcje
+`_09_jdbc/Lesson18_DomainModel` i `Lesson19_Dto` mają czysto obiektowe (bez SQL) ćwiczenia, bo ich
+teoria też jest czysto obiektowa; `_10_dao/Lesson25_DatabaseMigrations` (Flyway) ma ćwiczenia
+oparte na mechanice plików migracji (`V<wersja>__<opis>.sql`, `flyway_schema_history`) miast na
+wzorcu "napisz DAO", bo taka jest specyfika tej lekcji.
