@@ -1,5 +1,6 @@
 package com.example.javaquest._12_hibernate.Lesson03_ProjectSetupAndConfiguration;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -207,7 +208,10 @@ public class _Lesson03_ProjectSetupAndConfiguration {
         @GeneratedValue(strategy = GenerationType.IDENTITY)
         private Long id;
 
+        @Column(name = "setting_key")
         private String key;
+
+        @Column(name = "setting_value")
         private String value;
 
         public Long getId() {

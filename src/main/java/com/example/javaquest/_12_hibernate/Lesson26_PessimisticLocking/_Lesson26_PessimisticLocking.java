@@ -79,19 +79,20 @@ public class _Lesson26_PessimisticLocking {
          * (i niezacommitowany UPDATE) przez 800ms, wątek B próbuje
          * zdobyć TĘ SAMĄ blokadę z limitem czasu 300ms.
          *
-         * ⚠️ WAŻNA UWAGA O H2: H2 (od wersji 2.x) używa WYŁĄCZNIE
-         * silnika MVStore (MVCC) - w odróżnieniu od tradycyjnych,
-         * lockowych silników (PostgreSQL, MySQL/InnoDB), MVCC może
-         * pozwolić drugiej transakcji na odczyt/blokadę "for update" BEZ
-         * faktycznego oczekiwania, w zależności od poziomu izolacji i
-         * konkretnej implementacji. Kod poniżej POKAZUJE poprawne użycie
-         * API (LockModeType.PESSIMISTIC_WRITE + hint timeout) i MIERZY
-         * rzeczywisty czas oczekiwania wątku B - na PRAWDZIWEJ bazie
-         * klient-serwer z tradycyjnym blokowaniem (PostgreSQL/MySQL)
-         * wątek B blokowałby się na ok. 300ms i dostał LockTimeoutException;
-         * na H2/MVCC wynik może się różnić - i to WŁAŚNIE jest wartościowa
-         * lekcja: semantyka blokad pesymistycznych ZALEŻY od konkretnego
-         * silnika bazy danych.
+         * ⚠️ WAŻNA UWAGA O H2: uruchomienie tego przykładu pokazuje, że
+         * H2 NAPRAWDĘ blokuje wątek B (czeka ok. 800ms, dokładnie tyle,
+         * ile wątek A trzyma blokadę) - pesymistyczne blokowanie
+         * FAKTYCZNIE działa. ALE H2 NIE HONORUJE w pełni hinta
+         * "jakarta.persistence.lock.timeout" (300ms) - zamiast rzucić
+         * LockTimeoutException po 300ms, H2 czeka swoim WŁASNYM,
+         * dłuższym, wewnętrznym limitem (domyślnie ok. 1-2 sekund) i
+         * dopiero wtedy zwraca sukces (gdy blokada zdąży się zwolnić) -
+         * albo wyjątek, gdyby blokada trwała dłużej niż ten wewnętrzny
+         * limit. To WAŻNA, PRAKTYCZNA lekcja: obsługa hintów JPA (w tym
+         * lock.timeout) bywa NIEJEDNOLITA między dostawcami baz danych -
+         * PostgreSQL/MySQL honorują ten hint znacznie precyzyjniej niż
+         * H2. W REALNYM projekcie zawsze warto zweryfikować zachowanie
+         * na docelowej bazie produkcyjnej, a nie tylko na H2.
          */
         SessionFactory sessionFactory = buildSessionFactory();
         try (sessionFactory) {
@@ -145,8 +146,8 @@ public class _Lesson26_PessimisticLocking {
 
             System.out.println("\n=== WYNIK DEMO ===");
             System.out.println("Watek B: " + results.getOrDefault("outcome", "brak-wyniku-w-limicie-czasu"));
-            System.out.println("(Na PostgreSQL/MySQL oczekiwany wynik to LockTimeoutException po ok. 300ms - na H2/MVCC");
-            System.out.println(" wynik moze byc inny, patrz uwaga o roznicach silnikow bazodanowych powyzej.)");
+            System.out.println("Czas oczekiwania ok. 800ms dowodzi REALNEGO blokowania (tyle, ile Watek A trzymal blokade).");
+            System.out.println("H2 NIE honoruje w pelni hinta lock.timeout=300ms - patrz wyjasnienie w komentarzu powyzej.");
         }
 
         /*
