@@ -315,15 +315,35 @@ wzorcu "napisz DAO", bo taka jest specyfika tej lekcji.
 
 Dodany 2026-07-05 jako kolejny duży, samodzielny blok (na życzenie użytkownika, bezpośrednia
 kontynuacja `_08_sql`/`_09_jdbc`/`_10_dao` — ten sam H2 in-memory, ale przez pryzmat ORM zamiast
-ręcznego SQL/JDBC). 30 lekcji, ta sama skala co `_11_buildtools`. Stan na 2026-07-05: **struktura
-gotowa** (pakiet `_12_hibernate`, 30 podpakietów lekcji ze szkieletowymi plikami — `package` +
-klasa + pusty/skeletonowy `main()` z komentarzem TODO opisującym zakres) + wpis w
-`_TableOfContents.java` + zależności w `pom.xml`. **Treść (teoria + 30 ćwiczeń) do napisania w
-kolejnym kroku** — ten rozdział, w odróżnieniu od `_11_buildtools`, będzie w PEŁNI wykonywalny
-(`main()` naprawdę tworzy `SessionFactory`/`EntityManagerFactory` na H2 in-memory i wykonuje
-operacje — decyzja użytkownika, potwierdzona explicité, żeby zachować spójność z
+ręcznego SQL/JDBC). 30 lekcji, ta sama skala co `_11_buildtools`.
+
+Stan na 2026-07-05: **rozdział kompletny** — wszystkie 30 lekcji mają teorię + 30 ćwiczeń każda,
+zweryfikowane pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem uruchomieniowym WSZYSTKICH
+30 lekcji (`mvnw.cmd exec:java` dla każdej, zero błędów). W odróżnieniu od `_11_buildtools`, ten
+rozdział jest w PEŁNI wykonywalny (`main()` naprawdę tworzy `SessionFactory` na H2 in-memory i
+wykonuje operacje — decyzja użytkownika, potwierdzona explicité, żeby zachować spójność z
 `_08_sql`/`_09_jdbc`/`_10_dao`, w przeciwieństwie do Mavena/Gradle, gdzie `main()` tylko generował
-pliki konfiguracyjne).
+pliki konfiguracyjne). Ćwiczenia w każdej lekcji wracają do standardowej konwencji kursu (30
+statycznych klas zagnieżdżonych `ExerciseNN_...` z opisem zadania w komentarzu i pustym `main()` —
+kursant sam pisze kod), tak jak w `_08_sql`/`_09_jdbc`/`_10_dao`.
+
+Ważny techniczny problem napotkany i rozwiązany podczas pisania: domyślna nazwa encji JPA dla
+klasy ZAGNIEŻDŻONEJ (nasz wzorzec — encje jako `static class` wewnątrz pliku lekcji) to w tej
+wersji Hibernate PEŁNA, BINARNA nazwa Javy (np. `_Lesson18_HqlBasics$Book`, ze znakiem `$`), NIE
+prosta nazwa `Book` — przez co zapytania HQL typu `"from Book"` kończyły się
+`UnknownEntityException`. Naprawione przez jawne `@Entity(name = "Book")` na KAŻDEJ encji w całym
+rozdziale (wymuszone masowo przez skrypt `perl` na już napisanych lekcjach 1-18, potem stosowane
+od razu w lekcjach 19-30) — z wyjaśnieniem tej pułapki dopisanym do teorii Lesson04. W REALNYM
+projekcie (encje jako zwykłe, NIE zagnieżdżone klasy) ten problem w ogóle nie występuje — to
+specyfika sposobu, w jaki zbudowany jest ten kurs.
+
+Inne warte odnotowania decyzje z pisania treści: Lesson26 (blokowanie pesymistyczne) uczciwie
+opisuje w komentarzu, że H2 (silnik MVStore/MVCC) NIE honoruje w pełni hinta
+`jakarta.persistence.lock.timeout` tak jak zrobiłby to PostgreSQL/MySQL — zademonstrowane empirycznie
+(wątek faktycznie czeka na zwolnienie blokady, ale nie przerywa się po zadanym timeout) zamiast
+udawać idealne zachowanie, którego H2 nie zapewnia. Lesson24 (cache drugiego poziomu) wymagał
+dodania `hibernate-jcache`/`hibernate-envers`/`org.ehcache:ehcache` do `pom.xml` (zweryfikowane
+`mvn dependency:resolve`, rozwiązały się na wersjach zarządzanych przez BOM Spring Boota).
 
 Mapowanie lekcja → temat (30 lekcji):
 1. OrmIntroduction (impedance mismatch, po co ORM, alternatywy: MyBatis/jOOQ),
