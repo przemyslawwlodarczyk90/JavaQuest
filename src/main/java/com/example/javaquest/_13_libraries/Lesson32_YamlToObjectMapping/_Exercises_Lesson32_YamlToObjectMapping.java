@@ -114,11 +114,14 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise11_ListOfPrimitivesInPojo {
         /*
          * 🧪 Zadanie 11:
-         * Dodaj do klasy Book pole List<String> tags. Zaladuj YAML z
-         * lista tagow (stringi - NIE obiekty zlozone) przez loadAs -
-         * sprawdz, ze dla listy STRINGOW (typ prosty) mapowanie dziala
-         * poprawnie BEZ TypeDescription (problem type erasure dotyczy
-         * gl. typow ZLOZONYCH - wyjasnij dlaczego w komentarzu).
+         * Dodaj do klasy Book pole List<String> tags (zadeklarowane WPROST
+         * w Book, tak jak addresses w Person z lekcji). Zaladuj YAML z
+         * lista tagow przez loadAs - sprawdz, ze mapowanie dziala poprawnie
+         * BEZ TypeDescription i wyjasnij w komentarzu DLACZEGO (pole
+         * zadeklarowane bezposrednio niesie pelna informacje o typie
+         * elementu przez refleksje - problem type erasure z tej lekcji
+         * dotyczy pol ODZIEDZICZONYCH z klasy generycznej, nie pol
+         * zadeklarowanych wprost).
          */
         public static void main(String[] args) { }
     }
@@ -126,11 +129,15 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise12_TypeErasureProblemDemo {
         /*
          * 🧪 Zadanie 12:
-         * Zdefiniuj klasy Library (List<Book> books) oraz uzyj Book z
-         * pol tytul/autor (String). Zaladuj YAML z lista 2 ksiazek przez
-         * zwykly Constructor (BEZ TypeDescription) i wypisz
-         * getClass().getSimpleName() pierwszego elementu listy books -
-         * potwierdz, ze to LinkedHashMap, a nie Book.
+         * Zdefiniuj klase GENERYCZNA Repository<T> z polem List<T> items
+         * (getter/setter), a nastepnie BookRepository extends Repository<Book>
+         * (BEZ redeklarowania pola items) - dokladnie jak Container<T> ->
+         * AddressBox w lekcji. Book niech ma pola title/author (String).
+         * Zaladuj YAML z lista 2 ksiazek do "items" przez zwykly
+         * Constructor(BookRepository.class, ...) (BEZ TypeDescription) i
+         * wypisz getClass().getSimpleName() pierwszego elementu listy items -
+         * potwierdz, ze to LinkedHashMap, a NIE Book (prawdziwy type erasure,
+         * bo pole items fizycznie nalezy do klasy generycznej Repository<T>).
          */
         public static void main(String[] args) { }
     }
@@ -138,8 +145,8 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise13_TypeDescriptionFix {
         /*
          * 🧪 Zadanie 13:
-         * Napraw Zadanie 12: dodaj TypeDescription dla Library z
-         * addPropertyParameters("books", Book.class), zarejestruj ja na
+         * Napraw Zadanie 12: dodaj TypeDescription dla BookRepository z
+         * addPropertyParameters("items", Book.class), zarejestruj ja na
          * Constructor i ponownie zaladuj ten sam YAML - wypisz teraz
          * getClass().getSimpleName() pierwszego elementu (powinno byc Book)
          * oraz jego pola.
@@ -151,10 +158,12 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
         /*
          * 🧪 Zadanie 14:
          * Dla obiektu z co najmniej 4 polami (dowolna klasa z tej lekcji)
-         * zdumpuj go DWOMA sposobami: domyslnym Representer (new Yaml())
-         * oraz z BeanAccess.FIELD (representer.getPropertyUtils().
-         * setBeanAccess(BeanAccess.FIELD)) - wypisz OBA wyniki obok
-         * siebie i skomentuj roznice w kolejnosci pol.
+         * zdumpuj go DWOMA sposobami: domyslnym Representer (new Yaml()) -
+         * ZAWSZE alfabetycznie, oraz z wlasnym PropertyUtils analogicznym
+         * do DeclaredOrderPropertyUtils z lekcji (Set<Property> jako
+         * LinkedHashSet zbudowany z Class.getDeclaredFields() zamiast
+         * domyslnego TreeSet) - wypisz OBA wyniki obok siebie i skomentuj
+         * roznice w kolejnosci pol.
          */
         public static void main(String[] args) { }
     }
@@ -173,10 +182,13 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise16_NestedPojoWithListOfNestedPojo {
         /*
          * 🧪 Zadanie 16:
-         * Zdefiniuj Team (String name, List<Player> players), Player
-         * (String nick, int rating). Skonfiguruj Constructor +
-         * TypeDescription dla pola "players" -> Player.class. Zaladuj
-         * YAML z zespolem 3 graczy i wypisz kazdego gracza osobno.
+         * Zdefiniuj Team (String name, List<Player> players - pole
+         * zadeklarowane WPROST w Team), Player (String nick, int rating).
+         * Zaladuj YAML z zespolem 3 graczy przez zwykly
+         * Constructor(Team.class, ...) BEZ TypeDescription - sprawdz
+         * (getClass().getSimpleName()), ze elementy listy sa mimo to
+         * poprawnego typu Player (bo pole jest zadeklarowane bezposrednio,
+         * jak w Zadaniu 11) i wypisz kazdego gracza osobno.
          */
         public static void main(String[] args) { }
     }
@@ -195,11 +207,13 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise18_ConvertPojoListToYamlAndBack {
         /*
          * 🧪 Zadanie 18:
-         * Zbuduj recznie java.util.List<Book> z 3 elementami. Zdumpuj
-         * cala liste jednym wywolaniem yaml.dump(lista), a nastepnie
-         * zaladuj wynikowy tekst z powrotem (z odpowiednim
-         * TypeDescription/Constructor obslugujacym liste na poziomie
-         * glownym) - porownaj rozmiary list przed i po.
+         * Zbuduj recznie java.util.List<Book> z 3 elementami (klasa Book z
+         * Zadania 1). Zdumpuj cala liste jednym wywolaniem yaml.dump(lista)
+         * na zwyklym new Yaml() (dump nie ma problemu type erasure - dotyczy
+         * on wylacznie ODCZYTU/load). Zaladuj wynikowy tekst z powrotem
+         * zwyklym yaml.load(tekst) (generyczna List<Map<String,Object>>,
+         * jak w Lekcji 31) - porownaj rozmiar listy przed i po oraz typ
+         * elementow po zaladowaniu.
          */
         public static void main(String[] args) { }
     }
@@ -218,11 +232,14 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise20_CustomTypeDescriptionForTwoCollectionFields {
         /*
          * 🧪 Zadanie 20:
-         * Zdefiniuj klase Order z DWOMA polami kolekcji: List<String> tags
-         * (proste typy) oraz List<OrderItem> items (typ zlozony, OrderItem
-         * ma name/price). Skonfiguruj TypeDescription TYLKO dla pola
-         * "items" (tags nie wymaga tego, jak w Zadaniu 11) - zaladuj YAML
-         * i wypisz obie kolekcje.
+         * Zdefiniuj klase generyczna OrderBase<T> z polem List<T> items
+         * (tak jak Repository<T> w Zadaniu 12), a nastepnie Order extends
+         * OrderBase<OrderItem> (OrderItem ma name/price) - DODATKOWO Order
+         * niech ma WLASNE, bezposrednio zadeklarowane pole List<String>
+         * tags. Skonfiguruj TypeDescription TYLKO dla pola "items"
+         * (odziedziczonego, prawdziwy type erasure) - "tags" NIE wymaga
+         * TypeDescription, bo jest zadeklarowane wprost w Order (jak w
+         * Zadaniu 11) - zaladuj YAML i wypisz obie kolekcje.
          */
         public static void main(String[] args) { }
     }
@@ -255,11 +272,11 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise23_DumpThenReloadWithTypeDescriptionRoundTrip {
         /*
          * 🧪 Zadanie 23:
-         * Zbuduj obiekt Library (z Zadania 12/13) z 3 ksiazkami recznie w
-         * kodzie. Zdumpuj go do YAML, a nastepnie zaladuj wynikowy tekst
-         * z powrotem przez Yaml skonfigurowany z TypeDescription - sprawdz
-         * (petla + equals na kluczowych polach), ze dane po round-tripie
-         * sie zgadzaja.
+         * Zbuduj obiekt BookRepository (z Zadania 12/13) z 3 ksiazkami
+         * recznie w kodzie. Zdumpuj go do YAML, a nastepnie zaladuj
+         * wynikowy tekst z powrotem przez Yaml skonfigurowany z
+         * TypeDescription - sprawdz (petla + equals na kluczowych polach),
+         * ze dane po round-tripie sie zgadzaja.
          */
         public static void main(String[] args) { }
     }
@@ -292,12 +309,17 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
     static class Exercise26_DeepNestedTypeDescriptionThreeLevels {
         /*
          * 🧪 Zadanie 26:
-         * Zbuduj hierarchie 3 poziomow: Company (String name, List<Department>
-         * departments), Department (String name, List<Employee> employees),
-         * Employee (String name, double salary). Skonfiguruj DWIE
-         * TypeDescription (dla Company.departments -> Department oraz dla
-         * Department.employees -> Employee) na TYM SAMYM Constructor -
-         * zaladuj kompletny YAML i wypisz cala strukture zagniezdzona.
+         * Zbuduj hierarchie 3 poziomow, WSZYSTKIE pola kolekcji
+         * zadeklarowane WPROST (bez dziedziczenia generycznego): Company
+         * (String name, List<Department> departments), Department (String
+         * name, List<Employee> employees), Employee (String name, double
+         * salary). Zaladuj kompletny YAML przez zwykly
+         * Constructor(Company.class, ...) BEZ zadnej TypeDescription -
+         * potwierdz w petli (getClass().getSimpleName()), ze WSZYSTKIE
+         * zagniezdzone elementy (Department, Employee) maja poprawny typ na
+         * OBU poziomach zagniezdzenia - automatyczne odczytywanie generykow
+         * dziala rekurencyjnie dla pol zadeklarowanych wprost (patrz
+         * Zadanie 11/16).
          */
         public static void main(String[] args) { }
     }
@@ -317,9 +339,10 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
         /*
          * 🧪 Zadanie 28:
          * Dla TRZECH roznych klas z tej lekcji (np. Book, ServerConfig,
-         * Library) zdumpuj kazda z uzyciem BeanAccess.FIELD i wypisz
-         * wyniki jeden po drugim - potwierdz, ze kolejnosc pol w kazdym
-         * wyniku odpowiada kolejnosci deklaracji w danej klasie.
+         * BookRepository) zdumpuj kazda z uzyciem wlasnego PropertyUtils w
+         * kolejnosci deklaracji (jak DeclaredOrderPropertyUtils z lekcji) i
+         * wypisz wyniki jeden po drugim - potwierdz, ze kolejnosc pol w
+         * kazdym wyniku odpowiada kolejnosci deklaracji w danej klasie.
          */
         public static void main(String[] args) { }
     }
@@ -342,11 +365,12 @@ public class _Exercises_Lesson32_YamlToObjectMapping {
          * 🧪 Zadanie 30:
          * Polacz wiedze z calej lekcji w mini-narzedzie "startu aplikacji":
          * zaladuj kompletny AppConfig (zagniezdzony ServerConfig + lista
-         * stringow + TypeDescription tam, gdzie potrzebne), zwaliduj go
-         * (brakujace/niepoprawne pola), a na koniec zdumpuj go z powrotem
-         * do YAML w stylu BLOCK z zachowana kolejnoscia pol
-         * (BeanAccess.FIELD) jako "efektywna konfiguracja startowa" -
-         * wypisz caly raport (wejscie -> walidacja -> efektywna konfiguracja).
+         * stringow + TypeDescription tam, gdzie faktycznie potrzebne - patrz
+         * Zadanie 12/20), zwaliduj go (brakujace/niepoprawne pola), a na
+         * koniec zdumpuj go z powrotem do YAML w stylu BLOCK z zachowana
+         * kolejnoscia pol (wlasny PropertyUtils jak w lekcji) jako
+         * "efektywna konfiguracja startowa" - wypisz caly raport (wejscie ->
+         * walidacja -> efektywna konfiguracja).
          */
         public static void main(String[] args) { }
     }

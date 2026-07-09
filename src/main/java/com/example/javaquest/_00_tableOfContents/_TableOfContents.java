@@ -133,6 +133,21 @@ public class _TableOfContents {
                     "22_NamedQueries", "23_FirstLevelCache", "24_SecondLevelCacheAndQueryCache",
                     "25_OptimisticLocking", "26_PessimisticLocking", "27_InheritanceMapping",
                     "28_BeanValidationIntegration", "29_HibernateEnvers", "30_BestPracticesAndCapstone"
+            )),
+
+            new Chapter("_13_libraries", "Biblioteki – popularne narzędzia w ekosystemie Javy", List.of(
+                    "01_WhyLibraries", "02_ChoosingAndAddingDependencies", "03_LombokBasics",
+                    "04_LombokConstructorsAndBuilder", "05_LombokAdvancedAndPitfalls", "06_CommonsLang3",
+                    "07_CommonsIO", "08_CommonsCollections4", "09_GuavaImmutableCollections",
+                    "10_GuavaMultimapMultisetBiMap", "11_GuavaPreconditionsAndCache", "12_OkHttpBasics",
+                    "13_OkHttpAsyncAndInterceptors", "14_OkHttpStreamingAndTesting",
+                    "15_WhySlf4jNotSystemOut", "16_LogbackConfiguration",
+                    "17_MdcAndLoggingBestPractices", "18_WhyDependencyInjection", "19_GuiceBasics",
+                    "20_GuiceAdvancedModulesAndScopes", "21_MapStructBasics",
+                    "22_MapStructAdvancedMappings", "23_ApachePoiWritingExcel",
+                    "24_ApachePoiReadingAndStyling", "25_JsoupParsingHtml", "26_JsoupAdvancedScraping",
+                    "27_CaffeineBasics", "28_CaffeineLoadingAndAsyncCache", "29_PicocliBasics",
+                    "30_PicocliSubcommandsAndValidation", "31_SnakeYamlBasics", "32_YamlToObjectMapping"
             ))
     );
 

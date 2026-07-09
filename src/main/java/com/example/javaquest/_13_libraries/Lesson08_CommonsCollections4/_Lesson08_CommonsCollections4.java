@@ -238,7 +238,7 @@ public class _Lesson08_CommonsCollections4 {
         System.out.println("Zespol B: " + zespolB);
         System.out.println("union (suma, bez duplikatow po krotnosci): " + suma);
         System.out.println("intersection (czesc wspolna): " + czescWspolna);
-        System.out.println("subtract (tylko w A, bez elementow z B): " + tylkoWJednym.isEmpty() ? "-" : tylkoWZespoleA.toString());
+        System.out.println("subtract (tylko w A, bez elementow z B): " + tylkoWZespoleA);
         System.out.println("disjunction (w A lub w B, ale NIE w obu): " + tylkoWJednym);
     }
 

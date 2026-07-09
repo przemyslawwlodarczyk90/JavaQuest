@@ -1,14 +1,19 @@
 package com.example.javaquest._13_libraries.Lesson32_YamlToObjectMapping;
 
+import java.lang.reflect.Field;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.TypeDescription;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
-import org.yaml.snakeyaml.introspector.BeanAccess;
+import org.yaml.snakeyaml.introspector.FieldProperty;
+import org.yaml.snakeyaml.introspector.Property;
+import org.yaml.snakeyaml.introspector.PropertyUtils;
 import org.yaml.snakeyaml.representer.Representer;
 
 public class _Lesson32_YamlToObjectMapping {
@@ -36,6 +41,7 @@ public class _Lesson32_YamlToObjectMapping {
 
         demonstrateLoadAs();
         demonstrateExplicitConstructor();
+        demonstrateNestedListAutoResolved();
         demonstrateTypeErasureProblem();
         demonstrateTypeDescriptionFix();
         demonstrateFieldOrderDump();
@@ -53,17 +59,32 @@ public class _Lesson32_YamlToObjectMapping {
          * - Do WIEKSZEJ kontroli (m.in. do rejestrowania TypeDescription)
          *   buduje sie Yaml z jawnym Constructor + LoaderOptions:
          *   new Yaml(new Constructor(MyClass.class, new LoaderOptions())).
-         * - TYPE ERASURE: generyczne pole List<Address> w POJO w czasie
-         *   wykonania "traci" informacje o typie elementu - bez pomocy
-         *   SnakeYAML tworzy dla kazdego elementu listy zwykla
-         *   LinkedHashMap zamiast Address. TypeDescription +
-         *   addPropertyParameters("addresses", Address.class) jawnie
-         *   mowi SnakeYAML, jakiego typu sa elementy tej konkretnej listy.
-         * - Domyslny Representer (uzywany przy yaml.dump(obiekt)) ustawia
-         *   kolejnosc pol ALFABETYCZNIE wg nazwy property (introspekcja
-         *   JavaBean) - representer.getPropertyUtils().setBeanAccess(
-         *   BeanAccess.FIELD) przelacza na kolejnosc DEKLARACJI pol w
-         *   klasie.
+         * - Pole List<Address> zadeklarowane BEZPOSREDNIO w klasie (z
+         *   konkretnym parametrem typu w kodzie) SnakeYAML odczytuje
+         *   POPRAWNIE bez zadnej dodatkowej konfiguracji - biblioteka
+         *   sama odczytuje generyczna sygnature pola przez refleksje.
+         * - PRAWDZIWY problem type erasure pojawia sie, gdy konkretny
+         *   parametr typu NIE jest zapisany wprost na polu - np. gdy pole
+         *   pochodzi z klasy GENERYCZNEJ (List<T> w klasie bazowej), a
+         *   konkretny typ (T = Address) jest okreslony dopiero w klasie
+         *   POCHODNEJ (przez dziedziczenie). W takim przypadku refleksja
+         *   widzi tylko zmienna typu T, a SnakeYAML tworzy dla kazdego
+         *   elementu zwykla LinkedHashMap zamiast wlasciwej klasy.
+         *   TypeDescription + addPropertyParameters("pole", Klasa.class)
+         *   jawnie mowi wtedy SnakeYAML, jakiego typu sa elementy -
+         *   to NARZEDZIE OGOLNEGO PRZEZNACZENIA, ktore dziala zawsze
+         *   (rowniez tam, gdzie automatyczne wykrycie by zadzialalo), ale
+         *   jest NIEZBEDNE dokladnie w takich przypadkach prawdziwej
+         *   utraty informacji o typie.
+         * - Domyslny Representer (uzywany przy yaml.dump(obiekt)) zawsze
+         *   porzadkuje wlasciwosci ALFABETYCZNIE wg nazwy (wewnetrznie
+         *   uzywa posortowanego TreeSet) - NIEZALEZNIE od tego, czy
+         *   odczytuje je z getterow/setterow, czy z pol (BeanAccess.FIELD
+         *   samo w sobie NIE zmienia kolejnosci, tylko zrodlo odczytu).
+         *   Zeby naprawde zachowac kolejnosc DEKLARACJI pol, trzeba
+         *   podstawic WLASNY PropertyUtils zwracajacy LinkedHashSet
+         *   (zamiast TreeSet) zbudowany z Class.getDeclaredFields() -
+         *   patrz DeclaredOrderPropertyUtils ponizej w tym pliku.
          * - DumperOptions.setDefaultFlowStyle(...) kontroluje styl
          *   wyjscia: BLOCK (czytelny, wieloliniowy - domyslny wybor dla
          *   plikow konfiguracyjnych) vs FLOW (zwarty, jednoliniowy,
@@ -75,7 +96,7 @@ public class _Lesson32_YamlToObjectMapping {
          *   API wygladaloby WTEDY identycznie jak
          *   ObjectMapper.readValue/writeValueAsString, tylko z innym
          *   ObjectMapperem (YAMLMapper) pod spodem. Wybor miedzy nimi to
-         *   typowy kompromis: SnakeYAML - lekki, bez dodatkowych
+         *   typowy kompromis: SnakeYAML - lekko, bez dodatkowych
          *   zaleznosci Jacksona, wiecej kontroli recznej; Jackson YAML -
          *   spojne API z reszta projektu, jesli Jackson juz jest obecny
          *   (jak w tym projekcie - patrz _04_io/Lesson21_Jackson).
@@ -153,63 +174,22 @@ public class _Lesson32_YamlToObjectMapping {
 
     /*
      * ============================================================
-     * 🔍 PROBLEM: TYPE ERASURE DLA GENERYCZNYCH KOLEKCJI W POLACH
+     * 🔍 List<Address> ZADEKLAROWANE WPROST - DZIALA BEZ TypeDescription
      * ============================================================
-     * Pole Person.addresses ma zadeklarowany typ List<Address> - ale w
-     * czasie WYKONANIA (runtime) Java nie pamieta parametru generycznego
-     * (type erasure - poznane wczesniej w kursie). SnakeYAML, budujac
-     * kazdy element listy "addresses", NIE WIE zatem, ze powinien
-     * stworzyc obiekt Address - domyslnie tworzy dla kazdego elementu
-     * listy zwykla java.util.LinkedHashMap (dokladnie tak, jak
-     * yaml.load() bez zadnej klasy docelowej robil to w Lekcji 31).
-     * Ponizej demo BEZ naprawy - widac, ze element listy addresses to
-     * LinkedHashMap, a NIE Address.
+     * Pole Person.addresses ma typ List<Address> zapisany BEZPOSREDNIO
+     * w kodzie klasy Person. SnakeYAML odczytuje generyczna sygnature
+     * TEGO KONKRETNEGO pola przez refleksje (Field.getGenericType()) i
+     * SAM rozpoznaje, ze elementy listy powinny byc typu Address - bez
+     * jakiejkolwiek dodatkowej konfiguracji. To wygodna, ale czesto
+     * mylnie uogolniana wlasciwosc nowszych wersji SnakeYAML - patrz
+     * kolejna sekcja, gdzie POKAZANY jest przypadek, w ktorym to
+     * automatyczne wykrywanie faktycznie zawodzi.
      */
-    private static void demonstrateTypeErasureProblem() {
-        System.out.println("\n=== PROBLEM: List<Address> w POJO BEZ TypeDescription ===");
-
-        LoaderOptions loaderOptions = new LoaderOptions();
-        Constructor plainConstructor = new Constructor(Person.class, loaderOptions);
-        Yaml yaml = new Yaml(plainConstructor);
-
-        String yamlText = """
-                name: Jan Nowak
-                age: 42
-                addresses:
-                  - street: Marszalkowska 1
-                    city: Warszawa
-                  - street: Dluga 5
-                    city: Gdansk
-                """;
-
-        Person person = yaml.load(yamlText);
-        Object pierwszyElement = person.getAddresses().get(0);
-        System.out.println("Deklarowany typ pola: List<Address>");
-        System.out.println("Rzeczywisty typ elementu listy (BEZ TypeDescription): "
-                + pierwszyElement.getClass().getSimpleName() + "  <-- to NIE jest Address!");
-    }
-
-    /*
-     * ============================================================
-     * 🔹 TypeDescription - NAPRAWA PROBLEMU TYPE ERASURE
-     * ============================================================
-     * TypeDescription pozwala jawnie POWIEDZIEC SnakeYAML, jakiego typu
-     * sa elementy generycznej kolekcji we WSKAZANEJ wlasciwosci klasy:
-     * addPropertyParameters("addresses", Address.class) mowi "pole
-     * addresses to kolekcja elementow typu Address". Zarejestrowana na
-     * Constructor (constructor.addTypeDescription(...)) informacja jest
-     * uzywana PRZY KAZDYM load() wykonanym przez ten Yaml.
-     */
-    private static void demonstrateTypeDescriptionFix() {
-        System.out.println("\n=== NAPRAWA: TypeDescription.addPropertyParameters(...) ===");
+    private static void demonstrateNestedListAutoResolved() {
+        System.out.println("\n=== List<Address> zadeklarowane wprost na polu - dziala automatycznie ===");
 
         LoaderOptions loaderOptions = new LoaderOptions();
         Constructor constructor = new Constructor(Person.class, loaderOptions);
-
-        TypeDescription personDescription = new TypeDescription(Person.class);
-        personDescription.addPropertyParameters("addresses", Address.class);
-        constructor.addTypeDescription(personDescription);
-
         Yaml yaml = new Yaml(constructor);
 
         String yamlText = """
@@ -224,33 +204,109 @@ public class _Lesson32_YamlToObjectMapping {
 
         Person person = yaml.load(yamlText);
         Object pierwszyElement = person.getAddresses().get(0);
+        System.out.println("Typ elementu listy addresses (BEZ TypeDescription): "
+                + pierwszyElement.getClass().getSimpleName() + " - poprawnie rozpoznany jako Address!");
+        System.out.println("Person -> " + person);
+    }
+
+    /*
+     * ============================================================
+     * 🔍 PRAWDZIWY PROBLEM TYPE ERASURE - GENERYCZNA KLASA BAZOWA
+     * ============================================================
+     * Container<T> (ponizej) deklaruje pole List<T> items - w kodzie
+     * TEJ klasy typ elementu to zmienna typu T, nie konkretna klasa.
+     * AddressBox extends Container<Address> okresla T = Address, ale
+     * TA informacja istnieje TYLKO na poziomie dziedziczenia (w
+     * deklaracji "extends Container<Address>"), NIE na samym polu
+     * "items" (ktore w klasie Container nadal jest zadeklarowane jako
+     * List<T>). To jest WLASNIE type erasure w czystej postaci -
+     * refleksja odczytujaca pole "items" (nawet na obiekcie klasy
+     * AddressBox) widzi tylko "List<T>", bez ladu, jaki typ podstawic
+     * za T. SnakeYAML nie ma zatem jak sam wywnioskowac Address - dla
+     * kazdego elementu listy tworzy zwykla java.util.LinkedHashMap.
+     */
+    private static void demonstrateTypeErasureProblem() {
+        System.out.println("\n=== PRAWDZIWY PROBLEM: generyczne pole odziedziczone (Container<T> -> AddressBox) ===");
+
+        LoaderOptions loaderOptions = new LoaderOptions();
+        Constructor constructor = new Constructor(AddressBox.class, loaderOptions);
+        Yaml yaml = new Yaml(constructor);
+
+        String yamlText = """
+                items:
+                  - street: Dluga 5
+                    city: Gdansk
+                  - street: Krotka 2
+                    city: Poznan
+                """;
+
+        AddressBox box = yaml.load(yamlText);
+        Object pierwszyElement = box.getItems().get(0);
+        System.out.println("Deklaracja pola 'items' pochodzi z Container<T> (typ elementu: zmienna T)");
+        System.out.println("Rzeczywisty typ elementu listy (BEZ TypeDescription): "
+                + pierwszyElement.getClass().getSimpleName() + "  <-- to NIE jest Address!");
+    }
+
+    /*
+     * ============================================================
+     * 🔹 TypeDescription - NAPRAWA PROBLEMU TYPE ERASURE
+     * ============================================================
+     * TypeDescription pozwala jawnie POWIEDZIEC SnakeYAML, jakiego typu
+     * sa elementy generycznej kolekcji we WSKAZANEJ wlasciwosci klasy:
+     * addPropertyParameters("items", Address.class) mowi "wlasciwosc
+     * items (w AddressBox) to kolekcja elementow typu Address" -
+     * niezaleznie od tego, ze pole "items" fizycznie znajduje sie w
+     * klasie bazowej Container. Zarejestrowana na Constructor
+     * (constructor.addTypeDescription(...)) informacja jest uzywana
+     * PRZY KAZDYM load() wykonanym przez ten Yaml.
+     */
+    private static void demonstrateTypeDescriptionFix() {
+        System.out.println("\n=== NAPRAWA: TypeDescription.addPropertyParameters(...) ===");
+
+        LoaderOptions loaderOptions = new LoaderOptions();
+        Constructor constructor = new Constructor(AddressBox.class, loaderOptions);
+
+        TypeDescription addressBoxDescription = new TypeDescription(AddressBox.class);
+        addressBoxDescription.addPropertyParameters("items", Address.class);
+        constructor.addTypeDescription(addressBoxDescription);
+
+        Yaml yaml = new Yaml(constructor);
+
+        String yamlText = """
+                items:
+                  - street: Dluga 5
+                    city: Gdansk
+                  - street: Krotka 2
+                    city: Poznan
+                """;
+
+        AddressBox box = yaml.load(yamlText);
+        Object pierwszyElement = box.getItems().get(0);
         System.out.println("Rzeczywisty typ elementu listy (Z TypeDescription): "
                 + pierwszyElement.getClass().getSimpleName());
-        System.out.println("Person po naprawie -> " + person);
-        for (Address address : person.getAddresses()) {
+        for (Address address : box.getItems()) {
             System.out.println("  - " + address);
         }
     }
 
     /*
      * ============================================================
-     * 🔍 Representer + BeanAccess.FIELD - KOLEJNOSC POL PRZY DUMP
+     * 🔍 KOLEJNOSC POL PRZY dump() - DOMYSLNIE ZAWSZE ALFABETYCZNA
      * ============================================================
-     * Domyslny Representer (uzywany przez yaml.dump(obiekt)) opiera sie
-     * o introspekcje JavaBean (gettery/settery) i porzadkuje wlasciwosci
-     * ALFABETYCZNIE wg nazwy property - NIEZALEZNIE od kolejnosci
-     * deklaracji pol w klasie. Zeby zachowac kolejnosc DEKLARACJI (name,
-     * age, addresses - tak jak w kodzie klasy Person), tworzymy wlasny
-     * Representer i przelaczamy jego PropertyUtils na BeanAccess.FIELD -
-     * wtedy wlasciwosci sa odczytywane wprost z pol klasy (Class.
-     * getDeclaredFields()), a nie z alfabetycznie posortowanych
-     * property. Uwaga: kolejnosc getDeclaredFields() formalnie NIE jest
-     * gwarantowana przez specyfikacje JVM, ale w praktyce dla prostych
-     * klas skompilowanych javac odpowiada kolejnosci deklaracji - to
-     * powszechnie stosowana, praktyczna sztuczka.
+     * Domyslny Representer (uzywany przez yaml.dump(obiekt)) pobiera
+     * liste wlasciwosci z PropertyUtils.getProperties(...), a ta metoda
+     * WEWNETRZNIE zwraca java.util.TreeSet - czyli KOLEJNOSC JEST ZAWSZE
+     * ALFABETYCZNA wg nazwy wlasciwosci, bez wzgledu na to, czy
+     * wlasciwosci sa odczytywane z getterow/setterow, czy z pol wprost
+     * (BeanAccess.FIELD zmienia tylko ZRODLO odczytu wartosci, NIE
+     * kolejnosc sortowania). Zeby naprawde zachowac kolejnosc DEKLARACJI
+     * pol w klasie (name, age, addresses - tak jak w kodzie Person),
+     * trzeba podstawic WLASNY PropertyUtils (patrz zagniezdzona klasa
+     * DeclaredOrderPropertyUtils nizej), ktory zamiast TreeSet zwraca
+     * LinkedHashSet zbudowany w kolejnosci Class.getDeclaredFields().
      */
     private static void demonstrateFieldOrderDump() {
-        System.out.println("\n=== Representer + BeanAccess.FIELD - kolejnosc pol przy dump ===");
+        System.out.println("\n=== Kolejnosc pol przy dump() - domyslna (alfabetyczna) vs wlasny PropertyUtils ===");
 
         DumperOptions dumperOptions = new DumperOptions();
         dumperOptions.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
@@ -261,13 +317,13 @@ public class _Lesson32_YamlToObjectMapping {
         person.setAddresses(List.of(new Address("Kwiatowa 2", "Krakow")));
 
         Yaml domyslnyYaml = new Yaml(dumperOptions);
-        System.out.println("Dump DOMYSLNY (kolejnosc property ALFABETYCZNA - addresses, age, name):");
+        System.out.println("Dump DOMYSLNY (kolejnosc ZAWSZE alfabetyczna - addresses, age, name):");
         System.out.println(domyslnyYaml.dump(person));
 
         Representer representer = new Representer(dumperOptions);
-        representer.getPropertyUtils().setBeanAccess(BeanAccess.FIELD);
+        representer.setPropertyUtils(new DeclaredOrderPropertyUtils());
         Yaml fieldOrderYaml = new Yaml(representer, dumperOptions);
-        System.out.println("Dump z BeanAccess.FIELD (kolejnosc DEKLARACJI - name, age, addresses):");
+        System.out.println("Dump z wlasnym PropertyUtils (kolejnosc DEKLARACJI pol - name, age, addresses):");
         System.out.println(fieldOrderYaml.dump(person));
     }
 
@@ -360,7 +416,7 @@ public class _Lesson32_YamlToObjectMapping {
         }
     }
 
-    /** Value object - adres, uzywany jako element generycznej listy w Person. */
+    /** Value object - adres, uzywany jako element listy w Person oraz w AddressBox. */
     public static class Address {
 
         private String street;
@@ -396,7 +452,12 @@ public class _Lesson32_YamlToObjectMapping {
         }
     }
 
-    /** Pola w kolejnosci name -> age -> addresses - uzywane w demo kolejnosci dump. */
+    /**
+     * Pole "addresses" ma typ List<Address> zadeklarowany WPROST na tym polu
+     * (nie odziedziczony z klasy generycznej) - dlatego SnakeYAML poprawnie
+     * odczytuje typ elementu automatycznie, bez TypeDescription.
+     * Kolejnosc pol: name -> age -> addresses (uzywane w demo kolejnosci dump).
+     */
     public static class Person {
 
         private String name;
@@ -433,6 +494,57 @@ public class _Lesson32_YamlToObjectMapping {
         @Override
         public String toString() {
             return "Person{name='" + name + "', age=" + age + ", addresses=" + addresses + "}";
+        }
+    }
+
+    /**
+     * Klasa GENERYCZNA - pole "items" ma tu typ List<T> (T to zmienna typu,
+     * nie konkretna klasa). Uzywana wylacznie do demonstracji PRAWDZIWEGO
+     * problemu type erasure (patrz AddressBox nizej).
+     */
+    public static class Container<T> {
+
+        private List<T> items;
+
+        public Container() {
+        }
+
+        public List<T> getItems() {
+            return items;
+        }
+
+        public void setItems(List<T> items) {
+            this.items = items;
+        }
+    }
+
+    /**
+     * Konkretyzuje Container<T> jako Container<Address> - ale pole "items"
+     * fizycznie POZOSTAJE zadeklarowane w klasie bazowej jako List<T>, wiec
+     * refleksja NIE ma jak odczytac "Address" z samego pola - to jest
+     * prawdziwy przypadek type erasure, w ktorym TypeDescription jest
+     * NIEZBEDNE (nie tylko wygodne).
+     */
+    public static class AddressBox extends Container<Address> {
+    }
+
+    /**
+     * Wlasny PropertyUtils zwracajacy wlasciwosci w kolejnosci DEKLARACJI
+     * pol (Class.getDeclaredFields()) zamiast domyslnego, zawsze
+     * alfabetycznego posortowania (TreeSet) uzywanego przez standardowy
+     * PropertyUtils. Uzywany w demonstrateFieldOrderDump().
+     */
+    public static class DeclaredOrderPropertyUtils extends PropertyUtils {
+
+        @Override
+        protected Set<Property> createPropertySet(Class<?> type, org.yaml.snakeyaml.introspector.BeanAccess bAccess) {
+            Set<Property> properties = new LinkedHashSet<>();
+            for (Field field : type.getDeclaredFields()) {
+                if (!field.isSynthetic()) {
+                    properties.add(new FieldProperty(field));
+                }
+            }
+            return properties;
         }
     }
 }

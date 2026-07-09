@@ -129,9 +129,15 @@ public class _Lesson30_PicocliSubcommandsAndValidation {
         int badPriorityExitCode = commandLine.execute(badPriorityArgs);
         System.out.println("Kod wyjscia (wlasny ParameterException): " + badPriorityExitCode);
 
+        // UWAGA: od tego miejsca komendy "sync" celowo uzywaja WLASNEGO, swiezego
+        // obiektu CommandLine (a nie wspolnego "commandLine") - pole objete przez
+        // @ArgGroup NIE jest automatycznie zerowane miedzy kolejnymi execute() na
+        // TYM SAMYM obiekcie CommandLine, wiec ponowne uzycie mogloby "przeciekac"
+        // wartosci z poprzedniego wywolania. Swiezy CommandLine (nowa instancja
+        // TaskCliCommand) gwarantuje czysty stan przy kazdym wywolaniu.
         System.out.println("\n=== Wlasna walidacja: plik do synchronizacji nie istnieje ===");
         String[] badFileArgs = new String[]{"sync", "--file", "brakujacy-backup.dat"};
-        int badFileExitCode = commandLine.execute(badFileArgs);
+        int badFileExitCode = new CommandLine(new TaskCliCommand()).execute(badFileArgs);
         System.out.println("Kod wyjscia (plik nie istnieje): " + badFileExitCode);
 
         /*
@@ -181,16 +187,16 @@ public class _Lesson30_PicocliSubcommandsAndValidation {
          */
         System.out.println("\n=== ArgGroup co-occurring: pelne dane logowania (poprawnie) ===");
         String[] syncFullAuthArgs = new String[]{"sync", "--user", "admin", "--password", "tajne123"};
-        commandLine.execute(syncFullAuthArgs);
+        new CommandLine(new TaskCliCommand()).execute(syncFullAuthArgs);
 
         System.out.println("\n=== ArgGroup co-occurring: TYLKO --user, brak --password (blad) ===");
         String[] syncPartialAuthArgs = new String[]{"sync", "--user", "admin"};
-        int syncPartialExitCode = commandLine.execute(syncPartialAuthArgs);
+        int syncPartialExitCode = new CommandLine(new TaskCliCommand()).execute(syncPartialAuthArgs);
         System.out.println("Kod wyjscia (niekompletna grupa co-occurring): " + syncPartialExitCode);
 
         System.out.println("\n=== ArgGroup co-occurring: BEZ zadnych danych logowania (dozwolone, cala grupa opcjonalna) ===");
         String[] syncNoAuthArgs = new String[]{"sync"};
-        commandLine.execute(syncNoAuthArgs);
+        new CommandLine(new TaskCliCommand()).execute(syncNoAuthArgs);
 
         /*
          * ============================================================
@@ -325,6 +331,10 @@ public class _Lesson30_PicocliSubcommandsAndValidation {
         boolean verbose;
 
         final List<Task> tasks = new ArrayList<>();
+        // Osobny licznik ID (zamiast tasks.size() + 1) - dzieki temu ID pozostaja
+        // UNIKALNE nawet po usunieciu zadania z listy (Zadanie usuniete przez
+        // "remove" NIE zwalnia swojego ID do ponownego uzycia).
+        int nextId = 1;
 
         @Override
         public void run() {
@@ -359,7 +369,7 @@ public class _Lesson30_PicocliSubcommandsAndValidation {
                 throw new ParameterException(spec.commandLine(),
                         "Priorytet musi byc w zakresie 1-5, otrzymano: " + priority);
             }
-            int id = parent.tasks.size() + 1;
+            int id = parent.nextId++;
             Task task = new Task(id, name, priority, location);
             parent.tasks.add(task);
             if (parent.verbose) {
