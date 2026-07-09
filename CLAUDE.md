@@ -385,3 +385,118 @@ jawnego numeru wersji — zweryfikowane `mvn dependency:resolve`, rozwiązały s
 `org.hibernate.orm:hibernate-jcache`, `org.ehcache:ehcache`. `jakarta.persistence-api` przychodzi
 transytywnie z `hibernate-core`. `hibernate-validator` (lekcja 28) już jest obecny transytywnie
 przez istniejącą zależność `spring-boot-starter-validation` — NIE dodawaj go ponownie.
+
+## Rozdział _13_libraries ("Biblioteki – popularne narzędzia w ekosystemie Javy")
+
+32 lekcje, stan na 2026-07-09: **rozdział kompletny** — wszystkie 32 lekcje mają teorię + 30
+ćwiczeń każda, zweryfikowane pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem
+uruchomieniowym kilkunastu reprezentatywnych lekcji. Rozdział przegląda popularne biblioteki
+trzecie w ekosystemie Javy: Lombok (3-5), Apache Commons Lang3/IO/Collections4 (6-8), Guava (9-11),
+OkHttp (12-14), SLF4J/Logback (15-17), Guice (18-20), MapStruct (21-22), Apache POI (23-24), Jsoup
+(25-26), Caffeine (27-28), Picocli (29-30), SnakeYaml (31-32). Numeracja ma lukę na Lesson14 w
+pierwotnym stanie repo (12, 13, [brak 14], 15...) — uzupełniona jako `Lesson14_OkHttpStreamingAndTesting`
+(streaming/multipart/timeouty + testowanie `MockWebServer`), zgodnie z podpowiedziami zostawionymi
+w Lesson12 i komentarzem w `pom.xml` przy zależności `mockwebserver`. Napotkano też 3 zduplikowane,
+puste katalogi lekcji z wcześniejszych sesji (`Lesson17_MdcAndAppenders` vs
+`Lesson17_MdcAndLoggingBestPractices`, `Lesson26_JsoupWebScraping` vs `Lesson26_JsoupAdvancedScraping`,
+`Lesson28_CaffeineAdvancedEvictionAndStats` vs `Lesson28_CaffeineLoadingAndAsyncCache`) —
+rozwiązane przez zachowanie wersji zgodnej z istniejącymi forward-referencjami w już napisanej
+teorii i usunięcie pustego duplikatu.
+
+Wszystkie zależności biblioteczne dodane do `pom.xml` z jawnymi wersjami (Lombok w scope
+`provided`, MapStruct + `mapstruct-processor` w scope `provided` dla annotation processingu,
+OkHttp + `mockwebserver`, Guava, Apache Commons Lang3/IO/Collections4, Guice, Apache POI + POI-OOXML,
+Jsoup, Caffeine, Picocli) — SLF4J/Logback i SnakeYAML NIE zostały dodane jawnie, bo są już
+dostępne transytywnie przez `spring-boot-starter` (zweryfikowane `mvn dependency:tree`).
+
+Mapowanie lekcja → temat (32 lekcje): 1. WhyLibraries, 2. ChoosingAndAddingDependencies,
+3. LombokBasics, 4. LombokConstructorsAndBuilder, 5. LombokAdvancedAndPitfalls, 6. CommonsLang3,
+7. CommonsIO, 8. CommonsCollections4, 9. GuavaImmutableCollections, 10. GuavaMultimapMultisetBiMap,
+11. GuavaPreconditionsAndCache, 12. OkHttpBasics, 13. OkHttpAsyncAndInterceptors,
+14. OkHttpStreamingAndTesting, 15. WhySlf4jNotSystemOut, 16. LogbackConfiguration,
+17. MdcAndLoggingBestPractices, 18. WhyDependencyInjection, 19. GuiceBasics,
+20. GuiceAdvancedModulesAndScopes, 21. MapStructBasics, 22. MapStructAdvancedMappings,
+23. ApachePoiWritingExcel, 24. ApachePoiReadingAndStyling, 25. JsoupParsingHtml,
+26. JsoupAdvancedScraping, 27. CaffeineBasics, 28. CaffeineLoadingAndAsyncCache, 29. PicocliBasics,
+30. PicocliSubcommandsAndValidation, 31. SnakeYamlBasics, 32. YamlToObjectMapping.
+
+Techniczne decyzje warte odnotowania: Lesson16 (konfiguracja Logbacka) generuje `logback.xml` jako
+Java text block i ładuje go programowo przez `JoranConfigurator`, ZAMIAST dotykać realnego
+`src/main/resources/logback.xml` projektu — ten sam wzorzec "embeduj i naprawdę uruchom" co w
+`_11_buildtools`. Lesson14 (OkHttp) uruchamia zarówno lokalny `com.sun.net.httpserver.HttpServer`,
+jak i prawdziwy `MockWebServer`, oba na porcie 0, bez zależności od realnej sieci.
+
+## Rozdział _14_advancedjava ("Zaawansowane mechanizmy języka Java")
+
+30 lekcji, dodane 2026-07-09 jako kolejny duży, samodzielny blok (na życzenie użytkownika, który
+zaproponował bazową listę 18 tematów i poprosił o rozbudowę do skali `_11_buildtools`/`_12_hibernate`
+— potwierdzone explicité przez `AskUserQuestion`: "Duża rozbudowa do ~30 lekcji"). Nazwa pakietu
+`_14_advancedjava` (bez podkreślnika między słowami części opisowej) celowo NIE jest dosłownym
+`_14_advanced_java` zaproponowanym przez użytkownika — ujednolicona z konwencją wszystkich
+pozostałych rozdziałów (`_11_buildtools`, `_12_hibernate`, `_13_libraries` też nie mają
+podkreślników w nazwie opisowej).
+
+Stan na 2026-07-09: **rozdział kompletny** — wszystkie 30 lekcji mają teorię + 30 ćwiczeń każda,
+zweryfikowane pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem uruchomieniowym kilkunastu
+reprezentatywnych lekcji. Rozdział jest w pełni core-Javowy — ŻADNYCH nowych zależności do
+`pom.xml` (generics, lambdy, adnotacje, refleksja, sealed classes, pattern matching, moduły — to
+wszystko czysty JDK). Projekt celuje w Java 21 (`pom.xml`: `<java.version>21</java.version>`,
+`<release>21</release>`), co jest kluczowe dla lekcji 21 (pattern matching w switch + record
+patterns, JEP 441/440, sfinalizowane dopiero w Javie 21).
+
+Przed napisaniem rozdziału zweryfikowano brak nakładania się z rozdziałami 1-12: generics, method
+referencje, refleksja, sealed classes i JPMS nie istniały NIGDZIE w kursie; funkcyjne
+interfejsy/lambdy/wyrażenia switch/pattern matching instanceof/niezmienność miały tylko krótkie,
+pomocnicze akapity wewnątrz innych lekcji (`_02_oop/Lesson08_Interfaces`,
+`_01_fundamentals/Lesson03_Conditionals`, `_02_oop/Lesson06_Polymorphism`,
+`_02_oop/Lesson10_FinalKeyword`) — lekcje tego rozdziału jawnie nawiązują do tych wcześniejszych
+akapitów i pogłębiają temat, zamiast go powtarzać.
+
+Rozdział podzielony na 8 tematycznych klastrów:
+1-7. Generics (WhyGenerics → generyczne klasy/metody → bounded types → wildcardy → PECS/wariancja →
+type erasure → dobre praktyki/pułapki),
+8-11. Programowanie funkcyjne (interfejsy funkcyjne → lambdy → referencje do metod → wbudowane
+interfejsy z `java.util.function`),
+12-14. Adnotacje (wbudowane → własne `@interface` + meta-adnotacje → `RetentionPolicy` +
+prawdziwe przetwarzanie w czasie kompilacji przez `JavaCompiler`/`AbstractProcessor`),
+15-18. Refleksja i mechanizmy dynamiczne (podstawy `Class`/`Method`/`Field` → przypadki
+użycia/ryzyka → dynamiczne proxy `java.lang.reflect.Proxy` → `MethodHandles`),
+19-22. Nowoczesny system typów (sealed classes → pattern matching `instanceof` → pattern matching
+w `switch` + record patterns → wyrażenia switch),
+23-25. Wnioskowanie typów i niezmienność (`var` → niezmienność → obronne kopiowanie),
+26-28. Odkrywanie usług i modularność (`ServiceLoader`/SPI → podstawy JPMS → zaawansowane JPMS:
+`opens`/`uses`/`provides`),
+29-30. Podsumowanie (dobre praktyki „kiedy czego użyć" → kapsztonowy projekt łączący
+sealed+pattern matching+generics+funkcyjne interfejsy+adnotacje+refleksję+niezmienność).
+
+Kluczowy problem techniczny — lekcje 14 (adnotacje, przetwarzanie w czasie kompilacji) i 26-28
+(ServiceLoader/SPI, JPMS) wymagają REALNEGO zewnętrznego mechanizmu (kompilator, osobny moduł,
+osobny classloader), którego nie da się po prostu "napisać w `main()`" tak jak resztę rozdziału.
+Rozwiązanie — ten sam wzorzec "embeduj i naprawdę uruchom", który już wcześniej sprawdził się w
+`_11_buildtools` (`ToolProvider.getSystemJavaCompiler()` + `Files.createTempDirectory` +
+`ProcessBuilder`): Lesson14 buduje i uruchamia prawdziwy `AbstractProcessor` przez
+`CompilationTask.setProcessors(...)` bez `META-INF/services` (processor ustawiany programowo);
+Lesson26 kompiluje interfejs + 2 implementacje do katalogu tymczasowego, dopisuje prawdziwy plik
+`META-INF/services/...` i ładuje przez `URLClassLoader` + `ServiceLoader.load(Class, ClassLoader)`;
+Lesson27-28 kompilują i URUCHAMIAJĄ prawdziwy wielomodułowy mini-projekt (`javac
+--module-source-path` + `java --module-path`) przez `ProcessBuilder`, WŁĄCZAJĄC realne błędy
+(`IllegalAccessError`/`InaccessibleObjectException`/"package is not visible") jako faktyczny,
+przechwycony output podprocesu — nie udawane komunikaty. WAŻNE: cały projekt `javaQuest` pozostaje
+na classpath (bez `module-info.java` w `src/main/java`) — świadoma decyzja architektoniczna
+odnotowana w teorii Lesson28, żeby nie złamać kompilacji pozostałych 13 rozdziałów; JPMS jest
+demonstrowany WYŁĄCZNIE w osobnych katalogach tymczasowych.
+
+Napotkany i naprawiony błąd kompilacji: `Lesson29_AdvancedLanguageBestPractices` miał niejawne
+wnioskowanie typów generycznych, które nie kompilowało się przez konflikt diamentu (`<>`) z
+generyczną metodą `Comparator.naturalOrder()` przekazaną jako argument konstruktora — naprawione
+przez jawne `Comparator.<String>naturalOrder()`.
+
+Mapowanie lekcja → temat (30 lekcji): 1. GenericsIntroduction, 2. GenericClassesAndMethods,
+3. BoundedTypes, 4. WildcardsExtendsSuper, 5. VarianceAndPecs, 6. TypeErasure,
+7. GenericsBestPracticesAndPitfalls, 8. FunctionalInterfaces, 9. LambdaExpressions,
+10. MethodReferences, 11. BuiltInFunctionalInterfaces, 12. Annotations, 13. CustomAnnotations,
+14. AnnotationRetentionAndProcessing, 15. ReflectionBasics, 16. ReflectionUseCasesAndRisks,
+17. DynamicProxies, 18. MethodHandles, 19. SealedClasses, 20. PatternMatchingInstanceof,
+21. PatternMatchingSwitchAndRecordPatterns, 22. SwitchExpressions, 23. VarAndTypeInference,
+24. Immutability, 25. DefensiveCopying, 26. ServiceLoaderAndSpi, 27. ModulesJpmsBasics,
+28. ModulesAdvanced, 29. AdvancedLanguageBestPractices, 30. CapstoneAdvancedJava.

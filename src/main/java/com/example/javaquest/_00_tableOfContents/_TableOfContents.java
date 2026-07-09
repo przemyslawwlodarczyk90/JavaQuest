@@ -148,6 +148,20 @@ public class _TableOfContents {
                     "24_ApachePoiReadingAndStyling", "25_JsoupParsingHtml", "26_JsoupAdvancedScraping",
                     "27_CaffeineBasics", "28_CaffeineLoadingAndAsyncCache", "29_PicocliBasics",
                     "30_PicocliSubcommandsAndValidation", "31_SnakeYamlBasics", "32_YamlToObjectMapping"
+            )),
+
+            new Chapter("_14_advancedjava", "Zaawansowane mechanizmy języka Java", List.of(
+                    "01_GenericsIntroduction", "02_GenericClassesAndMethods", "03_BoundedTypes",
+                    "04_WildcardsExtendsSuper", "05_VarianceAndPecs", "06_TypeErasure",
+                    "07_GenericsBestPracticesAndPitfalls", "08_FunctionalInterfaces", "09_LambdaExpressions",
+                    "10_MethodReferences", "11_BuiltInFunctionalInterfaces", "12_Annotations",
+                    "13_CustomAnnotations", "14_AnnotationRetentionAndProcessing", "15_ReflectionBasics",
+                    "16_ReflectionUseCasesAndRisks", "17_DynamicProxies", "18_MethodHandles",
+                    "19_SealedClasses", "20_PatternMatchingInstanceof",
+                    "21_PatternMatchingSwitchAndRecordPatterns", "22_SwitchExpressions",
+                    "23_VarAndTypeInference", "24_Immutability", "25_DefensiveCopying",
+                    "26_ServiceLoaderAndSpi", "27_ModulesJpmsBasics", "28_ModulesAdvanced",
+                    "29_AdvancedLanguageBestPractices", "30_CapstoneAdvancedJava"
             ))
     );
 
