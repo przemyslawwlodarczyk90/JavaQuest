@@ -208,11 +208,14 @@ public class _Lesson04_LombokConstructorsAndBuilder {
 
     // ------------------------------------------------------------------
     // @NonNull na polu nie-final - @RequiredArgsConstructor traktuje je
-    // jako "wymagane" i generuje null-check.
+    // jako "wymagane" i generuje null-check. @AllArgsConstructor dokladany
+    // OBOK niego (owner, balance) - Lombok wstawia null-check na @NonNull
+    // do KAZDEGO generowanego konstruktora, w ktorym pole to wystepuje.
     // ------------------------------------------------------------------
     @Getter
     @ToString
     @RequiredArgsConstructor
+    @AllArgsConstructor
     static class Account {
         @NonNull
         private String owner;
