@@ -227,24 +227,35 @@ public class _Lesson15_MemoryLeaksInJava {
         System.out.println("\n--- Wzorzec 3: ThreadLocal w puli watkow bez .remove() ---");
 
         ThreadLocal<String> requestContext = new ThreadLocal<>();
-        ExecutorService pool = Executors.newFixedThreadPool(2);
 
+        // KAZDA faza dostaje WLASNA, SWIEZA pule watkow - inaczej resztki
+        // (niesprzatniete wartosci) z Fazy A "przecieklyby" do Fazy B i
+        // falszywie zasugerowalyby, ze naprawa (.remove()) nie zadziala.
+        ExecutorService poolA = Executors.newFixedThreadPool(2);
         try {
             System.out.println("Faza A: BEZ wywolania .remove() na koniec zadania (przeciek miedzy zadaniami).");
-            List<String> observedWithoutRemove = runTasksAndCollectObservedValues(pool, requestContext, false, 4);
+            List<String> observedWithoutRemove = runTasksAndCollectObservedValues(poolA, requestContext, false, "A", 4);
             System.out.println("Zaobserwowane wartosci ThreadLocal na starcie kolejnych zadan (bez remove): " + observedWithoutRemove);
             boolean leakDetected = observedWithoutRemove.stream().anyMatch(v -> !v.equals("brak-wartosci"));
             System.out.println("Wykryto 'przeciekniete' wartosci z poprzednich zadan: " + leakDetected);
+        } finally {
+            poolA.shutdown();
+            if (!poolA.awaitTermination(5, TimeUnit.SECONDS)) {
+                poolA.shutdownNow();
+            }
+        }
 
-            System.out.println("\nFaza B: Z wywolaniem .remove() na koniec kazdego zadania (poprawka).");
-            List<String> observedWithRemove = runTasksAndCollectObservedValues(pool, requestContext, true, 4);
+        ExecutorService poolB = Executors.newFixedThreadPool(2);
+        try {
+            System.out.println("\nFaza B: NOWA pula watkow, Z wywolaniem .remove() na koniec kazdego zadania (poprawka).");
+            List<String> observedWithRemove = runTasksAndCollectObservedValues(poolB, requestContext, true, "B", 4);
             System.out.println("Zaobserwowane wartosci ThreadLocal na starcie kolejnych zadan (z remove): " + observedWithRemove);
             boolean allClean = observedWithRemove.stream().allMatch(v -> v.equals("brak-wartosci"));
             System.out.println("Wszystkie zadania widzialy czysty stan (brak przecieku): " + allClean);
         } finally {
-            pool.shutdown();
-            if (!pool.awaitTermination(5, TimeUnit.SECONDS)) {
-                pool.shutdownNow();
+            poolB.shutdown();
+            if (!poolB.awaitTermination(5, TimeUnit.SECONDS)) {
+                poolB.shutdownNow();
             }
         }
     }
@@ -258,12 +269,12 @@ public class _Lesson15_MemoryLeaksInJava {
      * poprzedniego), zeby deterministycznie trafiac na te same watki z puli.
      */
     private static List<String> runTasksAndCollectObservedValues(
-            ExecutorService pool, ThreadLocal<String> requestContext, boolean callRemove, int taskCount)
+            ExecutorService pool, ThreadLocal<String> requestContext, boolean callRemove, String phaseLabel, int taskCount)
             throws InterruptedException {
 
         List<String> observedValues = new ArrayList<>();
         for (int i = 0; i < taskCount; i++) {
-            String taskValue = "zadanie-" + i;
+            String taskValue = "zadanie-" + phaseLabel + i;
             CountDownLatch latch = new CountDownLatch(1);
             String[] observedHolder = new String[1];
 

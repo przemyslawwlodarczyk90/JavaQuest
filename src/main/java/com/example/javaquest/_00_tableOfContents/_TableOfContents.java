@@ -162,6 +162,17 @@ public class _TableOfContents {
                     "23_VarAndTypeInference", "24_Immutability", "25_DefensiveCopying",
                     "26_ServiceLoaderAndSpi", "27_ModulesJpmsBasics", "28_ModulesAdvanced",
                     "29_AdvancedLanguageBestPractices", "30_CapstoneAdvancedJava"
+            )),
+
+            new Chapter("_15_jvm_internals", "JVM, pamięć i wydajność", List.of(
+                    "01_JdkJreJvmAndSpecification", "02_CompilationAndBytecode", "03_ClassLoadingMechanics",
+                    "04_CustomClassLoaders", "05_ClasspathVsModulepath", "06_HeapStackMetaspace",
+                    "07_ReferenceTypesAndStringPool", "08_GarbageCollectionFoundations",
+                    "09_GarbageCollectorAlgorithms", "10_G1GcDeepDive", "11_LowLatencyCollectors",
+                    "12_GcTuningAndLogging", "13_JitCompilerBasics", "14_EscapeAnalysisAndInlining",
+                    "15_MemoryLeaksInJava", "16_HeapDumpBasics", "17_ThreadDumpBasics",
+                    "18_JavaFlightRecorderBasics", "19_ProfilingBasics",
+                    "20_JvmTuningAndBestPracticesCapstone"
             ))
     );
 

@@ -239,7 +239,7 @@ public class _Lesson12_GcTuningAndLogging {
 
         ProcessResult result = runProcess("string dedup",
                 javaExe.toString(), "-XX:+UseG1GC", "-XX:+UseStringDeduplication",
-                "-Xlog:gc+stringdedup=debug", "-cp", classesDir.toString(), "SmallAllocatorDemo");
+                "-Xlog:stringdedup=debug", "-cp", classesDir.toString(), "SmallAllocatorDemo");
 
         System.out.println("Kod wyjscia: " + result.exitCode());
         long dedupLines = result.output().lines().filter(line -> line.toLowerCase().contains("dedup")).count();
@@ -274,9 +274,19 @@ public class _Lesson12_GcTuningAndLogging {
         printFirstLines(detailed.output(), 4);
     }
 
+    /**
+     * Znajduje linie z wyjscia -XX:+PrintFlagsFinal odpowiadajaca DOKLADNIE
+     * podanej nazwie flagi (a nie tylko jej fragmentowi) - format linii to
+     * "<typ> <NazwaFlagi> = <wartosc> {...}", wiec nazwa flagi to DRUGI
+     * token po rozbiciu na biale znaki. Bez tego np. szukanie "SurvivorRatio"
+     * trafialoby najpierw na "InitialSurvivorRatio" (zawiera te sama fraze).
+     */
     private static String findFlagLine(String output, String flagName) {
         return output.lines()
-                .filter(line -> line.contains(flagName))
+                .filter(line -> {
+                    String[] tokens = line.trim().split("\\s+");
+                    return tokens.length > 1 && tokens[1].equals(flagName);
+                })
                 .findFirst()
                 .map(String::trim)
                 .orElse("(nie znaleziono flagi " + flagName + " w wyjsciu -XX:+PrintFlagsFinal)");

@@ -176,7 +176,7 @@ public class _Exercises_Lesson12_GcTuningAndLogging {
          * Napisz program tworzacy DUZO (np. 100 000) obiektow String o
          * identycznej tresci przez `new String(...)`, uruchom go z
          * -XX:+UseG1GC -XX:+UseStringDeduplication
-         * -Xlog:gc+stringdedup=debug - sprawdz, czy tym razem pojawily sie
+         * -Xlog:stringdedup=debug - sprawdz, czy tym razem pojawily sie
          * jakies logi deduplikacji (wiecej danych = wieksza szansa).
          */
         public static void main(String[] args) { }
