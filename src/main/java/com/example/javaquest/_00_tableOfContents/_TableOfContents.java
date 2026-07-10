@@ -173,6 +173,26 @@ public class _TableOfContents {
                     "15_MemoryLeaksInJava", "16_HeapDumpBasics", "17_ThreadDumpBasics",
                     "18_JavaFlightRecorderBasics", "19_ProfilingBasics",
                     "20_JvmTuningAndBestPracticesCapstone"
+            )),
+
+            new Chapter("_16_clean_code", "Clean Code i refactoring", List.of(
+                    "01_WhatIsCleanCode", "02_Naming", "03_Comments", "04_MethodsAndFunctions",
+                    "05_Formatting", "06_ClassesAndResponsibilities", "07_SingleResponsibilityPrinciple",
+                    "08_OpenClosedPrinciple", "09_LiskovSubstitutionPrinciple",
+                    "10_InterfaceSegregationPrinciple", "11_DependencyInversionPrinciple",
+                    "12_CouplingCohesionAndLawOfDemeter", "13_DryKissYagni", "14_CodeSmells",
+                    "15_RefactoringBasics", "16_RefactoringCatalog", "17_ExceptionDesign",
+                    "18_NullHandling", "19_ImmutabilityInPractice", "20_StaticAnalysisTools",
+                    "21_LegacyCodeAndTechnicalDebt", "22_CodeReviewBestPracticesAndCapstone"
+            )),
+
+            new Chapter("_17_architecture", "Architektura aplikacji Java", List.of(
+                    "01_WhyArchitectureMatters", "02_LayeredArchitecture", "03_ControllerServiceRepository",
+                    "04_DomainModelVsAnemicModel", "05_DtoEntityMapper",
+                    "06_PackageByLayerVsPackageByFeature", "07_DependencyDirection",
+                    "08_HexagonalArchitectureIntro", "09_PortsAndAdapters", "10_TransactionBoundaries",
+                    "11_ValidationArchitecture", "12_ErrorHandlingArchitecture", "13_ModularMonolith",
+                    "14_WhenMicroservicesMakeSense", "15_ArchitectureCapstone"
             ))
     );
 

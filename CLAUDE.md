@@ -500,3 +500,204 @@ Mapowanie lekcja → temat (30 lekcji): 1. GenericsIntroduction, 2. GenericClass
 21. PatternMatchingSwitchAndRecordPatterns, 22. SwitchExpressions, 23. VarAndTypeInference,
 24. Immutability, 25. DefensiveCopying, 26. ServiceLoaderAndSpi, 27. ModulesJpmsBasics,
 28. ModulesAdvanced, 29. AdvancedLanguageBestPractices, 30. CapstoneAdvancedJava.
+
+## Rozdział _15_jvm_internals ("JVM, pamięć i wydajność")
+
+20 lekcji, dodane 2026-07-10. Wyjściowy brief użytkownika miał 12 lekcji (JdkJreJvm →
+JvmTuningBasics); rozbudowany do 20 po jawnym pytaniu użytkownika o skalę — odpowiedź: "rozbudować
+jeśli są dobre tematy, ale nie na siłę do 30" (świadomie NIE dociągnięty do skali
+`_11_buildtools`/`_12_hibernate`/`_13_libraries`/`_14_advancedjava` (27-32 lekcje), bo tyle
+dobrze uzasadnionych, nienadmuchanych tematów faktycznie się znalazło).
+
+Rozdział jest w pełni core-Javowy (jak `_14_advancedjava`) — ŻADNYCH nowych zależności do
+`pom.xml` (wszystko z `java.lang.management`, `com.sun.management`, `jdk.jfr`, `javax.tools`,
+`ProcessBuilder` jest w samym JDK). Celowo NIE duplikuje istniejących, wprowadzających lekcji:
+`_01_fundamentals/Lesson00_JavaPlatformBasics` (JDK/JRE/JVM wstęp), `Lesson10_HeapAndStack`
+(heap/stack koncepcyjnie), `Lesson14_GarbageCollector` (GC koncepcyjnie + Weak/Soft/Phantom) —
+ten rozdział jest ich pogłębieniem (prawdziwe mechanizmy JVM, prawdziwe API introspekcji, prawdziwe
+generowanie plików diagnostycznych), Lesson01 jawnie się do nich odsyła jednym zdaniem zamiast
+powtarzać.
+
+Mapowanie lekcja → temat (20 lekcji): 1. JdkJreJvmAndSpecification (JVM spec vs
+HotSpot/GraalVM/OpenJ9), 2. CompilationAndBytecode (javac→.class→JVM, realny `javap -c -v`),
+3. ClassLoadingMechanics (hierarchia loaderów, delegacja, fazy loading/linking/initialization),
+4. CustomClassLoaders (własny `ClassLoader`, zagadka "ta sama klasa, dwa różne `Class` obiekty"),
+5. ClasspathVsModulepath (classpath vs JPMS module path z perspektywy classloadingu/enkapsulacji),
+6. HeapStackMetaspace (`MemoryMXBean`/`MemoryPoolMXBean`, `StackOverflowError`),
+7. ReferenceTypesAndStringPool (Weak/Soft/Phantom + `ReferenceQueue` + `Cleaner`, String pool/
+`intern()`), 8. GarbageCollectionFoundations (hipoteza generacyjna, GC roots, mark-sweep-compact,
+`GarbageCollectorMXBean`), 9. GarbageCollectorAlgorithms (Serial/Parallel/G1/ZGC/Shenandoah
+porównanie, realne child JVM z różnymi `-XX:+Use*GC`), 10. G1GcDeepDive (regiony, remembered sets,
+mixed collections, `-Xlog:gc`), 11. LowLatencyCollectors (ZGC/Shenandoah głębiej, fallback gdy
+build JDK ich nie wspiera), 12. GcTuningAndLogging (flagi tuningowe, `-Xlog:gc` unified logging),
+13. JitCompilerBasics (C1/C2, tiered compilation, warm-up demo, `-XX:+PrintCompilation`),
+14. EscapeAnalysisAndInlining (scalar replacement, inlining, `-XX:+PrintInlining`),
+15. MemoryLeaksInJava (statyczne kolekcje, listenery, `ThreadLocal` w puli wątków, non-static inner
+class), 16. HeapDumpBasics (`HotSpotDiagnosticMXBean.dumpHeap` — realny `.hprof`),
+17. ThreadDumpBasics (`ThreadMXBean.dumpAllThreads`/`findDeadlockedThreads`, realny bezpieczny
+deadlock), 18. JavaFlightRecorderBasics (`jdk.jfr.Recording`/`Event` — realny `.jfr`,
+`jfr summary`), 19. ProfilingBasics (mini sampling profiler przez okresowe
+`Thread.getAllStackTraces()`), 20. JvmTuningAndBestPracticesCapstone (przegląd flag z całego
+rozdziału + kapsztonowe demo łączące heap dump + thread dump + JFR dla jednego obciążenia).
+
+Kluczowe decyzje techniczne:
+- Ten sam wzorzec "embeduj i naprawdę uruchom" co w `_11_buildtools`/`_14_advancedjava`:
+  `ToolProvider.getSystemJavaCompiler()` + `Files.createTempDirectory` do kompilacji w locie,
+  `ProcessBuilder` do odpalania PRAWDZIWEGO child procesu `java`/`javac`/`javap`/`jfr` z konkretnymi
+  flagami JVM (Lesson02 realny `javap -c -v`, Lesson05 realny JPMS `IllegalAccessException`,
+  Lesson09-13 realne child JVM z flagami GC/JIT, Lesson18 realny `jfr summary`).
+- WAŻNIEJSZA niż w poprzednich rozdziałach zasada bezpieczeństwa demo: każdy `ProcessBuilder`
+  używa `process.waitFor(10, TimeUnit.SECONDS)` + `process.destroyForcibly()` przy timeout
+  (NIE bezterminowego `waitFor()` jak część starszych lekcji w `_14_advancedjava`) — bo flagi typu
+  `-Xlog:gc`/`-XX:+PrintCompilation` na child JVM mają większe ryzyko nietypowego zachowania niż
+  zwykła kompilacja/uruchomienie. Realny (ale bezpieczny) deadlock w Lesson17 i Lesson20 powtarza
+  dokładnie wzorzec z `_05_multithreading/Lesson25_Deadlock`: wątki `daemon` + `join(2000)`,
+  program kończy się normalnie mimo trwającego zakleszczenia.
+- Lesson11 (ZGC/Shenandoah): na maszynie deweloperskiej (OpenJDK 25.0.2) Shenandoah faktycznie
+  jest niedostępny w tym buildzie — lekcja realnie ćwiczy i pokazuje przyjazny fallback ("ten
+  kolektor nie jest dostępny w tym buildzie JDK") zamiast udawać wsparcie, którego nie ma.
+  Ten sam wzorzec fallbacku co przy braku internetu w `_06_networking`.
+- Lesson16/18 generują prawdziwe pliki `.hprof`/`.jfr` do `Files.createTempDirectory` i CELOWO
+  ich nie usuwają na końcu (w przeciwieństwie do innych tymczasowych katalogów w kursie) — chodzi
+  o to, żeby kursant mógł je faktycznie otworzyć w VisualVM/JMC/Eclipse MAT; ścieżka i rozmiar
+  pliku są wypisywane na konsolę.
+- `_TableOfContents.java` zaktualizowany o nowy `Chapter("_15_jvm_internals", ...)` na końcu listy
+  `ROZDZIALY` (stabilność numeracji — ta sama zasada co przy `Lesson16_Exceptions` w
+  `_01_fundamentals`).
+
+Stan na 2026-07-10: rozdział kompletny (teoria + 30 ćwiczeń w każdej z 20 lekcji), zweryfikowany
+pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem uruchomieniowym reprezentatywnej próbki
+lekcji (Lesson02 realny bytecode, Lesson09 realne logi GC z 3 różnych kolektorów, Lesson17 realna
+detekcja deadlocku, Lesson20 kapsztonowe demo) — wszystkie kończą się samoistnie w kilka sekund.
+
+## Rozdział _16_clean_code ("Clean Code i refactoring")
+
+Rozpoczęty 2026-07-10. Wyjściowy brief użytkownika miał 16 lekcji (WhatIsCleanCode →
+CodeReviewBasics). Po pytaniu o skalę (jak przy `_15_jvm_internals`) użytkownik wybrał "umiarkowaną
+rozbudowę" — bez naciągania do 30, tylko dobrze uzasadnione dodatki. Finalny, ZATWIERDZONY program
+to **22 lekcje**. Stan na 2026-07-10: **rozdział kompletny** — wszystkie 22 lekcje mają teorię + 30
+ćwiczeń każda, zweryfikowane pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem uruchomieniowym
+wszystkich 15 lekcji dopisanych w tym kroku (01-03/07-09/13/14/18 były już gotowe wcześniej):
+
+1. WhatIsCleanCode, 2. Naming, 3. Comments (DODANE — klasyczny temat "dobre vs złe komentarze" z
+   Clean Code, brakowało go w brief-ie), 4. MethodsAndFunctions, 5. Formatting (DODANE —
+   formatowanie pionowe/poziome kodu), 6. ClassesAndResponsibilities,
+   7. SingleResponsibilityPrinciple, 8. OpenClosedPrinciple, 9. LiskovSubstitutionPrinciple,
+   10. InterfaceSegregationPrinciple, 11. DependencyInversionPrinciple,
+   12. CouplingCohesionAndLawOfDemeter (DODANE), 13. DryKissYagni, 14. CodeSmells,
+   15. RefactoringBasics, 16. RefactoringCatalog (DODANE — katalog konkretnych technik: Extract
+   Method/Class, Replace Conditional with Polymorphism, Introduce Parameter Object itp.),
+   17. ExceptionDesign, 18. NullHandling, 19. ImmutabilityInPractice,
+   20. StaticAnalysisTools (DODANE — planowane osadzenie PRAWDZIWYCH narzędzi PMD/SpotBugs
+   analizujących wygenerowany kod źródłowy, analogicznie do wzorca embedowania Anta w
+   `_11_buildtools` — UWAGA dla kontynuacji: dokładne współrzędne Maven dla PMD to
+   `net.sourceforge.pmd:pmd-core`+`net.sourceforge.pmd:pmd-java`, dla SpotBugs
+   `com.github.spotbugs:spotbugs` — dla Checkstyle współrzędne NIE zostały jeszcze zweryfikowane,
+   sprawdź w Maven Central przed dodaniem do `pom.xml`, nie zgaduj), 21. LegacyCodeAndTechnicalDebt
+   (DODANE), 22. CodeReviewBestPracticesAndCapstone (capstone — ta sama konwencja co ostatnia
+   lekcja w `_11_buildtools`/`_12_hibernate`/`_14_advancedjava`/`_15_jvm_internals`).
+
+Ten rozdział jest inny technicznie od `_14_advancedjava`/`_15_jvm_internals` — to głównie
+demonstracje "zły kod vs dobry kod" (przed/po refaktoryzacji) jako zagnieżdżone klasy
+`BadExample`/`GoodExample` z wywołaniami metod i wyjaśnieniem w komentarzu, NIE wymaga
+`ProcessBuilder`/child JVM/exotic JDK API (poza Lesson20, który świadomie osadza PRAWDZIWE
+narzędzia statycznej analizy, wzorem `_11_buildtools`). Brak potrzeby zasady "main() kończy się w
+kilka sekund" w sensie deadlocków/GC — tu ryzyko jest inne: pokusa pisania WYŁĄCZNIE tekstu bez
+kompilowalnego kodu. Zasada do pilnowania: KAŻDY blok teorii nadal musi być realnym,
+kompilującym się kodem Java (klasy `BadXxx`/`GoodXxx` z prawdziwymi polami/metodami, wywoływanymi
+i drukującymi wynik), nie tylko komentarzem.
+
+Lesson20 (StaticAnalysisTools) embeduje NAPRAWDĘ PMD 7.13.0 i SpotBugs 4.9.3 w `main()`, zweryfikowane
+uruchomieniowo (nie tylko kompilacyjnie) — API obu bibliotek różni się od starszych wersji/tutoriali
+w internecie, więc przed dalszą edycją tej lekcji sprawdź realne sygnatury (`javap`), nie zgaduj:
+- **PMD 7.x** (przeprojektowane API względem PMD 6): `PMDConfiguration` + `PmdAnalysis.create(config)`
+  (try-with-resources) + `pmd.files().addFile(Path)` (auto-wykrywa język po rozszerzeniu `.java`) +
+  `pmd.newRuleSetLoader().loadFromResource("category/java/bestpractices.xml")` (ruleset wbudowany w
+  jar `pmd-java`, BEZ potrzeby internetu) + `pmd.addRuleSet(...)` +
+  `pmd.performAnalysisAndCollectReport()` zwracające `Report` z `getViolations(): List<RuleViolation>`
+  (`violation.getRule().getName()`, `getDescription()`, `getLocation().getStartLine()`).
+- **SpotBugs 4.9.3** (klasyczne pakiety `edu.umd.cs.findbugs.*`, bez zmian od ery FindBugs): wymaga
+  NAJPIERW skompilowania kodu do `.class` (`ToolProvider.getSystemJavaCompiler()`, jak w
+  `_11_buildtools`/`_14_advancedjava`) — SpotBugs analizuje BYTECODE, nie źródło. Wzorzec: `new
+  Project()` + `project.addFile(katalogZKlasami)` + `new BugCollectionBugReporter(project)` +
+  `setPriorityThreshold(Priorities.LOW_PRIORITY)` + `try (FindBugs2 engine = new FindBugs2())` +
+  `engine.setBugReporter(...)`/`setProject(...)`/`setDetectorFactoryCollection(DetectorFactoryCollection.instance())`
+  + **KRYTYCZNE, łatwe do przeoczenia**: `engine.setUserPreferences(UserPreferences.createDefaultUserPreferences())`
+  MUSI być wywołane przed `finishSettings()`/`execute()`, inaczej `NullPointerException` w
+  `FindBugs.isDetectorEnabled` (brak `UserPreferences` nie jest ustawiany domyślnie). Wynik:
+  `bugReporter.getBugCollection()` (implementuje `Iterable<BugInstance>`, `bug.getType()`/`getMessage()`).
+
+## Rozdział _17_architecture ("Architektura aplikacji Java") — W TRAKCIE PISANIA
+
+Rozpoczęty 2026-07-10, na wyraźne życzenie użytkownika (rozdział + dokładna lista 15 lekcji podana
+przez użytkownika, zarejestrowana 1:1 w `_TableOfContents.java`). Kontynuacja `_16_clean_code` —
+tamten rozdział uczył czystego kodu NA POZIOMIE metody/klasy, ten uczy organizacji kodu NA POZIOMIE
+CAŁEJ APLIKACJI (warstwy, granice modułów, kierunek zależności, granice transakcji/walidacji/błędów).
+
+Stan na 2026-07-10: **szkielet zarejestrowany, TREŚĆ JESZCZE NIE NAPISANA** — wszystkie 15 folderów
+lekcji utworzone w `src/main/java/com/example/javaquest/_17_architecture/` z plikami-szkieletami
+(`_LessonXX_*.java` z `// TODO: lekcja jeszcze nie napisana`, `_Exercises_LessonXX_*.java` z
+`// TODO: 30 cwiczen jeszcze nie napisanych`) — DOKŁADNIE ten sam wzorzec co przy `_16_clean_code`
+(patrz sekcja wyżej). Jeśli praca zostanie przerwana, sprawdź które pliki nadal zawierają te
+znaczniki TODO — to jednoznaczna lista tego, co zostało do zrobienia.
+
+Lista 15 lekcji (nazwy folderów już zarejestrowane, DOKŁADNIE wg życzenia użytkownika — nie
+zmieniaj numeracji/nazw bez wyraźnej prośby):
+1. WhyArchitectureMatters, 2. LayeredArchitecture, 3. ControllerServiceRepository,
+4. DomainModelVsAnemicModel, 5. DtoEntityMapper, 6. PackageByLayerVsPackageByFeature,
+7. DependencyDirection, 8. HexagonalArchitectureIntro, 9. PortsAndAdapters,
+10. TransactionBoundaries, 11. ValidationArchitecture, 12. ErrorHandlingArchitecture,
+13. ModularMonolith, 14. WhenMicroservicesMakeSense, 15. ArchitectureCapstone.
+
+Planowana treść merytoryczna każdej lekcji (roboczy plan do rozwinięcia przy pisaniu — nie
+ostateczny, ale punkt wyjścia, żeby nie zaczynać od zera po ewentualnej przerwie):
+1. **WhyArchitectureMatters** — koszt zmiany rośnie z czasem/rozmiarem systemu bez architektury;
+   architektura = decyzje TRUDNE do odwrócenia później; cele dobrej architektury (testowalność,
+   niezależność od frameworka/UI/bazy danych — nawiązanie do Uncle Boba "Clean Architecture").
+2. **LayeredArchitecture** — klasyczne warstwy prezentacja/logika biznesowa/dostęp do danych,
+   POGŁĘBIENIE `_10_dao/Lesson02_LayeredArchitecture` (tamta lekcja była wąsko o DAO, ta jest o
+   całej aplikacji) — jawnie odesłać, nie powielać.
+3. **ControllerServiceRepository** — kanoniczna trójka (świadomie BEZ Spring Boota — to ostatni
+   rozdział kursu; symulacja przez zwykłe klasy Javy), odpowiedzialność każdej warstwy, typowy błąd
+   (logika biznesowa w kontrolerze, repozytorium przeciekające do kontrolera).
+4. **DomainModelVsAnemicModel** — anemiczny model domenowy (encje = worki na dane, cała logika w
+   serwisach, krytykowany przez Fowlera) vs bogaty model domenowy (zachowanie w encjach).
+5. **DtoEntityMapper** — DLACZEGO nie eksponować encji wprost na granicy API (sprzężenie kontraktu
+   z schematem bazy, nadmiarowe dane) — POGŁĘBIENIE `_09_jdbc/Lesson19_Dto`/`Lesson20_Mapper` na
+   poziomie architektonicznym, nie mechaniki mapowania.
+6. **PackageByLayerVsPackageByFeature** — `controller/service/repository` (poziomo) vs
+   `orders/users/payments` (pionowo, per funkcja) — kompromisy obu.
+7. **DependencyDirection** — Dependency Rule (Clean/Onion Architecture) — zależności ZAWSZE do
+   środka, w stronę domeny; bezpośrednie powiązanie z DIP (`_16_clean_code/Lesson11`).
+8. **HexagonalArchitectureIntro** — Ports and Adapters (Alistair Cockburn) — "hexagon" to tylko
+   metafora (dowolna liczba "boków"), rdzeń domenowy niezależny od technologii.
+9. **PortsAndAdapters** — konkretna implementacja: porty jako interfejsy, adaptery jako
+   implementacje (DB/HTTP/CLI), korzyść dla testowalności (podmiana adaptera na testowy).
+10. **TransactionBoundaries** — GDZIE powinna żyć granica transakcji (warstwa serwisu, nie
+    kontroler ani DAO) — POGŁĘBIENIE `_10_dao/Lesson19_UnitOfWork` na poziomie architektonicznym.
+11. **ValidationArchitecture** — warstwowa strategia walidacji: granica API (DTO) vs niezmienniki
+    domeny (encja/konstruktor) vs reguły biznesowe (serwis) — co gdzie powinno być sprawdzane.
+12. **ErrorHandlingArchitecture** — scentralizowana obsługa błędów NA GRANICY aplikacji, spójny
+    kształt odpowiedzi błędu — POGŁĘBIENIE `_16_clean_code/Lesson17_ExceptionDesign` (tam: projekt
+    pojedynczego wyjątku; tu: architektura obsługi błędów w całym systemie).
+13. **ModularMonolith** — moduły w JEDNYM wdrożeniu z wymuszonymi granicami (bez rozproszenia
+    sieciowego mikroserwisów) — "najlepsze z obu światów" dla wielu projektów.
+14. **WhenMicroservicesMakeSense** — koszty systemu rozproszonego, kiedy NIE warto skakać do
+    mikroserwisów, prawo Conwaya.
+15. **ArchitectureCapstone** — projekt łączący WSZYSTKIE poprzednie 14 lekcji w 1 spójnej,
+    mniejszej aplikacji (np. moduł zamówień) — architektura warstwowa/heksagonalna + DTO/Mapper +
+    granice transakcji/walidacji/błędów zademonstrowane razem.
+
+Kluczowa decyzja techniczna do utrzymania przy pisaniu: ten rozdział jest w PEŁNI konceptualny/
+architektoniczny jak `_16_clean_code` — ŻADNYCH nowych zależności do `pom.xml`, ŻADNEGO Springa
+(Spring Boot to OSTATNI, osobny rozdział całego kursu — architektura tu musi być demonstrowana
+CZYSTĄ Javą: zagnieżdżone klasy statyczne udające warstwy/moduły, `HashMap` jako "baza w pamięci",
+interfejsy jako porty, implementacje jako adaptery — dokładnie styl `BadExample`/`GoodExample`
+znany z `_16_clean_code`). Każda lekcja nadal musi być REALNYM, kompilującym się i uruchamialnym
+kodem (nie tylko tekstem w komentarzach) — ta sama zasada co w `_16_clean_code`.
+- Przykładowy "brudny" kod demo (`unusedField` nieużywane, `a == b` zamiast `.equals()` na
+  Stringach, martwy zapis `x=5; x=10;`) DAJE deterministyczne, zweryfikowane wyniki: PMD zgłasza 5
+  naruszeń (`UnusedPrivateField`, `UnusedLocalVariable`, 2× `UnusedAssignment`, `SystemPrintln`),
+  SpotBugs zgłasza 2 (`ES_COMPARING_PARAMETER_STRING_WITH_EQ`, `URF_UNREAD_FIELD`) — jeśli przyszła
+  aktualizacja wersji PMD/SpotBugs zmieni te liczby, to nie błąd w kodzie lekcji, tylko zmiana w
+  zestawie reguł danej wersji.
