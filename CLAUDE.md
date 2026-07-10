@@ -634,7 +634,7 @@ w internecie, więc przed dalszą edycją tej lekcji sprawdź realne sygnatury (
   zestawie reguł danej wersji.
 
 
-## Rozdział _17_architecture ("Architektura aplikacji Java") — W TRAKCIE PISANIA
+## Rozdział _17_architecture ("Architektura aplikacji Java")
 
 Rozpoczęty 2026-07-10, na wyraźne życzenie użytkownika (rozdział + wyjściowa lista 15 lekcji podana
 przez użytkownika). Kontynuacja `_16_clean_code` — tamten rozdział uczył czystego kodu NA POZIOMIE
@@ -651,12 +651,13 @@ listy, NIE doklejonych na końcu (w odróżnieniu od wzorca "dopisz na końcu, n
 `_01_fundamentals/Lesson16_Exceptions`/`_15_jvm_internals` — tu bezpiecznie przenumerowano całość,
 bo ŻADNA lekcja nie miała jeszcze napisanej treści, więc koszt przenumerowania był zerowy).
 
-Stan na 2026-07-10: **szkielet zarejestrowany (20 lekcji), TREŚĆ JESZCZE NIE NAPISANA** — wszystkie
-20 folderów lekcji utworzone w `src/main/java/com/example/javaquest/_17_architecture/` z
-plikami-szkieletami (`_LessonXX_*.java` z `// TODO: lekcja jeszcze nie napisana`,
-`_Exercises_LessonXX_*.java` z `// TODO: 30 cwiczen jeszcze nie napisanych`) — DOKŁADNIE ten sam
-wzorzec co przy `_16_clean_code` (patrz sekcja wyżej). Jeśli praca zostanie przerwana, sprawdź
-które pliki nadal zawierają te znaczniki TODO — to jednoznaczna lista tego, co zostało do zrobienia.
+Stan na 2026-07-10: **rozdział kompletny** — wszystkie 20 lekcji mają teorię + 30 ćwiczeń każda,
+zweryfikowane pełną kompilacją (`mvnw.cmd compile`) oraz smoke-testem uruchomieniowym kilkunastu
+reprezentatywnych lekcji (wszystkie kończą się poprawnie, bez wyjątków). Lesson20 (kapszton) to w
+pełni DZIAŁAJĄCA (nie tylko opisowa) symulacja modularnego monolitu "Platforma Zapisów na Kursy" —
+2 moduły (`Courses`, `Enrollments`) + moduł `Notifications` jako subskrybent zdarzeń, uruchamialna
+i zweryfikowana pod kątem 6 scenariuszy (sukces x2, wypełniony limit, zły format, nieznaleziony
+kurs, nieoczekiwany wyjątek) — każdy scenariusz daje DOKŁADNIE oczekiwany wynik.
 
 Finalna lista 20 lekcji (nazwy folderów już zarejestrowane w `_TableOfContents.java` — 5 nowych
 tematów oznaczonych NIŻEJ jako DODANE):
@@ -736,3 +737,21 @@ CZYSTĄ Javą: zagnieżdżone klasy statyczne udające warstwy/moduły, `HashMap
 interfejsy jako porty, implementacje jako adaptery — dokładnie styl `BadExample`/`GoodExample`
 znany z `_16_clean_code`). Każda lekcja nadal musi być REALNYM, kompilującym się i uruchamialnym
 kodem (nie tylko tekstem w komentarzach) — ta sama zasada co w `_16_clean_code`.
+
+Pułapka napotkana wielokrotnie przy pisaniu (Lesson04 i Lesson15) — WARTO ZAPAMIĘTAĆ na przyszłość:
+`record Foo(boolean success, ...)` NIE MOŻE mieć statycznej metody fabrykującej o TEJ SAMEJ nazwie
+co komponent rekordu (np. `static Foo success()` koliduje z auto-generowanym akcesorem
+`success()`) — daje błąd kompilacji `invalid accessor method in record` w miejscu deklaracji, oraz
+mylący błąd `incompatible types` we WSZYSTKICH miejscach wywołania akcesora. Rozwiązanie: nazwij
+fabrykę inaczej niż komponent (np. `ok()` zamiast `success()`/`valid()`) — zastosowane w
+`Lesson04_ControllerServiceRepository.TaskResult` i `Lesson15_ValidationArchitecture.ValidationResult`.
+
+Kapszton (Lesson20) demonstruje modularny monolit "Platforma Zapisów na Kursy": moduł `Courses`
+(bogata encja `Course` z niezmiennikiem pojemności, port `CourseRepositoryPort` + adapter in-memory
++ dekorator cache'ujący, publiczne API `CoursesModuleApi`) i moduł `Enrollments` (DTO wejściowe,
+`EnrollStudentUseCase` orkiestrujący 3 poziomy walidacji z Lesson15 + granicę transakcji z Lesson13,
+`BoundaryErrorHandler` z Lesson16, publikacja zdarzenia `EnrollmentCreated` z Lesson18) — moduł
+`Notifications` subskrybuje zdarzenie BEZ wiedzy modułu Enrollments o jego istnieniu. 6 scenariuszy
+w `main()`: 2 udane zapisy, wyczerpanie limitu miejsc (409), zły format e-maila (400), nieznaleziony
+kurs (404), i celowy `NullPointerException` demonstrujący bezpieczny fallback (500 bez wycieku
+szczegółów) — wszystkie zweryfikowane uruchomieniowo, nie tylko kompilacyjnie.
