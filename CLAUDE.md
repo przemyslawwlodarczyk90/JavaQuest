@@ -626,67 +626,108 @@ w internecie, więc przed dalszą edycją tej lekcji sprawdź realne sygnatury (
   MUSI być wywołane przed `finishSettings()`/`execute()`, inaczej `NullPointerException` w
   `FindBugs.isDetectorEnabled` (brak `UserPreferences` nie jest ustawiany domyślnie). Wynik:
   `bugReporter.getBugCollection()` (implementuje `Iterable<BugInstance>`, `bug.getType()`/`getMessage()`).
+- Przykładowy "brudny" kod demo (`unusedField` nieużywane, `a == b` zamiast `.equals()` na
+  Stringach, martwy zapis `x=5; x=10;`) DAJE deterministyczne, zweryfikowane wyniki: PMD zgłasza 5
+  naruszeń (`UnusedPrivateField`, `UnusedLocalVariable`, 2× `UnusedAssignment`, `SystemPrintln`),
+  SpotBugs zgłasza 2 (`ES_COMPARING_PARAMETER_STRING_WITH_EQ`, `URF_UNREAD_FIELD`) — jeśli przyszła
+  aktualizacja wersji PMD/SpotBugs zmieni te liczby, to nie błąd w kodzie lekcji, tylko zmiana w
+  zestawie reguł danej wersji.
+
 
 ## Rozdział _17_architecture ("Architektura aplikacji Java") — W TRAKCIE PISANIA
 
-Rozpoczęty 2026-07-10, na wyraźne życzenie użytkownika (rozdział + dokładna lista 15 lekcji podana
-przez użytkownika, zarejestrowana 1:1 w `_TableOfContents.java`). Kontynuacja `_16_clean_code` —
-tamten rozdział uczył czystego kodu NA POZIOMIE metody/klasy, ten uczy organizacji kodu NA POZIOMIE
-CAŁEJ APLIKACJI (warstwy, granice modułów, kierunek zależności, granice transakcji/walidacji/błędów).
+Rozpoczęty 2026-07-10, na wyraźne życzenie użytkownika (rozdział + wyjściowa lista 15 lekcji podana
+przez użytkownika). Kontynuacja `_16_clean_code` — tamten rozdział uczył czystego kodu NA POZIOMIE
+metody/klasy, ten uczy organizacji kodu NA POZIOMIE CAŁEJ APLIKACJI (warstwy, granice modułów,
+kierunek zależności, granice transakcji/walidacji/błędów/cache'a). Świadomie BEZ Springa — Spring
+Boot to OSTATNI, osobny rozdział całego kursu (potwierdzone explicité przez użytkownika w tej samej
+rozmowie: "SPRING BEDZIE NA SAM KONIEC DOPIERO").
 
-Stan na 2026-07-10: **szkielet zarejestrowany, TREŚĆ JESZCZE NIE NAPISANA** — wszystkie 15 folderów
-lekcji utworzone w `src/main/java/com/example/javaquest/_17_architecture/` z plikami-szkieletami
-(`_LessonXX_*.java` z `// TODO: lekcja jeszcze nie napisana`, `_Exercises_LessonXX_*.java` z
-`// TODO: 30 cwiczen jeszcze nie napisanych`) — DOKŁADNIE ten sam wzorzec co przy `_16_clean_code`
-(patrz sekcja wyżej). Jeśli praca zostanie przerwana, sprawdź które pliki nadal zawierają te
-znaczniki TODO — to jednoznaczna lista tego, co zostało do zrobienia.
+Po zapytaniu o skalę (ten sam wzorzec co przy `_15_jvm_internals`/`_16_clean_code`, przez
+`AskUserQuestion`) użytkownik wybrał umiarkowaną rozbudowę z 15 do **20 lekcji** — dodano 5 dobrze
+uzasadnionych tematów (ADR, bounded contexts/DDD-lite, API versioning, caching architecture,
+event-driven komunikacja między modułami), rozmieszczonych w logicznych miejscach oryginalnej
+listy, NIE doklejonych na końcu (w odróżnieniu od wzorca "dopisz na końcu, nie przenumerowuj" z
+`_01_fundamentals/Lesson16_Exceptions`/`_15_jvm_internals` — tu bezpiecznie przenumerowano całość,
+bo ŻADNA lekcja nie miała jeszcze napisanej treści, więc koszt przenumerowania był zerowy).
 
-Lista 15 lekcji (nazwy folderów już zarejestrowane, DOKŁADNIE wg życzenia użytkownika — nie
-zmieniaj numeracji/nazw bez wyraźnej prośby):
-1. WhyArchitectureMatters, 2. LayeredArchitecture, 3. ControllerServiceRepository,
-4. DomainModelVsAnemicModel, 5. DtoEntityMapper, 6. PackageByLayerVsPackageByFeature,
-7. DependencyDirection, 8. HexagonalArchitectureIntro, 9. PortsAndAdapters,
-10. TransactionBoundaries, 11. ValidationArchitecture, 12. ErrorHandlingArchitecture,
-13. ModularMonolith, 14. WhenMicroservicesMakeSense, 15. ArchitectureCapstone.
+Stan na 2026-07-10: **szkielet zarejestrowany (20 lekcji), TREŚĆ JESZCZE NIE NAPISANA** — wszystkie
+20 folderów lekcji utworzone w `src/main/java/com/example/javaquest/_17_architecture/` z
+plikami-szkieletami (`_LessonXX_*.java` z `// TODO: lekcja jeszcze nie napisana`,
+`_Exercises_LessonXX_*.java` z `// TODO: 30 cwiczen jeszcze nie napisanych`) — DOKŁADNIE ten sam
+wzorzec co przy `_16_clean_code` (patrz sekcja wyżej). Jeśli praca zostanie przerwana, sprawdź
+które pliki nadal zawierają te znaczniki TODO — to jednoznaczna lista tego, co zostało do zrobienia.
+
+Finalna lista 20 lekcji (nazwy folderów już zarejestrowane w `_TableOfContents.java` — 5 nowych
+tematów oznaczonych NIŻEJ jako DODANE):
+1. WhyArchitectureMatters, 2. ArchitectureDecisionRecords (DODANE), 3. LayeredArchitecture,
+4. ControllerServiceRepository, 5. DomainModelVsAnemicModel, 6. BoundedContextsAndDddLite (DODANE),
+7. DtoEntityMapper, 8. ApiVersioningAndCompatibility (DODANE), 9. PackageByLayerVsPackageByFeature,
+10. DependencyDirection, 11. HexagonalArchitectureIntro, 12. PortsAndAdapters,
+13. TransactionBoundaries, 14. CachingArchitecture (DODANE), 15. ValidationArchitecture,
+16. ErrorHandlingArchitecture, 17. ModularMonolith,
+18. EventDrivenCommunicationBetweenModules (DODANE), 19. WhenMicroservicesMakeSense,
+20. ArchitectureCapstone.
 
 Planowana treść merytoryczna każdej lekcji (roboczy plan do rozwinięcia przy pisaniu — nie
 ostateczny, ale punkt wyjścia, żeby nie zaczynać od zera po ewentualnej przerwie):
 1. **WhyArchitectureMatters** — koszt zmiany rośnie z czasem/rozmiarem systemu bez architektury;
    architektura = decyzje TRUDNE do odwrócenia później; cele dobrej architektury (testowalność,
    niezależność od frameworka/UI/bazy danych — nawiązanie do Uncle Boba "Clean Architecture").
-2. **LayeredArchitecture** — klasyczne warstwy prezentacja/logika biznesowa/dostęp do danych,
+2. **ArchitectureDecisionRecords** (DODANE) — ADR (Michael Nygard, 2011) jako lekki format
+   dokumentowania WAŻNYCH decyzji architektonicznych (kontekst, decyzja, konsekwencje) — dlaczego
+   "dlaczego" jest równie ważne co sam kod; naturalne rozwinięcie Lesson01.
+3. **LayeredArchitecture** — klasyczne warstwy prezentacja/logika biznesowa/dostęp do danych,
    POGŁĘBIENIE `_10_dao/Lesson02_LayeredArchitecture` (tamta lekcja była wąsko o DAO, ta jest o
    całej aplikacji) — jawnie odesłać, nie powielać.
-3. **ControllerServiceRepository** — kanoniczna trójka (świadomie BEZ Spring Boota — to ostatni
-   rozdział kursu; symulacja przez zwykłe klasy Javy), odpowiedzialność każdej warstwy, typowy błąd
-   (logika biznesowa w kontrolerze, repozytorium przeciekające do kontrolera).
-4. **DomainModelVsAnemicModel** — anemiczny model domenowy (encje = worki na dane, cała logika w
+4. **ControllerServiceRepository** — kanoniczna trójka (świadomie BEZ Spring Boota; symulacja przez
+   zwykłe klasy Javy), odpowiedzialność każdej warstwy, typowy błąd (logika biznesowa w
+   kontrolerze, repozytorium przeciekające do kontrolera).
+5. **DomainModelVsAnemicModel** — anemiczny model domenowy (encje = worki na dane, cała logika w
    serwisach, krytykowany przez Fowlera) vs bogaty model domenowy (zachowanie w encjach).
-5. **DtoEntityMapper** — DLACZEGO nie eksponować encji wprost na granicy API (sprzężenie kontraktu
+6. **BoundedContextsAndDddLite** (DODANE) — strategiczny DDD (Eric Evans) w pigułce: bounded
+   context jako granica, w której dany model/język ma jednoznaczne znaczenie; ten sam termin
+   biznesowy (np. "Produkt") może znaczyć co innego w różnych kontekstach (Katalog vs Magazyn) —
+   naturalne rozwinięcie Lesson05, pomost do Lesson17 (ModularMonolith).
+7. **DtoEntityMapper** — DLACZEGO nie eksponować encji wprost na granicy API (sprzężenie kontraktu
    z schematem bazy, nadmiarowe dane) — POGŁĘBIENIE `_09_jdbc/Lesson19_Dto`/`Lesson20_Mapper` na
    poziomie architektonicznym, nie mechaniki mapowania.
-6. **PackageByLayerVsPackageByFeature** — `controller/service/repository` (poziomo) vs
+8. **ApiVersioningAndCompatibility** (DODANE) — jak zmieniać kontrakt API bez łamania istniejących
+   klientów (wersjonowanie w URL/nagłówku, dodawanie pól jako zmiana kompatybilna, usuwanie/zmiana
+   typu jako niekompatybilna) — naturalne rozwinięcie Lesson07 (DTO to właśnie ten kontrakt).
+9. **PackageByLayerVsPackageByFeature** — `controller/service/repository` (poziomo) vs
    `orders/users/payments` (pionowo, per funkcja) — kompromisy obu.
-7. **DependencyDirection** — Dependency Rule (Clean/Onion Architecture) — zależności ZAWSZE do
-   środka, w stronę domeny; bezpośrednie powiązanie z DIP (`_16_clean_code/Lesson11`).
-8. **HexagonalArchitectureIntro** — Ports and Adapters (Alistair Cockburn) — "hexagon" to tylko
-   metafora (dowolna liczba "boków"), rdzeń domenowy niezależny od technologii.
-9. **PortsAndAdapters** — konkretna implementacja: porty jako interfejsy, adaptery jako
-   implementacje (DB/HTTP/CLI), korzyść dla testowalności (podmiana adaptera na testowy).
-10. **TransactionBoundaries** — GDZIE powinna żyć granica transakcji (warstwa serwisu, nie
+10. **DependencyDirection** — Dependency Rule (Clean/Onion Architecture) — zależności ZAWSZE do
+    środka, w stronę domeny; bezpośrednie powiązanie z DIP (`_16_clean_code/Lesson11`).
+11. **HexagonalArchitectureIntro** — Ports and Adapters (Alistair Cockburn) — "hexagon" to tylko
+    metafora (dowolna liczba "boków"), rdzeń domenowy niezależny od technologii.
+12. **PortsAndAdapters** — konkretna implementacja: porty jako interfejsy, adaptery jako
+    implementacje (DB/HTTP/CLI), korzyść dla testowalności (podmiana adaptera na testowy).
+13. **TransactionBoundaries** — GDZIE powinna żyć granica transakcji (warstwa serwisu, nie
     kontroler ani DAO) — POGŁĘBIENIE `_10_dao/Lesson19_UnitOfWork` na poziomie architektonicznym.
-11. **ValidationArchitecture** — warstwowa strategia walidacji: granica API (DTO) vs niezmienniki
+14. **CachingArchitecture** (DODANE) — GDZIE w architekturze powinien żyć cache (najczęściej
+    warstwa serwisu/repozytorium, nie kontroler), inwalidacja przy zapisie, cache jako przekrój
+    poprzeczny (cross-cutting concern) analogicznie do granic transakcji z Lesson13; nawiązanie do
+    `_13_libraries/Lesson27-28` (Caffeine) na poziomie mechaniki — tu nacisk na UMIEJSCOWIENIE.
+15. **ValidationArchitecture** — warstwowa strategia walidacji: granica API (DTO) vs niezmienniki
     domeny (encja/konstruktor) vs reguły biznesowe (serwis) — co gdzie powinno być sprawdzane.
-12. **ErrorHandlingArchitecture** — scentralizowana obsługa błędów NA GRANICY aplikacji, spójny
+16. **ErrorHandlingArchitecture** — scentralizowana obsługa błędów NA GRANICY aplikacji, spójny
     kształt odpowiedzi błędu — POGŁĘBIENIE `_16_clean_code/Lesson17_ExceptionDesign` (tam: projekt
     pojedynczego wyjątku; tu: architektura obsługi błędów w całym systemie).
-13. **ModularMonolith** — moduły w JEDNYM wdrożeniu z wymuszonymi granicami (bez rozproszenia
-    sieciowego mikroserwisów) — "najlepsze z obu światów" dla wielu projektów.
-14. **WhenMicroservicesMakeSense** — koszty systemu rozproszonego, kiedy NIE warto skakać do
+17. **ModularMonolith** — moduły w JEDNYM wdrożeniu z wymuszonymi granicami (bez rozproszenia
+    sieciowego mikroserwisów) — "najlepsze z obu światów" dla wielu projektów; opiera się na
+    bounded contexts z Lesson06.
+18. **EventDrivenCommunicationBetweenModules** (DODANE) — jak moduły w monolicie (Lesson17) mogą
+    komunikować się LUŹNO przez zdarzenia domenowe (domain events, prosty in-memory publisher/
+    listener) zamiast bezpośrednich wywołań metod między modułami — redukuje sprzężenie między
+    bounded contexts (Lesson06); naturalny pomost do Lesson19 (mikroserwisy komunikują się
+    analogicznie, ale przez sieć).
+19. **WhenMicroservicesMakeSense** — koszty systemu rozproszonego, kiedy NIE warto skakać do
     mikroserwisów, prawo Conwaya.
-15. **ArchitectureCapstone** — projekt łączący WSZYSTKIE poprzednie 14 lekcji w 1 spójnej,
-    mniejszej aplikacji (np. moduł zamówień) — architektura warstwowa/heksagonalna + DTO/Mapper +
-    granice transakcji/walidacji/błędów zademonstrowane razem.
+20. **ArchitectureCapstone** — projekt łączący WSZYSTKIE poprzednie 19 lekcji w 1 spójnej,
+    mniejszej aplikacji (np. moduł zamówień) — architektura warstwowa/heksagonalna + bounded
+    contexts + DTO/Mapper/wersjonowanie + granice transakcji/cache/walidacji/błędów + komunikacja
+    zdarzeniowa między modułami, zademonstrowane razem.
 
 Kluczowa decyzja techniczna do utrzymania przy pisaniu: ten rozdział jest w PEŁNI konceptualny/
 architektoniczny jak `_16_clean_code` — ŻADNYCH nowych zależności do `pom.xml`, ŻADNEGO Springa
@@ -695,9 +736,3 @@ CZYSTĄ Javą: zagnieżdżone klasy statyczne udające warstwy/moduły, `HashMap
 interfejsy jako porty, implementacje jako adaptery — dokładnie styl `BadExample`/`GoodExample`
 znany z `_16_clean_code`). Każda lekcja nadal musi być REALNYM, kompilującym się i uruchamialnym
 kodem (nie tylko tekstem w komentarzach) — ta sama zasada co w `_16_clean_code`.
-- Przykładowy "brudny" kod demo (`unusedField` nieużywane, `a == b` zamiast `.equals()` na
-  Stringach, martwy zapis `x=5; x=10;`) DAJE deterministyczne, zweryfikowane wyniki: PMD zgłasza 5
-  naruszeń (`UnusedPrivateField`, `UnusedLocalVariable`, 2× `UnusedAssignment`, `SystemPrintln`),
-  SpotBugs zgłasza 2 (`ES_COMPARING_PARAMETER_STRING_WITH_EQ`, `URF_UNREAD_FIELD`) — jeśli przyszła
-  aktualizacja wersji PMD/SpotBugs zmieni te liczby, to nie błąd w kodzie lekcji, tylko zmiana w
-  zestawie reguł danej wersji.

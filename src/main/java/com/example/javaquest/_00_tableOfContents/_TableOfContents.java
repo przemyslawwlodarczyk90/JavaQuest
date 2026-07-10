@@ -187,12 +187,14 @@ public class _TableOfContents {
             )),
 
             new Chapter("_17_architecture", "Architektura aplikacji Java", List.of(
-                    "01_WhyArchitectureMatters", "02_LayeredArchitecture", "03_ControllerServiceRepository",
-                    "04_DomainModelVsAnemicModel", "05_DtoEntityMapper",
-                    "06_PackageByLayerVsPackageByFeature", "07_DependencyDirection",
-                    "08_HexagonalArchitectureIntro", "09_PortsAndAdapters", "10_TransactionBoundaries",
-                    "11_ValidationArchitecture", "12_ErrorHandlingArchitecture", "13_ModularMonolith",
-                    "14_WhenMicroservicesMakeSense", "15_ArchitectureCapstone"
+                    "01_WhyArchitectureMatters", "02_ArchitectureDecisionRecords", "03_LayeredArchitecture",
+                    "04_ControllerServiceRepository", "05_DomainModelVsAnemicModel",
+                    "06_BoundedContextsAndDddLite", "07_DtoEntityMapper", "08_ApiVersioningAndCompatibility",
+                    "09_PackageByLayerVsPackageByFeature", "10_DependencyDirection",
+                    "11_HexagonalArchitectureIntro", "12_PortsAndAdapters", "13_TransactionBoundaries",
+                    "14_CachingArchitecture", "15_ValidationArchitecture", "16_ErrorHandlingArchitecture",
+                    "17_ModularMonolith", "18_EventDrivenCommunicationBetweenModules",
+                    "19_WhenMicroservicesMakeSense", "20_ArchitectureCapstone"
             ))
     );
 
