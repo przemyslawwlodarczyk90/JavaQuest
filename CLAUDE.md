@@ -755,3 +755,184 @@ Kapszton (Lesson20) demonstruje modularny monolit "Platforma Zapisów na Kursy":
 w `main()`: 2 udane zapisy, wyczerpanie limitu miejsc (409), zły format e-maila (400), nieznaleziony
 kurs (404), i celowy `NullPointerException` demonstrujący bezpieczny fallback (500 bez wycieku
 szczegółów) — wszystkie zweryfikowane uruchomieniowo, nie tylko kompilacyjnie.
+
+Stan na 2026-07-10: `_17_architecture` **kompletny i zweryfikowany** — 20/20 lekcji z teorią +
+30 ćwiczeń, `mvnw.cmd compile` przechodzi bez błędów (uruchomione z `$env:JAVA_HOME =
+"C:\Users\kapit\.jdks\openjdk-25.0.2"` — na tej maszynie `JAVA_HOME` NIE jest ustawione globalnie
+w środowisku powłoki, trzeba je ustawić ręcznie w każdej nowej sesji przed `mvnw.cmd`).
+
+## Rozdziały _18_rest_api i _19_security_basics — PLANOWANIE W TOKU (checkpoint 2026-07-10)
+
+**UWAGA DLA KONTYNUACJI PO ZERWANIU SESJI:** ten wpis został zapisany świadomie WCZEŚNIE (zanim
+powstała jakakolwiek treść lekcji) na wypadek wyczerpania limitu w trakcie pisania — dokładnie z
+tego powodu, żeby wznowienie pracy nie wymagało odtwarzania planu od zera. Foldery obu rozdziałów
+utworzone, oba rozdziały zarejestrowane w `_TableOfContents.java` (`ROZDZIALY`). Kolejność
+pisania: `_18_rest_api` od Lesson01 w dół, potem `_19_security_basics`. **POSTĘP NA ŻYWO (aktualizuj
+przy każdej ukończonej lekcji):** `_18_rest_api` Lesson01_HttpDeepDive, Lesson02_RestIntroduction,
+Lesson03_ResourcesAndEndpoints, Lesson04_HttpMethods, Lesson05_StatusCodes,
+Lesson06_RequestResponseBody, Lesson07_ContentNegotiation, Lesson08_JsonApiDesign,
+Lesson09_PathVariablesAndQueryParams, Lesson10_PaginationSortingFiltering,
+Lesson11_HttpCachingAndConditionalRequests, Lesson12_ErrorResponseDesign,
+Lesson13_ValidationErrors GOTOWE (teoria + 30 ćwiczeń każda, skompilowane I uruchomieniowo
+zweryfikowane `mvnw.cmd exec:java` — zero błędów). Lesson14 i dalej: NIE zaczęte. (13/20
+`_18_rest_api` gotowe.)
+
+PUŁAPKA napotkana przy Lesson07 (temat z natury zawiera dużo literału `*/*` z Accept HTTP) —
+WARTO ZAPAMIĘTAĆ przy pisaniu KOLEJNYCH lekcji, które wspominają wildcard media type: pisanie
+`*/*` DOSŁOWNIE wewnątrz bloku komentarza `/* ... */` PRZEDWCZEŚNIE ZAMYKA ten komentarz (bo `*/`
+to token zamykający) — cała reszta bloku staje się wtedy nielegalnym kodem, dając mylące błędy
+kompilacji daleko od prawdziwej przyczyny (`illegal start of type`, `unclosed string literal`).
+Rozwiązanie: w komentarzach pisz `*\/*` (backslash rozdziela `*` i `/`, nie ma znaczenia
+składniowego w komentarzu, ale łamie token `*/`) — wewnątrz String literałów (`"*/*"` w kodzie
+wykonywalnym, np. `System.out.println`) NIE ma tego problemu, tam `*/` jest zwykłym tekstem.
+`_19_security_basics`: ŻADNA lekcja nie ma jeszcze treści. Sprawdź `git status`/zawartość folderów
+lekcji, żeby potwierdzić dokładnie gdzie praca stanęła (ten wpis może nie być zaktualizowany co do
+sekundy).
+
+Ważna notatka techniczna o środowisku (na tej maszynie): `JAVA_HOME` NIE jest ustawione globalnie
+w powłoce — przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell trzeba ustawić
+`$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` (Bash tool ma inny, nieskonfigurowany
+`JAVA_HOME` — używaj PowerShell do `mvnw.cmd`, nie Bash). Weryfikacja lekcji = 2 kroki:
+`mvnw.cmd -q compile` (kompilacja całego projektu) ORAZ
+`mvnw.cmd -q exec:java "-Dexec.mainClass=<pelna.klasa._LessonXX_Nazwa>"` (faktyczne uruchomienie,
+sprawdza że demo NIE rzuca wyjątków w runtime, nie tylko że się kompiluje). SPROSTOWANIE
+(sprawdzone 2026-07-10 przez grep po całym repo): polskie znaki diakrytyczne NIE są zakazaną
+konwencją — występują w wielu istniejących lekcjach we WSZYSTKICH rozdziałach (`_01`...`_17`),
+włącznie z `System.out.println(...)`. Zaobserwowany 1 przypadek "krzaczków" w outpucie
+(`mysli`→wyglądało jak zepsute) to najpewniej kosmetyczna usterka RENDEROWANIA konsoli
+PowerShell/tego narzędzia przy przechwytywaniu outputu `mvnw.cmd`, NIE realny błąd w kodzie —
+NIE trzeba unikać polskich znaków w nowych lekcjach `_18_rest_api`/`_19_security_basics`, pisz
+naturalną polszczyzną jak w większości istniejących rozdziałów.
+
+Oba rozdziały to kontynuacja `_17_architecture` — świadomie WCIĄŻ bez Springa (Spring Boot to
+OSTATNI, osobny rozdział całego kursu, potwierdzone wielokrotnie przez użytkownika). REST API i
+bezpieczeństwo są uczone czystą Javą (serwery embedowane przez `com.sun.net.httpserver.HttpServer`/
+`HttpsServer`, klient przez `java.net.http.HttpClient`) — dokładnie ten sam "embeduj i naprawdę
+uruchom" duch co w `_06_networking`/`_07_servlets`/`_11_buildtools`/`_14_advancedjava`/
+`_15_jvm_internals`, ale bez zależności od Tomcata (nie jest tu potrzebny — REST API na poziomie
+projektowania nie wymaga pełnego kontenera serwletów).
+
+Obie listy tematów wyjściowo podał użytkownik; za jego zgodą ("jeśli uważasz że trzeba rozbudować,
+to zrób") rozdziały zostały umiarkowanie rozbudowane (ten sam wzorzec co przy
+`_15_jvm_internals`/`_16_clean_code`/`_17_architecture`) — nowe tematy oznaczone niżej jako DODANE.
+
+### _18_rest_api ("REST API i projektowanie HTTP") — 20 lekcji (rozbudowane z 16)
+
+1. HttpDeepDive, 2. RestIntroduction (+ krótkie wprowadzenie do HATEOAS/Richardson Maturity Model,
+   bez osobnej lekcji — nie na tyle bogaty temat w praktyce codziennych REST API), 3. ResourcesAndEndpoints,
+   4. HttpMethods, 5. StatusCodes, 6. RequestResponseBody, 7. ContentNegotiation (DODANE — nagłówki
+   Accept/Content-Type, media types, wersjonowane media types jako alternatywa dla Lesson14),
+   8. JsonApiDesign, 9. PathVariablesAndQueryParams, 10. PaginationSortingFiltering,
+   11. HttpCachingAndConditionalRequests (DODANE — ETag/Last-Modified/Cache-Control/If-None-Match;
+   ŚWIADOMIE NIE duplikuje `_17_architecture/Lesson14_CachingArchitecture`, który jest o TYM, GDZIE
+   w architekturze aplikacji powinien żyć cache — ta lekcja jest o mechanice cache'owania na
+   poziomie protokołu HTTP, jawnie się odsyła do Lesson14 zamiast powtarzać), 12. ErrorResponseDesign,
+   13. ValidationErrors, 14. Versioning, 15. Idempotency, 16. RateLimitingAndThrottling (DODANE —
+   429, nagłówki `X-RateLimit-*`/`Retry-After`, koncepcja token bucket), 17. PostmanBasics,
+   18. OpenApiSwaggerIntro, 19. RestVsRpcVsGraphQL (DODANE — pozycjonuje REST wśród alternatyw,
+   naturalny pomost przed podsumowaniem), 20. RestApiBestPracticesAndCapstone (best practices +
+   kapszton połączone w jedną ostatnią lekcję — ta sama konwencja co ostatnia lekcja w
+   `_12_hibernate`/`_14_advancedjava`/`_15_jvm_internals`/`_16_clean_code`/`_17_architecture`).
+
+Planowane decyzje techniczne (do zweryfikowania/dopracowania przy pisaniu, nie ostateczne):
+- ŻADNA nowa zależność do `pom.xml` nie powinna być potrzebna — cały rozdział da się zrobić samym
+  JDK (`com.sun.net.httpserver.HttpServer` + `java.net.http.HttpClient`), tak jak już zrobiono w
+  `_06_networking/Lesson09-10,12` i `_13_libraries/Lesson14`.
+- Lesson17 (PostmanBasics) — Postman to zewnętrzne narzędzie GUI, nie da się go wywołać z `main()`.
+  HYBRYDOWY wzorzec ćwiczeń jak w blokach Maven/Gradle z `_11_buildtools` (opis + realne kroki w
+  Postmanie do wykonania przez kursanta), `main()` może za to wystawić lokalny endpoint (port 0),
+  na którym kursant faktycznie poćwiczy w Postmanie.
+- Lesson18 (OpenApiSwaggerIntro) — bez `springdoc`/nowej zależności; `main()` generuje i wypisuje
+  realną specyfikację OpenAPI 3.0 (YAML/JSON jako text block) opisującą endpointy z wcześniejszych
+  lekcji, ten sam wzorzec "generuj prawdziwy plik konfiguracyjny" co Maven/Gradle w `_11_buildtools`.
+  WAŻNA UWAGA (zgłoszona przez użytkownika 2026-07-10): w Spring Boot user normalnie generuje
+  Swagger/OpenAPI PRAWIE bezobsługowo przez samo dodanie 1 zależności do `pom.xml`:
+  `org.springdoc:springdoc-openapi-starter-webmvc-ui` (auto-skanuje `@RestController`/mapping
+  adnotacje przez Spring MVC dispatcher i wystawia `/v3/api-docs` + `/swagger-ui.html`) — TEGO
+  NIE da się tu embedować naprawdę, bo wymaga żywego kontekstu Spring MVC (którego ten rozdział
+  świadomie NIE ma). Lesson18 powinien to jawnie WSPOMNIEĆ jako zapowiedź ("w Spring Boot ten sam
+  efekt osiągniesz 1 zależnością, bez ręcznego pisania YAML") i odesłać do ostatniego,
+  osobnego rozdziału Spring Boot na końcu kursu, GDZIE dopiero `springdoc-openapi-starter-webmvc-ui`
+  powinien zostać naprawdę dodany do `pom.xml` i zademonstrowany działająco z prawdziwymi
+  kontrolerami. Współrzędna artefaktu podana przez użytkownika z pamięci — ZWERYFIKUJ dokładną
+  najnowszą wersję (`${springdoc.version}`) w Maven Central, kiedy przyjdzie czas pisać rozdział
+  Spring Boot, nie zgaduj.
+- Ta sama zasada bezpieczeństwa demo co w `_06_networking`/`_07_servlets`: port zawsze 0, serwer
+  zawsze zatrzymywany w `finally`, `main()` kończy się samoistnie w kilka sekund, bez zależności od
+  realnego internetu (w odróżnieniu od `_06_networking`, tu nie ma dobrego powodu do łączenia się z
+  prawdziwymi zewnętrznymi hostami).
+
+### _19_security_basics ("Podstawy bezpieczeństwa aplikacji") — 21 lekcji (rozbudowane z 13)
+
+1. AuthenticationVsAuthorization, 2. PasswordHashing, 3. BCrypt, 4. SessionsAndCookies,
+   5. JwtIntroduction, 6. OAuth2AndOpenIdConnectIntro (DODANE — delegowana autoryzacja, authorization
+   code flow koncepcyjnie, gdzie JWT pasuje jako format tokenu), 7. AuthorizationPatternsAndRbac
+   (DODANE — RBAC/ABAC, sprawdzanie uprawnień, zasada najmniejszych uprawnień; pogłębienie
+   Lesson01 poza samą definicję), 8. HttpsTlsBasics, 9. Cors, 10. Csrf, 11. Xss,
+   12. SecurityHeaders (DODANE — CSP/X-Frame-Options/HSTS/X-Content-Type-Options; naturalne
+   uzupełnienie Xss/Csrf), 13. SqlInjectionDeepDive (POGŁĘBIENIE `_09_jdbc/Lesson14_SqlInjection`
+   — tamta lekcja to wprowadzenie na poziomie JDBC, ta idzie głębiej: UNION-based, blind
+   boolean-based, second-order injection — jawnie się odsyła zamiast powtarzać),
+   14. InsecureDeserialization (DODANE, na wyraźną prośbę użytkownika o dalszą rozbudowę bloku
+   security — klasyczna kategoria OWASP, POGŁĘBIENIE `_04_io/Lesson16_ObjectSerialization` od
+   strony ataku: niebezpieczeństwo `ObjectInputStream.readObject()` na danych od niezaufanego
+   klienta, koncepcja "gadget chain" (Apache Commons Collections, ysoserial) BEZ faktycznego
+   uruchamiania złośliwego payloadu, obrona przez `ObjectInputFilter` (JEP 290)),
+   15. XxeAndXmlExternalEntityAttacks (DODANE — POGŁĘBIENIE `_06_networking/Lesson13_XmlParsing`
+   od strony ataku: `DocumentBuilderFactory` z domyślnymi ustawieniami pozwala na wczytanie
+   zewnętrznych encji/plików lokalnych przez DTD, realne demo podatnego i zabezpieczonego parsera
+   `setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)`),
+   16. PathTraversalAndFileUploadSecurity (DODANE — `../../../etc/passwd` w nazwie pliku,
+   "zip slip" jako specyficzny przypadek przy rozpakowywaniu ZIP, POGŁĘBIENIE
+   `_07_servlets/Lesson18_FileUpload` i `_04_io/Lesson24_ZIP` od strony bezpieczeństwa: walidacja
+   znormalizowanej ścieżki przez `Path.normalize()`/`startsWith` przed zapisem),
+   17. InputValidation (było 14), 18. SecretsManagement (było 15),
+   19. SecureLoggingAndAuditing (DODANE — nielogowanie sekretów/PII, audit trail zdarzeń
+   bezpieczeństwa, naturalne uzupełnienie Lesson18), 20. DependencyAndSupplyChainSecurity
+   (DODANE — podatne zależności tranzytywne, koncepcja SBOM, `mvn dependency:tree` pod kątem
+   bezpieczeństwa — nawiązanie do `_11_buildtools`), 21. OwaspTop10OverviewAndCapstone (przegląd +
+   kapszton łączący hashowanie/JWT/walidację/nagłówki bezpieczeństwa w jednym małym, zabezpieczonym
+   demo-endpoincie — ta sama konwencja "ostatnia lekcja = best practices + capstone" co w innych
+   rozdziałach).
+
+Świadomie NIE dodano osobnej lekcji o brute-force/blokadzie konta po nieudanych logowaniach (blisko
+związana z Lesson01/Lesson04) ani osobnej lekcji o narzędziach SAST/DAST (częściowo już pokryte
+przez `_16_clean_code/Lesson20_StaticAnalysisTools` — PMD/SpotBugs; tu wystarczy krótkie
+nawiązanie w Lesson20/21) — żeby nie rozdymać rozdziału ponad potrzebę.
+
+Planowane decyzje techniczne (do zweryfikowania/dopracowania przy pisaniu, nie ostateczne):
+- **BCrypt (Lesson03)**: wymaga nowej zależności. Plan: `org.mindrot:jbcrypt` (mała, samodzielna
+  implementacja BCrypt BEZ ciągnięcia całego Spring Security) zamiast
+  `spring-security-crypto` — świadomie unikamy jakiejkolwiek zależności `spring-security-*` przed
+  ostatnim rozdziałem kursu. **NIE dodawaj współrzędnych na pamięć — zweryfikuj dokładną, aktualną
+  wersję w Maven Central przed edycją `pom.xml`**, dokładnie ta sama zasada ostrożności co przy
+  PMD/SpotBugs w `_16_clean_code/Lesson20` i Checkstyle (tam jeszcze niezweryfikowany).
+- **JWT (Lesson05)**: wymaga nowej zależności. Plan: `io.jsonwebtoken:jjwt-api` +
+  `io.jsonwebtoken:jjwt-impl` + `io.jsonwebtoken:jjwt-jackson` (JJWT — integruje się z Jacksonem
+  już obecnym transytywnie przez `spring-boot-starter-web`). Tak samo: zweryfikuj wersję w Maven
+  Central przed dodaniem, nie zgaduj.
+- **HttpsTlsBasics (Lesson08)**: ambitny plan — realny, samopodpisany certyfikat wygenerowany
+  programowo LUB przez wywołanie prawdziwego `keytool` przez `ProcessBuilder` (ten sam wzorzec co
+  wywoływanie `javac`/`javap`/`jfr` w `_11_buildtools`/`_15_jvm_internals`), żeby postawić
+  faktyczny `com.sun.net.httpserver.HttpsServer` i połączyć się do niego prawdziwym TLS handshake
+  z `HttpClient` (wymaga custom `TrustManager`/truststore po stronie klienta, bo certyfikat jest
+  samopodpisany). Jeśli okaże się zbyt kruche/niestabilne przy pisaniu — fallback: lekcja
+  częściowo opisowa (koncepcja handshake/certyfikatów) + realne demo TYLKO na warstwie HTTP
+  nagłówków (`Strict-Transport-Security` itp.), bez pełnego TLS.
+- **OAuth2AndOpenIdConnectIntro (Lesson06)**: docelowo NIE tylko opisowa — plan: uproszczony,
+  lokalny "authorization server" + "resource server" jako dwa `HttpServer` na porcie 0 w tym samym
+  `main()`, żeby naprawdę przejść przez authorization code flow i pokazać wymianę kodu na token.
+  Jeśli zbyt złożone na jedną lekcję — fallback: opisowa lekcja z sekwencją kroków jako tekst +
+  diagram ASCII, bez pełnej implementacji.
+- Reszta rozdziału (Cors/Csrf/Xss/SecurityHeaders/SqlInjectionDeepDive) — realne demo przez
+  `com.sun.net.httpserver.HttpServer` (np. faktyczna obsługa preflight OPTIONS dla CORS, faktyczne
+  odbicie niezescapowanego inputu dla XSS pokazane obok wersji bezpiecznej) + H2 in-memory (już
+  używane w `_08_sql`/`_09_jdbc`/`_10_dao`/`_12_hibernate`) dla SqlInjectionDeepDive, bez nowej
+  zależności bazodanowej.
+- Ta sama zasada bezpieczeństwa demo co w `_18_rest_api`: port zawsze 0, serwer zatrzymywany w
+  `finally`, `main()` kończy się samoistnie w kilka sekund.
+
+Obie listy lekcji są już zarejestrowane w `_TableOfContents.java`. Foldery lekcji (puste) już
+utworzone pod `src/main/java/com/example/javaquest/_18_rest_api/LessonXX_Temat/` i
+`_19_security_basics/LessonXX_Temat/`. Następny krok pracy: zacząć pisać
+`_Lesson01_HttpDeepDive.java` + `_Exercises_Lesson01_HttpDeepDive.java` w `_18_rest_api`.

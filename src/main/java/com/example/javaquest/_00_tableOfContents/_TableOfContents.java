@@ -195,6 +195,28 @@ public class _TableOfContents {
                     "14_CachingArchitecture", "15_ValidationArchitecture", "16_ErrorHandlingArchitecture",
                     "17_ModularMonolith", "18_EventDrivenCommunicationBetweenModules",
                     "19_WhenMicroservicesMakeSense", "20_ArchitectureCapstone"
+            )),
+
+            new Chapter("_18_rest_api", "REST API i projektowanie HTTP", List.of(
+                    "01_HttpDeepDive", "02_RestIntroduction", "03_ResourcesAndEndpoints",
+                    "04_HttpMethods", "05_StatusCodes", "06_RequestResponseBody",
+                    "07_ContentNegotiation", "08_JsonApiDesign", "09_PathVariablesAndQueryParams",
+                    "10_PaginationSortingFiltering", "11_HttpCachingAndConditionalRequests",
+                    "12_ErrorResponseDesign", "13_ValidationErrors", "14_Versioning",
+                    "15_Idempotency", "16_RateLimitingAndThrottling", "17_PostmanBasics",
+                    "18_OpenApiSwaggerIntro", "19_RestVsRpcVsGraphQL",
+                    "20_RestApiBestPracticesAndCapstone"
+            )),
+
+            new Chapter("_19_security_basics", "Podstawy bezpieczeństwa aplikacji", List.of(
+                    "01_AuthenticationVsAuthorization", "02_PasswordHashing", "03_BCrypt",
+                    "04_SessionsAndCookies", "05_JwtIntroduction", "06_OAuth2AndOpenIdConnectIntro",
+                    "07_AuthorizationPatternsAndRbac", "08_HttpsTlsBasics", "09_Cors", "10_Csrf",
+                    "11_Xss", "12_SecurityHeaders", "13_SqlInjectionDeepDive",
+                    "14_InsecureDeserialization", "15_XxeAndXmlExternalEntityAttacks",
+                    "16_PathTraversalAndFileUploadSecurity", "17_InputValidation",
+                    "18_SecretsManagement", "19_SecureLoggingAndAuditing",
+                    "20_DependencyAndSupplyChainSecurity", "21_OwaspTop10OverviewAndCapstone"
             ))
     );
 
