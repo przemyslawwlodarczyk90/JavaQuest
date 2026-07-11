@@ -1567,10 +1567,16 @@ poprzednich rozdziałach tego kursu.
 
 ### Stan `_22_spring_web` na 2026-07-11
 
-`_20_spring_core` (23/23) i `_21_spring_boot` (16/16) pozostają KOMPLETNE. `_22_spring_web`
-(19 lekcji) W TRAKCIE: **Lesson01-12 gotowe** (teoria + 30 ćwiczeń, skompilowane ORAZ
-uruchomieniowo zweryfikowane `mvnw.cmd exec:java`), Lesson13-19 jeszcze NIE napisane. Następny
-krok: `Lesson13_SortingAndFiltering`. Ten sam wzorzec embedowania co w `_18_rest_api`/
+**`_22_spring_web` jest w PEŁNI ukończony (stan na 2026-07-11): 19/19 lekcji, każda z teorią +
+30 ćwiczeniami, cały projekt skompilowany (`mvnw.cmd compile`) i uruchomieniowo zweryfikowany
+(`mvnw.cmd exec:java` dla każdej lekcji) — zero błędów.** `_20_spring_core` (23/23) i
+`_21_spring_boot` (16/16) pozostają KOMPLETNE. Lesson19 (kapszton "JavaQuest Tasks API") łączy w
+1 działającym mini-API zbudowanym na prawdziwym Spring MVC: routing/DTO (Lesson01-07), `@Valid`+
+`@RestControllerAdvice`+`ProblemDetail` RFC 7807 (Lesson08-10), stronicowanie (Lesson12), CORS
+(Lesson15) i `HandlerInterceptor` do logowania dostępu (Lesson16) — zweryfikowane end-to-end przez
+6 scenariuszy w `main()` (lista+stronicowanie, utworzenie 201+Location, 404 nieznaleziony zasób,
+400 błąd walidacji, aktualizacja, usunięcie 204), wszystkie z oczekiwanymi kodami statusu. Ten sam
+wzorzec embedowania co w `_18_rest_api`/
 `_19_security_basics`, ale TERAZ przez prawdziwy Spring MVC (`@SpringBootApplication` +
 `SpringApplicationBuilder(...).properties("server.port=0").run()` + zagnieżdżone
 `@RestController` w `main()`), NIE przez surowy `com.sun.net.httpserver.HttpServer`.
@@ -1610,3 +1616,37 @@ Dwie nowe pułapki znalezione przy pisaniu `_22_spring_web` (WAŻNE dla Lesson09
   `GET /products/P1`, w tym samym pliku/paczce, NIE dały "Ambiguous mapping" — Spring poprawnie
   wybiera handler po nagłówku `Accept`. Zasada unikalnych ścieżek dotyczy więc tylko przypadku, gdy
   WSZYSTKIE kryteria mapowania (ścieżka+metoda+produces+consumes) się pokrywają.
+- **CORS z originem SPOZA dozwolonej listy: Spring odrzuca NA SERWERZE (403), nie tylko pomija
+  nagłówek** — pierwotny tekst Lesson15 błędnie zakładał (przez analogię do `_19_security_basics/
+  Lesson09`, gdzie CORS był implementowany ręcznie na surowym `HttpServer`), że serwer zawsze
+  zwraca 200, a TYLKO przeglądarka blokuje odczyt odpowiedzi po swojej stronie. Zweryfikowane
+  empirycznie: wbudowany `DefaultCorsProcessor` Springa jest BARDZIEJ restrykcyjny — gdy `Origin`
+  nie pasuje do skonfigurowanej listy, zwraca 403 Forbidden i kontroler NIGDY nie zostaje wywołany
+  (podwójna warstwa ochrony: serwer ORAZ przeglądarka, nie tylko poleganie na przeglądarce). Test
+  dał realne 403 zamiast zakładanego 200 — poprawione w treści i komentarzach Lesson15.
+- **NAJPOWAŻNIEJSZA usterka tego rozdziału — realny, zweryfikowany bug w `springdoc-openapi`
+  2.8.15/2.8.16/2.8.17 ZEPSUŁ WSZYSTKIE lekcje Spring w CAŁYM projekcie, nie tylko Lesson18**:
+  po dodaniu `springdoc-openapi-starter-webmvc-ui` (potrzebnego do Lesson18) w wersji 2.8.17
+  (wtedy najnowsza 2.x, zweryfikowana WebSearch), KAŻDA aplikacja Spring Boot w PROJEKCIE zaczęła
+  padać na starcie z `BeanCreationException: Error creating bean with name
+  'resourceHandlerMapping' ... No more pattern data allowed after {*...} or ** pattern element` —
+  włącznie z Lesson01, który nie ma NIC wspólnego z Swaggerem. Przyczyna: to jest AUTO-KONFIGURACJA
+  (rejestruje handler zasobów dla `/webjars/**` itd.) uruchamiana w KAŻDYM kontekście Spring Boot
+  na classpath, więc zły wzorzec ścieżki psuje WSZYSTKO, nie tylko lekcję, która go używa. Znany,
+  udokumentowany błąd (GitHub `springdoc/springdoc-openapi#3210`): 2.8.15+ generuje wzorzec
+  zasobu `/swagger-ui/**/*swagger-initializer.js` (gwiazdka PO `**`), którego NOWY, ściślejszy
+  `PathPattern` parser Spring Framework 6/Boot 3.4.4 nie akceptuje. **Naprawa: przypięcie wersji
+  na 2.8.14** (ostatnia sprzed regresji) — zweryfikowane empirycznie, że 2.8.14 działa poprawnie
+  ze WSZYSTKIMI lekcjami `_20_spring_core`/`_21_spring_boot`/`_22_spring_web`. **ZASADA NA
+  PRZYSZŁOŚĆ (dla `_23`/`_24` i każdej kontynuacji tego rozdziału)**: gdy dodajesz JAKĄKOLWIEK
+  nową zależność Spring Boot auto-konfigurowalną (starter/springdoc/podobne), ZAWSZE uruchom
+  PONOWNIE (nie tylko skompiluj) co najmniej 1 WCZEŚNIEJ już zweryfikowaną, niepowiązaną lekcję z
+  INNEGO rozdziału Spring — sama kompilacja NIE WYKRYJE tego rodzaju regresji uruchomieniowej,
+  bo błąd pojawia się dopiero przy starcie `ApplicationContext`, nie przy `javac`.
+- **Druga nowa zależność**: `spring-boot-starter-webflux` — potrzebna do `WebClient` (Lesson17).
+  Dodanie NIE przełącza aplikacji na `WebApplicationType.REACTIVE` — obecność
+  `spring-boot-starter-web` (klasa wskaźnikowa `DispatcherServlet`) wygrywa w
+  `WebApplicationType.deduceFromClasspath()`, więc `SERVLET` pozostaje typem domyślnym mimo
+  obecności WebFluksa na classpath — zweryfikowane empirycznie (wszystkie lekcje nadal startują
+  na embedded Tomcacie, nie Netty). To standardowy, wspierany wzorzec "aplikacja MVC z
+  `WebClient` jako klientem HTTP".

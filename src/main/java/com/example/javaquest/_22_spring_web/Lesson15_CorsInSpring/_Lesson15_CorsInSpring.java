@@ -55,11 +55,14 @@ public class _Lesson15_CorsInSpring {
          *   `Access-Control-Allow-Origin`/`-Methods`/`-Headers`) - NIE
          *   trzeba pisac WLASNEGO handlera `OPTIONS` (w odroznieniu od
          *   `_19_security_basics/Lesson09`).
-         * - Origin SPOZA dozwolonej listy = odpowiedz BEZ naglowka
-         *   `Access-Control-Allow-Origin` - przegladarka SAMA
-         *   ZABLOKUJE dostep do odpowiedzi PO STRONIE klienta (serwer
-         *   TECHNICZNIE zwraca 200, ale JS W przegladarce NIE ODCZYTA
-         *   wyniku).
+         * - Origin SPOZA dozwolonej listy - W ODROZNIENIU od "surowej"
+         *   implementacji CORS (gdzie serwer ZAWSZE zwraca 200, a TYLKO
+         *   przegladarka blokuje ODCZYT wyniku PO SWOJEJ stronie),
+         *   WBUDOWANY `DefaultCorsProcessor` Springa jest BARDZIEJ
+         *   restrykcyjny: ODRZUCA zadanie JUZ NA SERWERZE, zwracajac
+         *   403 Forbidden I NIGDY nie wywolujac kontrolera - PODWOJNA
+         *   warstwa ochrony (serwer I przegladarka), NIE TYLKO poleganie
+         *   NA przegladarce.
          */
         System.out.println("\n=== KONIEC LEKCJI 15 ===");
     }
@@ -177,7 +180,7 @@ public class _Lesson15_CorsInSpring {
     }
 
     private static void demonstrateDisallowedOriginRejected() throws Exception {
-        System.out.println("\n=== ORIGIN SPOZA DOZWOLONEJ LISTY - BRAK naglowka Access-Control-Allow-Origin ===");
+        System.out.println("\n=== ORIGIN SPOZA DOZWOLONEJ LISTY - Spring ODRZUCA NA SERWERZE (403), NIE TYLKO poleganie NA przegladarce ===");
 
         Properties props = new Properties();
         props.setProperty("server.port", "0");
@@ -188,8 +191,8 @@ public class _Lesson15_CorsInSpring {
         try {
             int port = context.getEnvironment().getProperty("local.server.port", Integer.class);
             HttpResponse<String> response = httpGetWithOrigin(port, "/api/secure", "https://zlosliwa-strona.example.com");
-            System.out.println("GET /api/secure (Origin: https://zlosliwa-strona.example.com) -> status: " + response.statusCode() + " (serwer ODPOWIADA, ale...)");
-            System.out.println("Access-Control-Allow-Origin: " + response.headers().firstValue("Access-Control-Allow-Origin").orElse("BRAK (przegladarka ZABLOKUJE odczyt odpowiedzi PO STRONIE klienta)"));
+            System.out.println("GET /api/secure (Origin: https://zlosliwa-strona.example.com) -> status: " + response.statusCode() + " (oczekiwane: 403 - Spring ODRZUCA na serwerze, kontroler NIGDY nie zostal wywolany)");
+            System.out.println("Access-Control-Allow-Origin: " + response.headers().firstValue("Access-Control-Allow-Origin").orElse("BRAK"));
         } finally {
             context.close();
         }
