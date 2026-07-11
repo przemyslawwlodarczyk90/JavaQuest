@@ -998,12 +998,24 @@ sekcji). **`_20_spring_core` jest w PEŁNI ukończony (stan na 2026-07-11): 23/2
 włącznie z kapsztonem (Lesson23) łączącym WSZYSTKIE 22 poprzednie mechanizmy w jednym, spójnym,
 2-profilowym demo "JavaQuest Order Processing".**
 
-**`_21_spring_boot` — Lesson01-12 GOTOWE (teoria + 30 ćwiczeń, skompilowane I uruchomieniowo
-zweryfikowane, zero błędów).** Lesson13 i dalej: NIE napisane. Następny krok:
-`_Lesson13_ObservabilityMicrometerAndTracing.java`. Pozostałe 3 rozdziały (`_22`-`_24`) mają TYLKO
-puste foldery.
+**`_21_spring_boot` jest w PEŁNI ukończony (stan na 2026-07-11): 16/16 lekcji, każda z teorią +
+30 ćwiczeniami, skompilowane I uruchomieniowo zweryfikowane — WŁĄCZNIE z kapsztonem (Lesson16,
+"JavaQuest Notes Service") łączącym starter/auto-konfigurację/`@ConfigurationProperties`/profile/
+`CommandLineRunner`/Actuator w jednym, REALNIE działającym serwisie REST z wbudowanym Tomcatem,
+zweryfikowanym w 2 scenariuszach profilowych (dev/prod) przez prawdziwe wywołania HTTP.**
+Następny krok pracy: zacząć `_22_spring_web` od `_Lesson01_ControllerVsRestController.java`.
+Pozostałe 2 rozdziały (`_23`-`_24`) mają TYLKO puste foldery.
 
 **NOWA zależność:** `spring-boot-starter-actuator` dodana do `pom.xml` dla Lesson12-13.
+
+Warte odnotowania z Lesson13-16: Lesson14 (budowanie jara/native image) świadomie NIE wywołuje
+pełnego `mvnw.cmd package` wewnątrz demo (zbyt wolne/kruche do uruchamiania przy każdej
+weryfikacji) — zamiast tego sprawdza REALNĄ obecność `spring-boot-maven-plugin` w `pom.xml` i
+REALNĄ dostępność `native-image` na maszynie (z przyjaznym fallbackiem, gdy GraalVM nie jest
+zainstalowany — potwierdzone: NIE jest). Lesson15 zamyka pętlę z Lesson04 przez pisanie
+prawdziwej klasy `@AutoConfiguration` + zapis prawdziwego pliku `.imports` do katalogu
+tymczasowego (bez ryzykownej pełnej dynamicznej klasy ładującej — uznane za zbyt kruche/czasochłonne
+względem wartości dydaktycznej, zostawione jako zadanie 21 dla zainteresowanych).
 
 **Kolejny wariant tej samej pułapki `@ComponentScan` (Lesson11) — TYM RAZEM przez
 `@SpringBootApplication`, nie ręczny `@ComponentScan`:** `@RestController` jest SAM w sobie
@@ -1552,3 +1564,49 @@ użytkownik to zaplanował: "Tu bym zaczął Springa nie od Boota, tylko od idei
 wyczerpania limitu w trakcie pisania KTÓREGOKOLWIEK z tych rozdziałów, zaktualizuj tę sekcję CLAUDE.md
 o dokładny stan (które lekcje mają już treść, które nie) — ta sama konwencja co przy wszystkich
 poprzednich rozdziałach tego kursu.
+
+### Stan `_22_spring_web` na 2026-07-11
+
+`_20_spring_core` (23/23) i `_21_spring_boot` (16/16) pozostają KOMPLETNE. `_22_spring_web`
+(19 lekcji) W TRAKCIE: **Lesson01-12 gotowe** (teoria + 30 ćwiczeń, skompilowane ORAZ
+uruchomieniowo zweryfikowane `mvnw.cmd exec:java`), Lesson13-19 jeszcze NIE napisane. Następny
+krok: `Lesson13_SortingAndFiltering`. Ten sam wzorzec embedowania co w `_18_rest_api`/
+`_19_security_basics`, ale TERAZ przez prawdziwy Spring MVC (`@SpringBootApplication` +
+`SpringApplicationBuilder(...).properties("server.port=0").run()` + zagnieżdżone
+`@RestController` w `main()`), NIE przez surowy `com.sun.net.httpserver.HttpServer`.
+
+Dwie nowe pułapki znalezione przy pisaniu `_22_spring_web` (WAŻNE dla Lesson09+ i dla `_23`/`_24`):
+
+- **`ConstraintViolationException` z `@Validated` na `@RequestParam`/`@PathVariable` NIE MA
+  domyślnego handlera w Spring MVC** — w odróżnieniu od `MethodArgumentNotValidException`
+  (rzucanego przez `@Valid` na `@RequestBody`, który Spring Boot automatycznie tłumaczy na 400 Bad
+  Request), `ConstraintViolationException` z walidacji POJEDYNCZYCH parametrów (przez AOP-owy
+  `MethodValidationPostProcessor` wyzwalany przez `@Validated` NA KLASIE) propaguje się
+  NIEOBSŁUŻONY aż do Tomcata, dając **500 Internal Server Error, NIE 400** — mimo że wygląda jak
+  "zwykły" błąd walidacji. Odkryte empirycznie w Lesson08 (test dał realne 500 zamiast
+  oczekiwanego 400). Naprawa: własny `@ExceptionHandler(ConstraintViolationException.class)`
+  zwracający `ResponseEntity.status(HttpStatus.BAD_REQUEST)...` — Lesson08 demonstruje TERAZ oba
+  warianty (bez handlera = 500, z handlerem = 400) jako CELOWĄ lekcję o tej pułapce, nie ukrywa
+  jej. **Zapamiętaj na `Lesson09_GlobalExceptionHandler`**: `@ExceptionHandler`/`@ControllerAdvice`
+  MUSI jawnie obsłużyć `ConstraintViolationException` obok `MethodArgumentNotValidException`,
+  inaczej walidacja parametrów zapytania/ścieżki nadal będzie dawać 500 nawet z globalnym
+  handlerem, jeśli ten globalny handler też o tym zapomni.
+- **Ten sam wariant bug-family co w `_20_spring_core`/`_21_spring_boot`**: WIELE `@SpringBootApplication`
+  + `@RestController` zagnieżdżonych w JEDNYM pliku lekcji dzieli TĘ SAMĄ paczkę (Java package) —
+  implicit component-scan KAŻDEGO `@SpringBootApplication` (scan bazowy = paczka klasy z adnotacją)
+  wykrywa WSZYSTKICH sąsiadujących `@RestController` w TYM SAMYM pliku, NIE TYLKO tego
+  "przypisanego" do danej metody demo. Jeśli DWIE takie klasy kontrolera mapują TĘ SAMĄ ścieżkę +
+  metodę HTTP (nawet jeśli są używane w RÓŻNYCH metodach `demonstrateXxx()` z RÓŻNYMI
+  `@SpringBootApplication`), Spring rzuci `Ambiguous mapping` w OBU kontekstach. Wystąpiło 2x w tej
+  samej sesji (Lesson07: `LeakyController`/`SafeController` obie na `GET /users/{id}`; Lesson08:
+  `UnhandledParamValidationController`/`HandledParamValidationController` obie na
+  `GET /products/search`) — naprawione przez NADANIE KAŻDEMU kontrolerowi w pliku UNIKALNEJ
+  ścieżki. NIGDY nie zakładaj, że dwie klasy kontrolerów w tym samym pliku "są od siebie
+  niezależne" tylko dlatego, że są wywoływane z różnych metod `demonstrateXxx()`.
+  **DOPRECYZOWANIE (Lesson11)**: ta kolizja NIE występuje, jeśli dwie metody na tej samej ścieżce
+  różnią się atrybutem `produces` (Spring MVC traktuje `produces`/`consumes` jako część klucza
+  mapowania, nie tylko ścieżkę+metodę HTTP) — zweryfikowane empirycznie: `NegotiationController`
+  (`produces=application/json`) i `CsvController` (`produces=text/csv`) na TEJ SAMEJ ścieżce
+  `GET /products/P1`, w tym samym pliku/paczce, NIE dały "Ambiguous mapping" — Spring poprawnie
+  wybiera handler po nagłówku `Accept`. Zasada unikalnych ścieżek dotyczy więc tylko przypadku, gdy
+  WSZYSTKIE kryteria mapowania (ścieżka+metoda+produces+consumes) się pokrywają.
