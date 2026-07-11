@@ -984,3 +984,465 @@ Obie listy lekcji są już zarejestrowane w `_TableOfContents.java`. Foldery lek
 utworzone pod `src/main/java/com/example/javaquest/_18_rest_api/LessonXX_Temat/` i
 `_19_security_basics/LessonXX_Temat/`. Następny krok pracy: zacząć pisać
 `_Lesson01_HttpDeepDive.java` + `_Exercises_Lesson01_HttpDeepDive.java` w `_18_rest_api`.
+
+## PLAN: Rozdziały _20_spring_core, _21_spring_boot, _22_spring_web, _23_spring_data_jpa,
+## _24_spring_security (Spring / Spring Boot) — ZAPLANOWANE, TREŚĆ JESZCZE NIE NAPISANA
+
+Zapisane 2026-07-11, zaktualizowane tego samego dnia po rozpoczęciu pisania treści. Status:
+**foldery WSZYSTKICH 89 lekcji utworzone, wszystkie 5 rozdziałów zarejestrowane w
+`_TableOfContents.java`.** `_20_spring_core` ma już **23 lekcje** (nie 22 — użytkownik jawnie
+zażądał dodania `Lesson02_SpringVersionsAndCompatibilityOverview` NA POCZĄTKU rozdziału, zaraz po
+wstępie, reszta lekcji przesunięta o +1; pełna, aktualna lista lekcji rozdziału jest niżej w tej
+sekcji). **Postęp pisania treści w `_20_spring_core`: Lesson01-09 GOTOWE (teoria + 30 ćwiczeń
+każda, skompilowane I uruchomieniowo zweryfikowane `mvnw.cmd exec:java` — zero błędów). Lesson10 i
+dalej: NIE napisane.** Następny krok pracy: `_Lesson10_ConstructorInjection.java` w
+`_20_spring_core`. Pozostałe 4 rozdziały (`_21`-`_24`) mają TYLKO puste foldery — żadna treść.
+
+Lesson09 dodatkowo pokazuje (zweryfikowane uruchomieniowo, real CGLIB) różnicę `@Configuration`
+"full mode" (domyślny — CGLIB przechwytuje "ręczne" wywołania jednej metody `@Bean` z wnętrza
+drugiej, gwarantując singleton) vs `@Configuration(proxyBeanMethods = false)` "lite mode" (brak
+przechwytywania — takie "ręczne" wywołanie tworzy NOWĄ instancję, potwierdzone przez `==` i licznik
+wywołań w teście).
+
+**Trzecia decyzja techniczna warta zapamiętania (z Lesson08):** `org.springframework.dao.*`
+(`DataAccessException`, `PersistenceExceptionTranslationPostProcessor`) żyje w module `spring-tx`,
+który NIE JEST jeszcze zależnością projektu (pojawi się naturalnie w `_23_spring_data_jpa` przez
+`spring-boot-starter-data-jpa`) — próba użycia go w `_20_spring_core` dała błąd kompilacji
+`package org.springframework.dao does not exist`. Naprawione przez zbudowanie WŁASNEGO,
+uproszczonego odpowiednika mechanizmu tłumaczenia wyjątków przez zwykły `java.lang.reflect.Proxy`
+(ta sama idea co prawdziwe `@Repository`, zero nowej zależności, i przy okazji naturalna zapowiedź
+`Lesson21_SpringAopFundamentals` — proxy to fundament AOP). Zasada na przyszłość: jeśli lekcja w
+`_20_spring_core`/`_21_spring_boot`/`_22_spring_web` (obiecane jako "zero nowych zależności")
+potrzebuje czegoś z `spring-tx`/`spring-orm`/`spring-jdbc`/`spring-security-*`, zbuduj lekki,
+własnoręczny odpowiednik zamiast dodawać zależność przedwcześnie — prawdziwe API pojawi się we
+właściwym rozdziale (`_23`/`_24`) i wtedy będzie mogło być pokazane NAPRAWDĘ.
+
+**Druga pułapka odkryta przy pisaniu Lesson07 (WARTO PAMIĘTAĆ przy `@ComponentScan` w dalszych
+lekcjach tego rozdziału):** `@Configuration` jest SAMA W SOBIE meta-oznaczona `@Component` — jeśli
+w JEDNYM pliku lekcji (jak w tym kursie, gdzie WSZYSTKIE demo-klasy żyją jako zagnieżdżone `static
+class` w tym samym pakiecie) użyjesz `@ComponentScan` bez ograniczeń, skaner znajdzie TEŻ inne,
+wcześniej zdefiniowane w tym samym pliku klasy `@Configuration` (np. z poprzedniej metody
+`demonstrateXxx()`) i PONOWNIE uruchomi ich metody `@Bean` — dało to redundantny, ale
+nieszkodliwy dodatkowy log przy pierwszym uruchomieniu Lesson07 (dodatkowe utworzenie
+`LoggingBean` z INNEGO demo). Naprawione przez rezygnację z `@ComponentScan` tam, gdzie
+wystarczy jawna rejestracja pojedynczej klasy przez `@Bean` — PREFERUJ jawną rejestrację
+(`@Bean` zwracające `new Xxx()`) zamiast `@ComponentScan` w lekcjach, które mają WIELE
+niezależnych metod `demonstrateXxx()` z WŁASNYMI klasami `@Configuration` w tym samym pliku.
+
+**Nowa pułapka odkryta i udokumentowana przy pisaniu Lesson06 (WARTO PAMIĘTAĆ przy dalszych
+lekcjach tego rozdziału, wzorem analogicznej pułapki nazw encji w `_12_hibernate`):** domyślna
+nazwa beana dla klasy ZAGNIEŻDŻONEJ (nasz wzorzec — komponenty jako `static class` wewnątrz pliku
+lekcji) NIE JEST prostym `Introspector.decapitalize(SimpleName)` (jak dla klasy najwyższego
+poziomu) — Spring najpierw zamienia `$` na `.` w pełnej nazwie (`Outer$Inner` → `Outer.Inner`),
+DOPIERO POTEM dekapitalizuje TYLKO pierwszy znak całego łańcucha — dla zagnieżdżonej klasy
+`ManagedCounter` w pliku `_Lesson06_Bean.java` faktyczna nazwa beana to
+`"_Lesson06_Bean.ManagedCounter"`, NIE `"managedCounter"` (zweryfikowane uruchomieniowo:
+`NoSuchBeanDefinitionException` przy hardkodowaniu zgadywanej nazwy). Rozwiązanie stosowane w
+tym rozdziale: NIGDY nie zgaduj/hardkoduj nazwy beana dla zagnieżdżonej klasy — zawsze znajdź ją
+dynamicznie przez `context.getBeanNamesForType(Xxx.class)[0]`, ewentualnie nadaj jawną nazwę przez
+`@Component("nazwa")`/`@Bean("nazwa")` (JAWNA nazwa NIE zależy od zagnieżdżenia). W REALNYM
+projekcie (komponenty jako zwykłe, NIE zagnieżdżone klasy) ten problem w ogóle nie występuje — to
+specyfika sposobu, w jaki zbudowany jest ten kurs (analogicznie do zastrzeżenia o `@Entity(name=
+...)` w `_12_hibernate`).
+
+Warte odnotowania decyzje techniczne z pisania Lesson01-04 (przydatne przy kontynuacji):
+- Lesson01/02/04 są w PEŁNI wykonywalne — component-scanning DZIAŁA na zagnieżdżonych klasach
+  statycznych `@Component` (bo pakietem klasy zagnieżdżonej jest pakiet klasy najwyższego poziomu
+  ją zawierającej — Spring skanuje WSZYSTKIE pliki `.class` w katalogu pakietu, w tym `Outer$Inner
+  .class`) — dokładnie ten sam wzorzec zagnieżdżonych encji/komponentów co w `_12_hibernate`.
+  `@ComponentScan` bez argumentów na zagnieżdżonej klasie `@Configuration` skanuje pakiet klasy
+  ZEWNĘTRZNEJ (czyli też plik `_Exercises_...java` w tym samym folderze — nieszkodliwe, bo tam nie
+  ma żadnych `@Component`).
+- Lesson02 realnie odczytuje wersję Springa PRZEZ KOD (`SpringVersion.getVersion()`/
+  `SpringBootVersion.getVersion()`) zamiast opisywać ją z pamięci — zweryfikowane uruchomieniowo:
+  Spring Framework 6.2.5, Spring Boot 3.4.4 (zgodne z `pom.xml`).
+- Wszystkie fakty "stare vs nowe" w Lesson02 zweryfikowane przez WebSearch 2026-07-11 (nie tylko
+  pamięć modelu) — źródła i szczegóły w sekcji "Zweryfikowane fakty" niżej w tym samym bloku
+  planistycznym.
+- Ten rozdział pisany NATURALNĄ polszczyzną z pełnymi znakami diakrytycznymi (w odróżnieniu od
+  świadomie ASCII-only `_18_rest_api`/`_19_security_basics`) — zgodnie z większościową konwencją
+  reszty repozytorium.
+
+### Dlaczego ta kolejność rozdziałów (decyzja użytkownika, potwierdzona explicité)
+
+Spring zaczynamy od IDEI (Spring Core: IoC/DI/kontener), NIE od Spring Boota — świadomie
+odwrotna kolejność niż większość kursów "hello world Spring Boot w 5 minut". Kursant ma najpierw
+zrozumieć, CO Spring Boot robi automatycznie za niego (auto-konfiguracja, wbudowany serwer,
+starter POM-y), zanim zobaczy "magię" — dokładnie ta sama filozofia co w całym kursie
+(`_11_buildtools` uczy `javac`/`java`/classpath PRZED Mavenem/Gradle, `_15_jvm_internals` uczy
+JVM PRZED tuningiem). Kolejność: `_20_spring_core` (idea, kontener, DI) →
+`_21_spring_boot` (jak Boot automatyzuje to, co poznaliśmy w Core) → `_22_spring_web`
+(REST na Springu — kursant MA JUŻ `_18_rest_api` protokołowo i `_07_servlets` na surowym Servlet
+API, więc to "jak to samo wygląda w Springu") → `_23_spring_data_jpa` (kursant MA JUŻ
+`_12_hibernate`, więc to będzie — cytując użytkownika — "bardzo przyjemne", bo Spring Data JPA to
+głównie cienka warstwa abstrakcji NAD tym, co już zna) → `_24_spring_security` (kursant MA JUŻ
+cały `_19_security_basics` czystą Javą, więc to "jak Spring Security automatyzuje to, co już
+umiesz zrobić ręcznie").
+
+**Testowanie (`@SpringBootTest`, `@WebMvcTest`, `@DataJpaTest`, `@MockitoBean`, Testcontainers)
+ŚWIADOMIE NIE wchodzi w skład żadnego z tych 5 rozdziałów** — użytkownik wyraźnie zastrzegł
+(2026-07-11): "testy beda odzielnym blokiem nie musisz ich robic teraz". Będzie to OSOBNY,
+przyszły rozdział (numeracja/nazwa jeszcze nieustalona, prawdopodobnie `_25_spring_testing` lub
+podobny, do ustalenia gdy przyjdzie czas) — nie dodawaj lekcji o testowaniu do żadnego z 5
+rozdziałów opisanych niżej, nawet jeśli wydaje się to naturalne w danym miejscu (np. przy
+`_21_spring_boot/Lesson12_SpringBootActuator` czy przy `_23_spring_data_jpa`).
+
+**Zależności Maven już DOSTĘPNE bez żadnych zmian w `pom.xml`** (zweryfikowane 2026-07-11):
+`spring-boot-starter-parent:3.4.4` jest już rodzicem projektu, `spring-boot-starter`,
+`spring-boot-starter-web` i `spring-boot-starter-validation` są już zależnościami (dodane
+wcześniej głównie transytywnie dla Jacksona/Tomcata/Bean Validation w `_04_io`/`_07_servlets`/
+`_18_rest_api`/`_19_security_basics`) — to oznacza, że **`_20_spring_core`, `_21_spring_boot` i
+`_22_spring_web` da się w całości napisać BEZ dodawania jakiejkolwiek nowej zależności**.
+Zależności do DODANIA gdy przyjdzie czas (zweryfikuj dokładne najnowsze wersje/koordynaty w Maven
+Central przed dodaniem — nie zgaduj, ta sama zasada co przy BCrypt/JJWT/PMD w poprzednich
+rozdziałach):
+- `_23_spring_data_jpa` → `org.springframework.boot:spring-boot-starter-data-jpa` (Spring Data
+  JPA repository abstraction + `PlatformTransactionManager`; UWAGA: projekt ma już bezpośrednio
+  dodane `hibernate-core`/`hibernate-envers`/`hibernate-jcache` z `_12_hibernate` — sprawdź `mvn
+  dependency:tree` po dodaniu tego startera pod kątem ewentualnego konfliktu/duplikacji wersji
+  Hibernate, BOM Boota powinien to rozwiązać spójnie, ale zweryfikuj zamiast zakładać).
+- `_24_spring_security` → `org.springframework.boot:spring-boot-starter-security` (podstawa
+  rozdziału); dla `Lesson15_OAuth2LoginAndResourceServerIntro` prawdopodobnie
+  `org.springframework.boot:spring-boot-starter-oauth2-client` i/lub
+  `-oauth2-resource-server` (zweryfikuj DOKŁADNE artifactId w Maven Central przy pisaniu tej
+  lekcji — nie zgaduj na pamięć, mimo że koordynaty są względnie pewne). Do
+  `Lesson12_JwtAuthentication` — do decyzji przy pisaniu: reużyć `io.jsonwebtoken:jjwt-*`
+  (już w `pom.xml` z `_19_security_basics`, spójne z tym, co kursant już zna) CZY pokazać
+  natywne wsparcie Spring Security dla JWT (`NimbusJwtDecoder`/OAuth2 Resource Server) —
+  prawdopodobnie WARTO pokazać OBA jako kolejny przykład "jak to robiłeś ręcznie (Lesson12/13 z
+  `_19_security_basics`) vs jak robi to za ciebie framework".
+
+### `_20_spring_core` ("Spring Core i Dependency Injection") — 23 lekcje (rozbudowane z 14)
+
+Wyjściowa lista użytkownika (14 lekcji) rozbudowana o 9 tematów oznaczonych niżej jako DODANE —
+użytkownik poprosił o rozbudowę "żeby było solidnie", z naciskiem na dokładne wyjaśnienie
+mechanizmów Spring Core, w tym różnic między starszymi a nowszymi wersjami. **2026-07-11, druga
+tura:** użytkownik jawnie zażądał lekcji o różnicach międzywersyjnych "na początku" rozdziału
+("wiem ze w jednym springu dziala cos tak a w drugim dziala cos inaczej") — dodano
+`Lesson02_SpringVersionsAndCompatibilityOverview` zaraz po wstępie, PRZED jakąkolwiek lekcją
+techniczną, jako mapa orientacyjna dla całego 5-rozdziałowego łuku Spring/Spring Boot (reszta
+lekcji przesunięta o +1 numer względem poprzedniej wersji tej notatki):
+
+1. WhatIsSpring — w tej lekcji JAWNIE zaznacz, że kurs uczy Spring Framework 6.x / Spring Boot
+   3.x (bo `pom.xml` ma `spring-boot-starter-parent:3.4.4`) — co oznacza namespace `jakarta.*`
+   (NIE `javax.*`) wszędzie, i Javę 17+ jako minimum (projekt celuje w Javę 21). Krótki przegląd
+   ekosystemu (Spring Framework/Boot/Data/Security/Cloud) też tu.
+2. SpringVersionsAndCompatibilityOverview (DODANE, 2. tura, celowo na POCZĄTKU rozdziału) —
+   dedykowana lekcja-mapa PRZED jakąkolwiek techniczną treścią: (a) jak się mapują wersje Spring
+   Boot 1.x/2.x/3.x na wersje Spring Framework 4.x/5.x/6.x i na wymagany Java baseline
+   (8/8/17+) oraz namespace (`javax.*` vs `jakarta.*`); (b) TABELA mechanizmów, które DZIAŁAJĄ
+   INACZEJ w zależności od wersji, z odesłaniem do lekcji, która idzie w kazdy temat głębiej:
+   style konfiguracji XML/Java Config (Lesson05 tego rozdziału), niejawna constructor injection
+   od 4.3 (Lesson10), domyślna obsługa cyklicznych zależności zmieniona w Boot 2.6 (Lesson13),
+   `WebSecurityConfigurerAdapter`→`SecurityFilterChain` (`_24_spring_security/Lesson03`),
+   `RestTemplate`→`WebClient`→`RestClient` (`_22_spring_web/Lesson17`), `spring.factories`→
+   `AutoConfiguration.imports` (`_21_spring_boot/Lesson04`), `@MockBean`→`@MockitoBean`
+   (przyszły rozdział o testowaniu); (c) PRAKTYCZNA umiejętność: jak rozpoznać PO SAMYM KODZIE,
+   pod jaką wersję Springa pisany jest tutorial/odpowiedź na Stack Overflow, ZANIM stracisz czas
+   na kopiowanie nieaktualnego API (importy `javax.*` = Boot 2.x, `WebSecurityConfigurerAdapter`
+   = sprzed 2022, `spring.factories` = starsza biblioteka/starszy Boot).
+3. InversionOfControl — IoC jako ZASADA (kontener, nie Twój kod, tworzy i zarządza obiektami),
+   NIE mechanizm — DI to JEDNA z technik realizujących IoC (ServiceLocator to inna, historyczna).
+4. DependencyInjection — 3 rodzaje wstrzykiwania (konstruktor/setter/pole) jako zapowiedź
+   Lesson10/11.
+5. ConfigurationStylesXmlVsJavaVsAnnotations (DODANE) — jawna lekcja o HISTORYCZNEJ EWOLUCJI
+   konfiguracji Springa: XML `<beans><bean id="..." class="...">` (Spring 1.x-2.x, dziś
+   praktycznie wymarłe, ale kursant MOŻE je spotkać w starym, legacy kodzie) → adnotacje +
+   component-scanning (`@Component`+`@ComponentScan`, mainstream od Spring 2.5/3.0) → czysty Java
+   Config (`@Configuration`+`@Bean`, DOMYŚLNY i JEDYNY styl w Spring Boot — Boot NIE UŻYWA XML
+   wcale). Pokaż TEN SAM bean zdefiniowany wszystkimi 3 sposobami obok siebie. Pogłębienie
+   tabeli z Lesson02.
+6. Bean — czym jest "bean" (obiekt zarządzany przez kontener) vs zwykły obiekt Javy.
+7. ApplicationContext — `ApplicationContext` vs starszy, bardziej podstawowy `BeanFactory`
+   (lazy vs eager, `ApplicationContext` to "rozszerzony" `BeanFactory` z eventami/i18n/zasobami).
+8. ComponentServiceRepository — stereotypy `@Component`/`@Service`/`@Repository`/`@Controller` —
+   semantycznie tożsame dla kontenera, ale `@Repository` dodaje translację wyjątków
+   (`PersistenceExceptionTranslationPostProcessor`), `@Controller`/`@RestController` włącza
+   obsługę przez Spring MVC (zapowiedź `_22_spring_web`).
+9. ConfigurationAndBeanAnnotation — `@Configuration`+`@Bean` dla obiektów, których NIE jesteś
+   właścicielem kodu (biblioteki zewnętrzne) — kontrast z `@Component` (Twoje własne klasy).
+10. ConstructorInjection — REKOMENDOWANY, domyślny styl — WAŻNE: od Spring 4.3 (2016) `@Autowired`
+    na konstruktorze jest OPCJONALNE, jeśli klasa ma DOKŁADNIE JEDEN konstruktor ("implicit
+    constructor injection") — pokaż PRZED (jawne `@Autowired`) i PO (bez adnotacji) na przykładzie.
+11. FieldInjectionWhyAvoid — dlaczego wstrzykiwanie do pola (`@Autowired private X x;`) jest
+    ODRADZANE (niemożliwość `final`, ukryte zależności, trudność testowania bez Springa/refleksji,
+    możliwość cyklu zależności, którego constructor injection by WYŁAPAŁ od razu) — mimo że
+    WCIĄŻ powszechnie spotykane w starym/legacy kodzie i tutorialach.
+12. QualifierAndPrimary (DODANE) — co się dzieje, gdy jest WIĘCEJ NIŻ JEDEN bean danego typu
+    (np. 2 implementacje interfejsu) — `@Qualifier("nazwa")` vs `@Primary` (domyślny wybór) —
+    bez tego `NoUniqueBeanDefinitionException`.
+13. CircularDependencies (DODANE) — cykl A→B→A jako BŁĄD projektowy (nie tylko techniczny) —
+    WAŻNA różnica wersji: setter/field injection historycznie POZWALAŁ na cykle (Spring
+    "naprawiał" to przez wczesną referencję do proxy), constructor injection ZAWSZE failował z
+    `BeanCurrentlyInCreationException`. Spring Boot **2.6 (2021) ZMIENIŁ DOMYŚLNE zachowanie**:
+    `spring.main.allow-circular-references` domyślnie `false` (wcześniej `true`) — czyli PRZED
+    Boot 2.6 cykl przez setter/field injection cicho "działał", PO 2.6 rzuca wyjątek od razu,
+    chyba że jawnie włączysz starą flagę. Zweryfikuj dokładny numer wersji w oficjalnych release
+    notes Spring Boot 2.6 przy pisaniu tej lekcji, zamiast polegać wyłącznie na tej notatce.
+14. BeanScopes — `singleton` (domyślny) vs `prototype` vs `request`/`session`/`application`
+    (web-owe, wymagają `_22_spring_web`) — pułapka: prototype bean wstrzyknięty do singletona.
+15. Profiles — `@Profile("dev")`/`@Profile("prod")`, aktywacja przez
+    `spring.profiles.active` — zapowiedź głębszego potraktowania w `_21_spring_boot/Lesson06`.
+16. PropertiesAndConfiguration — `@Value("${klucz}")`, `Environment` abstraction, `PropertySource`.
+17. SpelBasics (DODANE) — Spring Expression Language (`#{...}`) używane w `@Value`, WARUNKOWYCH
+    beanach, a PÓŹNIEJ w wyrażeniach `@PreAuthorize` w `_24_spring_security/Lesson10` — wprowadź
+    tu RAZ, żeby nie tłumaczyć składni SpEL od nowa przy Security.
+18. LifecycleCallbacks — `@PostConstruct`/`@PreDestroy` (JAKARTA, nie własne Springa) vs
+    interfejsy `InitializingBean`/`DisposableBean` (starsze, Spring-specific, dziś odradzane na
+    rzecz adnotacji JSR-250) vs atrybuty `initMethod`/`destroyMethod` na `@Bean`.
+19. BeanPostProcessorsAndContainerExtensionPoints (DODANE) — jak DZIAŁA kontener "pod spodem" —
+    `BeanPostProcessor`/`BeanFactoryPostProcessor` jako mechanizm, na którym OPIERAJĄ SIĘ
+    `@Autowired`, `@Value`, a nawet proxy AOP (Lesson21-22) — ten sam duch "zajrzyj pod maskę" co
+    `_15_jvm_internals`.
+20. ApplicationEvents (DODANE) — `ApplicationEventPublisher`/`@EventListener` — luźne powiązanie
+    między komponentami przez zdarzenia W JEDNYM kontenerze Springa — bezpośrednie
+    NAWIĄZANIE do `_17_architecture/Lesson18_EventDrivenCommunicationBetweenModules` (tam:
+    ręczny publisher/listener czystą Javą; tu: to samo, ale kontener Springa robi
+    "podpinanie" słuchaczy za Ciebie).
+21. SpringAopFundamentals (DODANE) — aspekty jako rozwiązanie "cross-cutting concerns" (logowanie,
+    security, transakcje — TO WŁAŚNIE jest mechanizm, na którym stoi `@Transactional` z
+    `_23_spring_data_jpa/Lesson08`!) — `@Aspect`, `@Before`/`@After`/`@Around`, jak Spring TWORZY
+    proxy (JDK dynamic proxy dla interfejsów vs CGLIB dla klas — `proxy-target-class=true`
+    DOMYŚLNIE w Spring Boot od dawna, w przeciwieństwie do "gołego" Spring Framework, gdzie
+    domyślnie było JDK proxy dla klas implementujących interfejs).
+22. SpringAopAdvancedPointcutsAndProxies (DODANE) — składnia wyrażeń pointcut (`execution(...)`),
+    KLASYCZNA pułapka self-invocation (wywołanie metody `@Transactional`/`@Cacheable` z TEJ SAMEJ
+    klasy omija proxy — częsty, mylący błąd w praktyce), `@Order` przy wielu aspektach.
+23. SpringCoreCapstone — mini-aplikacja łącząca WSZYSTKIE 22 poprzednich lekcji (kontener +
+    profile + AOP + eventy + lifecycle) w jednym spójnym demo, BEZ Spring Boota (świadomie —
+    pokazuje "gołego" `AnnotationConfigApplicationContext`, żeby kursant docenił, ile automatyzuje
+    `_21_spring_boot`).
+
+### `_21_spring_boot` ("Spring Boot") — 16 lekcji (rozbudowane z 12)
+
+1. WhatIsSpringBoot — Boot jako "opinionated" warstwa NAD Spring Frameworkiem — auto-config +
+   embedded server + starter POM-y = mniej boilerplate'u z `_20_spring_core`.
+2. ProjectSetup — Spring Initializr (koncepcyjnie — ten projekt już ISTNIEJE, więc pokaż RÓWNIEŻ
+   jak wyglądałby ten sam `pom.xml` wygenerowany od zera).
+3. Starters — `spring-boot-starter-*` jako "kurator zależności" (BOM + sensowne domyślne wersje).
+4. AutoConfiguration — MECHANIZM: `@EnableAutoConfiguration`, `@Conditional*` (`@ConditionalOn
+   Class`/`@ConditionalOnMissingBean`/`@ConditionalOnProperty`). **WAŻNA różnica wersji do
+   pokazania WPROST**: rejestracja klas auto-konfiguracji przez plik `META-INF/spring.factories`
+   pod kluczem `org.springframework.boot.autoconfigure.EnableAutoConfiguration` (STARY mechanizm,
+   PRZED Spring Boot 2.7) vs plik `META-INF/spring/org.springframework.boot.autoconfigure.
+   AutoConfiguration.imports` + adnotacja `@AutoConfiguration` (NOWY mechanizm, Boot 2.7+,
+   zachowana wsteczna kompatybilność ze `spring.factories` w 2.7, ale to STANDARD od tej wersji
+   wzwyż — projekt na Boot 3.4.4 powinien uczyć TEGO mechanizmu jako domyślnego, ze wzmianką o
+   `spring.factories` jako "zobaczysz to w starszych bibliotekach/tutorialach").
+5. ApplicationPropertiesYaml — `.properties` vs `.yml` (zagnieżdżanie, czytelność list) — oba
+   WCIĄŻ wspierane, YAML popularniejszy dla złożonej konfiguracji.
+6. ProfilesInSpringBoot — `application-{profile}.yml`, `spring.profiles.active`, pogłębienie
+   `_20_spring_core/Lesson15_Profiles`.
+7. CommandLineRunner — `CommandLineRunner`/`ApplicationRunner` — kod uruchamiany PO starcie
+   kontekstu, PRZED przyjęciem ruchu.
+8. ConfigurationProperties — `@ConfigurationProperties` (type-safe, hierarchiczna konfiguracja)
+   vs pojedyncze `@Value` z Lesson15 `_20_spring_core` — kiedy które.
+9. DevToolsAndProductivity (DODANE) — `spring-boot-devtools` (automatyczny restart przy zmianie
+   kodu, LiveReload) — narzędzie DEV-ONLY, WYŁĄCZONE automatycznie w produkcyjnym jarze.
+10. LoggingInSpringBoot — domyślny Logback (już znany z `_13_libraries/Lesson16-17`) +
+    autokonfiguracja poziomów logowania przez `application.yml` (`logging.level.*`).
+11. ErrorHandlingBasics — domyślna strona/JSON błędu Boota (`/error`, `BasicErrorController`) —
+    PRZED pełnym `@ControllerAdvice` z `_22_spring_web/Lesson09`.
+12. SpringBootActuator — `/actuator/health`, `/actuator/metrics`, `/actuator/info` — endpointy
+    operacyjne "za darmo".
+13. ObservabilityMicrometerAndTracing (DODANE) — **WAŻNA różnica Boot 2 vs Boot 3**: Boot 2 —
+    Actuator + Micrometer głównie dla METRYK; Boot 3 wprowadził ujednolicony Micrometer
+    Observation API + natywne wsparcie dla distributed tracingu (Micrometer Tracing, następca
+    zarchiwizowanego Spring Cloud Sleuth) — zweryfikuj dokładne szczegóły/wersje przy pisaniu.
+14. BuildingExecutableJarAndNativeImage — klasyczny "fat/uber jar" (`spring-boot-maven-plugin`,
+    zagnieżdżone jary w layoucie Boota) ORAZ **nowość Boot 3**: kompilacja do natywnego obrazu
+    przez GraalVM (Spring AOT processing, `native-image`) — znacząco szybszy start/mniejsze
+    zużycie pamięci kosztem czasu kompilacji i pewnych ograniczeń (refleksja/proxy wymagają
+    jawnych "hints"). Zweryfikuj czy warto/da się to zademonstrować realnie (wymaga GraalVM na
+    maszynie — prawdopodobnie TYLKO koncepcyjnie + polecenia do uruchomienia ręcznie, podobnie do
+    hybrydowego stylu Mavena/Gradle w `_11_buildtools`).
+15. CustomAutoConfigurationAndStarters (DODANE) — jak NAPISAĆ WŁASNĄ auto-konfigurację (własny
+    `@AutoConfiguration` + wpis w `AutoConfiguration.imports`) — zamyka pętlę z Lesson04,
+    kursant przechodzi od "użytkownika" do "twórcy" mechanizmu.
+16. SpringBootCapstone (DODANE — oryginalna lista użytkownika NIE miała capstone'u, dodany dla
+    spójności z KAŻDYM innym rozdziałem tego kursu) — mała, kompletna aplikacja Boot łącząca
+    starter/auto-config/properties/profile/CommandLineRunner/Actuator w jednym demo.
+
+### `_22_spring_web` ("Spring Web i REST API") — 19 lekcji (rozbudowane z 16)
+
+Kursant ma już `_18_rest_api` (projektowanie REST protokołowo, czystym `HttpServer`) i
+`_07_servlets` (surowe Servlet API) — ten rozdział to "jak Spring MVC robi to samo za Ciebie".
+Jawnie odsyłaj do konkretnych lekcji `_18_rest_api` zamiast powtarzać teorię protokołu HTTP.
+
+1. ControllerVsRestController — `@Controller`+`@ResponseBody` per metoda vs `@RestController`
+   (skrót = `@Controller`+`@ResponseBody` na całej klasie) — MVC (widoki) vs REST (dane).
+2. RequestMappingGetPostPutDelete — **stary styl** `@RequestMapping(method = RequestMethod.GET)`
+   vs **nowy styl** `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`
+   (skróty wprowadzone w Spring 4.3, 2016 — dziś DOMYŚLNY, idiomatyczny styl) — pokaż OBA obok
+   siebie, `@RequestMapping` nadal potrzebny na poziomie KLASY (wspólny prefix ścieżki).
+3. PathVariable — `@PathVariable`, powiązanie z `_18_rest_api/Lesson09`.
+4. RequestParam — `@RequestParam` (wymagane/opcjonalne/wartość domyślna).
+5. RequestBody — `@RequestBody` + Jackson (deserializacja JSON->obiekt) automatyczna dzięki
+   `HttpMessageConverter` (zapowiedź Lesson11).
+6. ResponseEntity — pełna kontrola nad statusem/nagłówkami/ciałem odpowiedzi, powiązanie z
+   `_18_rest_api/Lesson05_StatusCodes`.
+7. DtoInRestApi — powiązanie z `_17_architecture/Lesson07_DtoEntityMapper` i
+   `_09_jdbc/Lesson19-20` — teraz w kontekście Springowego `@RequestBody`/`@ResponseBody`.
+8. ValidationWithValid — `@Valid`/`@Validated` + Bean Validation (już znane z
+   `_19_security_basics/Lesson17`) — TERAZ zintegrowane automatycznie przez Spring MVC
+   (`MethodArgumentNotValidException` przy błędzie, zamiast ręcznego `Validator.validate()`).
+9. GlobalExceptionHandler — `@ControllerAdvice`+`@ExceptionHandler` — scentralizowana obsługa
+   błędów, POGŁĘBIENIE `_16_clean_code/Lesson17`+`_17_architecture/Lesson16` w kontekście Springa.
+10. ErrorResponseDto — `ProblemDetail` (RFC 7807, WBUDOWANE w Spring 6/Boot 3 — `org.springframework.
+    http.ProblemDetail`, NOWOŚĆ względem Boot 2, gdzie trzeba było ręcznie implementować RFC 7807
+    jak w `_18_rest_api/Lesson12`) vs własny DTO błędu — pokaż PRZEJŚCIE od ręcznej implementacji
+    (znanej z `_18_rest_api`) do wbudowanego wsparcia frameworka.
+11. ContentNegotiationAndMessageConverters (DODANE) — `produces`/`consumes`, jak Spring wybiera
+    `HttpMessageConverter` (Jackson dla JSON domyślnie) — Spring-owa MECHANIKA tego, co
+    `_18_rest_api/Lesson07_ContentNegotiation` uczył na poziomie protokołu.
+12. PaginationInApi — `Pageable`/`Page<T>` Spring Data (zapowiedź `_23_spring_data_jpa/Lesson06`),
+    powiązanie z `_18_rest_api/Lesson10`.
+13. SortingAndFiltering — `Sort` z Spring Data, parametry `sort=`/`filter=` w praktyce Springa.
+14. FileUpload — `MultipartFile`, POGŁĘBIENIE `_07_servlets/Lesson18` (tam: surowy
+    `MultipartConfigElement` na embedded Tomcacie; tu: Spring robi to za Ciebie).
+15. CorsInSpring — `@CrossOrigin` per-kontroler vs globalna konfiguracja (Lesson16) — powiązanie
+    z `_19_security_basics/Lesson09_Cors`.
+16. InterceptorsAndWebMvcConfigurer (DODANE) — `HandlerInterceptor` (Springowy odpowiednik
+    `Filter` z `_07_servlets/Lesson14`, ale działający NA POZIOMIE Spring MVC, z dostępem do
+    `HandlerMethod`) + `WebMvcConfigurer` jako miejsce CENTRALNEJ rejestracji interceptorów/CORS/
+    konwerterów — "jak to wszystko się ze sobą spina".
+17. HttpClientsRestTemplateWebClientRestClient (DODANE) — **kluczowa lekcja "stare vs nowe"**:
+    `RestTemplate` (Spring 3.0, 2009 — dziś w "trybie utrzymaniowym", bez nowych funkcji, ale
+    WCIĄŻ szeroko spotykany w istniejącym kodzie) → `WebClient` (Spring 5, 2017, reaktywny,
+    część WebFlux — działa też synchronicznie przez `.block()`, ale to "reaktywne narzędzie użyte
+    nie-reaktywnie") → `RestClient` (Spring Framework **6.1**, 2023/Boot **3.2** — NOWY,
+    SYNCHRONICZNY klient, płynne API jak `WebClient`, ale bez narzutu reaktywnego — zalecany
+    domyślny wybór dla zwykłych, blokujących aplikacji Spring MVC od Boot 3.2 wzwyż). Pokaż
+    IDENTYCZNE zapytanie HTTP wykonane WSZYSTKIMI TRZEMA, obok siebie.
+18. SwaggerOpenApi — `springdoc-openapi-starter-webmvc-ui` — TU WŁAŚNIE realizuje się zapowiedź z
+    `_18_rest_api/Lesson18_OpenApiSwaggerIntro` ("w Spring Boot ten sam efekt osiągniesz jedną
+    zależnością") — DODAJ TERAZ tę zależność do `pom.xml` (zweryfikuj `${springdoc.version}` w
+    Maven Central, nie zgaduj — ta sama zasada co zawsze), pokaż auto-skanowanie
+    `@RestController` bez ręcznego pisania YAML.
+19. RestApiCapstone — mini-API łączące wszystkie 18 poprzednich lekcji, analogiczne do
+    `_18_rest_api/Lesson20` ale zaimplementowane w Springu zamiast czystym `HttpServer`.
+
+### `_23_spring_data_jpa` ("Spring Data JPA") — 15 lekcji (BEZ zmian względem listy użytkownika)
+
+Użytkownik NIE poprosił o rozbudowę tego rozdziału i nie ma potrzeby — lista jest już kompletna
+i ściśle lustrzana względem `_12_hibernate` (kursant ma PEŁNE 30 lekcji Hibernate/JPA za sobą, więc
+ten rozdział to głównie "jak Spring Data JPA automatyzuje to, co już umiesz": `Repository`
+zamiast ręcznego DAO, `@Query` zamiast ręcznego HQL, itd. — jawnie odsyłaj do konkretnych lekcji
+`_12_hibernate` zamiast powtarzać teorię JPA/ORM od zera):
+01_WhatIsSpringDataJpa, 02_RepositoryInterfaces, 03_CrudRepositoryJpaRepository, 04_QueryMethods,
+05_CustomQueries, 06_PaginationAndSorting, 07_EntityRelationshipsInSpring, 08_TransactionsInSpring
+(powiązanie z `_17_architecture/Lesson13_TransactionBoundaries` — GDZIE żyje granica transakcji),
+09_LazyLoadingAndNPlusOne (powiązanie z `_12_hibernate/Lesson15`), 10_EntityGraph,
+11_Projections, 12_Specifications, 13_Auditing (powiązanie z `_12_hibernate/Lesson29_
+HibernateEnvers` — inne podejście do tego samego problemu), 14_MigrationsWithFlyway (powiązanie z
+`_10_dao/Lesson25_DatabaseMigrations`), 15_SpringDataJpaCapstone.
+
+### `_24_spring_security` ("Spring Security") — 17 lekcji (rozbudowane z 15)
+
+Kursant ma już CAŁY `_19_security_basics` (21 lekcji czystą Javą) — ten rozdział to "jak Spring
+Security automatyzuje ręczne mechanizmy, które already umiesz zbudować sam" — jawnie odsyłaj do
+konkretnych lekcji zamiast tłumaczyć np. czym jest BCrypt/JWT/CSRF od zera.
+
+1. WhatIsSpringSecurity — filtr bezpieczeństwa jako WARSTWA PRZED Spring MVC (Servlet Filter
+   Chain, powiązanie z `_07_servlets/Lesson14_Filters`).
+2. SecurityFilterChain — **TO JEST WSPÓŁCZESNY, JEDYNY sposób konfiguracji w Spring Security 6.x
+   /Boot 3.x** — bean `SecurityFilterChain` budowany przez lambda DSL na `HttpSecurity`. Ucz TEGO
+   jako JEDYNEGO, aktualnego API (bez pokazywania od razu starego stylu — to zadanie Lesson03).
+3. SecurityConfigEvolutionOldVsNew (DODANE) — DEDYKOWANA lekcja "jak to wyglądało kiedyś", bo
+   Security ma NAJWIĘCEJ zmian międzywersyjnych z całego Springa (zweryfikowane WebSearch
+   2026-07-11, źródła: spring.io blog, docs.spring.io, Baeldung):
+   - XML `<http>`/`<intercept-url>` (najstarsze, Spring Security 2.x-3.x, dziś martwe).
+   - `WebSecurityConfigurerAdapter` (dziedziczenie z `configure(HttpSecurity)`) —
+     WPROWADZONY jako mainstream przez lata, **DEPRECATED w Spring Security 5.7.0-M2 / Spring
+     Boot 2.7.0**, **CAŁKOWICIE USUNIĘTY w Spring Security 6.x** (czyli w KAŻDYM projekcie na
+     Boot 3.x — w tym W TYM kursie — ten kod PO PROSTU SIĘ NIE SKOMPILUJE, klasa nie istnieje).
+   - `SecurityFilterChain` jako bean (metoda BEZ dziedziczenia) — WPROWADZONY jako opcja w
+     Spring Security **5.4**, stał się JEDYNYM sposobem od 6.x — to jest styl z Lesson02.
+   - `authorizeRequests()`+`antMatchers()` (STARE, deprecated od Security 5.7+, oznaczone do
+     USUNIĘCIA w Security 7.0) vs `authorizeHttpRequests()`+`requestMatchers()` (NOWE, JEDYNE
+     zalecane od 6.x) — UWAGA: NIE MIESZAĆ obu w jednej konfiguracji (błąd w runtime).
+   - `@EnableGlobalMethodSecurity(prePostEnabled = true)` (STARE, deprecated od Spring Security
+     6.0) vs `@EnableMethodSecurity` (NOWE, `prePostEnabled=true` DOMYŚLNIE, nie trzeba go już
+     jawnie ustawiać) — powiązanie z Lesson10.
+   Ta lekcja istnieje PO TO, żeby kursant natrafiający w internecie na starszy tutorial (a
+   WIĘKSZOŚĆ tutoriali Spring Security w necie WCIĄŻ uczy `WebSecurityConfigurerAdapter`, bo
+   powstały przed 2022) rozumiał, DLACZEGO ten kod nie działa i jak go przetłumaczyć na
+   współczesne API.
+4. DefaultLogin — domyślna strona logowania/wygenerowane hasło Boota (`spring-boot-starter-
+   security` "z automatu") jako PUNKT WYJŚCIA, zanim zacznie się to konfigurować ręcznie.
+5. UserDetailsService — własna implementacja `UserDetailsService`, powiązanie z
+   `_19_security_basics/Lesson01` (`User`/`role` tam jako zwykły rekord, tu jako framework-owy
+   kontrakt).
+6. PasswordEncoder — `BCryptPasswordEncoder` (Spring-owy WRAPPER na TO SAMO jBCrypt API poznane w
+   `_19_security_basics/Lesson03` — pokaż, że to KONCEPCYJNIE identyczny algorytm, inny tylko
+   interfejs), `DelegatingPasswordEncoder` (obsługa wielu formatów/migracji hasła naraz).
+7. RolesAndAuthorities — `GrantedAuthority`, `ROLE_` prefix convention, powiązanie z
+   `_19_security_basics/Lesson07_AuthorizationPatternsAndRbac`.
+8. FormLogin — `formLogin()` w `SecurityFilterChain`, powiązanie z `_19_security_basics/Lesson04`.
+9. ProtectingEndpoints — `authorizeHttpRequests()` w praktyce (`permitAll()`/`authenticated()`/
+   `hasRole()`/`hasAuthority()`).
+10. MethodSecurity — `@PreAuthorize`/`@PostAuthorize`/`@Secured` z wyrażeniami SpEL (powiązanie
+    z `_20_spring_core/Lesson17_SpelBasics`) — `@EnableMethodSecurity` z Lesson03.
+11. CustomLoginPage — własny widok logowania (Thymeleaf lub prosty HTML) zamiast domyślnej
+    strony Boota.
+12. JwtAuthentication — implementacja JWT w Spring Security — DO DECYZJI przy pisaniu: reużyć
+    jjwt (jak `_19_security_basics/Lesson05`) w WŁASNYM filtrze `OncePerRequestFilter`, CZY
+    natywne `NimbusJwtDecoder`/OAuth2 Resource Server — prawdopodobnie pokazać OBA.
+13. StatelessSecurity — `SessionCreationPolicy.STATELESS`, dlaczego JWT+sesje się WYKLUCZAJĄ
+    koncepcyjnie, powiązanie z `_19_security_basics/Lesson04` (sesje) vs `Lesson05` (JWT).
+14. CorsAndCsrfInSpringSecurity — konfiguracja CORS/CSRF W RAMACH `SecurityFilterChain` (różni
+    się od czystego `_19_security_basics/Lesson09-10`, bo Security ma WŁASNY mechanizm CSRF
+    zintegrowany z sesją) — WAŻNE: CSRF jest WŁĄCZONY domyślnie w Spring Security, trzeba go
+    świadomie wyłączyć dla bezstanowego API JWT (i wyjaśnić, DLACZEGO to bezpieczne tylko wtedy).
+15. OAuth2LoginAndResourceServerIntro (DODANE) — `spring-boot-starter-oauth2-client` (logowanie
+    "Zaloguj się przez Google" itp.) i `-oauth2-resource-server` (walidacja tokenów JWT wydanych
+    przez ZEWNĘTRZNY authorization server) — Spring-owa REALIZACJA koncepcji poznanej czystą Javą
+    w `_19_security_basics/Lesson06_OAuth2AndOpenIdConnectIntro`.
+16. SecurityExceptionHandling — `AuthenticationEntryPoint`/`AccessDeniedHandler` — spójne
+    401/403 w stylu Spring Security, powiązanie z `_18_rest_api/Lesson12_ErrorResponseDesign`.
+17. SpringSecurityCapstone — zabezpieczone REST API łączące WSZYSTKIE poprzednie 16 lekcji,
+    analogiczne w duchu do `_19_security_basics/Lesson21` (tam: ręczny `HttpServer`+BCrypt+JWT;
+    tu: TO SAMO, ale Spring Security robi ciężką pracę za kursanta) — najlepsza okazja, żeby
+    kursant PORÓWNAŁ ilość kodu "ręcznie" vs "frameworkiem" na identycznym scenariuszu.
+
+### Zweryfikowane fakty "stare vs nowe" (WebSearch 2026-07-11) — źródło prawdy dla powyższych lekcji
+
+Poniższe zostało sprawdzone przez wyszukiwanie w sieci (nie tylko pamięć modelu) przy planowaniu
+tego rozdziału — użyj jako punkt odniesienia przy pisaniu treści, ale i tak zweryfikuj ponownie
+przy faktycznym pisaniu lekcji (informacje w sieci mogły się zmienić):
+- `@MockBean`/`@SpyBean` — **deprecated od Spring Boot 3.4.0** (do usunięcia w 4.0.0), zastąpione
+  przez `@MockitoBean`/`@MockitoSpyBean` (dostępne od Boot 3.2). Dotyczy PRZYSZŁEGO rozdziału o
+  testowaniu, nie żadnego z 5 opisanych wyżej — zanotowane tu, żeby nie zgubić przy pisaniu tamtego
+  rozdziału. Różnica: `@MockitoBean` NIE jest wspierane na `@Configuration`/`@Component` (w
+  odróżnieniu od `@MockBean`).
+- `WebSecurityConfigurerAdapter` — deprecated Spring Security 5.7.0-M2/Boot 2.7.0, USUNIĘTY w
+  Security 6.x. `SecurityFilterChain` bean — wprowadzony jako opcja w Security 5.4.
+- `authorizeRequests()`/`antMatchers()` — deprecated od 5.7+, do usunięcia w Security 7.0.
+  `authorizeHttpRequests()`/`requestMatchers()` — aktualny standard.
+- `@EnableGlobalMethodSecurity` — deprecated od Spring Security 6.0. `@EnableMethodSecurity` —
+  aktualny standard, `prePostEnabled=true` domyślnie.
+- `RestTemplate` (Spring Framework 3.0, 2009) → `WebClient` (Spring 5, reaktywny) → `RestClient`
+  (Spring Framework 6.1, 2023, wsparcie w Boot od 3.2) — RestClient to "płynne API WebClienta +
+  synchroniczna, blokująca infrastruktura RestTemplate", zalecany domyślny wybór dla zwykłych
+  (nie-reaktywnych) aplikacji Spring MVC od Boot 3.2 wzwyż.
+- Auto-konfiguracja: `META-INF/spring.factories` (stary mechanizm) →
+  `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` +
+  `@AutoConfiguration` (nowy mechanizm od Boot 2.7, `spring.factories` nadal honorowany w 2.7 dla
+  wstecznej kompatybilności, ale to NIE jest już zalecany sposób rejestrowania WŁASNYCH
+  auto-konfiguracji).
+- Constructor injection bez jawnego `@Autowired` — możliwe od Spring **4.3** (2016), TYLKO gdy
+  klasa ma DOKŁADNIE JEDEN konstruktor; przy więcej niż jednym trzeba jawnie oznaczyć wybrany.
+- `javax.*` → `jakarta.*` — namespace zmieniony przy przejściu Jakarta EE spod Oracle do Eclipse
+  Foundation; Spring Framework 6/Spring Boot 3 WYMAGAJĄ `jakarta.*` (Java 17+ jako baseline) —
+  KAŻDY tutorial/kod używający `javax.servlet`/`javax.persistence`/`javax.validation` jest pisany
+  pod Spring Boot 2.x i NIE zadziała bez zmiany importów w tym projekcie (Boot 3.4.4).
+
+### Uwaga o kolejności PISANIA (nie tylko planowania)
+
+Rozdziały MOGĄ (ale nie muszą) być pisane w innej kolejności niż logiczna kolejność kursu, jeśli
+przyszła sesja uzna to za praktyczne — ALE `_20_spring_core` powinien powstać PIERWSZY, bo
+`_21_spring_boot` i dalsze ZAKŁADAJĄ znajomość DI/kontenera/AOP z Core (dokładnie tak, jak
+użytkownik to zaplanował: "Tu bym zaczął Springa nie od Boota, tylko od idei"). W razie
+wyczerpania limitu w trakcie pisania KTÓREGOKOLWIEK z tych rozdziałów, zaktualizuj tę sekcję CLAUDE.md
+o dokładny stan (które lekcje mają już treść, które nie) — ta sama konwencja co przy wszystkich
+poprzednich rozdziałach tego kursu.

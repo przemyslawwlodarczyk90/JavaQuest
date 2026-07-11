@@ -217,6 +217,56 @@ public class _TableOfContents {
                     "16_PathTraversalAndFileUploadSecurity", "17_InputValidation",
                     "18_SecretsManagement", "19_SecureLoggingAndAuditing",
                     "20_DependencyAndSupplyChainSecurity", "21_OwaspTop10OverviewAndCapstone"
+            )),
+
+            new Chapter("_20_spring_core", "Spring Core i Dependency Injection", List.of(
+                    "01_WhatIsSpring", "02_SpringVersionsAndCompatibilityOverview",
+                    "03_InversionOfControl", "04_DependencyInjection",
+                    "05_ConfigurationStylesXmlVsJavaVsAnnotations", "06_Bean", "07_ApplicationContext",
+                    "08_ComponentServiceRepository", "09_ConfigurationAndBeanAnnotation",
+                    "10_ConstructorInjection", "11_FieldInjectionWhyAvoid", "12_QualifierAndPrimary",
+                    "13_CircularDependencies", "14_BeanScopes", "15_Profiles",
+                    "16_PropertiesAndConfiguration", "17_SpelBasics", "18_LifecycleCallbacks",
+                    "19_BeanPostProcessorsAndContainerExtensionPoints", "20_ApplicationEvents",
+                    "21_SpringAopFundamentals", "22_SpringAopAdvancedPointcutsAndProxies",
+                    "23_SpringCoreCapstone"
+            )),
+
+            new Chapter("_21_spring_boot", "Spring Boot", List.of(
+                    "01_WhatIsSpringBoot", "02_ProjectSetup", "03_Starters", "04_AutoConfiguration",
+                    "05_ApplicationPropertiesYaml", "06_ProfilesInSpringBoot", "07_CommandLineRunner",
+                    "08_ConfigurationProperties", "09_DevToolsAndProductivity", "10_LoggingInSpringBoot",
+                    "11_ErrorHandlingBasics", "12_SpringBootActuator",
+                    "13_ObservabilityMicrometerAndTracing", "14_BuildingExecutableJarAndNativeImage",
+                    "15_CustomAutoConfigurationAndStarters", "16_SpringBootCapstone"
+            )),
+
+            new Chapter("_22_spring_web", "Spring Web i REST API", List.of(
+                    "01_ControllerVsRestController", "02_RequestMappingGetPostPutDelete",
+                    "03_PathVariable", "04_RequestParam", "05_RequestBody", "06_ResponseEntity",
+                    "07_DtoInRestApi", "08_ValidationWithValid", "09_GlobalExceptionHandler",
+                    "10_ErrorResponseDto", "11_ContentNegotiationAndMessageConverters",
+                    "12_PaginationInApi", "13_SortingAndFiltering", "14_FileUpload", "15_CorsInSpring",
+                    "16_InterceptorsAndWebMvcConfigurer", "17_HttpClientsRestTemplateWebClientRestClient",
+                    "18_SwaggerOpenApi", "19_RestApiCapstone"
+            )),
+
+            new Chapter("_23_spring_data_jpa", "Spring Data JPA", List.of(
+                    "01_WhatIsSpringDataJpa", "02_RepositoryInterfaces", "03_CrudRepositoryJpaRepository",
+                    "04_QueryMethods", "05_CustomQueries", "06_PaginationAndSorting",
+                    "07_EntityRelationshipsInSpring", "08_TransactionsInSpring",
+                    "09_LazyLoadingAndNPlusOne", "10_EntityGraph", "11_Projections", "12_Specifications",
+                    "13_Auditing", "14_MigrationsWithFlyway", "15_SpringDataJpaCapstone"
+            )),
+
+            new Chapter("_24_spring_security", "Spring Security", List.of(
+                    "01_WhatIsSpringSecurity", "02_SecurityFilterChain",
+                    "03_SecurityConfigEvolutionOldVsNew", "04_DefaultLogin", "05_UserDetailsService",
+                    "06_PasswordEncoder", "07_RolesAndAuthorities", "08_FormLogin",
+                    "09_ProtectingEndpoints", "10_MethodSecurity", "11_CustomLoginPage",
+                    "12_JwtAuthentication", "13_StatelessSecurity", "14_CorsAndCsrfInSpringSecurity",
+                    "15_OAuth2LoginAndResourceServerIntro", "16_SecurityExceptionHandling",
+                    "17_SpringSecurityCapstone"
             ))
     );
 
