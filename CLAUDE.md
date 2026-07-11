@@ -996,9 +996,43 @@ wstępie, reszta lekcji przesunięta o +1; pełna, aktualna lista lekcji rozdzia
 sekcji). **`_20_spring_core` jest w PEŁNI ukończony (stan na 2026-07-11): 23/23 lekcje, każda z teorią +
 30 ćwiczeniami, skompilowane I uruchomieniowo zweryfikowane `mvnw.cmd exec:java` — zero błędów,
 włącznie z kapsztonem (Lesson23) łączącym WSZYSTKIE 22 poprzednie mechanizmy w jednym, spójnym,
-2-profilowym demo "JavaQuest Order Processing".** Następny krok pracy: zacząć `_21_spring_boot`
-od `_Lesson01_WhatIsSpringBoot.java`. Pozostałe 4 rozdziały (`_21`-`_24`) mają TYLKO puste foldery —
-żadna treść.
+2-profilowym demo "JavaQuest Order Processing".**
+
+**`_21_spring_boot` — Lesson01-12 GOTOWE (teoria + 30 ćwiczeń, skompilowane I uruchomieniowo
+zweryfikowane, zero błędów).** Lesson13 i dalej: NIE napisane. Następny krok:
+`_Lesson13_ObservabilityMicrometerAndTracing.java`. Pozostałe 3 rozdziały (`_22`-`_24`) mają TYLKO
+puste foldery.
+
+**NOWA zależność:** `spring-boot-starter-actuator` dodana do `pom.xml` dla Lesson12-13.
+
+**Kolejny wariant tej samej pułapki `@ComponentScan` (Lesson11) — TYM RAZEM przez
+`@SpringBootApplication`, nie ręczny `@ComponentScan`:** `@RestController` jest SAM w sobie
+`@Component`, więc domyślny component-scan wewnątrz `@SpringBootApplication` ZNAJDUJE go
+automatycznie. Jawne DODATKOWE `@Bean` zwracające `new FailingController()` dało DWIE rejestracje
+tego samego kontrolera i błąd Spring MVC "Ambiguous mapping" (dwa handlery na tę samą ścieżkę URL).
+**Zasada dla `_21_spring_boot`/`_22_spring_web` (gdzie `@SpringBootApplication` ZAWSZE
+component-scanuje): kontrolery/`@Component`-podobne klasy z stereotypem NIGDY nie potrzebują
+DODATKOWEGO jawnego `@Bean` — rejestruj je PRZEZ stereotyp (component-scan) ALBO przez `@Bean`,
+NIGDY oba naraz w tym samym `@SpringBootApplication`.** Dla klas BEZ żadnego stereotypu (`plain`
+POJO, jak w Lesson09/10 demo) jawny `@Bean` jest oczywiście nadal poprawny i konieczny.
+
+Warte odnotowania z Lesson05-08: Lesson08 demo fail-fast walidacji `@ConfigurationProperties`
+pokazuje NAPRAWDĘ oryginalny diagnostyczny raport błędu Boota ("APPLICATION FAILED TO START" +
+dokładna ścieżka właściwości + komunikat Hibernate Validatora PO POLSKU) — nie symulacja, realne
+zachowanie frameworka przechwycone przez `try/catch` w demo. Zasada z `_20_spring_core/Lesson19`
+(publiczna klasa + publiczne gettery/settery wymagane dla wiązania JavaBean) zastosowana od razu
+prewencyjnie w `PoolProperties`/`ValidatedPoolProperties` — zero powtórki tego buga.
+
+Warte odnotowania z Lesson01-04: Lesson02 realnie parsuje `pom.xml` TEGO projektu (ten sam wzorzec
+co `_19_security_basics/Lesson20`) i wypisuje 5 realnych starterów. Lesson04 realnie CZYTA plik
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` z JAR-a
+`spring-boot-autoconfigure` na classpath (przez `getClassLoader().getResourceAsStream(...)`) —
+znaleziono 153 prawdziwe klasy auto-konfiguracji, i zweryfikowano że `ObjectMapper` jest NAPRAWDĘ
+auto-konfigurowany (bean istnieje bez jawnej rejestracji). Wzorzec `@Conditional*` z
+`_20_spring_core`-owej reguły "unikaj `@ComponentScan` przy wielu grupach demo w 1 pliku" nie
+dotyczy tego rozdziału tak samo — każdy `demonstrateXxx()` tworzy WŁASNY, EFEMERYCZNY
+`SpringApplicationBuilder(...).sources(...)`, więc grupy demo są już naturalnie izolowane przez
+jawne `.sources(...)` zamiast global component-scan.
 
 **NOWA zależność dodana do `pom.xml` na potrzeby Lesson21-23 (AOP):**
 `org.springframework.boot:spring-boot-starter-aop` — WYJĄTEK od wcześniejszej obietnicy "zero
