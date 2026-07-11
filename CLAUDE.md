@@ -1650,3 +1650,85 @@ Dwie nowe pułapki znalezione przy pisaniu `_22_spring_web` (WAŻNE dla Lesson09
   obecności WebFluksa na classpath — zweryfikowane empirycznie (wszystkie lekcje nadal startują
   na embedded Tomcacie, nie Netty). To standardowy, wspierany wzorzec "aplikacja MVC z
   `WebClient` jako klientem HTTP".
+
+## Stan `_23_spring_data_jpa` na 2026-07-11
+
+Rozpoczęty. Foldery WSZYSTKICH 15 lekcji już istniały (utworzone wcześniej razem z resztą bloku
+Spring). **Lesson01-08 gotowe** (teoria + 30 ćwiczeń, skompilowane ORAZ uruchomieniowo
+zweryfikowane `mvnw.cmd exec:java`), Lesson09-15 jeszcze NIE napisane. Następny krok:
+`Lesson09_LazyLoadingAndNPlusOne`.
+
+Warte odnotowania z Lesson08 (`@Transactional`): zweryfikowane empirycznie WSZYSTKIE 3 zjawiska
+opisane w teorii — (1) `RuntimeException` w `@Transactional` COFA WSZYSTKIE zmiany, WŁĄCZNIE Z
+operacją `save()`, która już się "wykonała" przed wyjątkiem; (2) CHECKED wyjątek (`Exception`, NIE
+`RuntimeException`) domyślnie NIE cofa transakcji — dane ZOSTAJĄ zatwierdzone mimo wyjątku, chyba
+że jawnie dodasz `rollbackFor = Exception.class`; (3) self-invocation (`this.metodaTransactional()`
+wywołane Z TEJ SAMEJ klasy) OMIJA proxy Springa — `@Transactional` PO CICHU przestaje działać,
+DOKŁADNIE ta sama pułapka co przy AOP w `_20_spring_core/Lesson22`, teraz zademonstrowana dla
+`@Transactional` konkretnie. Lesson05 (`@Modifying` bez `@Transactional`) TEŻ zweryfikowany
+empirycznie: RZUCA `InvalidDataAccessApiUsageException` (potwierdza teorię, w odróżnieniu od
+`deleteById` z Lesson03, gdzie empiryczna rzeczywistość zaprzeczyła Javadocowi).
+
+**Nowa zależność:** `org.springframework.boot:spring-boot-starter-data-jpa` — dodana BEZ
+jawnej wersji (zarządzana przez `spring-boot-starter-parent` BOM, TA SAMA wersja Hibernate co
+już obecne `hibernate-core`/`hibernate-envers`/`hibernate-jcache` z `_12_hibernate` —
+zweryfikowane brakiem konfliktu przy kompilacji i uruchomieniu). Zweryfikowano (nauczka ze
+`springdoc` w `_22_spring_web`) przez PONOWNE uruchomienie niepowiązanych, wcześniej
+zweryfikowanych lekcji z `_20_spring_core`/`_22_spring_web` PO dodaniu tej zależności — zero
+regresji.
+
+### NAJWAŻNIEJSZA, CHARAKTERYSTYCZNA DLA TEGO ROZDZIAŁU pułapka: repozytoria Spring Data JPA jako ZAGNIEŻDŻONE interfejsy
+
+Zgodnie z konwencją kursu, repozytoria (`interface XxxRepository extends JpaRepository<...>`) są
+zagnieżdżone WEWNĄTRZ klasy lekcji (jak wszystko inne w tym kursie) — ale to NATRAFIA na
+mechanizm CAŁKOWICIE INNY od zwykłego `@ComponentScan` (które domyślnie ZNAJDUJE zagnieżdżone
+`@Component`, jak ustalono w `_20_spring_core`/`_21_spring_boot`/`_22_spring_web`):
+
+- **`@EnableJpaRepositories` (i domyślna auto-konfiguracja repozytoriów w Spring Boot) ma WŁASNY
+  skaner, z atrybutem `considerNestedRepositories`, DOMYŚLNIE `false`** — zagnieżdżone interfejsy
+  repozytoriów są PO CICHU IGNOROWANE, dając `NoSuchBeanDefinitionException: No qualifying bean
+  of type '...Repository' available` przy próbie `context.getBean(XxxRepository.class)`. Naprawa:
+  jawna adnotacja `@EnableJpaRepositories(considerNestedRepositories = true)` NA KAŻDEJ klasie
+  źródłowej (`@SpringBootApplication`/`@Configuration`) przekazywanej do `SpringApplicationBuilder`.
+  **Zapamiętaj na Lesson05-15**: KAŻDA klasa-źródło w tym rozdziale MUSI mieć tę adnotację, inaczej
+  `context.getBean(Repository.class)` zawsze zawiedzie.
+- **DRUGA warstwa tej samej pułapki, WYKRYTA DOPIERO PO naprawieniu pierwszej**: pliki lekcji Z
+  WIELOMA metodami `demonstrateXxx()` (WIĘCEJ NIŻ 1 `@SpringBootApplication`/`@Configuration` W
+  TYM SAMYM pliku/pakiecie) dają `BeanDefinitionOverrideException: Cannot register bean
+  definition ... since there is already ... bound`, GDY DWIE (lub więcej) klas źródłowych W TYM
+  SAMYM pliku mają WŁASNE `@EnableJpaRepositories`. Przyczyna: `@SpringBootApplication` niesie ZE
+  SOBĄ implicit `@ComponentScan` (jak zawsze), KTÓRY ZNAJDUJE sąsiednie klasy
+  `@SpringBootApplication`/`@Configuration` W TYM SAMYM pakiecie JAKO zwykłe beany
+  `@Configuration` — Spring wtedy PRZETWARZA TEŻ ICH WŁASNE `@EnableJpaRepositories`
+  (bo to adnotacja typu `@Import`, uruchamiana dla KAŻDEJ odkrytej klasy `@Configuration`,
+  NIEZALEŻNIE od tego, czy jest ona "aktywnym" źródłem `SpringApplicationBuilder` czy tylko
+  "przypadkowo znalezionym sąsiadem") — TO SAMO repozytorium zostaje zarejestrowane DWA RAZY W
+  JEDNYM kontekście. **NAPRAWA (zastosowana w Lesson02-04, obowiązuje DLA WSZYSTKICH kolejnych
+  lekcji tego rozdziału Z WIĘCEJ NIŻ 1 klasą źródłową w pliku)**: ZASTĄP `@SpringBootApplication`
+  kombinacją `@Configuration` + `@EnableAutoConfiguration` (BEZ `@ComponentScan`) — to ZACHOWUJE
+  auto-konfigurację (`DataSource`/`EntityManagerFactory`/skanowanie encji JPA, bo
+  `@EnableAutoConfiguration` niesie ZE SOBĄ `@AutoConfigurationPackage`, KTÓRY rejestruje pakiet
+  DLA skanowania encji NIEZALEŻNIE od `@ComponentScan`), ale USUWA implicit component-scan, KTÓRY
+  wcześniej ZNAJDOWAŁ sąsiednie klasy źródłowe i PODWAJAŁ rejestrację repozytoriów. Wzorzec:
+  ```java
+  @Configuration
+  @EnableAutoConfiguration
+  @EnableJpaRepositories(considerNestedRepositories = true)
+  static class DemoApp { }
+  ```
+  Lesson01 (TYLKO 1 klasa źródłowa W pliku) NIE POTRZEBOWAŁ tej drugiej naprawy — `@SpringBootApplication`
+  tam działa poprawnie, bo NIE MA żadnego sąsiada do przypadkowego odkrycia. **ZASADA: jeśli plik
+  lekcji ma TYLKO 1 klasę źródłową, `@SpringBootApplication` + `@EnableJpaRepositories` wystarczy;
+  jeśli ma WIĘCEJ NIŻ 1 (niemal zawsze W TYM kursie), UŻYWAJ `@Configuration` +
+  `@EnableAutoConfiguration` ZAMIAST `@SpringBootApplication`, żeby uniknąć implicit
+  component-scan.**
+
+### Druga pułapka (mniej poważna, udokumentowana W treści Lesson03, NIE naprawiana W kodzie)
+
+`deleteById(id)` na NIEISTNIEJĄCYM ID — Javadoc `CrudRepository` DOPUSZCZA
+`EmptyResultDataAccessException`, ale zweryfikowane EMPIRYCZNIE na tej wersji Spring Data JPA
+(Boot 3.4.4): `deleteById` na brakującym ID NIE RZUCA wyjątku (cichy no-op) — zachowanie
+`SimpleJpaRepository` zmieniało się między wersjami. Lesson03 demonstruje to PRZEZ `try/catch`
+obsługujący OBA warianty (nie zakłada z góry, który zajdzie) i drukuje RZECZYWISTY wynik zamiast
+twierdzić coś, czego nie zweryfikowano. **Zasada: NIE ufaj Javadocowi bez testu na WŁASNEJ
+wersji, szczególnie dla zachowań, które Spring Data zmieniał między wersjami.**
