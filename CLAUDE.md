@@ -993,10 +993,82 @@ Zapisane 2026-07-11, zaktualizowane tego samego dnia po rozpoczęciu pisania tre
 `_TableOfContents.java`.** `_20_spring_core` ma już **23 lekcje** (nie 22 — użytkownik jawnie
 zażądał dodania `Lesson02_SpringVersionsAndCompatibilityOverview` NA POCZĄTKU rozdziału, zaraz po
 wstępie, reszta lekcji przesunięta o +1; pełna, aktualna lista lekcji rozdziału jest niżej w tej
-sekcji). **Postęp pisania treści w `_20_spring_core`: Lesson01-09 GOTOWE (teoria + 30 ćwiczeń
-każda, skompilowane I uruchomieniowo zweryfikowane `mvnw.cmd exec:java` — zero błędów). Lesson10 i
-dalej: NIE napisane.** Następny krok pracy: `_Lesson10_ConstructorInjection.java` w
-`_20_spring_core`. Pozostałe 4 rozdziały (`_21`-`_24`) mają TYLKO puste foldery — żadna treść.
+sekcji). **`_20_spring_core` jest w PEŁNI ukończony (stan na 2026-07-11): 23/23 lekcje, każda z teorią +
+30 ćwiczeniami, skompilowane I uruchomieniowo zweryfikowane `mvnw.cmd exec:java` — zero błędów,
+włącznie z kapsztonem (Lesson23) łączącym WSZYSTKIE 22 poprzednie mechanizmy w jednym, spójnym,
+2-profilowym demo "JavaQuest Order Processing".** Następny krok pracy: zacząć `_21_spring_boot`
+od `_Lesson01_WhatIsSpringBoot.java`. Pozostałe 4 rozdziały (`_21`-`_24`) mają TYLKO puste foldery —
+żadna treść.
+
+**NOWA zależność dodana do `pom.xml` na potrzeby Lesson21-23 (AOP):**
+`org.springframework.boot:spring-boot-starter-aop` — WYJĄTEK od wcześniejszej obietnicy "zero
+nowych zależności dla `_20_spring_core`" z sekcji planu niżej; okazało się to NIEUNIKNIONE, bo
+realne Spring AOP ze składnią `@Aspect`/`execution(...)` wymaga `aspectjweaver` na classpath
+(sam `spring-aop` jest już transytywnie obecny przez `spring-context`, ale parser wyrażeń pointcut
+w stylu adnotacji @AspectJ potrzebuje dodatkowo tej biblioteki). Zaktualizuj tę obietnicę w opisie
+`_21_spring_boot`/`_22_spring_web`, jeśli któraś z ich lekcji też natrafi na podobną potrzebę.
+
+**NAJWAŻNIEJSZA pułapka całego rozdziału, odkryta przy Lesson21-23 (AOP z adnotacjami NIE
+DZIAŁAŁO WCALE, cicho, bez żadnego błędu kompilacji ani runtime — najgroźniejszy rodzaj bugu):**
+wyrażenia pointcut `@annotation(NazwaAdnotacji)` przekazywane jako STRING do `@Before`/`@Around`/
+itd. są parsowane przez silnik AspectJ, który NIE ZNA zasięgu (scope) Javy — prosta nazwa
+ZAGNIEŻDŻONEJ adnotacji (np. `LogExecution` zadeklarowana jako `@interface` WEWNĄTRZ tej samej
+klasy lekcji — standardowy wzorzec w tym kursie) nie rozwiązuje się do niczego, więc pointcut PO
+CICHU dopasowuje ZERO metod → Spring w ogóle NIE TWORZY proxy dla takiego beana → `@Aspect` nic
+nie robi, ale KOD SIĘ KOMPILUJE I URUCHAMIA BEZ WYJĄTKU (tylko brak logów aspektu zdradzał
+problem — wykryte WYŁĄCZNIE dzięki faktycznemu uruchomieniu i czytaniu outputu, nie samej
+kompilacji). To samo dotyczy `execution(...)` z NIEPEŁNĄ kwalifikowaną nazwą (pominięcie
+prefiksu zewnętrznej klasy `_LessonXX_...` przed nazwą klasy zagnieżdżonej — pakiet Javy TO NIE
+TO SAMO co pełna ścieżka do klasy zagnieżdżonej). **ZASADA NA PRZYSZŁOŚĆ (dla `_21`-`_24`, gdziekolwiek
+pojawi się `@Aspect`/AOP, np. przy `@Transactional`-podobnych demo w `_23_spring_data_jpa` lub
+`@PreAuthorize` w `_24_spring_security`, jeśli używają zagnieżdżonych własnych adnotacji):
+ZAWSZE używaj PEŁNEJ kwalifikowanej nazwy (`pakiet.NazwaZewnetrznejKlasy.NazwaZagniezdzonejAdnotacji`)
+w wyrażeniach pointcut, NIGDY prostej nazwy — najlepiej jako `private static final String` stała
+(patrz wzorzec `LOG_EXECUTION`/`AUDITED` w Lesson21-23), i ZAWSZE zweryfikuj uruchomieniowo, że
+logi aspektu FAKTYCZNIE się pojawiają, nie tylko że kod się kompiluje.**
+Lesson16 wymagał nowego pliku zasobu `src/main/resources/lesson16-app.properties` (app.name/
+app.version) — utworzony.
+
+**UOGÓLNIONA ZASADA WIDOCZNOŚCI (2 wystąpienia — Lesson17 SpEL, Lesson19 BeanFactoryPostProcessor +
+`PropertyValues`):** wszędzie indziej w tym kursie klasy/metody pomocnicze domyślnie mają widoczność
+PAKIETOWĄ (brak modyfikatora) — to działa dla zwykłego DI (`@Autowired` na polu/konstruktorze radzi
+sobie z `setAccessible(true)`). Ale co najmniej DWA mechanizmy Springa oparte na **refleksji
+JavaBean/`java.beans.Introspector`** (nie na `Field`/`Constructor` reflection) wymagają PUBLICZNEJ
+klasy I PUBLICZNYCH metod, inaczej milcząco "nie widzą" ich wcale: (1) **SpEL**
+(`ReflectiveMethodResolver` woła `Class.getMethods()`, tylko publiczne) — dało `EL1004E: Method
+call ... cannot be found` w Lesson17; (2) **`BeanDefinition.getPropertyValues()` / setter injection
+przez `BeanWrapperImpl`** (introspekcja JavaBean property, wymaga PUBLICZNEGO getter+setter PARY,
+NIE tylko poprawnej nazwy) — dało mylący błąd "property is not writable" w Lesson19, nawet PO
+dodaniu poprawnie nazwanego `getGreeting()`/`setGreeting()` — dopiero `public` na klasie I obu
+metodach naprawiło problem. **Zasada na przyszłość: jeśli lekcja demonstruje SpEL, programową
+manipulację `PropertyValues`/`BeanDefinition`, lub cokolwiek opartego o `java.beans.Introspector` —
+użyta klasa pomocnicza i jej metody MUSZĄ być `public`, nie tylko poprawnie nazwane.**
+
+**Zmiana procesu (2026-07-11, na wyraźną prośbę użytkownika o tempo):** kompilacja nadal NASTĘPUJE
+po KAŻDEJ lekcji (tania, natychmiastowa informacja zwrotna), ale URUCHAMIANIE (`exec:java`) i
+odczyt realnego outputu odbywa się PARAMI (2 lekcje na raz) zamiast pojedynczo — nadal ZERO
+lekcji trafia do repo bez faktycznego uruchomienia i sprawdzenia wyniku, tylko mniej rund
+tool-call/odczyt na tę samą liczbę zweryfikowanych lekcji.
+
+**STANDARDOWE ROZWIĄZANIE dla nawracającej pułapki `@ComponentScan` (4. wystąpienie, w Lesson10 i
+Lesson13 — ZAKTUALIZOWANE po tym, jak filtr wykluczający okazał się NIEWYSTARCZAJĄCY):** jeśli plik
+lekcji ma WIĘCEJ NIŻ JEDNĄ klasę `@Configuration` i/lub WIĘCEJ NIŻ JEDNĄ grupę klas `@Component`
+należących do RÓŻNYCH `demonstrateXxx()` (a w tym kursie ma to miejsce niemal zawsze), to
+`@ComponentScan` — nawet z `excludeFilters = @Filter(type = ANNOTATION, classes =
+Configuration.class)` — WCIĄŻ zgarnie WSZYSTKIE `@Component` z INNYCH demo w TYM SAMYM pliku (bo
+są w TYM SAMYM pakiecie, a filtr wykluczał tylko `@Configuration`, nie zwykłe `@Component`). W
+Lesson13 dało to FAŁSZYWY wynik — drugi test (field injection + `allowCircularReferences=false`)
+obserwowanie awarii spowodowanej PRZEZ ZUPEŁNIE INNĄ parę klas z PIERWSZEGO demo w tym samym pliku
+(`ConstructorCycleA`/`B`), nie przez zamierzoną parę `FieldCycleA`/`B` — błąd byłby NIEWYKRYTY,
+gdyby nie porównanie treści komunikatu z oczekiwaną nazwą klasy. **NOWA, TWARDA ZASADA:** NIE
+UŻYWAJ `@ComponentScan` w plikach lekcji tego rozdziału, chyba że CAŁA lekcja demonstruje TYLKO
+JEDNĄ, spójną grupę beanów (jak Lesson01/02/06/11) — w KAŻDEJ innej sytuacji (wiele niezależnych
+`demonstrateXxx()`, każda z WŁASNYMI klasami `@Component`-podobnymi) rejestruj beany WYŁĄCZNIE
+jawnie przez metody `@Bean` w danej klasie `@Configuration` (parametry metody = zależności — Spring
+i tak stosuje `@Autowired`-processing na polach/setterach NIEZALEŻNIE od tego, czy bean powstał
+przez skan czy przez `@Bean`, więc field/setter injection demo działa identycznie). Przed napisaniem
+KAŻDEJ kolejnej lekcji zadaj sobie pytanie: "czy ten plik ma więcej niż 1 grupę demo-klas?" — jeśli
+tak, NIE sięgaj po `@ComponentScan`.
 
 Lesson09 dodatkowo pokazuje (zweryfikowane uruchomieniowo, real CGLIB) różnicę `@Configuration`
 "full mode" (domyślny — CGLIB przechwytuje "ręczne" wywołania jednej metody `@Bean` z wnętrza

@@ -192,8 +192,8 @@ public class _Exercises_Lesson02_SpringVersionsAndCompatibilityOverview {
         /*
          * 🧪 Zadanie 20:
          * Bez terminala: dla kazdego wiersza tabeli mechanizmow, zapisz,
-         * W KTOREJ lekcji tego 5-rozdzialowego bloku spodziewasz sie
-         * pelnego wyjasnienia - sprawdzisz to pozniej.
+         * W KTOREJ lekcji bloku rozdzialow poswieconych Springowi
+         * spodziewasz sie pelnego wyjasnienia - sprawdzisz to pozniej.
          */
         public static void main(String[] args) { }
     }

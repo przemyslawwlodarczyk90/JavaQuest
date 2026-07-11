@@ -15,15 +15,16 @@ public class _Lesson01_WhatIsSpring {
          * ============================================================
          * 📦 NOWY ROZDZIAŁ, NOWY, NAJWIĘKSZY BLOK TEGO KURSU
          * ============================================================
-         * Ten rozdział otwiera ostatnią, 5-częściową serię kursu
-         * poświęconą Springowi: `_20_spring_core` (ten rozdział — IDEA:
+         * Ten rozdział otwiera serię kursu poświęconą Springowi, na razie
+         * zaplanowaną jako: `_20_spring_core` (ten rozdział — IDEA:
          * kontener, IoC, DI) → `_21_spring_boot` (jak Boot AUTOMATYZUJE
          * to, co tu poznasz) → `_22_spring_web` (REST na Springu — masz
          * już `_18_rest_api`/`_07_servlets`) → `_23_spring_data_jpa`
          * (masz już PEŁNE `_12_hibernate`) → `_24_spring_security` (masz
-         * już PEŁNE `_19_security_basics`). CELOWO zaczynamy od Core, NIE
-         * od Boota — zanim zobaczysz "magię" auto-konfiguracji, musisz
-         * zrozumieć, CO ta magia właściwie robi za kulisami.
+         * już PEŁNE `_19_security_basics`) — kolejne rozdziały tego bloku
+         * MOGĄ jeszcze dojść. CELOWO zaczynamy od Core, NIE od Boota —
+         * zanim zobaczysz "magię" auto-konfiguracji, musisz zrozumieć, CO
+         * ta magia właściwie robi za kulisami.
          *
          * 🔹 JAKI PROBLEM ROZWIĄZUJE SPRING?
          * ============================================================

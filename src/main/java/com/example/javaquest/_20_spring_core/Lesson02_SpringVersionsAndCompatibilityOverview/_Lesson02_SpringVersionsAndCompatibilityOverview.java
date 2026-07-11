@@ -47,8 +47,8 @@ public class _Lesson02_SpringVersionsAndCompatibilityOverview {
          *   `jakarta.*` / Java 21 — sprawdzone TERAZ, w KODZIE (nie na
          *   pamiec), przez `SpringBootVersion.getVersion()`.
          * - Kazdy mechanizm z tabeli wyzej ma WLASNA, glebsza lekcje w
-         *   dalszej czesci tego 5-rozdzialowego bloku — ta lekcja to
-         *   TYLKO mapa, wracaj do niej w razie watpliwosci.
+         *   dalszej czesci bloku rozdzialow poswieconych Springowi — ta
+         *   lekcja to TYLKO mapa, wracaj do niej w razie watpliwosci.
          * - Praktyczna umiejetnosc: zanim skopiujesz kod ze Stack
          *   Overflow/starego tutoriala, sprawdz SYGNALY wersji (import
          *   `javax.*`, `WebSecurityConfigurerAdapter`, `spring.factories`)
