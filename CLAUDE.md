@@ -776,12 +776,47 @@ Lesson20 (kapszton "JavaQuest Tasks API") łączy w 1 działającym mini-API: za
 (Lesson11), błędy RFC 7807 + walidacja collect-all (Lesson12/13), klucz idempotencji (Lesson15) i
 rate limiting (Lesson16) — zweryfikowane end-to-end przez 6 scenariuszy w `main()`.
 
-**Postęp `_19_security_basics` (21 lekcji, folder utworzony i zarejestrowany w
-`_TableOfContents.java`):** Lesson01_AuthenticationVsAuthorization GOTOWA (teoria + 30 ćwiczeń,
-skompilowana I uruchomieniowo zweryfikowana — zero błędów, demo pokazuje 401 vs 403 na
-realnym `/login`+`/admin/dashboard`). Lesson02 i dalej: NIE zaczęte. Następny krok:
-Lesson02_PasswordHashing. Sprawdź `git status`/zawartość folderów lekcji, żeby potwierdzić
-dokładnie gdzie praca stanęła, jeśli ten wpis nie został zaktualizowany na bieżąco.
+**`_19_security_basics` jest w PEŁNI ukończony (stan na 2026-07-11): 21/21 lekcji, każda z
+teorią + 30 ćwiczeniami, cały projekt skompilowany (`mvnw.cmd compile`) ORAZ każda z 4 ostatnio
+dopisanych lekcji (18-21) uruchomieniowo zweryfikowana `mvnw.cmd exec:java` — zero błędów.**
+Lesson01-17 były już gotowe z wcześniejszej sesji (ta notatka w CLAUDE.md była nieaktualna —
+błędnie sugerowała, że ukończona jest tylko Lesson01; w praktyce Lesson01-17 miały już komplet
+teorii i ćwiczeń, zweryfikowano to przy starcie tej sesji przez odczyt zawartości plików, nie tylko
+istnienia folderów). W tej sesji dopisano brakujące Lesson18-21:
+
+- **Lesson18_SecretsManagement** — rozwinięcie `_10_dao/Lesson13_EnvironmentVariables` (zmienne
+  środowiskowe to "krok 1"): maskowanie sekretu w `toString()`, wzorzec klienta menedżera sekretów
+  (Vault/AWS Secrets Manager) z cache'em i TTL (`CachingSecretStore`), prosty regexowy skaner
+  zahardkodowanych sekretów (wzorem git-secrets/TruffleHog).
+- **Lesson19_SecureLoggingAndAuditing** — czego NIGDY nie logować, log injection (wstrzyknięcie
+  `\n` fałszujące wpis w logu) + sanityzacja, REALNY plik dziennika audytu przez
+  `java.util.logging.FileHandler` (ten sam wzorzec "generuj prawdziwy plik" co `.hprof`/`.jfr` w
+  `_15_jvm_internals`), oraz dziennik audytu z ŁAŃCUCHEM SKRÓTÓW SHA-256 (tamper-evident) —
+  zweryfikowane uruchomieniowo, że modyfikacja jednego wpisu bez przeliczenia hasha WYKRYWA
+  manipulację (`verifyChain` zwraca `false`).
+- **Lesson20_DependencyAndSupplyChainSecurity** — parsuje REALNY `pom.xml` TEGO projektu (DOM,
+  `disallow-doctype-decl` jak w Lesson15) i generuje z niego mini-SBOM z faktycznej listy
+  zależności (nie przykładowych danych), plus koncepcje: typosquatting, dependency confusion,
+  pinowanie wersji vs zakresy. Świadomie NIE wywołuje realnego `mvn dependency:tree` (zbyt
+  kosztowne/kruche w demo) — w odróżnieniu od Ant w `_11_buildtools`, Maven nie ma czystego API do
+  embedowania w procesie.
+- **Lesson21_OwaspTop10OverviewAndCapstone** — mapowanie 10 kategorii OWASP Top 10 (2021) na
+  konkretne lekcje rozdziału (jako `Map<String,String>` wypisywana programowo, nie tylko tekst w
+  komentarzu); JAWNIE przyznana luka: A10 SSRF nie ma własnej lekcji w tym rozdziale (wyjaśnione
+  krótko koncepcyjnie, bez pełnej implementacji — świadoma decyzja, żeby nie rozdymać rozdziału).
+  Kapszton: REALNY `HttpServer` z endpointami `/login` (walidacja → BCrypt → wystawienie JWT) i
+  `/admin/report` (weryfikacja JWT → RBAC → nagłówki bezpieczeństwa), audytowany przez łańcuch
+  skrótów z Lesson19 — 7 scenariuszy w `main()` (sukces, złe hasło, pusty input, autoryzowany
+  dostęp, 403 przy braku uprawnień, 401 brak tokenu, 401 zmanipulowany token), wszystkie
+  zweryfikowane uruchomieniowo z oczekiwanymi kodami statusu.
+
+Drobna pułapka napotkana i naprawiona: w Lesson20 przypadkiem wpisany 1 znak z polskim
+diakrytykiem (`RÓWNOLEGLE`) w pliku pisanym celowo w konwencji ASCII-only (jak cały `_18_rest_api`
+i teraz `_19_security_basics`) spowodował "krzaczek" w wyjściu terminala PowerShell — poprawione na
+`ROWNOLEGLE`. Ten rozdział (w odróżnieniu od wcześniejszej notatki dla `_18_rest_api`) też został
+konsekwentnie napisany ASCII-only w `println`/komentarzach, mimo że nie jest to wymagana konwencja
+całego repo (patrz sprostowanie w sekcji "Pułapki techniczne napotkane przy pisaniu `_18_rest_api`"
+niżej) — utrzymano spójność wewnątrz całego rozdziału `_19_security_basics`.
 
 ### Pułapki techniczne napotkane przy pisaniu `_18_rest_api` — WARTO PAMIĘTAĆ przy `_19_security_basics`
 
