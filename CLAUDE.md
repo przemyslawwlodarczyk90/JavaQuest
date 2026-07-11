@@ -761,48 +761,61 @@ Stan na 2026-07-10: `_17_architecture` **kompletny i zweryfikowany** — 20/20 l
 "C:\Users\kapit\.jdks\openjdk-25.0.2"` — na tej maszynie `JAVA_HOME` NIE jest ustawione globalnie
 w środowisku powłoki, trzeba je ustawić ręcznie w każdej nowej sesji przed `mvnw.cmd`).
 
-## Rozdziały _18_rest_api i _19_security_basics — PLANOWANIE W TOKU (checkpoint 2026-07-10)
+## Rozdział _18_rest_api — KOMPLETNY (stan na 2026-07-10)
 
-**UWAGA DLA KONTYNUACJI PO ZERWANIU SESJI:** ten wpis został zapisany świadomie WCZEŚNIE (zanim
-powstała jakakolwiek treść lekcji) na wypadek wyczerpania limitu w trakcie pisania — dokładnie z
-tego powodu, żeby wznowienie pracy nie wymagało odtwarzania planu od zera. Foldery obu rozdziałów
-utworzone, oba rozdziały zarejestrowane w `_TableOfContents.java` (`ROZDZIALY`). Kolejność
-pisania: `_18_rest_api` od Lesson01 w dół, potem `_19_security_basics`. **POSTĘP NA ŻYWO (aktualizuj
-przy każdej ukończonej lekcji):** `_18_rest_api` Lesson01_HttpDeepDive, Lesson02_RestIntroduction,
-Lesson03_ResourcesAndEndpoints, Lesson04_HttpMethods, Lesson05_StatusCodes,
-Lesson06_RequestResponseBody, Lesson07_ContentNegotiation, Lesson08_JsonApiDesign,
-Lesson09_PathVariablesAndQueryParams, Lesson10_PaginationSortingFiltering,
-Lesson11_HttpCachingAndConditionalRequests, Lesson12_ErrorResponseDesign,
-Lesson13_ValidationErrors GOTOWE (teoria + 30 ćwiczeń każda, skompilowane I uruchomieniowo
-zweryfikowane `mvnw.cmd exec:java` — zero błędów). Lesson14 i dalej: NIE zaczęte. (13/20
-`_18_rest_api` gotowe.)
+**`_18_rest_api` ("REST API i projektowanie HTTP") jest w PEŁNI ukończony: 20/20 lekcji, każda z
+teorią + 30 ćwiczeniami, każda skompilowana ORAZ uruchomieniowo zweryfikowana
+`mvnw.cmd exec:java` — zero błędów.** Lesson17 (PostmanBasics) użyła hybrydowego stylu (jak
+Maven/Gradle w `_11_buildtools`) — `main()` uruchamia prawdziwy lokalny serwer + generuje realne
+pliki JSON kolekcji/środowiska Postmana jako text blocki, ćwiczenia proszą o realne kroki w
+zewnętrznym Postmanie. Lesson18 (OpenApiSwaggerIntro) generuje realną specyfikację OpenAPI 3.0
+jako text block ORAZ prawdziwy, refleksyjny generator schematu z rekordu Java — zawiera zapowiedź
+`springdoc-openapi-starter-webmvc-ui` dla przyszłego rozdziału Spring Boot (patrz notatka niżej).
+Lesson20 (kapszton "JavaQuest Tasks API") łączy w 1 działającym mini-API: zasoby/metody/statusy
+(Lesson03-05), spójny JSON (Lesson06/08), stronicowanie+filtrowanie (Lesson10), ETag+If-Match
+(Lesson11), błędy RFC 7807 + walidacja collect-all (Lesson12/13), klucz idempotencji (Lesson15) i
+rate limiting (Lesson16) — zweryfikowane end-to-end przez 6 scenariuszy w `main()`.
 
-PUŁAPKA napotkana przy Lesson07 (temat z natury zawiera dużo literału `*/*` z Accept HTTP) —
-WARTO ZAPAMIĘTAĆ przy pisaniu KOLEJNYCH lekcji, które wspominają wildcard media type: pisanie
-`*/*` DOSŁOWNIE wewnątrz bloku komentarza `/* ... */` PRZEDWCZEŚNIE ZAMYKA ten komentarz (bo `*/`
-to token zamykający) — cała reszta bloku staje się wtedy nielegalnym kodem, dając mylące błędy
-kompilacji daleko od prawdziwej przyczyny (`illegal start of type`, `unclosed string literal`).
-Rozwiązanie: w komentarzach pisz `*\/*` (backslash rozdziela `*` i `/`, nie ma znaczenia
-składniowego w komentarzu, ale łamie token `*/`) — wewnątrz String literałów (`"*/*"` w kodzie
-wykonywalnym, np. `System.out.println`) NIE ma tego problemu, tam `*/` jest zwykłym tekstem.
-`_19_security_basics`: ŻADNA lekcja nie ma jeszcze treści. Sprawdź `git status`/zawartość folderów
-lekcji, żeby potwierdzić dokładnie gdzie praca stanęła (ten wpis może nie być zaktualizowany co do
-sekundy).
+**Postęp `_19_security_basics` (21 lekcji, folder utworzony i zarejestrowany w
+`_TableOfContents.java`):** Lesson01_AuthenticationVsAuthorization GOTOWA (teoria + 30 ćwiczeń,
+skompilowana I uruchomieniowo zweryfikowana — zero błędów, demo pokazuje 401 vs 403 na
+realnym `/login`+`/admin/dashboard`). Lesson02 i dalej: NIE zaczęte. Następny krok:
+Lesson02_PasswordHashing. Sprawdź `git status`/zawartość folderów lekcji, żeby potwierdzić
+dokładnie gdzie praca stanęła, jeśli ten wpis nie został zaktualizowany na bieżąco.
 
-Ważna notatka techniczna o środowisku (na tej maszynie): `JAVA_HOME` NIE jest ustawione globalnie
-w powłoce — przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell trzeba ustawić
-`$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` (Bash tool ma inny, nieskonfigurowany
-`JAVA_HOME` — używaj PowerShell do `mvnw.cmd`, nie Bash). Weryfikacja lekcji = 2 kroki:
-`mvnw.cmd -q compile` (kompilacja całego projektu) ORAZ
-`mvnw.cmd -q exec:java "-Dexec.mainClass=<pelna.klasa._LessonXX_Nazwa>"` (faktyczne uruchomienie,
-sprawdza że demo NIE rzuca wyjątków w runtime, nie tylko że się kompiluje). SPROSTOWANIE
-(sprawdzone 2026-07-10 przez grep po całym repo): polskie znaki diakrytyczne NIE są zakazaną
-konwencją — występują w wielu istniejących lekcjach we WSZYSTKICH rozdziałach (`_01`...`_17`),
-włącznie z `System.out.println(...)`. Zaobserwowany 1 przypadek "krzaczków" w outpucie
-(`mysli`→wyglądało jak zepsute) to najpewniej kosmetyczna usterka RENDEROWANIA konsoli
-PowerShell/tego narzędzia przy przechwytywaniu outputu `mvnw.cmd`, NIE realny błąd w kodzie —
-NIE trzeba unikać polskich znaków w nowych lekcjach `_18_rest_api`/`_19_security_basics`, pisz
-naturalną polszczyzną jak w większości istniejących rozdziałów.
+### Pułapki techniczne napotkane przy pisaniu `_18_rest_api` — WARTO PAMIĘTAĆ przy `_19_security_basics`
+
+- **Demo oparte na timerach/refill (np. rate limiting, token bucket)** jest z natury zależne od
+  czasu — jeśli 2 sekcje demo dzielące tego samego "klienta"/stan są rozdzielone innym demo z
+  `Thread.sleep`, stan może się zdążyć zmienić między nimi i zepsuć założony rezultat (wystąpiło w
+  Lesson16: `demonstratePerClientIndependence` pierwotnie zakładała, że `client-B` z wcześniejszej
+  sekcji jest wciąż wyczerpany — po dodaniu 1.1s sleep w sekcji między nimi już nie był).
+  Rozwiązanie: użyj ŚWIEŻEGO stanu i ustaw go BEZPOŚREDNIO przed sprawdzeniem, zamiast polegać na
+  stanie z odległej wcześniejszej sekcji.
+- **Literał `*/*` (wildcard Accept/media type) wewnątrz bloku komentarza `/* ... */` PRZEDWCZEŚNIE
+  GO ZAMYKA** (bo `*/` to token zamykający) — cała reszta bloku staje się wtedy nielegalnym kodem,
+  dając mylące błędy kompilacji daleko od prawdziwej przyczyny (`illegal start of type`,
+  `unclosed string literal`). Rozwiązanie: w komentarzach pisz `*\/*` (backslash łamie token `*/`,
+  nie ma innego znaczenia składniowego w komentarzu) — wewnątrz String literałów (`"*/*"` w kodzie
+  wykonywalnym, np. `System.out.println`) NIE ma tego problemu, tam `*/` jest zwykłym tekstem.
+  Mniej prawdopodobne w `_19_security_basics`, ale warto pamiętać przy dowolnym temacie
+  wspominającym gwiazdki/wildcardy w komentarzach.
+- Weryfikacja KAŻDEJ lekcji = 2 kroki: `mvnw.cmd -q compile` (kompilacja całego projektu) ORAZ
+  `mvnw.cmd -q exec:java "-Dexec.mainClass=<pelna.klasa._LessonXX_Nazwa>"` (faktyczne uruchomienie
+  — sprawdza że demo NIE rzuca wyjątków w runtime, nie tylko że się kompiluje). `JAVA_HOME` NIE
+  jest ustawione globalnie w powłoce na tej maszynie — przed `mvnw.cmd` w KAŻDEJ nowej sesji
+  PowerShell trzeba ustawić `$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` (Bash tool ma
+  inny, nieskonfigurowany `JAVA_HOME` — używaj PowerShell do `mvnw.cmd`, nie Bash).
+- SPROSTOWANIE własnej wcześniejszej notatki: polskie znaki diakrytyczne NIE są zakazaną
+  konwencją w tym repo — występują w wielu istniejących lekcjach we WSZYSTKICH rozdziałach
+  (`_01`...`_17`), włącznie z `System.out.println(...)`. Mimo to `_18_rest_api` został
+  konsekwentnie napisany BEZ nich (ASCII-only w println/komentarzach) — nie dlatego, że to
+  wymagana konwencja repo, ale bo raz napotkany przypadek zniekształconego znaku w outpucie
+  terminala (najpewniej kosmetyczna usterka renderowania konsoli PowerShell przy przechwytywaniu
+  `mvnw.cmd`, nie realny błąd w kodzie) skłonił do zachowania spójności wewnątrz całego rozdziału.
+  Przy pisaniu `_19_security_basics` MOŻNA pisać naturalną polszczyzną (zgodnie z resztą repo) —
+  ale jeśli zauważysz podobne "krzaczki" w outpucie weryfikacyjnym, to nieszkodliwy artefakt
+  wyświetlania, nie powód do paniki; i tak warto to sprostować dla czytelności, jak robiono w `_18`.
 
 Oba rozdziały to kontynuacja `_17_architecture` — świadomie WCIĄŻ bez Springa (Spring Boot to
 OSTATNI, osobny rozdział całego kursu, potwierdzone wielokrotnie przez użytkownika). REST API i
