@@ -1651,12 +1651,61 @@ Dwie nowe pułapki znalezione przy pisaniu `_22_spring_web` (WAŻNE dla Lesson09
   na embedded Tomcacie, nie Netty). To standardowy, wspierany wzorzec "aplikacja MVC z
   `WebClient` jako klientem HTTP".
 
-## Stan `_23_spring_data_jpa` na 2026-07-11
+## `_23_spring_data_jpa` — KOMPLETNY (stan na 2026-07-12)
 
-Rozpoczęty. Foldery WSZYSTKICH 15 lekcji już istniały (utworzone wcześniej razem z resztą bloku
-Spring). **Lesson01-08 gotowe** (teoria + 30 ćwiczeń, skompilowane ORAZ uruchomieniowo
-zweryfikowane `mvnw.cmd exec:java`), Lesson09-15 jeszcze NIE napisane. Następny krok:
-`Lesson09_LazyLoadingAndNPlusOne`.
+**`_23_spring_data_jpa` jest w PEŁNI ukończony: 15/15 lekcji, każda z teorią + 30 ćwiczeniami,
+cały projekt skompilowany (`mvnw.cmd compile`) ORAZ KAŻDA lekcja uruchomieniowo zweryfikowana
+`mvnw.cmd exec:java` — zero błędów, włącznie z kapsztonem (Lesson15, mala "Biblioteka"
+Author→Book) łączącym WSZYSTKICH 14 poprzednich mechanizmów w 9 scenariuszach w jednym,
+spójnym `main()`.** Lesson11 (Projections) — błąd SpEL z poprzedniej sesji (opisany niżej w
+"Piąta pułapka") był już naprawiony w pliku, ta sesja tylko przekompilowała i potwierdziła
+uruchomieniowo, że naprawa działa.
+
+Standardowa dyscyplina weryfikacji zachowana do końca: KAŻDA nowa lekcja (13, 14, 15) skompilowana
+i uruchomiona osobno zaraz po napisaniu, z regresyjnym ponownym uruchomieniem 1-2 wcześniej
+zweryfikowanych lekcji (Lesson01, Lesson08) po zmianach w `src/main/resources/db/` — zero regresji.
+
+### Szósta pułapka (Lesson14) — domyślna lokalizacja Flyway `classpath:db/migration` skanuje REKURENCYJNIE
+
+Próba "izolowania" migracji Lesson14 w podfolderze `db/migration/lesson14/V1__...sql` (myśląc, że
+podfolder = izolacja) zepsuła WSZYSTKIE lekcje tego rozdziału korzystające z domyślnej lokalizacji
+Flyway (nie tylko Lesson14!) — `FlywayException: Found more than one migration with version 1`,
+bo domyślna lokalizacja `classpath:db/migration` skanuje WSZYSTKIE podfoldery rekurencyjnie i
+podfolder DOKŁADA SIĘ do współdzielonego zestawu `V1`/`V2` (`db/migration/V1__create_users_table.sql`
+z `_10_dao/Lesson25`), kolidując numerem wersji. **Naprawa: prawdziwie izolowane migracje MUSZĄ
+leżeć POZA `db/migration` całkowicie** (sąsiedni folder na tym samym poziomie, np.
+`db/migration-lesson14`, `db/migration-lesson15`), NIE w jego podfolderze — dopiero wtedy
+`spring.flyway.locations=classpath:db/migration-lesson14` daje prawdziwą izolację od
+współdzielonego zestawu. **Zasada na przyszłość (dla `_24_spring_security` i każdej kontynuacji):
+gdy dodajesz NOWY, izolowany zestaw plików `.sql` do `src/main/resources/db/`, NIGDY nie twórz
+podfolderu wewnątrz `db/migration/` — zawsze sąsiedni folder poza nim.** (Uwaga: stale skompilowane
+zasoby w `target/classes/` NIE są automatycznie usuwane przy przenoszeniu/usuwaniu plików źródłowych
+zasobów — po przeniesieniu trzeba ręcznie usunąć stary katalog z `target/classes/db/migration/...`
+albo zrobić `mvnw.cmd clean`, inaczej `exec:java` nadal użyje starych, martwych plików.)
+
+### Siódma pułapka (Lesson14, Lesson15) — `@Entity(name = "Xxx")` BEZ `@Table` mapuje na ZŁĄ nazwę tabeli przy `ddl-auto=validate`
+
+Gdy Flyway (nie Hibernate) tworzy tabelę o nazwie W LICZBIE MNOGIEJ (`tasks`, `books` — typowa
+konwencja SQL), a encja ma `@Entity(name = "TaskEntity")`/`@Entity(name = "Book")` BEZ jawnego
+`@Table`, Hibernate przy `ddl-auto=validate` wyprowadza nazwę tabeli Z NAZWY KLASY JAVA (nie z
+`@Entity(name=...)`, który ustawia TYLKO nazwę encji JPA używaną w HQL/JPQL) — `TaskEntity` →
+`task_entity`, `Book` → `book` — dając `SchemaManagementException: Schema-validation: missing
+table [task_entity]`, mimo że tabela `tasks`/`books` FAKTYCZNIE istnieje. **Naprawa: `@Table(name
+= "...")` jest OBOWIĄZKOWE na każdej encji mapowanej na Flyway-owy schemat, ilekroć nazwa tabeli
+SQL różni się od (przekształconej przez naming strategy) nazwy klasy Javy** — najczęściej właśnie
+wtedy, gdy tabela SQL jest w liczbie mnogiej, a klasa encji w liczbie pojedynczej. Zweryfikowane
+empirycznie w obu kierunkach: Lesson14 (`Task`→`tasks`) i Lesson15 (`Book`→`books`,
+`Author`→`authors`) — po dodaniu `@Table` obie lekcje startują bez błędu z `ddl-auto=validate`.
+
+### Ósma pułapka (Lesson15) — `double` w encji vs `DECIMAL(10,2)` w schemacie Flyway — ZASTĄP `BigDecimal`
+
+Pierwotny plan kapsztonu miał `double price` na encji `Book` mapowanej na kolumnę `DECIMAL(10,2)`
+utworzoną przez Flyway. Zanim to dało się przetestować, zastąpiono `double` przez `BigDecimal`
+prewencyjnie (typ Javy zgodny z rodziną SQL `NUMERIC`/`DECIMAL`) — **zweryfikowane empirycznie, że
+to była słuszna decyzja: `BigDecimal price` + `DECIMAL(10,2)` przechodzi `ddl-auto=validate` bez
+błędu.** Zasada na przyszłość: dla kolumn pieniężnych/`DECIMAL` w Flyway-owym schemacie, ZAWSZE
+używaj `BigDecimal` w encji, NIGDY `double`/`float` — unika to zarówno ryzyka niezgodności typów
+przy `ddl-auto=validate`, jak i klasycznych błędów zaokrągleń zmiennoprzecinkowych przy pieniądzach.
 
 Warte odnotowania z Lesson08 (`@Transactional`): zweryfikowane empirycznie WSZYSTKIE 3 zjawiska
 opisane w teorii — (1) `RuntimeException` w `@Transactional` COFA WSZYSTKIE zmiany, WŁĄCZNIE Z
@@ -1732,3 +1781,37 @@ mechanizm CAŁKOWICIE INNY od zwykłego `@ComponentScan` (które domyślnie ZNAJ
 obsługujący OBA warianty (nie zakłada z góry, który zajdzie) i drukuje RZECZYWISTY wynik zamiast
 twierdzić coś, czego nie zweryfikowano. **Zasada: NIE ufaj Javadocowi bez testu na WŁASNEJ
 wersji, szczególnie dla zachowań, które Spring Data zmieniał między wersjami.**
+
+### Trzecia pułapka (Lesson09, `hibernate.session_factory.statement_inspector`) — wymaga `public` klasy (WZORZEC ZNANY, NOWY KONTEKST)
+
+Własny `StatementInspector` (do zliczania realnych zapytań SQL i dowodzenia N+1) jest
+INSTANCJOWANY PRZEZ REFLEKSJĘ przez Hibernate (`StrategySelectorImpl`), DOKŁADNIE jak
+`BeanWrapper`/SpEL z `_20_spring_core` — pierwsza próba z klasą PAKIETOWĄ (domyślną widoczność)
+dała `IllegalAccessException: ... cannot access a member ... with package access`. Naprawa:
+`public static class QueryCountingInspector implements StatementInspector`. **Dopisz do
+ogólnej zasady z `_20_spring_core`: KAŻDY mechanizm oparty o odbicie/refleksję z zewnętrznej
+biblioteki (Hibernate, nie tylko Spring) wymaga PUBLICZNEJ klasy — nie zakładaj, że dotyczy to
+tylko `java.beans.Introspector`/SpEL.**
+
+### Czwarta pułapka (Lesson09) — `LazyInitializationException` przy dostępie do LAZY kolekcji POZA transakcją repozytorium
+
+Wywołanie `repository.findAll()` bezpośrednio z `main()`, a POTEM (w osobnej pętli, POZA
+wywołaniem repozytorium) dostęp do `customer.orders` (LAZY) rzuca `LazyInitializationException:
+... no Session` — sesja Hibernate ZAMYKA SIĘ, gdy metoda repozytorium (owinięta domyślną
+transakcją Spring Data) się kończy. Naprawa: przenieś CAŁĄ logikę (ładowanie + pętlę dotykającą
+LAZY kolekcji) DO JEDNEJ metody `@Service` oznaczonej `@Transactional` (`CustomerLoadingService`
+w Lesson09) — sesja pozostaje otwarta przez CAŁY czas trwania tej metody. **Zasada dla
+Lesson13-15 i `_24_spring_security`: jeśli demo dotyka LAZY relacji, NIGDY nie rób tego
+bezpośrednio w `main()` po wywołaniu repozytorium — zawsze przez `@Transactional` metodę
+serwisu.**
+
+### Piąta pułapka (Lesson11, Projections) — projekcja OTWARTA (`@Value("#{target.pole}")`) wymaga `public` encji
+
+`SummaryProjection` z wyrażeniem SpEL `#{target.name + ...}` dało `EL1008E: Property or field
+'name' cannot be found on object of type 'Product' - maybe not public or not valid?` — TA SAMA
+przyczyna co pułapka SpEL w `_20_spring_core/Lesson17` (`ReflectiveMethodResolver`/`Class.getMethods()`
+widzi TYLKO publiczne składowe), TERAZ w kontekście projekcji Spring Data. Naprawa: `Product`
+i jego pola oznaczone `public` (`public static class Product { public Long id; public String
+name; ... }`). **NAPRAWA ZAPISANA W PLIKU, ALE JESZCZE NIE PRZEKOMPILOWANA/ZWERYFIKOWANA —
+pierwszy krok następnej sesji.** Zasada: KAŻDA lekcja demonstrująca interfejs OTWARTY projekcji
+Spring Data MUSI mieć `public` encję, inaczej SpEL nie zobaczy jej pól/getterów.
