@@ -2403,13 +2403,50 @@ Warte odnotowania z Lesson14-18:
   celowo analizuje TYLKO klasy zagnieżdżone we WŁASNYM pliku lekcji (nie cały projekt) dla
   pełnej kontroli i przewidywalności wyniku (38 zaimportowanych klas).
 
-**Następny krok pracy**: dokończyć `_27_spring_test` — TYLKO Lesson19_SpringTestBestPractices i
-Lesson20_SpringTestCapstone pozostają (ostatnie 2/20). Potem `_28_java_evolution` (24 lekcje,
-ZUPEŁNIE nienapisany rozdział — pełna lista tematów w sekcji planu wyżej w tym pliku). Pamiętaj o
-technicznych przeszkodach: wzorzec subprocess `javac --release 22+` dla lekcji Java 22-25 w
-`_28_java_evolution` (Lesson21-22), bo baseline projektu to `--release 21`; i przy weryfikacji
-JAKIEJKOLWIEK nowej wersji Maven w przyszłości ZAWSZE bezpośrednie zapytanie Solr API, NIE
-podsumowanie WebSearch.
+**`_27_spring_test` jest w PEŁNI ukończony (stan na 2026-07-19): 20/20 lekcji, każda z teorią +
+30 ćwiczeniami, cały projekt skompilowany i KAŻDA lekcja uruchomieniowo zweryfikowana — zero
+błędów, włącznie z kapsztonem (Lesson20, "JavaQuest Tasks API") łączącym `@SpringBootTest
+(RANDOM_PORT)` + `TestRestTemplate` + PRAWDZIWĄ bazę H2 + `@MockitoBean` + `@TestConfiguration`
+(deterministyczny `Clock`) + `@ActiveProfiles` + regułę ArchUnit (kontroler nie omija serwisu) —
+2/2 testy + reguła architektoniczna, wszystkie PRZESZŁY.**
+
+**WAŻNA OPERACYJNA lekcja z końcówki tej sesji (nie merytoryczna, ale przyszła sesja powinna to
+wiedzieć)**: `mvnw.cmd exec:java` NIE zawsze kończy proces JVM natychmiast po zakończeniu `main()`
+w tym środowisku — w trakcie tej sesji uzbierało się 5+ "osieroconych" procesów `java.exe`
+(każdy po ~400-580MB) z wcześniejszych, formalnie zakończonych uruchomień lekcji, które nie
+zostały w pełni zwolnione. Gdy uzbierało się ich 6 naraz, KOLEJNE uruchomienie (kapszton
+Lesson20, ciężki: pełny kontekst Spring+Tomcat+Hibernate+HikariCP) zamiast normalnych ~10-15s
+trwało **ponad 8 minut** wyłącznie przez rywalizację o CPU (nie był to bug w kodzie — po
+wyczyszczeniu procesów ten sam test przeszedł normalnie, ze startem kontekstu ~19s zamiast
+zawieszenia). Sprzątanie whole-machine `Stop-Process -Force` na WSZYSTKICH procesach `java` jest
+BLOKOWANE przez klasyfikator bezpieczeństwa auto mode (zbyt szerokie, mogłoby ubić niepowiązane
+procesy użytkownika typu IDE) — wymaga jawnej zgody użytkownika, uzyskanej tu przez
+`AskUserQuestion` z węższym filtrem (`Where-Object StartTime -lt (Get-Date).AddMinutes(-2)`,
+oszczędzający aktualnie uruchomiony proces). **Zasada na przyszłość: jeśli pojedyncze uruchomienie
+`exec:java` trwa podejrzanie długo (>60s dla czegoś, co wcześniej trwało <20s) w trakcie DŁUGIEJ
+sesji z wieloma poprzednimi uruchomieniami, PRZED założeniem, że to bug w kodzie, sprawdź
+`Get-Process java` — jeśli jest ich więcej niż 1-2, to najpewniej właśnie ten problem, nie
+faktyczny hang/deadlock w napisanym kodzie.**
+
+**Stan `_28_java_evolution` na 2026-07-19: Lesson01-07/24 NAPISANE, skompilowane i uruchomieniowo
+zweryfikowane.** Rozdział jest RETROSPEKTYWĄ (większość tematów już nauczona gdzie indziej w
+kursie) — każda lekcja jawnie odsyła do PEŁNEJ teorii w innym rozdziale (Lesson02→`_14_advancedjava/
+Lesson08-11`, Lesson03→`_03_collections/Lesson16-21`, Lesson04→`_02_oop/Lesson08`, Lesson05→
+`_01_fundamentals/Lesson07`, Lesson06→`_14_advancedjava/Lesson27-28`) i demonstruje TYLKO
+"przed/po" lub inspekcję uzupełniającą, NIE powtarza mechaniki. Lesson07 (NOWY materiał — Java 9
+drobne funkcje: try-with-resources na zmiennej "effectively final", prywatne metody interfejsu,
+`List.of`/`Map.of`/`Set.of`) w pełni zweryfikowany. ŻADNYCH nowych zależności do `pom.xml` w tych
+7 lekcjach.
+
+**Następny krok pracy**: kontynuować `_28_java_evolution` od Lesson08_Java10LocalVariableTypeInference
+(08-24 pozostają, pełna lista tematów w sekcji planu wyżej w tym pliku). Pamiętaj o technicznych
+przeszkodach: wzorzec subprocess `javac --release 22+` dla lekcji Java 22-25 w `_28_java_evolution`
+(Lesson21-22), bo baseline projektu to `--release 21`; i przy weryfikacji JAKIEJKOLWIEK nowej
+wersji Maven w przyszłości ZAWSZE bezpośrednie zapytanie Solr API, NIE podsumowanie WebSearch.
+Po ukończeniu `_28_java_evolution` CAŁY zaplanowany łuk kursu (`_01`-`_28`) będzie KOMPLETNY —
+pozostają tylko `_29_spring_reactive`/`_30_spring_messaging_and_async`/
+`_31_spring_cloud_microservices`, które mają TYLKO foldery+plan (patrz sekcja niżej w tym pliku),
+świadomie odłożone przez użytkownika ("zaawansowany Spring dorobimy kiedyś").
 
 ## PLAN: Rozdziały _29_spring_reactive, _30_spring_messaging_and_async,
 ## _31_spring_cloud_microservices ("zaawansowany Spring") — ZAPLANOWANE, TREŚĆ JESZCZE NIE NAPISANA
