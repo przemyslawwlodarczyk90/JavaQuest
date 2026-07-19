@@ -267,6 +267,87 @@ public class _TableOfContents {
                     "12_JwtAuthentication", "13_StatelessSecurity", "14_CorsAndCsrfInSpringSecurity",
                     "15_OAuth2LoginAndResourceServerIntro", "16_SecurityExceptionHandling",
                     "17_SpringSecurityCapstone"
+            )),
+
+            new Chapter("_25_unit_testing", "Testy jednostkowe - JUnit i AssertJ", List.of(
+                    "01_WhyUnitTests", "02_JUnit5ArchitectureOverview", "03_FirstTestAndBuiltInAssertions",
+                    "04_TestLifecycleAnnotations", "05_AssertJIntroduction", "06_AssertJForCollectionsAndMaps",
+                    "07_AssertJForExceptionsAndCustomAssertions", "08_ParameterizedTests",
+                    "09_NestedAndDisplayNameTests", "10_TestOrderingAndRepeatedTests",
+                    "11_ConditionalExecutionAndAssumptions", "12_TestTagsAndFiltering", "13_MockitoBasics",
+                    "14_MockitoArgumentMatchersAndCaptors", "15_MockitoAnnotationsAndExtension",
+                    "16_TestDoublesTaxonomy", "17_TestingExceptionsAndEdgeCases",
+                    "18_TestNamingAndOrganizationBestPractices", "19_CodeCoverageBasics",
+                    "20_UnitTestingCapstone"
+            )),
+
+            new Chapter("_26_integration_testing", "Testy integracyjne", List.of(
+                    "01_WhatIsIntegrationTesting", "02_IntegrationTestChallenges",
+                    "03_TestingWithRealDatabaseVsInMemory", "04_TestcontainersIntroduction",
+                    "05_TestcontainersWithJdbc", "06_TestcontainersLifecycleAndReuse",
+                    "07_WireMockIntroduction", "08_StubbingAndVerifyingHttpCalls",
+                    "09_TestingFileSystemAndIO", "10_TestDataManagementStrategies",
+                    "11_TestIsolationAndIdempotency", "12_FlakyTestsAndHowToFixThem",
+                    "13_ContractTestingIntro", "14_CiCdIntegrationOfTests",
+                    "15_IntegrationTestingBestPractices", "16_IntegrationTestingCapstone"
+            )),
+
+            new Chapter("_27_spring_test", "Testowanie aplikacji Spring (Spring Test)", List.of(
+                    "01_SpringTestModuleOverview", "02_SpringBootTestBasics", "03_WebEnvironmentOptions",
+                    "04_TestSlicesConcept", "05_WebMvcTestAndMockMvc", "06_DataJpaTestAndTestEntityManager",
+                    "07_JsonTestForSerialization", "08_MockitoBeanAndSpyBean",
+                    "09_TestConfigurationAndContextCustomization", "10_ActiveProfilesInTests",
+                    "11_TestPropertySourceAndDynamicProperties", "12_TestRestTemplateAndWebTestClient",
+                    "13_TestingSecuredEndpoints", "14_TestingTransactionalCodeInSpring",
+                    "15_TestcontainersServiceConnection", "16_TestingSchedulingAndAsyncCode",
+                    "17_ContextCachingAndTestPerformance", "18_ArchUnitForArchitectureTesting",
+                    "19_SpringTestBestPractices", "20_SpringTestCapstone"
+            )),
+
+            new Chapter("_28_java_evolution", "Ewolucja Javy: od Java 8 do dzis", List.of(
+                    "01_JavaReleaseCadenceAndLtsExplained", "02_Java8LambdasAndFunctionalInterfaces",
+                    "03_Java8StreamsAndOptional", "04_Java8DefaultAndStaticInterfaceMethods",
+                    "05_Java8NewDateTimeApi", "06_Java9ModuleSystemJpms", "07_Java9SmallerFeatures",
+                    "08_Java10LocalVariableTypeInference", "09_Java11LtsStringAndFilesMethods",
+                    "10_Java11HttpClient", "11_Java12To13SwitchExpressionsPreview",
+                    "12_Java14SwitchExpressionsAndRecordsPreview", "13_Java15TextBlocks",
+                    "14_Java16RecordsAndPatternMatchingInstanceof", "15_Java17SealedClasses",
+                    "16_Java18UtfDefaultAndSimpleWebServer", "17_Java19To20VirtualThreadsPreview",
+                    "18_Java21PatternMatchingSwitchAndRecordPatterns", "19_Java21VirtualThreadsFinalized",
+                    "20_Java21SequencedCollections", "21_Java22To23NewFeatures",
+                    "22_Java24To25LatestFeatures", "23_ChoosingJavaVersionForNewProjects",
+                    "24_JavaEvolutionCapstone"
+            )),
+
+            new Chapter("_29_spring_reactive", "Programowanie reaktywne ze Spring WebFlux", List.of(
+                    "01_WhyReactive", "02_ReactiveStreamsSpecification", "03_ProjectReactorIntro",
+                    "04_MonoBasics", "05_FluxBasics", "06_ReactiveOperators",
+                    "07_ErrorHandlingInReactiveStreams", "08_SchedulersAndThreading",
+                    "09_WebFluxVsSpringMvc", "10_AnnotatedControllersInWebFlux",
+                    "11_FunctionalEndpointsRouterFunction", "12_WebClientDeepDive", "13_R2dbcIntro",
+                    "14_ReactiveSecurity", "15_TestingReactiveCodeWithStepVerifier",
+                    "16_WhenToUseReactiveVsBlocking", "17_ReactiveCapstone"
+            )),
+
+            new Chapter("_30_spring_messaging_and_async", "Asynchronicznosc i komunikaty", List.of(
+                    "01_AsyncMethodsWithEnableAsync", "02_TaskExecutorConfiguration",
+                    "03_CompletableFutureWithAsync", "04_SchedulingWithEnableScheduling",
+                    "05_ApplicationEventsDeepDive", "06_JmsIntro", "07_SpringJmsTemplate",
+                    "08_RabbitMqConcepts", "09_SpringAmqpBasics", "10_KafkaConcepts",
+                    "11_SpringKafkaBasics", "12_MessageDrivenArchitecturePatterns",
+                    "13_ErrorHandlingAndDeadLetterQueues", "14_TestingAsyncAndMessagingCode",
+                    "15_ChoosingRabbitVsKafka", "16_MessagingCapstone"
+            )),
+
+            new Chapter("_31_spring_cloud_microservices", "Spring Cloud i mikroserwisy", List.of(
+                    "01_SpringCloudOverview", "02_ServiceDiscoveryConcepts", "03_SpringCloudNetflixEureka",
+                    "04_ConfigServerIntro", "05_SpringCloudConfigClient", "06_ApiGatewayIntro",
+                    "07_GatewayRoutingAndFilters", "08_ClientSideLoadBalancing", "09_CircuitBreakerConcepts",
+                    "10_Resilience4jIntegration", "11_DistributedTracingIntro",
+                    "12_DistributedTracingWithZipkin", "13_DeclarativeHttpClientsWithFeign",
+                    "14_SagaPatternIntro", "15_EventDrivenMicroservicesWithSpringCloudStream",
+                    "16_SecurityAcrossMicroservices", "17_ContainerizingSpringBootApps",
+                    "18_ObservabilityAcrossServices", "19_MicroservicesCapstone"
             ))
     );
 

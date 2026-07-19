@@ -1815,3 +1815,734 @@ i jego pola oznaczone `public` (`public static class Product { public Long id; p
 name; ... }`). **NAPRAWA ZAPISANA W PLIKU, ALE JESZCZE NIE PRZEKOMPILOWANA/ZWERYFIKOWANA —
 pierwszy krok następnej sesji.** Zasada: KAŻDA lekcja demonstrująca interfejs OTWARTY projekcji
 Spring Data MUSI mieć `public` encję, inaczej SpEL nie zobaczy jej pól/getterów.
+
+## `_24_spring_security` — KOMPLETNY (stan na 2026-07-12)
+
+**`_24_spring_security` jest w PEŁNI ukończony: 17/17 lekcji, każda z teorią + 30 ćwiczeniami,
+cały projekt skompilowany (`mvnw.cmd compile`) ORAZ KAŻDA lekcja uruchomieniowo zweryfikowana
+`mvnw.cmd exec:java` — zero błędów, włącznie z kapsztonem (Lesson17, "JavaQuest Secure API")
+łączącym WSZYSTKICH 16 poprzednich mechanizmów w 9 scenariuszach w jednym `main()`.** Tym samym
+ZAKOŃCZONY jest CAŁY 5-rozdziałowy łuk Spring/Spring Boot zaplanowany 2026-07-11
+(`_20_spring_core` → `_21_spring_boot` → `_22_spring_web` → `_23_spring_data_jpa` →
+`_24_spring_security`) — WSZYSTKIE 5 rozdziałów kompletne, zweryfikowane, zero regresji między
+nimi (potwierdzone ponownym uruchomieniem `_21_spring_boot/Lesson16` i
+`_23_spring_data_jpa/Lesson15` PO dodaniu wszystkich nowych zależności Security).
+
+Dwie nowe zależności dodane do `pom.xml`: `spring-boot-starter-security` (podstawa całego
+rozdziału) i `spring-boot-starter-oauth2-resource-server` (Lesson15, natywna walidacja JWT przez
+`NimbusJwtDecoder` — kontrast z ręcznym filtrem z Lesson12). Obie bez jawnej wersji, zarządzane
+przez `spring-boot-starter-parent` BOM.
+
+**NAJWAŻNIEJSZA decyzja architektoniczna tego rozdziału**, wymagająca jawnej zgody użytkownika
+(harness zablokował pierwszą automatyczną próbę jako "osłabienie zabezpieczeń"): dodanie
+`spring-boot-starter-security` do WSPÓLNEGO `pom.xml` auto-zabezpiecza WSZYSTKIE inne lekcje Spring
+w CAŁYM repo (401 na każdym endpoincie) — naprawione przez domyślne wyłączenie auto-konfiguracji
+Security w `src/main/resources/application.properties` (`spring.autoconfigure.exclude=...`), z
+każdą lekcją TEGO rozdziału jawnie przywracającą ją przez `System.setProperty("spring.
+autoconfigure.exclude", "")` PRZED `.run()` (NIE `SpringApplicationBuilder.properties(...)` —
+te mają NIŻSZY priorytet niż classpath'owy `application.properties` i NIE nadpiszą globalnego
+wyłączenia). Szczegóły i pełne uzasadnienie — patrz sekcje pułapek niżej.
+
+**Zbiorcza lista pułapek napotkanych w tym rozdziale** (każda opisana szczegółowo w swojej sekcji
+powyżej w historii tego pliku, tu tylko indeks dla szybkiej orientacji): (1) globalne
+`spring.autoconfigure.exclude` + `System.setProperty` override na poziomie każdej lekcji;
+(2) `SpringApplicationBuilder.properties(...)` ma NIŻSZY priorytet niż `application.properties`;
+(3) 2+ klas `@SpringBootApplication` w 1 pliku → `BeanDefinitionOverrideException` (ta sama
+pułapka co `_20`-`_23`, naprawa: `@Configuration`+`@EnableAutoConfiguration` z jawną rejestracją
+kontrolerów przez `@Bean`); (4) `httpBasic()` NIE tworzy sesji (w przeciwieństwie do `formLogin()`)
+mimo domyślnej `SessionCreationPolicy.IF_REQUIRED` — zweryfikowane empirycznie, obalając własne
+wcześniejsze założenie; (5) `CorsConfigurationSource` wstrzykiwany po typie jest dwuznaczny
+(koliduje z auto-konfigurowanym `mvcHandlerMappingIntrospector`) — wymaga `@Qualifier`; (6) bez
+`httpBasic()`/`formLogin()` (czysto JWT-owe API, Lesson12) brak uwierzytelnienia daje 403, NIE 401
+— naprawione w Lesson16 własnym `AuthenticationEntryPoint`, i automatycznie w Lesson15 przez
+natywny `.oauth2ResourceServer(...)`; (7) import `UsernamePasswordAuthenticationFilter` żyje w
+`org.springframework.security.web.authentication`, NIE w `org.springframework.security.
+authentication` (gdzie żyje `UsernamePasswordAuthenticationToken`).
+
+## `_24_spring_security` — historia sesji (zachowana poniżej dla kontekstu wykrywania pułapek)
+
+Rozpoczęty od razu po ukończeniu `_23_spring_data_jpa`. Foldery WSZYSTKICH 17 lekcji już
+istniały. **Lesson01-09 NAPISANE, skompilowane I uruchomieniowo zweryfikowane (zero błędów w
+KAŻDEJ z 9)** — WhatIsSpringSecurity, SecurityFilterChain, SecurityConfigEvolutionOldVsNew,
+DefaultLogin, UserDetailsService, PasswordEncoder, RolesAndAuthorities, FormLogin,
+ProtectingEndpoints. Nowa zależność `org.springframework.boot:spring-boot-starter-security`
+dodana do `pom.xml` (bez jawnej wersji, zarządzana przez BOM). **Pozostaje 8 lekcji:
+Lesson10_MethodSecurity, Lesson11_CustomLoginPage, Lesson12_JwtAuthentication,
+Lesson13_StatelessSecurity, Lesson14_CorsAndCsrfInSpringSecurity,
+Lesson15_OAuth2LoginAndResourceServerIntro, Lesson16_SecurityExceptionHandling,
+Lesson17_SpringSecurityCapstone** — kontynuacja w kolejnej sesji, jeśli ta się skończy w trakcie.
+
+**Ustalony, powtarzalny wzorzec każdej dotychczasowej lekcji (stosuj DALEJ dla Lesson10-17):**
+`@RestController` + `@Configuration` z `@Bean SecurityFilterChain` (+ ew. `@Bean UserDetailsService`/
+`PasswordEncoder`) + `@SpringBootApplication` w JEDNYM pliku, `server.port=0`,
+`System.setProperty("spring.autoconfigure.exclude", "")` PRZED `.run()` i
+`System.clearProperty(...)` w `finally` (patrz pułapka niżej), realne żądania HTTP przez
+`java.net.http.HttpClient` (Basic Auth przez nagłówek `Authorization`, form login przez
+`CookieManager` + wyciąganie tokenu CSRF regexem `CSRF_TOKEN_PATTERN` z HTML — helper
+skopiowany 1:1 z Lesson04 do Lesson08, warto rozważyć wydzielenie go gdyby pojawił się w kolejnej
+lekcji). Każda lekcja kompilowana I URUCHAMIANA osobno zaraz po napisaniu (zero lekcji trafiło do
+repo bez faktycznego uruchomienia).
+
+### KRYTYCZNA, PROJEKTOWA pułapka (wykryta OD RAZU przy dodaniu zależności) — Spring Security auto-zabezpiecza WSZYSTKIE lekcje Spring w CAŁYM repo
+
+Dokładnie ta sama kategoria regresji co `springdoc-openapi` w `_22_spring_web` (patrz notatka
+tamże) — dodanie `spring-boot-starter-security` DO WSPÓLNEGO `pom.xml` sprawia, że KAŻDA
+aplikacja Spring Boot w CAŁYM repo (embedded Tomcat + realne żądania HTTP) zaczyna DOMYŚLNIE
+zabezpieczać WSZYSTKIE endpointy (401 Unauthorized) — zweryfikowane empirycznie na
+`_22_spring_web/Lesson19` (kapszton), który zaczął zwracać 401 zamiast 200/201/404 dla
+WSZYSTKICH żądań. **Naprawa (zaakceptowana przez użytkownika przez `AskUserQuestion`, PO tym jak
+harness zablokował pierwszą próbę edycji jako "osłabienie zabezpieczeń" wymagające jawnej
+zgody)**: `src/main/resources/application.properties` domyślnie WYŁĄCZA auto-konfigurację
+Security DLA CAŁEGO projektu:
+```properties
+spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration,org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration,org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration,org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration
+```
+Zweryfikowane RÓWNOLEGLE na `_22_spring_web/Lesson19` (znów 200/201/400/404, jak przed dodaniem
+zależności) i `_21_spring_boot/Lesson12_SpringBootActuator` (`/actuator/health` znów 200) — ZERO
+regresji w pozostałych rozdziałach Spring.
+
+**DRUGA warstwa tej samej pułapki, WAŻNIEJSZA na przyszłość:** każda lekcja `_24_spring_security`
+MUSI jawnie PRZYWRÓCIĆ auto-konfigurację Security dla WŁASNEGO kontekstu demo, żeby w ogóle móc
+JĄ demonstrować. Pierwsza próba (`SpringApplicationBuilder.properties(props)` z
+`props.setProperty("spring.autoconfigure.exclude", "")`) **PO CICHU NIE ZADZIAŁAŁA** (endpoint
+dalej zwracał 200 bez poświadczeń) — `SpringApplicationBuilder.properties(...)` ustawia tzw.
+"default properties" (`SpringApplication.setDefaultProperties`), które mają NIŻSZY priorytet w
+hierarchii property source'ów Spring Boota NIŻ classpath'owy `application.properties`. **Naprawa:
+`System.setProperty("spring.autoconfigure.exclude", "")` PRZED `.run()`** (Java System properties
+mają WYŻSZY priorytet niż `application.properties`), z `System.clearProperty(...)` w `finally`,
+żeby nie "wyciekło" do kolejnych demo/lekcji uruchamianych W TYM SAMYM procesie JVM. **ZASADA NA
+PRZYSZŁOŚĆ dla WSZYSTKICH pozostałych 16 lekcji tego rozdziału: każda metoda `demonstrateXxx()`,
+która ma pokazać Security W AKCJI, musi zaczynać się od `System.setProperty("spring.
+autoconfigure.exclude", "")` i kończyć `System.clearProperty(...)` w `finally` — NIE
+`Properties`/`SpringApplicationBuilder.properties(...)`.** Ta sama zasada dotyczy `spring.security.
+user.name`/`spring.security.user.password` TYLKO jeśli kiedyś zostaną też ustawione globalnie w
+`application.properties` (na razie NIE są, więc zwykłe `Properties` wystarczą DLA TYCH kluczy).
+
+### Ogólna zasada wyniesiona z tej sesji (dotyczy KAŻDEGO przyszłego rozdziału dodającego auto-konfigurowalną zależność Spring Boot)
+
+Przed dodaniem JAKIEJKOLWIEK nowej zależności Spring Boot z WŁASNĄ auto-konfiguracją do
+WSPÓLNEGO `pom.xml` tego projektu (jeden classpath dla WSZYSTKICH 24 rozdziałów), ZAWSZE najpierw
+uruchom (nie tylko skompiluj) co najmniej 1 wcześniej zweryfikowaną, niepowiązaną lekcję z INNEGO
+rozdziału Spring PO dodaniu zależności — sama kompilacja NIE WYKRYJE tej kategorii regresji
+(`springdoc` w `_22_spring_web`, teraz `spring-boot-starter-security`), bo błąd/zmiana zachowania
+pojawia się dopiero przy starcie `ApplicationContext`, nie przy `javac`. Jeśli regresja
+WYSTĄPI i naprawa wymaga zmiany zachowania bezpieczeństwa/globalnej konfiguracji (np. wyłączenia
+auto-konfiguracji Security), zapytaj użytkownika PRZED wprowadzeniem zmiany — harness może (i w
+tej sesji: zablokował) wymagać jawnej zgody na tego typu zmiany.
+
+**Stan na 2026-07-12, kontynuacja: Lesson10-12 również napisane i zweryfikowane (12/17 gotowe)**
+— MethodSecurity, CustomLoginPage, JwtAuthentication. Drobna pułapka w Lesson12: import
+`UsernamePasswordAuthenticationFilter` żyje w `org.springframework.security.web.authentication`,
+NIE w `org.springframework.security.authentication` (gdzie żyje `UsernamePasswordAuthenticationToken`
+— łatwo pomylić, bo nazwy bardzo podobne, ale to DWA różne pakiety).
+
+**Ważniejsza pułapka (Lesson12, zweryfikowana empirycznie, WARTO PAMIĘTAĆ dla Lesson13/15/16):**
+gdy `SecurityFilterChain` NIE rejestruje `.httpBasic(...)` ani `.formLogin(...)` (czysto JWT-owy
+filtr, jak w Lesson12), brak uwierzytelnienia daje **403 Forbidden, NIE 401 Unauthorized** —
+Security nie ma zarejestrowanego żadnego `AuthenticationEntryPoint` (to `httpBasic()`/`formLogin()`
+normalnie go dostarczają) i spada na domyślny `Http403ForbiddenEntryPoint`. Lesson12 dokumentuje to
+wprost i zapowiada Lesson16 (`SecurityExceptionHandling`), gdzie właściwy `AuthenticationEntryPoint`
+naprawi kod statusu na poprawne 401 dla bezstanowego API. **Zasada: przy pisaniu Lesson13
+(StatelessSecurity) i Lesson16, jeśli demo nie ma httpBasic/formLogin, oczekuj 403 dla braku
+uwierzytelnienia, nie zakładaj 401 bez weryfikacji.**
+
+**Stan: Lesson13_StatelessSecurity też gotowa (13/17).** Dwie nowe pułapki znalezione przy
+pisaniu:
+1. **PIERWSZE wystąpienie w `_24_spring_security` znanej pułapki "2+ klasy `@SpringBootApplication`
+   w 1 pliku"** (Lesson13 to pierwsza lekcja tego rozdziału z DWOMA takimi klasami —
+   `StatelessApp`/`StatefulApp`) — dało `BeanDefinitionOverrideException` na beanie `filterChain`
+   (implicit component-scan każdej klasy `@SpringBootApplication` znajduje sąsiednią jako zwykłe
+   `@Configuration` i rejestruje jej `@Bean` metody ponownie). Naprawa: TA SAMA co w
+   `_23_spring_data_jpa` — `@Configuration` + `@EnableAutoConfiguration` (BEZ `@SpringBootApplication`)
+   na obu klasach, z `@Bean` metodami (WŁĄCZNIE z rejestracją `@RestController` przez jawny
+   `@Bean controllerBean() { return new XxxController(); }`, bo bez component-scan kontroler też
+   nie zostałby znaleziony) bezpośrednio na tych klasach zamiast osobnych `Config` klas.
+2. **Empiryczne obalenie własnego założenia w treści lekcji**: pierwotny plan zakładał, że
+   `httpBasic()` z domyślną polityką `IF_REQUIRED` TEŻ tworzy sesję (jak `formLogin()`) —
+   zweryfikowane, że to NIEPRAWDA na Spring Security 6.x/Boot 3.4.4: `httpBasic()` sam z siebie
+   NIE tworzy `JSESSIONID` (Basic Auth jest bezstanowy z natury, poświadczenia lecą w każdym
+   żądaniu), tylko `formLogin()` faktycznie tworzy sesję (potrzebuje jej, by przetrwać
+   przekierowanie 302). Lesson13 przepisana, by użyć `formLogin()` do demo "sesja tworzona
+   domyślnie" — kolejny przykład zasady tego kursu: nie ufaj lore/założeniom, zweryfikuj
+   uruchomieniowo.
+
+**Stan: Lesson14_CorsAndCsrfInSpringSecurity też gotowa (14/17).** Nowa pułapka: wstrzykiwanie
+`CorsConfigurationSource` PO SAMYM TYPIE jako parametr `@Bean SecurityFilterChain filterChain(...)`
+jest DWUZNACZNE — Spring MVC auto-konfiguruje bean `mvcHandlerMappingIntrospector`
+(`HandlerMappingIntrospector`), który TEŻ implementuje `CorsConfigurationSource`, więc Spring
+znajduje 2 kandydatów (`UnsatisfiedDependencyException: expected single matching bean but found
+2`). Naprawa: `@Qualifier("corsConfigurationSource")` na parametrze. **Zasada: przy wstrzykiwaniu
+`CorsConfigurationSource` w Spring MVC/Security, ZAWSZE kwalifikuj po nazwie beana.**
+
+Lesson15 (OAuth2), Lesson16 (SecurityExceptionHandling) i Lesson17 (SpringSecurityCapstone)
+napisane i zweryfikowane w tej samej sesji — rozdział KOMPLETNY, patrz podsumowanie na początku
+tej sekcji.
+
+## PLAN: Rozdziały _25_unit_testing, _26_integration_testing, _27_spring_test,
+## _28_java_evolution — ZAPLANOWANE, TREŚĆ JESZCZE NIE NAPISANA
+
+Zapisane 2026-07-12, na wyraźną prośbę użytkownika ("chcę poznać Springa dalej... zaproponuj
+następne rozdziały"). Po propozycji obejmującej też Spring Reactive/Messaging/Cloud, użytkownik
+wybrał WĘŻSZY, ale głębszy zakres skupiony na TESTOWANIU + retrospektywie wersji Javy — te 4
+rozdziały mają, cytując użytkownika, "zamknąć temat kursu". Status: **foldery WSZYSTKICH 80
+lekcji utworzone, wszystkie 4 rozdziały zarejestrowane w `_TableOfContents.java`. ŻADNA lekcja
+nie ma jeszcze napisanej treści (teoria + 30 ćwiczeń) — to następny krok pracy.**
+
+Kolejność pisania (polecana, ale nie sztywna): `_25_unit_testing` najpierw (fundament — JUnit5/
+AssertJ/Mockito, którego brakowało w CAŁYM kursie do tej pory, mimo że `spring-boot-starter-test`
+był już zależnością projektu od dawna), potem `_26_integration_testing` (rozszerza ideę
+testowania na zewnętrzne zależności — bazy/HTTP/pliki), potem `_27_spring_test` (Spring-owe
+adnotacje testowe — NATURALNIE zakłada znajomość `_25`/`_26`, a merytorycznie odwołuje się do
+`_22_spring_web`/`_23_spring_data_jpa`/`_24_spring_security`), na końcu `_28_java_evolution`
+(niezależny tematycznie od reszty — czysta retrospektywa języka, może być pisany w dowolnym
+momencie, ale logicznie domyka kurs jako "podsumowanie całej drogi").
+
+### `_25_unit_testing` ("Testy jednostkowe - JUnit i AssertJ") — 20 lekcji
+
+1. WhyUnitTests, 2. JUnit5ArchitectureOverview (Platform/Jupiter/Vintage), 3. FirstTestAndBuiltInAssertions,
+4. TestLifecycleAnnotations (`@BeforeEach`/`@AfterEach`/`@BeforeAll`/`@AfterAll`),
+5. AssertJIntroduction (fluent assertions, dlaczego LEPSZE od wbudowanych `assertEquals`),
+6. AssertJForCollectionsAndMaps, 7. AssertJForExceptionsAndCustomAssertions, 8. ParameterizedTests
+(`@ValueSource`/`@CsvSource`/`@MethodSource`), 9. NestedAndDisplayNameTests (`@Nested`,
+`@DisplayName`), 10. TestOrderingAndRepeatedTests (`@Order`, `@RepeatedTest`),
+11. ConditionalExecutionAndAssumptions (`@EnabledOnOs`, `Assumptions`), 12. TestTagsAndFiltering
+(`@Tag`), 13. MockitoBasics (mock/when/verify), 14. MockitoArgumentMatchersAndCaptors,
+15. MockitoAnnotationsAndExtension (`@Mock`/`@InjectMocks`/`MockitoExtension`),
+16. TestDoublesTaxonomy (dummy/fake/stub/spy/mock), 17. TestingExceptionsAndEdgeCases,
+18. TestNamingAndOrganizationBestPractices, 19. CodeCoverageBasics (JaCoCo, powiązanie z
+`_16_clean_code/Lesson20` PMD/SpotBugs), 20. UnitTestingCapstone.
+
+### `_26_integration_testing` ("Testy integracyjne") — 16 lekcji
+
+1. WhatIsIntegrationTesting, 2. IntegrationTestChallenges (zewnętrzne zależności, flaky testy,
+szybkość), 3. TestingWithRealDatabaseVsInMemory (powiązanie z `_08_sql`-`_10_dao`, H2 vs realna
+baza), 4. TestcontainersIntroduction, 5. TestcontainersWithJdbc, 6. TestcontainersLifecycleAndReuse,
+7. WireMockIntroduction (powiązanie z `_06_networking`/`_13_libraries/Lesson14` MockWebServer),
+8. StubbingAndVerifyingHttpCalls, 9. TestingFileSystemAndIO (powiązanie z `_04_io`),
+10. TestDataManagementStrategies (fixtures/builders), 11. TestIsolationAndIdempotency,
+12. FlakyTestsAndHowToFixThem, 13. ContractTestingIntro (Consumer-Driven Contracts, koncepcyjnie),
+14. CiCdIntegrationOfTests (powiązanie z `_11_buildtools`), 15. IntegrationTestingBestPractices,
+16. IntegrationTestingCapstone.
+
+### `_27_spring_test` ("Testowanie aplikacji Spring — Spring Test") — 20 lekcji
+
+1. SpringTestModuleOverview (co jest w `spring-boot-starter-test`), 2. SpringBootTestBasics
+(`@SpringBootTest`), 3. WebEnvironmentOptions (MOCK/RANDOM_PORT/DEFINED_PORT/NONE),
+4. TestSlicesConcept (dlaczego "wycinki" zamiast pełnego kontekstu), 5. WebMvcTestAndMockMvc
+(powiązanie z `_22_spring_web`), 6. DataJpaTestAndTestEntityManager (powiązanie z
+`_23_spring_data_jpa`), 7. JsonTestForSerialization (`@JsonTest`), 8. MockitoBeanAndSpyBean
+(`@MockitoBean`/`@MockitoSpyBean` — NOWY standard od Boot 3.2, `@MockBean`/`@SpyBean` deprecated
+od Boot 3.4.0, fakt już zweryfikowany WebSearch i zanotowany w planie `_20`-`_24` wyżej w tym
+pliku), 9. TestConfigurationAndContextCustomization (`@TestConfiguration`), 10. ActiveProfilesInTests,
+11. TestPropertySourceAndDynamicProperties, 12. TestRestTemplateAndWebTestClient,
+13. TestingSecuredEndpoints (`spring-security-test`, `@WithMockUser`, powiązanie z
+`_24_spring_security`), 14. TestingTransactionalCodeInSpring (auto-rollback w testach),
+15. TestcontainersServiceConnection (`@ServiceConnection`, integracja `_26` z Springiem),
+16. TestingSchedulingAndAsyncCode, 17. ContextCachingAndTestPerformance (dlaczego pakiet testów
+zwalnia bez cache'owania kontekstu), 18. ArchUnitForArchitectureTesting (powiązanie z
+`_17_architecture`), 19. SpringTestBestPractices, 20. SpringTestCapstone.
+
+### `_28_java_evolution` ("Ewolucja Javy: od Java 8 do dziś") — 24 lekcje
+
+Celowo NIE jest to nowa teoria od zera — WIĘKSZOŚĆ tematów jest już nauczona GDZIEINDZIEJ w kursie
+(generyki/lambdy/streamy w `_03_collections`/`_14_advancedjava`, rekordy/sealed/pattern matching w
+`_02_oop`/`_14_advancedjava`, moduły w `_14_advancedjava`, wątki wirtualne w `_05_multithreading`)
+— ten rozdział to RETROSPEKTYWA chronologiczna, spinająca WSZYSTKO w oś czasu "co wprowadziła
+która wersja", z krótkim przypomnieniem + PEŁNYMI 30 ćwiczeniami (do faktycznego poćwiczenia, nie
+tylko przeczytania) na KAŻDĄ lekcję, tak jak reszta kursu. Kilka lekcji to NOWY materiał (jeszcze
+nigdzie w kursie nieujęty), oznaczone niżej jako NOWY:
+
+1. JavaReleaseCadenceAndLtsExplained (6-miesięczny cykl od Javy 9, LTS vs non-LTS, powiązanie z
+`_01_fundamentals/Lesson00`), 2. Java8LambdasAndFunctionalInterfaces (przypomnienie
+`_14_advancedjava/Lesson8-11`), 3. Java8StreamsAndOptional (przypomnienie `_03_collections`),
+4. Java8DefaultAndStaticInterfaceMethods (przypomnienie `_02_oop/Lesson08`),
+5. Java8NewDateTimeApi (przypomnienie `_01_fundamentals/Lesson07`), 6. Java9ModuleSystemJpms
+(przypomnienie `_14_advancedjava/Lesson27-28`), 7. Java9SmallerFeatures (NOWY — try-with-resources
+na effectively final zmiennych, prywatne metody interfejsu, `List.of`/`Map.of`/`Set.of`, JShell),
+8. Java10LocalVariableTypeInference (przypomnienie `_14_advancedjava/Lesson23`),
+9. Java11LtsStringAndFilesMethods (NOWY — `String.isBlank`/`strip`/`repeat`/`lines`,
+`Files.readString`/`writeString`, `var` w parametrach lambdy, uruchamianie pojedynczego pliku
+`.java` bez kompilacji), 10. Java11HttpClient (przypomnienie `_06_networking`),
+11. Java12To13SwitchExpressionsPreview (NOWY — składnia strzałkowa jako preview, droga do 14),
+12. Java14SwitchExpressionsAndRecordsPreview (NOWY — wyrażenia switch finalne w 14, rekordy jako
+preview, pomocne komunikaty NPE), 13. Java15TextBlocks (NOWY), 14. Java16RecordsAndPatternMatchingInstanceof
+(rekordy finalne, przypomnienie `_02_oop/Lesson14`/`_14_advancedjava/Lesson20`),
+15. Java17SealedClasses (przypomnienie `_14_advancedjava/Lesson19`, LTS), 16. Java18UtfDefaultAndSimpleWebServer
+(NOWY — UTF-8 jako domyślne kodowanie, `jwebserver`), 17. Java19To20VirtualThreadsPreview (NOWY —
+wątki wirtualne i structured concurrency jako preview, ZANIM trafiły do `_05_multithreading`),
+18. Java21PatternMatchingSwitchAndRecordPatterns (przypomnienie `_14_advancedjava/Lesson21`, LTS),
+19. Java21VirtualThreadsFinalized (przypomnienie `_05_multithreading/Lesson33`),
+20. Java21SequencedCollections (NOWY — `SequencedCollection`/`SequencedSet`/`SequencedMap`,
+`getFirst()`/`getLast()`/`reversed()` — NIGDZIE jeszcze nieujęte w kursie, mimo że projekt celuje w
+Javę 21), 21. Java22To23NewFeatures (NOWY — Foreign Function & Memory API finalne, Stream Gatherers,
+nienazwane zmienne/wzorce), 22. Java24To25LatestFeatures (NOWY — structured concurrency finalne,
+scoped values, najnowszy stan na dziś — ZWERYFIKUJ dokładne szczegóły WebSearch przy pisaniu, nie
+z pamięci), 23. ChoosingJavaVersionForNewProjects (LTS vs najnowsza, strategie migracji),
+24. JavaEvolutionCapstone (mini-demo łączące cechy Z KILKU różnych wersji naraz).
+
+### WAŻNE techniczne przeszkody do rozwiązania PRZED (lub NA POCZĄTKU) pisania lekcji
+
+Zidentyfikowane PODCZAS planowania, jeszcze NIE rozwiązane — pierwsza sesja pisząca którykolwiek
+z tych rozdziałów powinna je zaadresować:
+
+1. **Zależności testowe (JUnit5/AssertJ/Mockito) są DZIŚ w `pom.xml` w scope `test`**
+   (`spring-boot-starter-test`) — ale WSZYSTKIE lekcje tego kursu żyją w `src/main/java` i są
+   URUCHAMIANE przez `mvnw.cmd exec:java` (klasy Z GŁÓWNEGO scope kompilacji). Klasy ze scope
+   `test` NIE SĄ dostępne dla `src/main/java` — próba użycia `org.junit.jupiter.api.Test`/AssertJ/
+   Mockito W pliku `_25_unit_testing/LessonXX/_LessonXX.java` NIE SKOMPILUJE SIĘ, dopóki te
+   zależności nie dostaną WYŻSZEGO zasięgu (usunięcie `<scope>test</scope>` dla konkretnych
+   artefaktów typu `junit-jupiter`/`assertj-core`/`mockito-core`/`mockito-junit-jupiter`, LUB
+   dodanie ich jako osobnych, NIE-testowych zależności obok istniejącego `spring-boot-starter-test`).
+   **DO ZROBIENIA jako pierwszy krok pisania `_25_unit_testing`**: zweryfikuj dokładne wersje w
+   Maven Central (zgodne Z tym, co i tak przynosi `spring-boot-starter-test` przez BOM, żeby
+   uniknąć konfliktu wersji) i dodaj je jawnie, bez scope `test`.
+2. **Wzorzec plików lekcji dla tematu "testowanie" wymaga przemyślenia** — cała reszta kursu ma
+   `public static void main()`, który coś ROBI i WYPISUJE wynik. Tu naturalna treść to prawdziwe
+   klasy `@Test`. Proponowany wzorzec (DO POTWIERDZENIA przy pisaniu Lesson01): teoria pisze
+   PRAWDZIWE klasy testowe (zagnieżdżone, Z `@Test`) ORAZ `main()`, KTÓRY programowo URUCHAMIA je
+   przez JUnit Platform Launcher API (`org.junit.platform.launcher.core.LauncherFactory` +
+   `LauncherDiscoveryRequestBuilder` + `SummaryGeneratingListener`) i WYPISUJE podsumowanie
+   (liczba testów/sukcesy/porażki/czas) — TEN SAM duch "embeduj i naprawdę uruchom" co Ant W
+   `_11_buildtools`/PMD-SpotBugs W `_16_clean_code/Lesson20`. Ćwiczenia (`_Exercises_...`)
+   ZACHOWUJĄ konwencję kursu (30 zagnieżdżonych klas Z opisem zadania), ale zadanie proponuje
+   NAPISANIE prawdziwego testu (metoda `@Test` ZAMIAST pustego `main()`) — DO OSTATECZNEGO
+   ustalenia formatu przy faktycznym pisaniu Lesson01.
+3. **Testcontainers (`_26`/`_27`) WYMAGA Docker Desktop/Engine URUCHOMIONEGO na maszynie** — W
+   odróżnieniu OD reszty kursu (H2 in-memory, embedded serwery), TE demo NIE zadziałają bez
+   Dockera. **PRZED napisaniem tych lekcji zweryfikuj `docker version`/`docker info` na tej
+   maszynie** — jeśli Docker jest niedostępny, zastosuj TEN SAM wzorzec przyjaznego fallbacku co
+   `_15_jvm_internals/Lesson11` (Shenandoah niedostępny) LUB `_06_networking` (brak internetu) —
+   złap wyjątek, wypisz czytelny komunikat, NIE wywalaj całego demo.
+4. **Nowe zależności DO ZWERYFIKOWANIA w Maven Central przed dodaniem** (ta sama zasada
+   ostrożności co przy BCrypt/JJWT/PMD w poprzednich rozdziałach — NIE zgaduj wersji):
+   `org.testcontainers:testcontainers` + `junit-jupiter` + moduł bazy (np. `postgresql`) dla `_26`/
+   `_27`; `org.wiremock:wiremock` (LUB starsze `com.github.tomakehurst:wiremock-jre8` — zweryfikuj
+   AKTUALNĄ, zalecaną współrzędną) dla `_26`; `com.tngtech.archunit:archunit`(-junit5) dla `_27`.
+5. **`_28_java_evolution`, Lesson21-22 (Java 22-25) PRZEKRACZAJĄ baseline projektu**
+   (`pom.xml`: `<java.version>21</java.version>`, `<release>21</release>`) — kod używający cech Z
+   Javy 22+ (Foreign Function API finalne, Stream Gatherers, unnamed variables/patterns) NIE
+   SKOMPILUJE SIĘ jako część `src/main/java` przy `--release 21`. Rozwiązanie: TEN SAM wzorzec
+   "embeduj i NAPRAWDĘ uruchom W PODPROCESIE" co `_14_advancedjava/Lesson26-28` (JPMS) I
+   `_15_jvm_internals` (child JVM Z flagami) — `ToolProvider.getSystemJavaCompiler()`/`ProcessBuilder`
+   kompilujący I URUCHAMIAJĄCY osobny plik źródłowy Z `--release 22`/`23`/`24`/`25` (LUB
+   `--enable-preview`, jeśli cecha jest nadal preview) W katalogu tymczasowym, PROJEKT GŁÓWNY
+   NIE ZMIENIA swojego baseline. Zainstalowany JDK na tej maszynie to `openjdk-25.0.2`
+   (`C:\Users\kapit\.jdks\openjdk-25.0.2`) — WYSTARCZAJĄCY, żeby faktycznie skompilować/uruchomić
+   demo AŻ DO Javy 25 W PODPROCESIE.
+
+Następny krok pracy: zacząć `_25_unit_testing` od rozwiązania punktu 1 (scope zależności testowych
+W `pom.xml`), potem `_Lesson01_WhyUnitTests.java` + `_Exercises_Lesson01_WhyUnitTests.java`.
+
+### Stan na 2026-07-12: `_25_unit_testing` ROZPOCZĘTY, punkty 1-2 z listy wyżej ROZWIĄZANE
+
+Użytkownik potwierdził plan i poprosił o kontynuację BEZ dalszego pytania o zgodę ("kontynuuj i
+nie pytaj o zgodę... zaawansowany Spring dorobimy kiedyś" — czyli Reactive/Messaging/Cloud
+Z pierwotnej, szerszej propozycji ŚWIADOMIE odłożone, NIE są częścią tych 4 rozdziałów).
+
+**Punkt 1 (scope zależności) ROZWIĄZANY**: dodano do `pom.xml` (bez scope `test`, wersje
+zarządzane przez `spring-boot-starter-parent` BOM, zweryfikowane brakiem konfliktu):
+`org.junit.jupiter:junit-jupiter`, `org.junit.platform:junit-platform-launcher`,
+`org.assertj:assertj-core`, `org.mockito:mockito-core`, `org.mockito:mockito-junit-jupiter`.
+Istniejący `spring-boot-starter-test` (scope `test`) POZOSTAJE bez zmian — obie kopie tych samych
+bibliotek współistnieją bez konfliktu (różne scope, ten sam BOM). Przy okazji odkryto i
+zignorowano jako POZA ZAKRESEM: `src/test/java/.../_01_fundamentals/Training/StudentTest.java` ma
+PRZEDINSTNIEJĄCY, niezwiązany błąd kompilacji (`assert` użyty jako nazwa zmiennej — słowo
+kluczowe od Javy 1.4) — potwierdzone `git diff` że to NIE jest spowodowane tą sesją, nie
+naprawiane (poza zakresem misji).
+
+**Punkt 2 (wzorzec plików dla tematu "testowanie") ROZWIĄZANY I ZWERYFIKOWANY DZIAŁAJĄCO** na
+Lesson01: teoria pisze PRAWDZIWE zagnieżdżone klasy `@Test` (JUnit 5) + `main()` URUCHAMIAJĄCY je
+programowo przez JUnit Platform Launcher API. **Sprawdzony, działający wzorzec (kopiuj do
+kolejnych lekcji `_25`/`_26`/`_27`)**:
+```java
+LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
+        .selectors(DiscoverySelectors.selectClass(MyTestClass.class))
+        .build();
+Launcher launcher = LauncherFactory.create();
+SummaryGeneratingListener listener = new SummaryGeneratingListener();
+launcher.registerTestExecutionListeners(listener);
+launcher.execute(request);
+TestExecutionSummary summary = listener.getSummary();
+PrintWriter writer = new PrintWriter(System.out);
+summary.printTo(writer);
+summary.printFailuresTo(writer);
+writer.flush();
+```
+Zweryfikowane uruchomieniowo: `summary.getTestsFoundCount()`/`getTestsSucceededCount()`/
+`getTestsFailedCount()` działają poprawnie, `printFailuresTo(...)` daje CZYTELNY, prawdziwy
+stack trace asercji (nie atrapę) — dokładnie jak w prawdziwym IDE/Surefire. Ćwiczenia
+(`_Exercises_...`) ZACHOWUJĄ standardową konwencję kursu (30 zagnieżdżonych klas z pustym
+`public static void main`), zadania proszą o napisanie prawdziwych klas `@Test` i uruchomienie
+ich tym samym wzorcem Launcher API.
+
+**Lesson01_WhyUnitTests NAPISANA, skompilowana i uruchomieniowo zweryfikowana** (3 testy
+znalezione, 2 sukcesy, 1 celowa porażka z prawdziwym stack trace'em asercji). **Stan na koniec tej
+sesji: Lesson01-07 z `_25_unit_testing` NAPISANE, skompilowane i uruchomieniowo zweryfikowane
+(7/20 gotowe)** — WhyUnitTests, JUnit5ArchitectureOverview, FirstTestAndBuiltInAssertions,
+TestLifecycleAnnotations, AssertJIntroduction, AssertJForCollectionsAndMaps,
+AssertJForExceptionsAndCustomAssertions. Wszystkie używają tego samego, sprawdzonego wzorca
+`runAndReport(Class<?> testClass)` (helper metoda z Launcher API, kopiowana per plik zgodnie z
+konwencją kursu "każdy plik lekcji jest samodzielny"). Lesson07 dodatkowo wprowadza wzorzec
+`AbstractAssert`-owych WŁASNYCH klas asercji (`OrderAssert extends AbstractAssert<OrderAssert,
+Order>`, metody zwracające `this` dla łańcuchowania, `failWithMessage(...)` dla czytelnych
+komunikatów błędu) — ten wzorzec będzie przydatny w dalszych lekcjach `_25`-`_27`.
+
+**`_25_unit_testing` jest w PEŁNI ukończony (stan na 2026-07-19): 20/20 lekcji, każda z teorią +
+30 ćwiczeniami, cały projekt skompilowany (`mvnw.cmd compile`) i KAŻDA lekcja (08-20 dopisane w
+tej sesji, 01-07 były już gotowe z poprzedniej) uruchomieniowo zweryfikowana `mvnw.cmd exec:java` —
+zero błędów, włącznie z kapsztonem (Lesson20, pakiet testów `OrderService` z 3 mockowanymi
+zależnościami) łączącym JUnit5/AssertJ/Mockito/`@Nested`/`@Tag`/`@ParameterizedTest`/
+`@RepeatedTest`/przypadki brzegowe w jednym, zweryfikowanym pakiecie (11 testów, w tym filtrowanie
+tagiem "fast" dające 8/11).**
+
+Na początku tej sesji naprawiono też PRZEDINSTNIEJĄCY, niezwiązany z `_25` błąd kompilacji: plik
+`_11_buildtools/Lesson11_MavenBasics/_Lesson11_MavenBasics.java` miał przypadkowo wpisany prefiks
+`cla` w nazwie klasy (`cla_Lesson11_MavenBasics` zamiast `_Lesson11_MavenBasics`) — efekt
+najpewniej przypadkowego wklejenia/literówki z wcześniejszej sesji, NIE związany z żadną
+świadomą zmianą. **WAŻNA OBSERWACJA na przyszłość**: ten pojedynczy błąd (niezgodność nazwy klasy
+publicznej z nazwą pliku) powodował, że `javac` przerywał fazę parse-and-enter PRZED uruchomieniem
+przetwarzania adnotacji — w efekcie Lombok (w zupełnie innym, niepowiązanym pliku
+`_13_libraries/Lesson03-05`) przestawał działać W CAŁYM projekcie z mylącymi błędami "cannot find
+symbol" dla getterów/setterów, mimo że `fork=true` i przypięte wersje Lomboka (ustalone w
+poprzedniej sesji) były poprawne. **Jeśli w przyszłości Lombok "nagle" przestanie działać mimo
+niezmienionej konfiguracji, sprawdź NAJPIERW, czy nie ma gdzieś w projekcie banalnego błędu
+składni/nazewnictwa klasy blokującego CAŁĄ fazę annotation processing, zanim zaczniesz debugować
+samą konfigurację Lomboka.**
+
+**Nowa pułapka odkryta przy pisaniu Lesson16 (TestDoublesTaxonomy) — Byte Buddy nie wspiera w pełni
+JDK 25**: Mockito `spy(prawdziwyObiekt)` NA KONKRETNEJ (nie-interfejsowej) klasie wymaga
+RETRANSFORMACJI bajtkodu tej klasy przez silnik Byte Buddy pod spodem — Byte Buddy w wersji
+ciągniętej przez `mockito-core:5.14.2` OFICJALNIE wspiera tylko do Javy 24, więc na tej maszynie
+(JDK 25.0.2) `spy(...)` na konkretnej klasie rzuca `MockitoException`/`IllegalArgumentException:
+Java 25 (69) is not supported by the current version of Byte Buddy`. **`mock(Interfejs.class)` NIE
+MA tego problemu** (nie wymaga retransformacji, działa normalnie na JDK 25 — potwierdzone empirycznie
+w Lesson13-15/17/20, gdzie wszystkie mockowane typy to interfejsy). **Naprawa: `System.setProperty(
+"net.bytebuddy.experimental", "true")` na samym początku `main()`, PRZED pierwszym użyciem
+Mockito w danym procesie JVM** — włącza eksperymentalne wsparcie nowszych wersji Javy. **Zasada na
+przyszłość (dla `_26_integration_testing`/`_27_spring_test` i każdej dalszej lekcji używającej
+`spy(...)` NA KONKRETNEJ klasie, lub `mock(KonkretnaKlasa.class)` na klasie FINALNEJ/betonowej):
+dodaj tę linię na początku `main()` PREWENCYJNIE, zanim napotkasz ten sam błąd ponownie** — dla
+samych interfejsów (zdecydowana większość mocków w tym kursie) nie jest to konieczne, ale nie
+szkodzi.
+
+**Nowa zależność dodana do `pom.xml`**: `org.jacoco:org.jacoco.core:0.8.15` (BEZ scope `test` —
+jak reszta zależności testowych tego rozdziału, potrzebna w `src/main/java`). Wersja zweryfikowana
+WebSearch jako najnowsza stabilna w Maven Central na 2026-07-19 (NIE zgadywana z pamięci). Użyta w
+Lesson19 (`CodeCoverageBasics`) do PRAWDZIWEGO, PROGRAMOWEGO użycia surowego API `org.jacoco.core`
+(`Instrumenter`+`LoggerRuntime`+`RuntimeData`+własny `MemoryClassLoader`+`Analyzer`+
+`CoverageBuilder`) — klasa "pod testem" jest ZINSTRUMENTOWANA W LOCIE, uruchomiona, a WYNIK
+(pokrycie linii/gałęzi/instrukcji/metod, z rozróżnieniem NIEPOKRYTA/CZĘŚCIOWO/W PEŁNI dla każdej
+linii) jest wypisywany na podstawie FAKTYCZNIE zebranych danych wykonania — dokładnie ten sam
+wzorzec "embeduj i naprawdę uruchom" co PMD/SpotBugs w `_16_clean_code/Lesson20`. Zweryfikowane
+uruchomieniowo: metoda z gałęzią `if/else`, gdzie wywołano tylko gałąź `if`, poprawnie pokazuje
+50% pokrycia gałęzi i czerwoną (niepokrytą) linię dla nigdy niewykonanej gałęzi `else`.
+
+Regresja sprawdzona PO dodaniu zależności JaCoCo: ponownie uruchomiono
+`_21_spring_boot/Lesson16_SpringBootCapstone` (niepowiązany rozdział Spring) — zero regresji,
+identyczny wynik jak wcześniej.
+
+**Stan `_26_integration_testing` na 2026-07-19: Lesson01-08/16 NAPISANE, skompilowane i uruchomieniowo
+zweryfikowane.** Docker Desktop NIE jest uruchomiony na tej maszynie (`docker version` działa —
+klient jest zainstalowany — ale `docker info`/Testcontainers zgłaszają brak dostępnego silnika/
+daemona) — potwierdzone na starcie pracy nad tym rozdziałem. Lesson04-06 (Testcontainers) stosują
+PRZYJAZNY fallback: `DockerClientFactory.instance().isDockerAvailable()` sprawdzane na starcie,
+PRAWDZIWY kod Testcontainers jest NAPISANY i wykonałby się identycznie na maszynie z Dockerem, ale
+gdy niedostępny — program wypisuje kod referencyjny zamiast go uruchamiać, zamiast się wywalać.
+
+**Trzy nowe pułapki wersji zależności odkryte w tej sesji (WAŻNE dla `_27_spring_test`, gdzie
+prawdopodobnie wrócą Testcontainers/podobne narzędzia)**:
+1. **WebSearch podał BŁĘDNĄ, nieistniejącą wersję `org.testcontainers:testcontainers:2.0.5`**
+   (halucynacja narzędzia podsumowującego wyniki wyszukiwania) — złapane dopiero przez faktyczny
+   błąd `mvnw.cmd compile` ("Could not find artifact"). Poprawna, zweryfikowana wersja: **1.21.3**
+   (potwierdzone BEZPOŚREDNIM zapytaniem do `search.maven.org/solrsearch/select?q=g:...+AND+a:...
+   &core=gav&wt=json` — to jest WIARYGODNE źródło, WebSearch summary NIE JEST). **ZASADA NA
+   PRZYSZŁOŚĆ: przy weryfikacji wersji Maven, ZAWSZE wołaj bezpośrednio Solr API przez WebFetch
+   (`https://search.maven.org/solrsearch/select?q=g:<groupId>+AND+a:<artifactId>&core=gav&rows=10&
+   wt=json`) zamiast polegać na podsumowaniu WebSearch — WebSearch już RAZ skutecznie
+   zahalucynowało nieistniejącą wersję, Solr API zwraca surowe dane z samego Maven Central.**
+   Ostatecznie zweryfikowane tą metodą: `jacoco.core:0.8.15` (Solr pokazał tylko do 0.8.13, ale
+   0.8.15 i tak POPRAWNIE się rozwiązał przez `mvn compile` — Solr index bywa nieaktualny,
+   FAKTYCZNA rezolucja Mavena jest ostatecznym rozjemcą), `testcontainers:1.21.3`,
+   `testcontainers:junit-jupiter:1.21.3`, `testcontainers:postgresql:1.21.3`,
+   `org.postgresql:postgresql:42.7.13`, `org.wiremock:wiremock:3.13.1`.
+2. **WireMock 3.x NIE zawiera już wbudowanego serwera Jetty w samym artefakcie `wiremock`** —
+   `WireMockServer.start()` bez dodatkowej zależności rzuca `Jetty 11 is not present and no
+   suitable HttpServerFactory extension was found`. Naprawa: dodać `org.wiremock:wiremock-jetty12`
+   (TA SAMA wersja co `wiremock`, tu: 3.13.1).
+3. **Po dodaniu `wiremock-jetty12`, sam bazowy artefakt `wiremock` WCIĄŻ ciągnie transytywnie
+   MIESZANKĘ starego Jetty 11 (`jetty-servlet`/`jetty-servlets`/`jetty-webapp`/
+   `org.eclipse.jetty.http2:http2-server`, seria 11.0.24) OBOK Jetty 12 (seria 12.0.18)** — dało to
+   `IncompatibleClassChangeError: class HttpChannelOverHTTP2 has interface HttpChannel as super
+   class` przy starcie serwera (dwie sprzeczne wersje TEJ SAMEJ klasy na classpath). Naprawa:
+   `<exclusions>` na deklaracji `wiremock` wykluczające dokładnie te 4 artefakty Jetty 11 (patrz
+   `pom.xml`, sekcja WireMock) — po wykluczeniu zostaje spójny, jednolity komplet Jetty 12.0.18 z
+   `wiremock-jetty12`. **Zasada: przy dodawaniu JAKIEJKOLWIEK biblioteki embedującej WŁASNY serwer
+   HTTP (Jetty/Netty/inny), ZAWSZE uruchom (nie tylko skompiluj) demo ZARAZ PO dodaniu zależności —
+   ten rodzaj konfliktu wersji ujawnia się TYLKO w runtime (`IncompatibleClassChangeError`), nigdy
+   przy kompilacji.**
+
+Inne warte odnotowania z Lesson01-08: Lesson03 natrafił na H2 traktujące `value` jako słowo
+kluczowe (rezerwowane) — kolumna musiała zostać przemianowana na `setting_value`. Regresja
+sprawdzona PO dodaniu wszystkich nowych zależności (Testcontainers/WireMock/PostgreSQL driver):
+ponownie uruchomiono `_24_spring_security/Lesson17_SpringSecurityCapstone` (niepowiązany rozdział)
+— zero regresji, wszystkie 9 scenariuszy nadal dają oczekiwane kody statusu.
+
+**`_26_integration_testing` jest w PEŁNI ukończony (stan na 2026-07-19): 16/16 lekcji, każda z
+teorią + 30 ćwiczeniami, cały projekt skompilowany (`mvnw.cmd clean compile`) i KAŻDA lekcja
+uruchomieniowo zweryfikowana `mvnw.cmd exec:java` — zero błędów, włącznie z kapsztonem (Lesson16,
+"JavaQuest Order Processing") łączącym PRAWDZIWĄ bazę H2 + STUBOWANY przez WireMock zewnętrzny
+gateway płatności + Test Data Builder (Lesson10) + izolację przez UUID (Lesson11) w 3
+zweryfikowanych scenariuszach (sukces, odrzucona płatność, izolacja między scenariuszami).**
+
+**Nowa pułapka odkryta w Lesson16 (WireMock priorytety stubów)**: gdy DWA stuby PASUJĄ do TEGO
+SAMEGO żądania (ogólny `post(urlEqualTo("/charge"))` + bardziej szczegółowy z `withRequestBody`),
+WireMock domyślnie wybiera OSTATNIO zarejestrowany przy TYM SAMYM priorytecie — zarejestrowanie
+szczegółowego stuba PIERWSZY, a ogólnego DRUGI, dało BŁĘDNY wynik (ogólny "wygrywał", szczegółowy
+nigdy się nie uruchamiał). Naprawa: jawne `.atPriority(1)` na szczegółowym stubie i `.atPriority(2)`
+na ogólnym (niższa liczba = wyższy priorytet). **Zasada: gdy REJESTRUJESZ WIĘCEJ NIŻ JEDEN stub
+mogący pasować do tego samego żądania (ogólny fallback + specific override), ZAWSZE nadaj jawny
+`.atPriority(...)`, nie polegaj na kolejności rejestracji.**
+
+**Stan `_27_spring_test` na 2026-07-19: Lesson01-05/20 NAPISANE, skompilowane i uruchomieniowo
+zweryfikowane.** Dodano nowe zależności do `pom.xml` BEZ scope `test` (ten sam powód co
+JUnit/AssertJ/Mockito w `_25_unit_testing`): `org.springframework:spring-test`,
+`org.springframework.boot:spring-boot-test`, `org.springframework.boot:spring-boot-test-
+autoconfigure` (wersje z BOM `spring-boot-starter-parent`, bez jawnego numeru). Regresja
+sprawdzona PO dodaniu: ponownie uruchomiono `_22_spring_web/Lesson19_RestApiCapstone` i
+`_23_spring_data_jpa/Lesson15_SpringDataJpaCapstone` — zero regresji.
+
+**NAJWAŻNIEJSZA, CHARAKTERYSTYCZNA DLA TEGO ROZDZIAŁU pułapka, wykryta w Lesson05 — bare
+`@SpringBootConfiguration` (bez `@SpringBootApplication`) NIE component-scanuje NIC**: `@WebMvcTest`
+(i inne wycinki testowe) szukają klasy `@SpringBootConfiguration` w pakiecie testu (jak
+`@SpringBootTest` bez `classes=...`) jako "kotwicy" konfiguracji. Pierwsza próba użyła CELOWO
+bare `@SpringBootConfiguration` (zamiast `@SpringBootApplication`), próbując z góry uniknąć znanej
+pułapki "implicit component-scan zbiera sąsiednie klasy w tym samym pliku" z `_20_spring_core`-
+`_24_spring_security`. To był BŁĄD: `@SpringBootConfiguration` SAM w sobie NIE niesie ze sobą
+`@ComponentScan` (w odróżnieniu od `@SpringBootApplication`, które łączy `@SpringBootConfiguration`
++ `@EnableAutoConfiguration` + `@ComponentScan`) — bez component-scanu `DispatcherServlet` W OGÓLE
+nie widział zagnieżdżonego `@RestController`, dając **404 zamiast 200** (żądanie trafiało w
+`NoResourceFoundException`, jakby kontroler nie istniał) — zweryfikowane empirycznie, naprawione
+zamianą na `@SpringBootApplication`. **ZASADA NA PRZYSZŁOŚĆ dla WSZYSTKICH pozostałych lekcji tego
+rozdziału używających `@WebMvcTest`/`@DataJpaTest`/`@JsonTest`/innych wycinków**: jeśli plik lekcji
+ma TYLKO 1 scenariusz/1 klasę-kotwicę (zdecydowana większość lekcji tego rozdziału, bo każda testuje
+JEDEN mechanizm na raz) — użyj `@SpringBootApplication` (BEZPIECZNE, bo nie ma sąsiada do
+przypadkowego odkrycia). TYLKO jeśli plik ma WIĘCEJ NIŻ 1 scenariusz z WŁASNYMI klasami-kotwicami w
+tym samym pliku (jak to bywało w `_20_spring_core`), wróć do wzorca `@Configuration`+
+`@EnableAutoConfiguration` (BEZ component-scan) z jawną rejestracją przez `@Bean` — DOKŁADNIE ta
+sama zasada co ustalona w `_20_spring_core`/`_23_spring_data_jpa`, tylko odwrotnie zastosowana: tu
+domyślnie preferuj PROSTSZE `@SpringBootApplication`, bo większość lekcji tego rozdziału ma 1
+scenariusz, nie wiele.
+
+Drobna pułapka API (Lesson05): `MockMvcTester.from(...)` przyjmuje `WebApplicationContext`, NIE
+`MockMvc` — trzeba wstrzyknąć `WebApplicationContext` osobno (BŁĄD kompilacji `MockMvc cannot be
+converted to WebApplicationContext` przy próbie `MockMvcTester.from(mockMvc)`).
+
+**Druga pułapka (Lesson06, `@DataJpaTest`) — Flyway na classpath wyłącza domyślne `ddl-auto`
+tworzenie schematu NAWET dla lokalnej, jednorazowej encji lekcji**: cały projekt ma Flyway na
+classpath (`_10_dao`/`_23_spring_data_jpa`) — Spring Boot WTEDY domyślnie ustawia
+`spring.jpa.hibernate.ddl-auto=none` (zamiast zwyczajowego `create-drop` dla embedded bazy w
+`@DataJpaTest`), więc Hibernate NIGDY nie tworzy tabeli dla nowej, lokalnej encji danej lekcji —
+`Table TEST_PRODUCT not found` (zweryfikowane empirycznie). Naprawa: `@DataJpaTest(properties =
+{"spring.flyway.enabled=false", "spring.jpa.hibernate.ddl-auto=create-drop"})` na KAŻDEJ lekcji
+`@DataJpaTest` definiującej WŁASNĄ, jednorazową encję (NIE dotyczy lekcji, które celowo testują
+PRAWDZIWY schemat Flyway — tam zostaw domyślne zachowanie). Także `@EnableJpaRepositories
+(considerNestedRepositories = true)` nadal wymagane na klasie-kotwicy (ta sama zasada z
+`_23_spring_data_jpa`), a `@DataJpaTest` (w odróżnieniu od `@WebMvcTest`) NIE MA atrybutu
+`classes` — polega WYŁĄCZNIE na wyszukiwaniu `@SpringBootConfiguration` w pakiecie.
+
+**Stan `_27_spring_test` na 2026-07-19 (kontynuacja): Lesson06-13/20 też NAPISANE, skompilowane i
+uruchomieniowo zweryfikowane (13/20 gotowe łącznie).** Nowa zależność dodana do `pom.xml` BEZ scope
+`test`: `org.springframework.security:spring-security-test` (`@WithMockUser`/`@WithAnonymousUser`/
+`SecurityMockMvcRequestPostProcessors`, potrzebne w Lesson13) — normalnie dociąga się transytywnie
+w scope `test` razem z `spring-boot-starter-test`, tu dodana jawnie z tego samego powodu co reszta.
+
+Kolejne warte odnotowania pułapki/decyzje z Lesson06-13:
+- **Lesson13 (`@WithMockUser`)**: cały projekt globalnie wyłącza auto-konfigurację Spring Security
+  w `application.properties` (opisane w sekcji `_24_spring_security` wyżej) — trzeba ją JAWNIE
+  przywrócić przez `System.setProperty("spring.autoconfigure.exclude", "")` na początku `main()`
+  (ten sam wzorzec co w `_24_spring_security`), inaczej `@WebMvcTest` w ogóle nie zobaczy
+  `SecurityFilterChain`. Zweryfikowane empirycznie: `@Import(TestApp.class)` (gdzie `TestApp` to
+  `@SpringBootApplication`+`@EnableWebSecurity`+bean `SecurityFilterChain`) zaimportowany jawnie
+  DO `@WebMvcTest` obok automatycznie odkrytego `@SpringBootConfiguration` w tym samym pakiecie
+  NIE powoduje konfliktu/duplikacji (Spring dedupuje po w pełni kwalifikowanej nazwie klasy) —
+  wszystkie 4 scenariusze (401/403/200 publiczny/200 admin) dały oczekiwane kody statusu.
+- **Lesson06 (`@DataJpaTest`)**: patrz pułapka opisana wyżej (Flyway na classpath → `ddl-auto=none`
+  domyślnie, naprawa przez `properties = {"spring.flyway.enabled=false", "spring.jpa.hibernate.
+  ddl-auto=create-drop"}`).
+- **Lesson08 (`@MockitoSpyBean`)**: na konkretnej (nie-interfejsowej) klasie wymaga TEJ SAMEJ
+  flagi `System.setProperty("net.bytebuddy.experimental", "true")` co `spy()` w `_25_unit_testing/
+  Lesson16` (Byte Buddy vs JDK 25) — dodana prewencyjnie na początku `main()`.
+- **Lesson12 (`TestRestTemplate`/`WebTestClient`)**: `testRestTemplate.getForObject(url, Map.class)`
+  zwraca RAW `Map` — przypisanie do `Map<String, Object>` wymaga `@SuppressWarnings("unchecked")`
+  (błąd kompilacji `String cannot be converted to CAP#1` przy bezpośrednim użyciu w
+  `assertThat(...).containsEntry(...)` na `Map<?,?>`).
+
+**Stan `_27_spring_test` na 2026-07-19 (kontynuacja 2): Lesson14-18/20 też NAPISANE, skompilowane i
+uruchomieniowo zweryfikowane (18/20 gotowe łącznie).** Dwie nowe zależności BEZ scope `test`:
+`org.springframework.boot:spring-boot-testcontainers` (`@ServiceConnection`, Lesson15) i
+`com.tngtech.archunit:archunit-junit5:1.4.1` (Lesson18, wersja zweryfikowana Solr API — 1.4.1 jest
+najnowsza, WebSearch tym razem NIE użyty, tylko bezpośrednie zapytanie Solr, zgodnie z nauczką z
+testcontainers).
+
+Warte odnotowania z Lesson14-18:
+- **Lesson14 (`TestTransaction`)**: `flagForCommit()+end()` TRWALE zapisuje dane (NIE cofa ich
+  domyślny rollback na końcu testu) — jeśli test PO commicie chce POSPRZĄTAĆ, samo `deleteAll()`
+  w NOWEJ transakcji (`TestTransaction.start()`) TEŻ zostanie cofnięte przez domyślny rollback na
+  końcu testu, chyba że jawnie wywołasz `TestTransaction.flagForCommit()` PONOWNIE przed końcem
+  metody — inaczej wiersz „przecieka” do innych testów w klasie (dokładnie ta sama pułapka
+  izolacji co `_26_integration_testing/Lesson11`, teraz w kontekście Springa).
+- **Lesson15 (`@ServiceConnection`)**: Docker niedostępny na tej maszynie przez CAŁĄ sesję — kod
+  jest realny i poprawnie ustrukturyzowany (potwierdzone kompilacją), ale ŚCIEŻKA faktycznego
+  uruchomienia kontenera NIGDY nie została wykonana z żywym Dockerem w tej sesji — jeśli
+  kontynuacja tej pracy ma dostęp do działającego Dockera, WARTO wrócić i zweryfikować
+  uruchomieniowo Lesson04-06 (`_26`) i Lesson15 (`_27`) naprawdę, nie tylko przez fallback.
+- **Lesson18 (ArchUnit)**: `noClasses().that().haveSimpleName(X).should().dependOnClassesThat()
+  .haveSimpleNameEndingWith("Repository")` zadziałało od razu poprawnie — `ArchRule.check(classes)`
+  rzuca `AssertionError` (a nie jakiś specyficzny dla ArchUnit typ) przy naruszeniu, więc
+  `assertThatThrownBy(...).isInstanceOf(AssertionError.class)` łapie to bezpośrednio. Demo
+  celowo analizuje TYLKO klasy zagnieżdżone we WŁASNYM pliku lekcji (nie cały projekt) dla
+  pełnej kontroli i przewidywalności wyniku (38 zaimportowanych klas).
+
+**Następny krok pracy**: dokończyć `_27_spring_test` — TYLKO Lesson19_SpringTestBestPractices i
+Lesson20_SpringTestCapstone pozostają (ostatnie 2/20). Potem `_28_java_evolution` (24 lekcje,
+ZUPEŁNIE nienapisany rozdział — pełna lista tematów w sekcji planu wyżej w tym pliku). Pamiętaj o
+technicznych przeszkodach: wzorzec subprocess `javac --release 22+` dla lekcji Java 22-25 w
+`_28_java_evolution` (Lesson21-22), bo baseline projektu to `--release 21`; i przy weryfikacji
+JAKIEJKOLWIEK nowej wersji Maven w przyszłości ZAWSZE bezpośrednie zapytanie Solr API, NIE
+podsumowanie WebSearch.
+
+## PLAN: Rozdziały _29_spring_reactive, _30_spring_messaging_and_async,
+## _31_spring_cloud_microservices ("zaawansowany Spring") — ZAPLANOWANE, TREŚĆ JESZCZE NIE NAPISANA
+
+Zapisane 2026-07-12, na wyraźną prośbę użytkownika — TO są dokładnie te 3 tematy ("Reactive/
+Messaging/Cloud"), które przy pierwszej propozycji rozdziałów zostały ŚWIADOMIE odłożone na rzecz
+`_25`-`_28` (testy + ewolucja Javy), z komentarzem użytkownika "zaawansowany Spring dorobimy
+kiedyś". TERAZ użytkownik poprosił WYŁĄCZNIE o plan + foldery (analogicznie do `_25`-`_28`) —
+**ŻADNA lekcja treści NIE została napisana, to świadoma decyzja użytkownika na tym etapie.**
+Status: **foldery WSZYSTKICH 52 lekcji utworzone, wszystkie 3 rozdziały zarejestrowane w
+`_TableOfContents.java`.**
+
+Kolejność logiczna (do pisania, gdy przyjdzie czas): `_29_spring_reactive` → `_30_spring_messaging_
+and_async` → `_31_spring_cloud_microservices` — Reactive jest najbardziej samodzielny
+(rozszerza `_22_spring_web`), Messaging/Async buduje na nim częściowo (WebClient reaktywny już
+znany), Cloud/mikroserwisy jest NAJBARDZIEJ złożony i naturalnie zamyka całość (opiera się na
+Config/Discovery/Gateway, które same w sobie są osobnymi aplikacjami Spring Boot).
+
+### `_29_spring_reactive` ("Programowanie reaktywne ze Spring WebFlux") — 17 lekcji
+
+Domyka wątek zostawiony otwarty w `_22_spring_web/Lesson17` (RestTemplate→WebClient→RestClient) —
+kursant już zna `WebClient` jako KLIENTA używanego NIE-reaktywnie (`.block()`); ten rozdział uczy
+PRAWDZIWEGO stylu reaktywnego (bez `.block()`), od podstaw Reactive Streams po WebFlux.
+
+1. WhyReactive (blocking vs non-blocking I/O, backpressure, C10K problem), 2. ReactiveStreamsSpecification
+(`Publisher`/`Subscriber`/`Subscription`/`Processor` — specyfikacja, NIE implementacja Reactora),
+3. ProjectReactorIntro (Reactor jako implementacja Reactive Streams używana przez Spring),
+4. MonoBasics (0-lub-1 element), 5. FluxBasics (0..N elementów), 6. ReactiveOperators
+(`map`/`flatMap`/`filter`/`zip`/`merge`/`concat`), 7. ErrorHandlingInReactiveStreams
+(`onErrorReturn`/`onErrorResume`/`retry`), 8. SchedulersAndThreading (`subscribeOn`/`publishOn`,
+powiązanie z `_05_multithreading`), 9. WebFluxVsSpringMvc (Netty vs Tomcat, kiedy które),
+10. AnnotatedControllersInWebFlux (`@RestController` zwracający `Mono`/`Flux`, powiązanie z
+`_22_spring_web`), 11. FunctionalEndpointsRouterFunction (styl funkcyjny jako alternatywa dla
+adnotacji), 12. WebClientDeepDive (PRAWDZIWIE reaktywne użycie, BEZ `.block()`, kontrast z
+`_22_spring_web/Lesson17`), 13. R2dbcIntro (reaktywny dostęp do bazy, kontrast z JPA z
+`_23_spring_data_jpa`), 14. ReactiveSecurity (Spring Security reaktywny wariant, kontrast z
+`_24_spring_security`), 15. TestingReactiveCodeWithStepVerifier (powiązanie z `_25_unit_testing`),
+16. WhenToUseReactiveVsBlocking (decyzja architektoniczna — I/O-bound vs CPU-bound, powiązanie z
+`_17_architecture`), 17. ReactiveCapstone.
+
+**Nowa zależność do dodania przy pisaniu**: `org.springframework.boot:spring-boot-starter-webflux`
+JUŻ JEST w `pom.xml` (dodana w `_22_spring_web/Lesson17` dla `WebClient` — ale projekt pozostaje
+typu `SERVLET`, nie `REACTIVE`, bo `spring-boot-starter-web` wygrywa w `WebApplicationType.
+deduceFromClasspath()`, udokumentowane w sekcji `_22_spring_web` wyżej). Lekcje 9-11 tego
+rozdziału będą pierwszymi, które FAKTYCZNIE uruchamiają serwer W TRYBIE REACTIVE — zweryfikuj przy
+pisaniu, czy trzeba jawnie wymusić `WebApplicationType.REACTIVE` (`SpringApplicationBuilder.web(
+WebApplicationType.REACTIVE)`) per-kontekst, żeby uniknąć konfliktu z resztą projektu (który
+zakłada Tomcat/Servlet). Dla `_13_R2dbcIntro` potrzebna NOWA zależność (`org.springframework.boot:
+spring-boot-starter-data-r2dbc` + sterownik R2DBC dla H2, np. `io.r2dbc:r2dbc-h2` — ZWERYFIKUJ
+dokładne współrzędne w Maven Central przed dodaniem, nie zgaduj).
+
+### `_30_spring_messaging_and_async` ("Asynchroniczność i komunikaty") — 16 lekcji
+
+Pogłębia `@Async`/eventy poznane w `_20_spring_core/Lesson20_ApplicationEvents` i wchodzi w
+RabbitMQ/Kafka.
+
+1. AsyncMethodsWithEnableAsync (`@EnableAsync`, `@Async`), 2. TaskExecutorConfiguration (tuning
+puli wątków, powiązanie z `_05_multithreading`), 3. CompletableFutureWithAsync (`@Async` zwracający
+`CompletableFuture`), 4. SchedulingWithEnableScheduling (`@Scheduled` — cron/fixedRate/fixedDelay),
+5. ApplicationEventsDeepDive (pogłębienie `_20_spring_core/Lesson20`, `@Async` listenery zdarzeń),
+6. JmsIntro (Java Message Service — koncepcje), 7. SpringJmsTemplate (`JmsTemplate`,
+`@JmsListener`), 8. RabbitMqConcepts (AMQP — exchange/queue/binding/routing key), 9. SpringAmqpBasics
+(`RabbitTemplate`, `@RabbitListener`), 10. KafkaConcepts (topics/partitions/consumer groups/offset),
+11. SpringKafkaBasics (`KafkaTemplate`, `@KafkaListener`), 12. MessageDrivenArchitecturePatterns
+(powiązanie z `_17_architecture/Lesson18_EventDrivenCommunicationBetweenModules` — TAM: in-memory
+publisher/listener w monolicie; TU: to samo NA SIECI, między procesami), 13. ErrorHandlingAndDeadLetterQueues
+(retry, dead letter exchange/topic), 14. TestingAsyncAndMessagingCode (powiązanie z `_25`/`_26`),
+15. ChoosingRabbitVsKafka (kompromisy — kolejka vs log, kiedy które), 16. MessagingCapstone.
+
+**Nowe zależności do dodania przy pisaniu**: `org.springframework.boot:spring-boot-starter-amqp`
+(RabbitMQ) i `org.springframework.kafka:spring-kafka` (Kafka) — obie zarządzane przez BOM
+`spring-boot-starter-parent`, więc bez jawnej wersji, ale ZWERYFIKUJ że są zgodne z Boot 3.4.4
+przed dodaniem. **KLUCZOWE OGRANICZENIE ŚRODOWISKOWE**: lekcje 8-11 (RabbitMQ/Kafka) WYMAGAJĄ
+prawdziwego, DZIAŁAJĄCEGO brokera — w przeciwieństwie do reszty kursu (H2 in-memory, embedded
+serwery), TU nie ma czystej opcji "embedowanej w JVM". Najbardziej realistyczna ścieżka: reużyć
+Testcontainers z `_26_integration_testing` (obraz `rabbitmq`/`confluentinc/cp-kafka`) — WYMAGA
+Docker Desktop/Engine URUCHOMIONEGO na maszynie (TA SAMA przeszkoda co w `_26`/`_27`, zweryfikuj
+RAZ, użyj wyniku wszędzie). Jeśli Docker jest niedostępny w chwili pisania, zastosuj wzorzec
+przyjaznego fallbacku (jak `_15_jvm_internals`/`_06_networking`) — teoria I tak powinna
+DEMONSTROWAĆ prawdziwy kod producent/konsument, tylko z czytelnym komunikatem zamiast twardego
+wywalenia, gdy broker jest niedostępny.
+
+### `_31_spring_cloud_microservices` ("Spring Cloud i mikroserwisy") — 19 lekcji
+
+Domyka `_17_architecture/Lesson19_WhenMicroservicesMakeSense` w praktyce — kursant PRZECZYTAŁ już
+o kosztach mikroserwisów, TU widzi, jak faktycznie się je buduje.
+
+1. SpringCloudOverview (mapa modułów: Config/Discovery/Gateway/Circuit Breaker/Sleuth-Micrometer
+Tracing), 2. ServiceDiscoveryConcepts (po co rejestr usług, service registry pattern),
+3. SpringCloudNetflixEureka (embedded Eureka server + klienci rejestrujący się, w JEDNYM `main()`
+— wzorzec "wiele kontekstów Spring w jednym JVM" już sprawdzony w `_19_security_basics/Lesson06`),
+4. ConfigServerIntro (centralna konfiguracja — po co, jak działa), 5. SpringCloudConfigClient
+(embedded Config Server + klient odczytujący konfigurację zdalnie), 6. ApiGatewayIntro (Spring
+Cloud Gateway, zbudowany na WebFlux — powiązanie z `_29_spring_reactive`), 7. GatewayRoutingAndFilters
+(trasowanie żądań, filtry pre/post), 8. ClientSideLoadBalancing (Spring Cloud LoadBalancer, wybór
+instancji), 9. CircuitBreakerConcepts (wzorzec circuit breaker — closed/open/half-open),
+10. Resilience4jIntegration (`@CircuitBreaker`/`@Retry`/`@RateLimiter` — CZYSTA biblioteka, ŁATWA
+do faktycznego uruchomienia BEZ infrastruktury), 11. DistributedTracingIntro (Micrometer Tracing,
+powiązanie z `_21_spring_boot/Lesson13_ObservabilityMicrometerAndTracing` — TAM: podstawy jednej
+aplikacji; TU: trace ID propagowany MIĘDZY serwisami), 12. DistributedTracingWithZipkin (wizualizacja
+śladów — prawdopodobnie WYMAGA Docker/Testcontainers dla realnego Zipkina, ZWERYFIKUJ przy pisaniu
+czy da się pokazać sam trace/span context BEZ pełnego backendu jako fallback), 13. DeclarativeHttpClientsWithFeign
+(`@FeignClient` — deklaratywna alternatywa dla `WebClient`/`RestClient`), 14. SagaPatternIntro
+(transakcje rozproszone — orkiestracja vs choreografia, KONCEPCYJNIE), 15. EventDrivenMicroservicesWithSpringCloudStream
+(powiązanie z `_30_spring_messaging_and_async` — abstrakcja NAD Kafka/RabbitMQ), 16. SecurityAcrossMicroservices
+(propagacja tokenu JWT między serwisami, powiązanie z `_24_spring_security`), 17. ContainerizingSpringBootApps
+(Dockerfile dla Spring Boota, powiązanie z `_11_buildtools`), 18. ObservabilityAcrossServices
+(logi+metryki+trace RAZEM, powiązanie z `_21_spring_boot/Lesson12-13`), 19. MicroservicesCapstone
+(kilka współpracujących mikroserwisów W JEDNYM `main()`, każdy jako osobny kontekst Spring na
+innym porcie — NAJWIĘKSZE, najbardziej złożone demo całego kursu).
+
+**KLUCZOWE techniczne ograniczenie do rozwiązania PRZED pisaniem**: Spring Cloud NIE JEST
+zarządzany przez `spring-boot-starter-parent` BOM — wymaga WŁASNEGO, DODATKOWEGO importu BOM
+(`spring-cloud-dependencies`, sekcja `<dependencyManagement>` w `pom.xml`, np. wersja z release
+trainu "2024.0.x" dla Boot 3.4.x — **ZWERYFIKUJ dokładną, zgodną wersję na stronie kompatybilności
+Spring Cloud PRZED dodaniem, nie zgaduj** — niezgodna wersja BOM da masowe konflikty tranzytywnych
+zależności). Dopiero PO dodaniu tego BOM-u da się dodawać poszczególne startery
+(`spring-cloud-starter-netflix-eureka-server`/`-client`, `spring-cloud-config-server`/`-client`,
+`spring-cloud-starter-gateway`, `spring-cloud-starter-circuitbreaker-resilience4j`,
+`spring-cloud-starter-openfeign`) BEZ jawnych wersji (BOM je zarządza). **Zasada testowania**: PO
+dodaniu BOM-u Spring Cloud, ZGODNIE Z domyślną zasadą tej sesji (patrz notatka o `springdoc`/
+`spring-boot-starter-security` wyżej), uruchom PONOWNIE co najmniej 1 wcześniej zweryfikowaną,
+niepowiązaną lekcję z INNEGO rozdziału Spring PRZED napisaniem jakiejkolwiek treści tego
+rozdziału — BOM tej wielkości ma WYSOKIE ryzyko konfliktu wersji Jacksona/Nettyego/innych
+współdzielonych bibliotek.
+
+### Wspólna nić dla wszystkich 3 rozdziałów
+
+Żaden z tych 3 rozdziałów NIE WYMAGA prawdziwej, zewnętrznej infrastruktury chmurowej (AWS/GCP) —
+WSZYSTKO da się zademonstrować LOKALNIE: reaktywne API (`_29`) całkowicie w JVM, Eureka/Config
+Server/Gateway (`_31`) jako embedded konteksty Spring w JEDNYM procesie (dokładnie jak
+`_07_servlets` embedował Tomcata), RabbitMQ/Kafka (`_30`) i ewentualnie Zipkin (`_31`) przez
+Testcontainers/Docker. Jedyna twarda zależność środowiskowa to Docker — jeśli PRZY PISANIU
+okaże się niedostępny na maszynie deweloperskiej, zastosuj wzorzec fallbacku ustalony już w
+`_15_jvm_internals`/`_06_networking` (prawdziwy kod + przyjazny komunikat zamiast twardego błędu),
+NIE rezygnuj z realnego kodu na rzecz czysto opisowej lekcji, chyba że to OSTATECZNOŚĆ.
