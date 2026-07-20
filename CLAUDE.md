@@ -2439,51 +2439,45 @@ final", prywatne metody interfejsu, `List.of`/`Map.of`/`Set.of`) w pełni zweryf
 nowych zależności do `pom.xml` w tych 8 lekcjach.
 
 ---
-### 🔖 PRZERWA W SESJI 2026-07-19 (użytkownik kończy na dziś) — DOKŁADNY STAN I NASTĘPNY KROK
+### ✅ `_28_java_evolution` KOMPLETNY (stan na 2026-07-20) — CAŁY ZAPLANOWANY ŁUK KURSU (`_01`-`_28`) UKOŃCZONY
 
-**Co jest zrobione (cała sesja, w kolejności)**: naprawiono przedistniejący błąd kompilacji
-(`_11_buildtools/Lesson11_MavenBasics`, literówka w nazwie klasy) → `_25_unit_testing` DOKOŃCZONY
-(20/20, było 7/20 na starcie sesji) → `_26_integration_testing` NAPISANY OD ZERA I UKOŃCZONY
-(16/16) → `_27_spring_test` NAPISANY OD ZERA I UKOŃCZONY (20/20) → `_28_java_evolution` W TRAKCIE:
-**8/24 lekcji gotowe (Lesson01-08)**. Cały projekt kompiluje się (`mvnw.cmd compile`) bez błędów.
+**`_28_java_evolution` jest w PEŁNI ukończony: 24/24 lekcje, każda z teorią + 30 ćwiczeniami, cały
+projekt skompilowany (`mvnw.cmd compile`) ORAZ KAŻDA lekcja (09-24 dopisane w tej sesji, 01-08 były
+już gotowe z poprzedniej) uruchomieniowo zweryfikowana `mvnw.cmd exec:java` — zero błędów, włącznie
+z kapsztonem (Lesson24, "JavaQuest Task Processor").** Lesson09-20 to głównie retrospektywa/NOWY
+materiał w granicach baseline projektu (`--release 21`, bez subprocesu). Lesson21-22 (Java 22-25)
+używają PODPROCESU `javac --release 22`/`24`/`25` (ten sam wzorzec co JPMS w
+`_14_advancedjava/Lesson27-28` i child-JVM w `_15_jvm_internals`), bo baseline projektu (21) nie
+wspiera tej składni bezpośrednio.
 
-**Następny krok pracy — zacznij TU**: kontynuować `_28_java_evolution` od
-**Lesson09_Java11LtsStringAndFilesMethods** (NOWY materiał — `String.isBlank`/`strip`/`repeat`/
-`lines`, `Files.readString`/`writeString`, `var` w parametrach lambdy, uruchamianie pojedynczego
-pliku `.java` bez kompilacji `java Plik.java`). Potem Lesson10-24 pozostają w kolejności z pełnej
-listy tematów w sekcji planu wyżej w tym pliku (sekcja "### `_28_java_evolution`"). Wzorzec pracy
-utrwalony w tej sesji dla każdej lekcji: (1) napisz `_LessonXX_...java` (teoria + realny,
-uruchamialny kod + odniesienia do wcześniejszych rozdziałów), (2) napisz
-`_Exercises_LessonXX_...java` (30 ćwiczeń, pusty `main()`), (3) `mvnw.cmd compile`, (4)
-`mvnw.cmd exec:java -Dexec.mainClass=...` i sprawdź, że wynik jest poprawny, (5) napraw jeśli
-trzeba, (6) przejdź do następnej lekcji — kompilacja po KAŻDEJ lekcji, uruchomienie też po
-KAŻDEJ (nie w parach, jak we wcześniejszych rozdziałach — w tej sesji sprawdzano pojedynczo).
+**Fakty Java 24-25 zweryfikowane WebSearch 2026-07-20 (nie z pamięci) przy pisaniu Lesson22** —
+WAŻNA NIESPODZIANKA warta zapamiętania: Java 24 (marzec 2025) finalizuje Stream Gatherers (JEP 485,
+po 2 rundach preview w 22-23); Java 25 (wrzesień 2025, LTS — pierwsza od Javy 21) finalizuje Scoped
+Values (JEP 506), Module Import Declarations (JEP 511), Compact Source Files and Instance Main
+Methods (JEP 512), Flexible Constructor Bodies (JEP 513) — ALE **Structured Concurrency NADAL jest
+preview NAWET w Javie 25** (JEP 505, 5. runda) — wcześniejsze założenie w planie tego rozdziału
+("structured concurrency finalne" w Java 24-25) było BŁĘDNE, poprawione po weryfikacji.
 
-Pamiętaj o technicznych przeszkodach jeszcze PRZED tobą w tym rozdziale: wzorzec subprocess
-`javac --release 22+` dla lekcji Java 22-25 w `_28_java_evolution` (Lesson21-22 konkretnie —
-`Java22To23NewFeatures`/`Java24To25LatestFeatures`), bo baseline projektu to `--release 21` i te
-lekcje UŻYWAJĄ składni nowszej niż 21 — trzeba skompilować/uruchomić w PODPROCESIE (ten sam wzorzec
-co JPMS w `_14_advancedjava/Lesson27-28` i child-JVM w `_15_jvm_internals`), NIE w głównym
-`src/main/java` tego projektu. Zainstalowany JDK na tej maszynie to `openjdk-25.0.2`
-(`C:\Users\kapit\.jdks\openjdk-25.0.2`) — wystarczający do skompilowania/uruchomienia AŻ DO Javy 25
-w podprocesie. Przy weryfikacji JAKIEJKOLWIEK nowej wersji Maven w przyszłości ZAWSZE bezpośrednie
-zapytanie Solr API (`search.maven.org/solrsearch/select?q=g:...+AND+a:...&core=gav&wt=json`), NIE
-podsumowanie WebSearch (już raz zahalucynowało błędną wersję w tej sesji — patrz notatka
-`_26_integration_testing` wyżej).
+**Pułapki napotkane przy pisaniu (dla ewentualnej kontynuacji/edycji tego rozdziału w przyszłości)**:
+- Lesson21 (`unnamed variables`, Java 22): `_` jako licznik klasycznej pętli `for(int _=0; _<n; _++)`
+  DAJE błąd kompilacji "underscore not allowed here" — unnamed variable NIE MOŻE być odczytywana po
+  deklaracji (w warunku/inkrementacji to jest odczyt). Działa za to `for (String _ : lista)` (element
+  pętli for-each nigdy nie czytany w ciele). Naprawione w Lesson21 po faktycznym uruchomieniu.
+- Lesson22 (Compact Source Files, Java 25): bare `println(...)` BEZ kwalifikacji NIE DZIAŁA — nowa
+  klasa `java.lang.IO` (JEP 512) jest niejawnie IMPORTOWANA, ale jej metody statyczne NIE SĄ niejawnie
+  importowane — wymagane `IO.println(...)`, inaczej "cannot find symbol". Zweryfikowane WebSearch i
+  empirycznie po pierwszej nieudanej próbie.
+- Lesson24 (kapszton): pierwsza wersja danych testowych miała 1 zadanie z celowo pustą treścią maila
+  (test negatywnej walidacji), co złamało asercję `allMatch(WynikZadania::sukces)` — naprawione przez
+  zmianę danych testowych na w pełni poprawne (kapszton demonstruje "happy path" 5/5 sukcesów, nie
+  scenariusz błędu).
 
-**Operacyjna pułapka z końcówki tej sesji (WAŻNE dla następnej)**: `mvnw.cmd exec:java` czasem
-zostawia "osierocone" procesy `java.exe`, które NIE kończą się od razu po zakończeniu `main()` —
-jeśli PODEJRZANIE DŁUGO trwa pojedyncze uruchomienie (>60s dla czegoś, co wcześniej trwało <20s),
-NAJPIERW sprawdź `Get-Process java` (PowerShell) ZANIM zaczniesz debugować kod jako "zawieszony" —
-jeśli jest ich więcej niż 1-2, to CPU contention, nie bug. Sprzątanie WSZYSTKICH procesów `java`
-jest blokowane przez klasyfikator bezpieczeństwa (zbyt szerokie) — poproś użytkownika o zgodę na
-WĘŻSZY filtr, np. `Get-Process java | Where-Object { $_.StartTime -lt (Get-Date).AddMinutes(-2) }
-| Stop-Process -Force` (oszczędza aktualnie uruchomiony proces).
-
-Po ukończeniu `_28_java_evolution` CAŁY zaplanowany łuk kursu (`_01`-`_28`) będzie KOMPLETNY —
+Po ukończeniu `_28_java_evolution` CAŁY zaplanowany łuk kursu (`_01`-`_28`) jest KOMPLETNY —
 pozostają tylko `_29_spring_reactive`/`_30_spring_messaging_and_async`/
 `_31_spring_cloud_microservices`, które mają TYLKO foldery+plan (patrz sekcja niżej w tym pliku),
-świadomie odłożone przez użytkownika ("zaawansowany Spring dorobimy kiedyś").
+świadomie odłożone przez użytkownika ("zaawansowany Spring dorobimy kiedyś") — następny krok pracy
+na kursie (jeśli użytkownik zdecyduje się kontynuować) to rozpoczęcie pisania treści `_29_spring_reactive`
+od `Lesson01_WhyReactive`.
 ---
 
 ## PLAN: Rozdziały _29_spring_reactive, _30_spring_messaging_and_async,
