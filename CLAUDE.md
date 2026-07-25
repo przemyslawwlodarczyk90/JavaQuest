@@ -2480,16 +2480,140 @@ na kursie (jeśli użytkownik zdecyduje się kontynuować) to rozpoczęcie pisan
 od `Lesson01_WhyReactive`.
 ---
 
-## PLAN: Rozdziały _29_spring_reactive, _30_spring_messaging_and_async,
-## _31_spring_cloud_microservices ("zaawansowany Spring") — ZAPLANOWANE, TREŚĆ JESZCZE NIE NAPISANA
+## Rozdziały _29_spring_reactive, _30_spring_messaging_and_async, _31_spring_cloud_microservices
+## ("zaawansowany Spring") — W TRAKCIE PISANIA (rozpoczęte 2026-07-20)
 
-Zapisane 2026-07-12, na wyraźną prośbę użytkownika — TO są dokładnie te 3 tematy ("Reactive/
-Messaging/Cloud"), które przy pierwszej propozycji rozdziałów zostały ŚWIADOMIE odłożone na rzecz
-`_25`-`_28` (testy + ewolucja Javy), z komentarzem użytkownika "zaawansowany Spring dorobimy
-kiedyś". TERAZ użytkownik poprosił WYŁĄCZNIE o plan + foldery (analogicznie do `_25`-`_28`) —
-**ŻADNA lekcja treści NIE została napisana, to świadoma decyzja użytkownika na tym etapie.**
-Status: **foldery WSZYSTKICH 52 lekcji utworzone, wszystkie 3 rozdziały zarejestrowane w
-`_TableOfContents.java`.**
+Zaplanowane 2026-07-12 (patrz historia planu niżej), pisanie rozpoczęte 2026-07-20 na wyraźną
+prośbę użytkownika ("koncz wszystko co sie da, do wyczerpania limitu").
+
+### ✅ `_29_spring_reactive` KOMPLETNY (stan na 2026-07-20): 17/17 lekcji
+
+Każda lekcja ma teorię + 30 ćwiczeń, cały projekt skompilowany (`mvnw.cmd compile`) ORAZ KAŻDA
+lekcja uruchomieniowo zweryfikowana `mvnw.cmd exec:java` — zero błędów, włącznie z kapsztonem
+(Lesson17, "JavaQuest Reactive Bookshelf" — WebFlux + R2DBC/`DatabaseClient` + Security + 6
+scenariuszy HTTP + bonus `StepVerifier` na bezpośrednim pipeline, wszystkie zweryfikowane).
+
+**Nowe zależności dodane do `pom.xml`** (bez scope `test`, ten sam powód co reszta zależności
+testowych/reaktywnych w projekcie — lekcje żyją w `src/main/java`): `io.projectreactor:reactor-test`
+(zarządzana przez BOM), `org.springframework.boot:spring-boot-starter-data-r2dbc` (zarządzana przez
+BOM), `io.r2dbc:r2dbc-h2:1.0.0.RELEASE` (wersja zweryfikowana Solr API — najnowsza stabilna, NIE
+kandydacka RC1).
+
+**KRYTYCZNA pułapka odkryta i naprawiona w Lesson09** — wymuszenie `WebApplicationType.REACTIVE`
+(`SpringApplicationBuilder.web(...)`) NIE WYSTARCZA, żeby uzyskać Netty: na TYM classpath (Tomcat
+obecny przez `spring-boot-starter-web`, reactor-netty przez `-webflux`) Spring Boot auto-konfiguracja
+WYBRAŁA TOMCAT (jego reaktywny adapter), NIE Netty — zweryfikowane empirycznie po nazwie wątku
+kontrolera (`http-nio-...`, NIE `reactor-http-nio-...`). Naprawione jawnym beanem
+`@Bean ReactiveWebServerFactory reactiveWebServerFactory() { return new NettyReactiveWebServerFactory(); }`
+w KAŻDEJ lekcji z REACTIVE Spring Boot context (Lesson09-11, 14, 17) — dopiero wtedy wątek faktycznie
+nazywał się `reactor-http-nio-N`. **Zasada na przyszłość: NIE zakładaj, który embedded serwer
+wygra, gdy wiele implementacji jest na classpath — zweryfikuj (np. przez nazwę wątku w logu/demo)
+zamiast ufać dokumentacji "domyślnie Netty".**
+
+**Druga pułapka (Lesson09) — global `spring.autoconfigure.exclude` (ustalone w `_24_spring_security`
+dla servletowego Security) NIE POKRYWA reaktywnego stosu**: `ReactiveSecurityAutoConfiguration`/
+`ReactiveUserDetailsServiceAutoConfiguration` (pakiet `security.reactive`, NIE `security.servlet`)
+oraz `ReactiveManagementWebSecurityAutoConfiguration` (actuator) to OSOBNE klasy auto-konfiguracji —
+wymuszenie `WebApplicationType.REACTIVE` w JAKIEJKOLWIEK lekcji z `spring-boot-starter-security` na
+classpath (co dotyczy CAŁEGO projektu) dawało 401 Unauthorized na WSZYSTKICH endpointach, mimo że
+serwletowe wykluczenie już istniało. **`application.properties` zaktualizowany o te 3 dodatkowe
+klasy** w `spring.autoconfigure.exclude` (razem z servletowymi z `_24_spring_security`) — lekcje
+demonstrujące Reactive Security (Lesson14, Lesson17) muszą JAWNIE przywrócić przez
+`System.setProperty("spring.autoconfigure.exclude", "")` na początku (TEN SAM wzorzec co
+`_24_spring_security`), z `clearProperty` w `finally`. Zweryfikowane brakiem regresji na
+`_24_spring_security/Lesson17_SpringSecurityCapstone` (9/9 scenariuszy nadal poprawne) PO obu
+zmianach w `application.properties`.
+
+**Trzecia pułapka (Lesson12, WebClient deep dive)** — test lokalnego `HttpServer` (JDK) z
+WŁASNYM `Executor` (`Executors.newFixedThreadPool(10)`, potrzebny do pokazania PRAWDZIWEJ
+równoległości klienta, bo domyślny executor `HttpServer` serializuje żądania na 1 wątku) dał
+PROCES, który NIGDY się nie kończył — `HttpServer.stop()` NIE zamyka zewnętrznie dostarczonego
+executora, a NIEDAEMONOWE wątki puli trzymały JVM przy życiu w nieskończoność. **Naprawione przez
+jawne `executor.shutdown()` w `finally`, OBOK `server.stop(0)`** — zasada: KAŻDY zewnętrzny
+`ExecutorService` przekazany do `HttpServer.setExecutor(...)` w demo tego kursu MUSI być jawnie
+zamknięty, inaczej proces `exec:java` zawiesza się mimo poprawnego wypisania całego outputu.
+
+Reszta rozdziału (Lesson01-08, 13, 15-16) nie napotkała nowych pułapek — standardowa weryfikacja
+kompilacja+uruchomienie po każdej lekcji, zero regresji.
+
+### ✅ `_30_spring_messaging_and_async` KOMPLETNY (stan na 2026-07-20): 16/16 lekcji
+
+Każda lekcja ma teorię + 30 ćwiczeń, cały projekt skompilowany (`mvnw.cmd compile`) ORAZ KAŻDA
+lekcja uruchomieniowo zweryfikowana `mvnw.cmd exec:java` — zero błędów, włącznie z kapsztonem
+(Lesson16, "JavaQuest Order Processing" — łączy `@Async`+`@Scheduled`+`ApplicationEvent`+próbę
+wysłania na RabbitMQ z przyjaznym fallbackiem, wszystkie mechanizmy zweryfikowane RAZEM w 1 demo).
+
+**Nowe zależności dodane do `pom.xml`** (bez scope `test`): `spring-boot-starter-amqp` (RabbitMQ,
+zarządzana przez BOM), `spring-kafka` (zarządzana przez BOM), `org.apache.activemq:activemq-client`
++ `activemq-broker:5.19.7` (ActiveMQ Classic, **javax.jms**, TYLKO dla Lesson06 — surowe API JMS
+bez Springa) + `javax.jms:javax.jms-api:2.0.1` (jawnie, bo `activemq-client` go nie ciągnie
+automatycznie), `spring-boot-starter-artemis` (Apache Artemis, **jakarta.jms natywny**, dla
+Lesson07/16 — Spring JmsTemplate wymaga jakarta.jms, niekompatybilne z ActiveMQ Classic).
+
+**Docker NIE jest uruchomiony na tej maszynie** (potwierdzone jak w `_26_integration_testing`) —
+Lesson09 (RabbitMQ) i Lesson11 (Kafka) piszą W PEŁNI prawdziwy, poprawny kod Spring AMQP/Kafka,
+ale opakowują próbę połączenia w try/catch z przyjaznym komunikatem fallbacku (ten sam wzorzec co
+Testcontainers w `_26_integration_testing/Lesson04-06`) — zweryfikowane empirycznie, że kod
+faktycznie próbuje się połączyć i poprawnie łapie `AmqpConnectException`/`KafkaException`.
+
+**Najważniejsze pułapki napotkane w tej sesji (przydatne dla `_31_spring_cloud_microservices` i
+każdej przyszłej pracy w tym rozdziale)**:
+
+1. **Auto-konfiguracja Actuator dla RabbitMQ psuje CAŁY projekt** — dodanie `spring-boot-starter-amqp`
+   sprawiło, że Actuator automatycznie dodaje komponent "rabbit" do `/actuator/health`, dający
+   status DOWN (bo broker niedostępny) na KAŻDEJ aplikacji Spring Boot w repo, nawet niezwiązanej
+   z messagingiem — zepsuło to `_21_spring_boot/Lesson16_SpringBootCapstone`. Naprawione przez
+   dodanie `org.springframework.boot.actuate.autoconfigure.amqp.RabbitHealthContributorAutoConfiguration`
+   do globalnego `spring.autoconfigure.exclude` w `application.properties`.
+2. **Klasyczna auto-konfiguracja ActiveMQ (javax.jms) koliduje z Artemis (jakarta.jms) na wspólnym
+   classpath** — dodanie `activemq-client`/`activemq-broker` (Lesson06, javax) na TEN SAM classpath
+   co `spring-boot-starter-artemis` (Lesson07, jakarta) sprawiło, że Spring Boot auto-wykrywał
+   klasę `org.apache.activemq.ActiveMQConnectionFactory` (Classic) i próbował jej użyć DLA
+   KAŻDEJ aplikacji z `@EnableJms`/JmsTemplate — dając `IncompatibleClassChangeError` (Classic
+   implementuje `javax.jms`, nie `jakarta.jms`). Naprawione przez wykluczenie
+   `org.springframework.boot.autoconfigure.jms.activemq.ActiveMQAutoConfiguration` globalnie —
+   Lesson06 (BEZ Springa wcale) nic na tym nie traci.
+3. **Embedded Apache Artemis — ręczna konfiguracja `TransportConfiguration`/`EmbeddedActiveMQ` jest
+   ZASKAKUJĄCO zawodna** — próby z `InVMAcceptorFactory`/`InVMConnectorFactory` (server-id=0) ORAZ
+   z `NettyAcceptorFactory`/`NettyConnectorFactory` (TCP localhost:61717) DAWAŁY po cichu
+   `ActiveMQNotConnectedException` bez jasnej przyczyny sieciowej (nie "connection refused", tylko
+   ogólne "tried with all available servers"). Częściowo wynikało to z niespójności wersji
+   (`artemis-jakarta-server:2.40.0` ciągnął transytywnie `artemis-server:2.37.0`), ale NAWET po
+   ujednoliceniu wersji problem pozostał. **Ostateczne rozwiązanie: `spring-boot-starter-artemis` +
+   właściwość `spring.artemis.mode=embedded`** — Spring Boot SAM poprawnie konfiguruje CAŁY
+   embedded broker (transport, ConnectionFactory, JmsTemplate) — ręczna konfiguracja NIE JEST
+   potrzebna i okazała się zbyt krucha. Zasada na przyszłość: PREFERUJ natywną auto-konfigurację
+   Spring Boota nad ręcznym API biblioteki, gdy tylko jest dostępna.
+4. **CGLIB proxy dla `@Async`/`@EventListener` NIE inicjalizuje pól na powłoce proxy** (2. wystąpienie
+   w tej sesji, Lesson02 i Lesson16) — Spring tworzy proxy przez Objenesis z POMINIĘCIEM konstruktora,
+   więc bezpośredni dostęp do PUBLICZNEGO pola beana (np. `serwis.licznik`) z zewnątrz czyta pole
+   PROXY (zawsze `null`/domyślna wartość), NIE pole prawdziwego celu — dało `NullPointerException`
+   przy bezpośrednim odczycie. Metody (w tym gettery) są POPRAWNIE delegowane do celu przez proxy.
+   **TWARDA ZASADA: KAŻDY bean z `@Async` (lub inną adnotacją wymagającą proxy) w tym kursie MUSI
+   udostępniać stan WYŁĄCZNIE przez gettery, NIGDY przez publiczne pola** — dotyczy to wszystkich
+   przyszłych lekcji w `_31_spring_cloud_microservices` używających `@Async`/AOP-podobnych mechanizmów.
+5. **Weryfikacja wersji Maven przez bezpośrednie zapytanie do `repo1.maven.org`** (nie tylko Solr
+   API) była kluczowa przy debugowaniu Artemisa — sprawdzanie HTTP status (200/404) konkretnego
+   jara pod konkretną wersją wykryło, że wiele wersji Artemis (2.45.0+) NIE publikuje już oddzielnych
+   artefaktów `artemis-jakarta-*` jako osobnych jarów (zwracają 404), mimo że Solr search je
+   wymienia (prawdopodobnie stare metadane/agregator POM). **Zasada: dla niejasnych przypadków
+   zawsze zweryfikuj `curl -I https://repo1.maven.org/maven2/.../plik.jar` bezpośrednio, nie tylko
+   Solr JSON.**
+
+### `_31_spring_cloud_microservices` — NASTĘPNY KROK PRACY (jeszcze nierozpoczęty)
+
+Wszystkie foldery lekcji już istnieją (19 lekcji), rozdział zarejestrowany w `_TableOfContents.java`
+(patrz pełny plan wyżej w tym pliku, sekcja "### `_31_spring_cloud_microservices`"). Zależności
+Spring Cloud (BOM `spring-cloud-dependencies`) JESZCZE NIE dodane do `pom.xml` — przy rozpoczęciu
+pracy zweryfikuj wersję BOM zgodną z Boot 3.4.4 przez bezpośrednie zapytanie Solr/repo1 (plan
+wcześniej wskazywał `2024.0.1` jako kompatybilny release train "Moorgate", ale ZWERYFIKUJ ponownie
+przed dodaniem — nie zgaduj, zgodnie z nauczką #5 wyżej). Po dodaniu BOM-u, zgodnie z ustaloną
+zasadą tej sesji, uruchom PONOWNIE co najmniej 1 wcześniej zweryfikowaną, niepowiązaną lekcję Spring
+(np. `_29_spring_reactive/Lesson09` lub `_30_spring_messaging_and_async/Lesson01`) PRZED napisaniem
+jakiejkolwiek treści tego rozdziału — BOM tej wielkości ma WYSOKIE ryzyko konfliktu wersji
+Jacksona/Nettyego/innych współdzielonych bibliotek (jak już nauczono się wielokrotnie w tej sesji).
+
+Zacznij od `Lesson01_SpringCloudOverview`.
 
 Kolejność logiczna (do pisania, gdy przyjdzie czas): `_29_spring_reactive` → `_30_spring_messaging_
 and_async` → `_31_spring_cloud_microservices` — Reactive jest najbardziej samodzielny
