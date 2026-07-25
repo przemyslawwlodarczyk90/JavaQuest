@@ -103,32 +103,61 @@ public class _Lesson03_SpringCloudNetflixEureka {
     }
 
     private static ConfigurableApplicationContext startEurekaServer() {
+        // WAZNE: `SpringApplicationBuilder.properties(...)` ma NIZSZY priorytet niz classpath'owy
+        // `application.properties` (ten sam pulapka udokumentowana W _24_spring_security) - bez
+        // TEGO globalne `spring.application.name=Java Quest` WYGRYWALOBY, a serwer FAKTYCZNIE
+        // probowalby sie zarejestrowac SAM W SOBIE (zweryfikowane empirycznie). Argumenty
+        // wiersza polecen (`run(String... args)`, styl "--klucz=wartosc") MAJA NAJWYZSZY
+        // priorytet W Springu - dokladnie TEN SAM wzorzec CO `_30_spring_messaging_and_async/
+        // Lesson01` (`SpringApplication.run(AsyncApp.class, "--server.port=0", ...)`).
+        // UWAGA: "standalone" Eureka Server (jak TEN) ZAWSZE probuje replikowac sie DO "peera"
+        // pod adresem `eureka.client.serviceUrl.defaultZone` (domyslnie `localhost:8761`,
+        // klasyczny "domyslny port Eureki") - to ZUPELNIE NIEZALEZNE OD `register-with-eureka`/
+        // `fetch-registry` (te flagi kontroluja TYLKO to, czy SERWER rejestruje SAM SIEBIE jako
+        // instancje). Poniewaz uzywamy `server.port=0` (losowy port, zgodnie Z konwencja tego
+        // kursu), serwer NIE MOZE wskazywac SAM NA SIEBIE jako peera - proby polaczenia Z
+        // (nieistniejacym) peerem NA porcie 8761 KONCZA SIE NIESZKODLIWYMI, ALE halasliwymi
+        // bledami W logu ("Network level connection to peer localhost"). Wyciszone ponizej -
+        // ZWERYFIKOWANE EMPIRYCZNIE, ze NIE WPLYWA to NA rejestracje klientow (dziala normalnie).
         return new SpringApplicationBuilder(EurekaServerApp.class)
-                .properties(
-                        "spring.application.name=eureka-server",
-                        "server.port=0",
-                        "eureka.client.register-with-eureka=false",
-                        "eureka.client.fetch-registry=false",
-                        "eureka.server.enable-self-preservation=false",
-                        "eureka.server.response-cache-update-interval-ms=1000",
-                        "eureka.server.use-read-only-response-cache=false",
-                        "logging.level.root=WARN")
-                .run();
+                .run(
+                        "--spring.application.name=eureka-server",
+                        "--server.port=0",
+                        "--eureka.client.register-with-eureka=false",
+                        "--eureka.client.fetch-registry=false",
+                        "--eureka.server.enable-self-preservation=false",
+                        "--eureka.server.response-cache-update-interval-ms=1000",
+                        "--eureka.server.use-read-only-response-cache=false",
+                        "--logging.level.root=WARN",
+                        "--logging.level.com.netflix.eureka.cluster=OFF",
+                        "--logging.level.org.springframework.cloud.netflix.eureka.server=OFF",
+                        "--logging.level.com.netflix.discovery.shared.transport=OFF");
     }
 
     private static ConfigurableApplicationContext startClientService(String appName, int eurekaServerPort) {
         return new SpringApplicationBuilder(ClientServiceApp.class)
-                .properties(
-                        "spring.application.name=" + appName,
-                        "server.port=0",
-                        "eureka.client.serviceUrl.defaultZone=http://localhost:" + eurekaServerPort + "/eureka/",
-                        "eureka.client.registry-fetch-interval-seconds=1",
-                        "eureka.instance.lease-renewal-interval-in-seconds=1",
-                        "eureka.instance.prefer-ip-address=true",
-                        "logging.level.root=WARN",
-                        "logging.level.com.netflix.discovery=DEBUG",
-                        "logging.level.org.springframework.cloud.netflix.eureka=DEBUG")
-                .run();
+                .run(
+                        "--spring.application.name=" + appName,
+                        "--server.port=0",
+                        "--eureka.client.serviceUrl.defaultZone=http://localhost:" + eurekaServerPort + "/eureka/",
+                        // fetch-registry=false: TEN klient nie POTRZEBUJE pobierac REJESTRU (nie
+                        // odpytuje INNYCH serwisow) - wylaczenie unika SZUMU W logu (agresywny
+                        // fetch-interval ponizej domyslnego moze dawac TimedSupervisorTask
+                        // TimeoutException, ZWERYFIKOWANE empirycznie). Rejestracja WLASNEJ
+                        // instancji (heartbeat) DZIALA NIEZALEZNIE OD tej flagi.
+                        "--eureka.client.fetch-registry=false",
+                        "--eureka.instance.lease-renewal-interval-in-seconds=1",
+                        "--eureka.instance.prefer-ip-address=true",
+                        "--logging.level.root=WARN",
+                        // Logowanie (Logback) jest GLOBALNE DLA calego JVM - kazdy KOLEJNY
+                        // kontekst Spring Boot PODMIENIA globalna konfiguracje logowania, WIEC
+                        // wyciszenie ustawione TYLKO W startEurekaServer() zostaje NADPISANE, GDY
+                        // startuje TEN kontekst. Te SAME wpisy MUSZA byc powtorzone TUTAJ, inaczej
+                        // wciaz-dzialajacy watek peer-replication serwera (patrz komentarz WYZEJ)
+                        // ZNOWU zacznie halasliwie logowac PRZEZ nowa, globalna konfiguracje.
+                        "--logging.level.com.netflix.eureka.cluster=OFF",
+                        "--logging.level.org.springframework.cloud.netflix.eureka.server=OFF",
+                        "--logging.level.com.netflix.discovery.shared.transport=OFF");
     }
 
     private static void demonstrateWaitForRegistration(ConfigurableApplicationContext serverContext, String appName) throws InterruptedException {
