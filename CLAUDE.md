@@ -3,6 +3,15 @@
 Kurs Java tworzony na wzór kursów [Codenga](https://codenga.pl) — teoria + ćwiczenia praktyczne,
 budowany rozdziałami (dużymi blokami tematycznymi), z myślą o docelowej sprzedaży jako kurs online.
 
+> **Nowa inicjatywa (od 2026-08-10): platforma edukacyjna wokół tego kursu** (frontend React +
+> Spring Boot serwujący go, docelowo interaktywne lekcje/zadania/quizy). Pełny plan, decyzje
+> architektoniczne i aktualny stan pracy: **`EDU_PLATFORM_PLAN.md`** (katalog główny repo) — czytaj
+> TEN plik jako punkt startowy dla tej inicjatywy, ZANIM zaczniesz cokolwiek zmieniać w
+> `com.example.javaquest.platform`/`com.example.javaquest.web`/`frontend/`. Cały kod pod
+> `_01_fundamentals` … `_31_spring_cloud_microservices` opisany niżej w tym pliku pozostaje
+> nienaruszoną "podstawą programową" tej platformy — nie kasować, nie modyfikować przy pracy nad
+> platformą.
+
 ## Struktura projektu
 
 Kod źródłowy: `src/main/java/com/example/javaquest/`
@@ -2481,7 +2490,7 @@ od `Lesson01_WhyReactive`.
 ---
 
 ## Rozdziały _29_spring_reactive, _30_spring_messaging_and_async, _31_spring_cloud_microservices
-## ("zaawansowany Spring") — W TRAKCIE PISANIA (rozpoczęte 2026-07-20)
+## ("zaawansowany Spring") — ✅ WSZYSTKIE 3 KOMPLETNE (rozpoczęte 2026-07-20, ukończone 2026-07-25)
 
 Zaplanowane 2026-07-12 (patrz historia planu niżej), pisanie rozpoczęte 2026-07-20 na wyraźną
 prośbę użytkownika ("koncz wszystko co sie da, do wyczerpania limitu").
@@ -2600,26 +2609,101 @@ każdej przyszłej pracy w tym rozdziale)**:
    zawsze zweryfikuj `curl -I https://repo1.maven.org/maven2/.../plik.jar` bezpośrednio, nie tylko
    Solr JSON.**
 
-### `_31_spring_cloud_microservices` — NASTĘPNY KROK PRACY (jeszcze nierozpoczęty)
+### ✅ `_31_spring_cloud_microservices` KOMPLETNY (stan na 2026-07-25) — CAŁY 5-CZĘŚCIOWY ŁUK "zaawansowany Spring" UKOŃCZONY
 
-Wszystkie foldery lekcji już istnieją (19 lekcji), rozdział zarejestrowany w `_TableOfContents.java`
-(patrz pełny plan wyżej w tym pliku, sekcja "### `_31_spring_cloud_microservices`"). Zależności
-Spring Cloud (BOM `spring-cloud-dependencies`) JESZCZE NIE dodane do `pom.xml` — przy rozpoczęciu
-pracy zweryfikuj wersję BOM zgodną z Boot 3.4.4 przez bezpośrednie zapytanie Solr/repo1 (plan
-wcześniej wskazywał `2024.0.1` jako kompatybilny release train "Moorgate", ale ZWERYFIKUJ ponownie
-przed dodaniem — nie zgaduj, zgodnie z nauczką #5 wyżej). Po dodaniu BOM-u, zgodnie z ustaloną
-zasadą tej sesji, uruchom PONOWNIE co najmniej 1 wcześniej zweryfikowaną, niepowiązaną lekcję Spring
-(np. `_29_spring_reactive/Lesson09` lub `_30_spring_messaging_and_async/Lesson01`) PRZED napisaniem
-jakiejkolwiek treści tego rozdziału — BOM tej wielkości ma WYSOKIE ryzyko konfliktu wersji
-Jacksona/Nettyego/innych współdzielonych bibliotek (jak już nauczono się wielokrotnie w tej sesji).
+**Wszystkie 19 lekcji mają teorię + 30 ćwiczeń, cały projekt skompilowany (`mvnw.cmd clean compile`)
+ORAZ KAŻDA lekcja uruchomieniowo zweryfikowana `mvnw.cmd exec:java` — zero błędów, włącznie z
+kapsztonem (Lesson19, "JavaQuest Microservices Demo").** Tym samym CAŁY zaplanowany łuk
+`_29_spring_reactive` → `_30_spring_messaging_and_async` → `_31_spring_cloud_microservices` jest
+ZAKOŃCZONY. Regresja zweryfikowana PO ukończeniu na `_24_spring_security/Lesson17` (9/9 scenariuszy)
+i `_29_spring_reactive/Lesson17` (6/6 scenariuszy) — zero regresji w reszcie projektu.
 
-Zacznij od `Lesson01_SpringCloudOverview`.
+BOM `spring-cloud-dependencies:2024.0.1` ("Moorgate") dodany do `pom.xml` (`<dependencyManagement>`),
+zweryfikowany jako zgodny ze Spring Boot 3.4.4 przez oficjalną macierz kompatybilności (WebFetch,
+NIE zgadywany). Nowe zależności dodane bez jawnej wersji (zarządzane przez BOM):
+`spring-cloud-starter-netflix-eureka-server`/`-client`, `spring-cloud-config-server`/
+`-starter-config`, `spring-cloud-starter-gateway-mvc` (**NIE** klasyczny `spring-cloud-starter-
+gateway` — patrz pułapka #1 niżej), `spring-cloud-starter-loadbalancer`,
+`spring-cloud-starter-circuitbreaker-resilience4j`, `spring-cloud-starter-openfeign`,
+`spring-cloud-stream` + `-starter-stream-rabbit`, `io.micrometer:micrometer-tracing-bridge-brave`,
+`io.zipkin.reporter2:zipkin-reporter-brave` (te dwie ostatnie zarządzane przez BOM Boota, nie Cloud).
 
-Kolejność logiczna (do pisania, gdy przyjdzie czas): `_29_spring_reactive` → `_30_spring_messaging_
-and_async` → `_31_spring_cloud_microservices` — Reactive jest najbardziej samodzielny
-(rozszerza `_22_spring_web`), Messaging/Async buduje na nim częściowo (WebClient reaktywny już
-znany), Cloud/mikroserwisy jest NAJBARDZIEJ złożony i naturalnie zamyka całość (opiera się na
-Config/Discovery/Gateway, które same w sobie są osobnymi aplikacjami Spring Boot).
+**Kluczowe, NOWE pułapki odkryte w tym rozdziale (żadna nie była udokumentowana w poprzednich
+24 rozdziałach Spring — WARTO PAMIĘTAĆ przy każdej przyszłej pracy z Eureką/Gateway MVC w tym
+projekcie):**
+
+1. **`spring-cloud-starter-gateway-mvc` rejestruje WŁASNE, GLOBALNE filtry nagłówków HTTP
+   (`forwardedRequestHeadersFilter`/`removeContentLengthRequestHeadersFilter`/itd.) NIEZALEŻNIE OD
+   tego, czy zdefiniowano jakiekolwiek trasy** — samo dodanie starterа do classpath złamało
+   `_24_spring_security/Lesson17` (POST z form-urlencoded body zaczęło przychodzić z PUSTYMI
+   parametrami — filtr najpewniej normalizował/czytał body PRZED Spring MVC). Naprawa: WŁASNA
+   flaga `spring.cloud.gateway.mvc.enabled=false` dodana GLOBALNIE do `application.properties`
+   (NIEZALEŻNA od `spring.autoconfigure.exclude`, bo niektóre lekcje — `_24_spring_security` —
+   CZYŚCĄ CAŁY `spring.autoconfigure.exclude` do pustego stringa, więc wpis TAM i tak by "wyciekł").
+   Lekcje `_31` demonstrujące Gateway jawnie PRZYWRACAJĄ `spring.cloud.gateway.mvc.enabled=true`
+   PRZEZ argument wiersza poleceń (`--spring.cloud.gateway.mvc.enabled=true`), NIGDY przez
+   `.properties()` (patrz pułapka #2).
+2. **`SpringApplicationBuilder.properties(String...)` ma NIŻSZY priorytet niż classpath'owy
+   `application.properties` — TA SAMA pułapka co w `_24_spring_security`, ale TU po raz pierwszy
+   złapana na `spring.application.name`/`eureka.instance.*`, nie tylko `spring.autoconfigure.
+   exclude`.** Skutek: Eureka Server próbował zarejestrować SAM SIEBIE pod nazwą "Java Quest"
+   (globalna wartość domyślna), ignorując `register-with-eureka=false` przekazane przez
+   `.properties(...)`. **ZASADA: dla WSZYSTKICH kontekstów Eureka/Gateway w tym rozdziale UŻYWAJ
+   WYŁĄCZNIE stylu wiersza poleceń (`.run("--klucz=wartość", ...)`), NIGDY `.properties(...)`** —
+   command-line args mają NAJWYŻSZY priorytet w Springu (wyżej nawet niż System properties),
+   `.properties()` ma NAJNIŻSZY (poniżej classpath `application.properties`).
+3. **Standalone Eureka Server ZAWSZE próbuje replikować się do "peera" pod adresem
+   `eureka.client.serviceUrl.defaultZone`** (domyślnie `localhost:8761`) — NIEZALEŻNIE od
+   `register-with-eureka`/`fetch-registry` (te flagi kontrolują TYLKO rejestrację WŁASNEJ
+   instancji serwera, NIE peer-replication). Przy `server.port=0` (losowy port, konwencja tego
+   kursu) serwer NIE MOŻE wskazywać SAM NA SIEBIE — dało to nieszkodliwe, ale HAŁAŚLIWE błędy
+   "Network level connection to peer localhost" CO SEKUNDĘ. Naprawa: wyciszenie
+   `logging.level.com.netflix.eureka.cluster=OFF` + `org.springframework.cloud.netflix.eureka.
+   server=OFF` + `com.netflix.discovery.shared.transport=OFF` — **MUSI być powtórzone W KAŻDYM
+   kolejnym kontekście Spring Boot uruchamianym W TYM SAMYM JVM** (logging/Logback jest GLOBALNY
+   per-JVM, każdy nowy `SpringApplication.run()` PODMIENIA globalną konfigurację, kasując
+   wcześniejsze wyciszenie).
+4. **`server.port=0` łamie Eureka `instance-id` I `nonSecurePort`** — domyślny szablon
+   `eureka.instance.instance-id` (`${hostname}:${spring.application.name}:${server.port}`) i
+   `nonSecurePort` rozwiązują się DO LITERALNEGO "0" (NIE faktycznego, wylosowanego portu) —
+   WSZYSTKIE instancje TEJ SAMEJ aplikacji dostają IDENTYCZNY instance-id (druga rejestracja PO
+   CICHU nadpisuje pierwszą W rejestrze zamiast dodać drugi wpis), a `@LoadBalanced RestTemplate`
+   próbuje łączyć się Z portem 0 ("Cannot assign requested address"). **Naprawa (DWUCZĘŚCIOWA,
+   OBOWIĄZKOWA dla każdej lekcji Z WIELOMA instancjami TEJ SAMEJ usługi): (a) wybierz WOLNY port
+   SAMODZIELNIE PRZED startem Springa (`new ServerSocket(0)`, zapisz port, ZAMKNIJ socket,
+   przekaż JAWNY numer jako `server.port`) — Eureka wtedy widzi PRAWDZIWĄ wartość od razu; (b)
+   NADAJ JAWNY, UNIKALNY `eureka.instance.instance-id` per instancja, niezależnie od portu.**
+5. **Eureka-client (NAWET TYLKO do odpytywania rejestru, BEZ własnej rejestracji) WYMAGA pełnego
+   `@SpringBootApplication` (Z `@ComponentScan`), NIE wystarczy `@Configuration+
+   @EnableAutoConfiguration`** — bez ComponentScan, `DiscoveryClientOptionalArgsConfiguration`
+   (wybór implementacji `TransportClientFactories`: Jersey3/RestTemplate/RestClient/WebClient) NIE
+   ROZWIĄZUJE ŻADNEGO kandydata, dając `No qualifying bean of type 'TransportClientFactories'`
+   PRZY PRÓBIE rejestracji/inicjalizacji klienta — przyczyna DOKŁADNA pozostaje niejasna (próba
+   naprawy przez `excludeFilters` na sąsiednich klasach NIE POMOGŁA), ale ZASADA jest jasna
+   I NIEZAWODNA po zweryfikowaniu: **KAŻDY kontekst z jakąkolwiek aktywnością eureka-client
+   (rejestracja LUB dyskavery/LoadBalancer) MUSI być `@SpringBootApplication`.** Kontrolery
+   REST na takim kontekście MUSZĄ być zagnieżdżone JAKO CZŁONEK tej klasy (member class, jak
+   `PingController` w Lesson03), NIE jako klasa siostrzana — inaczej sąsiedni
+   `@SpringBootApplication` w TYM SAMYM pliku ZNAJDZIE ją PRZEZ ComponentScan I zarejestruje
+   DRUGI RAZ (razem z jawnym `@Bean`), dając "Ambiguous mapping". Konteksty BEZ potrzeby
+   eureka-client (Gateway z jawnym adresem, jak w Lesson06/07/19) mogą i POWINNY zostać przy
+   `@Configuration+@EnableAutoConfiguration` (kontrolery jako klasy SIOSTRZANE + jawny `@Bean` —
+   `@Configuration` PRZETWARZA WŁASNE klasy członkowskie jako dodatkowych kandydatów
+   konfiguracji/komponentów NIEZALEŻNIE OD `@ComponentScan`, więc member-class dawał "Ambiguous
+   mapping" TEŻ bez scanu, jeśli kontroler był zagnieżdżony WEWNĄTRZ tej samej `@Configuration`
+   zamiast obok niej).
+6. **Global `System.setProperty("eureka.client.enabled", "true")` (potrzebny dla Eureka Server/
+   klienta/backendów w kapsztonie Lesson19) PRZECIEKA DO WSZYSTKICH kontekstów W TYM SAMYM JVM,
+   WŁĄCZNIE z tymi, które CELOWO nie powinny go mieć** (np. Gateway z jawnym adresem, bez
+   potrzeby Eureki) — dało DOKŁADNIE pułapkę #5 (TransportClientFactories) dla Gateway. Naprawa:
+   `--eureka.client.enabled=false` jawnie w `.run(...)` TEGO KONKRETNEGO kontekstu (argument
+   wiersza poleceń MA WYŻSZY priorytet niż System property, więc lokalnie nadpisuje globalne
+   `true`).
+
+Kolejność logiczna zaplanowanego łuku `_29`→`_30`→`_31` (Reactive najbardziej samodzielny,
+Messaging/Async buduje częściowo na nim, Cloud/mikroserwisy najbardziej złożony i zamykający
+całość) — zrealizowana zgodnie z planem, wszystkie 3 rozdziały ukończone w tej samej sesji
+(2026-07-20 do 2026-07-25).
 
 ### `_29_spring_reactive` ("Programowanie reaktywne ze Spring WebFlux") — 17 lekcji
 
