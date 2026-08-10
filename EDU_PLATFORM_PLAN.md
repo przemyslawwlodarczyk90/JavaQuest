@@ -357,12 +357,29 @@ true` TYLKO dla `00_JavaPlatformBasics`, pozostałe 16 lekcji `false`; `GET
 .../nope/theory` → 404; `GET /rozdzial/_01_fundamentals/00_JavaPlatformBasics`
 (twarde wejście) → 200 (fallback SPA nadal działa dla zagnieżdżonych tras).
 
-**Następny krok**: kontynuacja Fazy 2 dla POZOSTAŁYCH 16 lekcji
-`_01_fundamentals`, każda w PEŁNEJ, docelowej skali (30 zadań z odpowiadającego
+**Stan na 2026-08-10 (ciąg dalszy): lekcja 2/17 (`01_Variables`) ukończona w
+pełnej skali** — 7 bloków teorii (analogia "zmienne jako bagaż i przechowalnia"
+dla prymitywów vs referencji), 30 zadań (prompty z
+`_Exercises_Lesson01_Variables.java` + dopisane hint/solution), 100 pytań
+quizowych. Zweryfikowane end-to-end (log startowy bez `ERROR`, API zwraca
+poprawne liczby, `hasContent: true` dla obu ukończonych lekcji).
+
+**Ustalony, powtarzalny workflow generowania treści (WAŻNE dla kolejnych
+lekcji)**: pisanie 100 pytań + 30 zadań ręcznie w jednym pliku JSON jest
+podatne na błędy escapowania cudzysłowów/backslashy. Sprawdzona metoda:
+generować treść **skryptem Node.js** (obiekty JS z template literals, potem
+`JSON.stringify(..., null, 2)` do pliku) w katalogu scratchpad, w kilku
+mniejszych częściach (np. teoria+zadania osobno, quiz w 4 paczkach po 25),
+na końcu **scalić jednym skryptem merge** i zapisać do
+`src/main/resources/content/<rozdział>/<lekcja>.json`. To ZERO ręcznego
+escapowania i łatwa walidacja (`node -e` sprawdzające liczby elementów i
+poprawność `correct`/opcji przed zapisem).
+
+**Następny krok**: kontynuacja Fazy 2 dla POZOSTAŁYCH 15 lekcji
+`_01_fundamentals` (02_Operators, 03_Conditionals, 04_Loops, ...,
+16_Exceptions), każda w PEŁNEJ, docelowej skali (30 zadań z odpowiadającego
 pliku `_Exercises_LessonXX_*.java` + hint/solution dopisane, 100 pytań
-quizowych, kilka bloków teorii z przynajmniej jedną wizualną analogią) —
-metoda opisana wyżej (czytaj istniejący plik ćwiczeń, wyciągaj prompty,
-dopisuj hint+solution; quiz pisz od zera dla tematyki danej lekcji). Jedna
-lekcja = jedna sensowna porcja pracy do commitowania. Po ukończeniu całego
-`_01_fundamentals` (17/17 lekcji) — przejście do `_02_oop` jako kolejnego
-rozdziału.
+quizowych, kilka bloków teorii z przynajmniej jedną wizualną analogią),
+metodą i workflow opisanymi wyżej. Jedna lekcja = jedna sensowna porcja pracy
+do commitowania. Po ukończeniu całego `_01_fundamentals` (17/17 lekcji) —
+przejście do `_02_oop` jako kolejnego rozdziału.
