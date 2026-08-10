@@ -1,19 +1,23 @@
-import { Route, Routes } from 'react-router-dom'
+import { Link, Route, Routes } from 'react-router-dom'
 import ChapterListPage from './pages/ChapterListPage'
 import LessonListPage from './pages/LessonListPage'
+import LessonDetailPage from './pages/LessonDetailPage'
 import './App.css'
 
 function App() {
   return (
     <main className="app">
       <header className="app-header">
-        <h1>JavaQuest</h1>
+        <Link to="/" className="app-header__link">
+          <h1>JavaQuest</h1>
+        </Link>
         <p className="subtitle">Platforma edukacyjna oparta na kursie Java.</p>
       </header>
 
       <Routes>
         <Route path="/" element={<ChapterListPage />} />
         <Route path="/rozdzial/:chapterSlug" element={<LessonListPage />} />
+        <Route path="/rozdzial/:chapterSlug/:lessonSlug" element={<LessonDetailPage />} />
       </Routes>
     </main>
   )

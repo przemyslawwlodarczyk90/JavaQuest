@@ -2,6 +2,7 @@ package com.example.javaquest.web;
 
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.boot.autoconfigure.jms.artemis.ArtemisAutoConfiguration;
 import org.springframework.boot.autoconfigure.r2dbc.R2dbcAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
@@ -46,10 +47,19 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * ma nizszy priorytet i zostalby CALKOWICIE nadpisany, nie zmergowany (ta sama zasada co
  * przy `_24_spring_security`). Adnotacyjny `exclude` DZIALA ADDYTYWNIE wzgledem
  * property-based excludes, wiec nie koliduje z globalna lista.
+ *
+ * <p>{@code ArtemisAutoConfiguration} wykluczony z tego samego powodu, ale mniej
+ * krytycznego: `spring-boot-starter-artemis` (z `_30_spring_messaging_and_async/Lesson07`)
+ * probowal automatycznie odpalic embedded broker JMS przy KAZDYM starcie tej appki -
+ * niepotrzebne (platforma nie uzywa JMS) i konczylo sie widocznym w logu (ale
+ * NIEFATALNYM) bledem `AMQ224000: Failure in initialisation /
+ * UnsupportedOperationException: getSubject is not supported` (niezgodnosc Artemis-owego
+ * kodu natywnego z JAAS `Subject` API na nowszych JDK). Wykluczenie usuwa ten szum i
+ * skraca start o kilka sekund.
  */
 @SpringBootApplication(
         scanBasePackages = {"com.example.javaquest.web", "com.example.javaquest.platform"},
-        exclude = R2dbcAutoConfiguration.class
+        exclude = {R2dbcAutoConfiguration.class, ArtemisAutoConfiguration.class}
 )
 @EntityScan("com.example.javaquest.platform")
 @EnableJpaRepositories("com.example.javaquest.platform")

@@ -26,20 +26,24 @@ export default function LessonListPage() {
   }
 
   if (status === 'error') {
-    return <p className="error">Nie udalo sie wczytac lekcji: {error}</p>
+    return <p className="error">Nie udało się wczytać lekcji: {error}</p>
   }
 
   return (
     <div>
       <Link to="/" className="back-link">
-        &larr; Wszystkie rozdzialy
+        &larr; Wszystkie rozdziały
       </Link>
       <h2>{chapterSlug}</h2>
       <ol className="lesson-list">
         {lessons.map((lesson) => (
           <li key={lesson.slug} className="lesson-list__item">
-            <span className="lesson-list__title">{lesson.title}</span>
-            <span className="lesson-list__badge">tresc w przygotowaniu</span>
+            <Link to={`/rozdzial/${chapterSlug}/${lesson.slug}`} className="lesson-list__title">
+              {lesson.title}
+            </Link>
+            <span className={`lesson-list__badge ${lesson.hasContent ? 'lesson-list__badge--ready' : ''}`}>
+              {lesson.hasContent ? 'gotowa' : 'treść w przygotowaniu'}
+            </span>
           </li>
         ))}
       </ol>

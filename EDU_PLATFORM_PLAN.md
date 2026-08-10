@@ -268,13 +268,101 @@ HTTP)**: `GET /api/chapters` → 31 rozdziałów; `GET
 `GET /api/chapters/_nope/lessons` → 404; `GET /rozdzial/_01_fundamentals`
 (twarde wejście, nie SPA-nawigacja) → 200 + `index.html` (fallback działa).
 
-**Następny krok: Faza 2** — pełna treść (`ContentBlock`, `Exercise`,
-`QuizQuestion` z prawdziwymi 100 pytaniami quizowymi na lekcję) dla
-**`_01_fundamentals`** (17 lekcji) jako pionowy przekrój/wzorzec formatu,
-zanim rozmnożymy go na pozostałe 30 rozdziałów. Zacząć od zaprojektowania
-konkretnego kształtu `ContentBlock` (typy: `CONCEPT`/`ANALOGY`/`CODE_EXAMPLE`/
-`DIAGRAM` — dopracować dokładny JSON-owy kształt payloadu każdego typu PRZED
-napisaniem treści pierwszej lekcji, żeby nie przepisywać 17 lekcji po
-zmianie formatu) i miejsca przechowywania (`content/_01_fundamentals/*.json`,
-patrz sekcja 4.1 — założenie do potwierdzenia/doprecyzowania na starcie tej
-fazy, jeśli jeszcze nie ustalone ostatecznie).
+**Stan na 2026-08-10 (ciąg dalszy): Faza 2 ROZPOCZĘTA — pipeline treści gotowy
+i zweryfikowany, treść napisana dla 1 z 17 lekcji `_01_fundamentals`.**
+
+Zaimplementowane w `com.example.javaquest.platform.content`:
+- `ContentBlock`/`Exercise`/`QuizQuestion` — encje JPA (analogicznie do
+  `Chapter`/`Lesson`, `@Lob` na polach tekstowych, żeby uniknąć limitu
+  VARCHAR(255) Hibernate).
+- `ContentBlockType` — enum `CONCEPT`/`ANALOGY`/`CODE_EXAMPLE`/`DIAGRAM`.
+- `LessonContentFile` — rekordy Java (Jackson) opisujące kształt pliku JSON
+  treści lekcji: `{ theory: [...], exercises: [...], quiz: [...] }` — patrz
+  javadoc klasy dla pełnego przykładu.
+- `LessonContentLoader` (`ApplicationRunner`, `@Order(2)`, uruchamiany PO
+  `ContentSeeder` `@Order(1)`) — dla KAŻDEJ zasianej lekcji szuka pliku
+  `classpath:content/<rozdział>/<lekcja>.json`; jeśli istnieje, parsuje go i
+  zapisuje `ContentBlock`/`Exercise`/`QuizQuestion`. Brak pliku = lekcja
+  zostaje z samych metadanych nawigacyjnych (Faza 1) — to NORMALNE i
+  oczekiwane dla 16/17 lekcji na tym etapie. `@Transactional` na `run()` —
+  bez tego `lesson.getChapter().getSlug()` (LAZY) rzucałby
+  `LazyInitializationException` (sesja Hibernate zamyka się zaraz po
+  `lessonRepository.findAll()`).
+- `LessonContentController` — `GET .../theory`, `.../exercises`, `.../quiz`
+  (404 dla nieznanej pary rozdział/lekcja, pusta lista `[]` dla znanej lekcji
+  bez treści). Odpowiedź zawiera OD RAZU `hint`/`solution`/`correct`/
+  `explanation` — ujawnianie na froncie jest czysto kosmetyczne (przycisk
+  chowa/pokazuje), NIE ma osobnego endpointu "sprawdź odpowiedź". Świadome
+  uproszczenie architektury dla aplikacji jednoosobowej/lokalnej (patrz
+  sekcja 4.1) — do rewizji, gdyby platforma miała kiedyś więcej użytkowników
+  i sens "nieoszukiwania" quizu przez podgląd odpowiedzi w Network tab.
+- `ChapterController.LessonSummary` rozszerzony o `hasContent: boolean`
+  (sprawdzane przez `ContentBlockRepository.existsByLessonId`) — frontend
+  pokazuje realny status zamiast zawsze "treść w przygotowaniu".
+
+Frontend (`frontend/src/`): `LessonDetailPage` (trasa
+`/rozdzial/:chapterSlug/:lessonSlug`) z zakładkami Teoria/Zadania/Quiz,
+leniwie pobieranymi per zakładka. `components/TheoryView.jsx` (karty per typ
+bloku, inna kolorystyka dla `ANALOGY`/`CODE_EXAMPLE`),
+`components/ExercisesView.jsx` (1 zadanie na ekranie, `<textarea>` na
+odpowiedź, przyciski Podpowiedź/Rozwiązanie, nawigacja poprzednie/następne),
+`components/QuizView.jsx` (1 pytanie ABCD na ekranie, natychmiastowy
+feedback + wyjaśnienie, licznik postępu, wynik końcowy + restart).
+
+**Napisana treść (wzorzec formatu na przyszłość)**:
+`content/_01_fundamentals/00_JavaPlatformBasics.json` — 6 bloków teorii
+(w tym analogia "JDK/JRE/JVM jako ekosystem konsoli do gier"), 10 zadań
+(z podpowiedzią i rozwiązaniem każde), **20 pytań quizowych** (NIE 100 —
+świadoma decyzja tej sesji, patrz niżej).
+
+**Korekta po informacji zwrotnej użytkownika**: pierwsza wersja tej sesji miała
+tylko 10 zadań / 20 quizów jako "reprezentatywna próbkę", ale użytkownik
+sprecyzował: **każda lekcja MA MIEĆ 30 zadań (wzorem `_Exercises_LessonXX_*.java`
+z reszty kursu) + 100 pytań quizowych — bez kompromisów w liczbie**. Zadania NIE
+są wymyślane od zera — ich TREŚĆ (prompt) pochodzi wprost z istniejącego pliku
+`_Exercises_Lesson00_JavaPlatformBasics.java` (30 zagnieżdżonych klas
+`ExerciseNN_*` z komentarzem zadania) — platforma dopisuje do każdego z nich
+`hint`/`solution`, których oryginalny plik kursu celowo nie ma (kursant sam
+pisze kod). To dobra, powtarzalna metoda na przyszłe lekcje: **czytaj istniejący
+plik `_Exercises_LessonXX_*.java` danej lekcji, wyciągnij 30 promptów z komentarzy
+`🧪 Zadanie N`, dopisz hint+solution do każdego** — nie trzeba wymyślać zadań od
+zera, kurs już je ma.
+`content/_01_fundamentals/00_JavaPlatformBasics.json` ma teraz PEŁNE **30 zadań
+i 100 pytań quizowych**, zweryfikowane end-to-end przez API
+(`.../exercises` → 30, `.../quiz` → 100, log startowy bez żadnego `ERROR`).
+
+**Dwie nowe pułapki napotkane i naprawione w tej fazie:**
+1. Ta sama kategoria co pułapka R2DBC z Fazy 1: `spring-boot-starter-artemis`
+   (z `_30_spring_messaging_and_async/Lesson07`) automatycznie próbował
+   odpalić embedded broker JMS przy KAŻDYM starcie naszej aplikacji, dając
+   widoczny (ale niefatalny) błąd w logu (`AMQ224000: Failure in
+   initialisation` / `UnsupportedOperationException: getSubject is not
+   supported` - niezgodność natywnego kodu Artemis z JAAS na nowszych JDK).
+   Naprawione dokładnie tym samym wzorcem co R2DBC:
+   `@SpringBootApplication(exclude = {..., ArtemisAutoConfiguration.class})`.
+   Skróciło to też start aplikacji o kilka sekund.
+2. `ChapterController` (pakiet `platform.chapter`) potrzebował wstrzyknąć
+   `ContentBlockRepository` z SĄSIEDNIEGO pakietu `platform.content` (dla
+   flagi `hasContent`) — zadziałało bez żadnej dodatkowej konfiguracji, bo
+   `scanBasePackages` w `JavaQuestApplication` już obejmuje CAŁY
+   `com.example.javaquest.platform` (nie per-podpakiet) - warto pamiętać na
+   przyszłość, że podpakiety `platform.*` mogą swobodnie zależeć od siebie
+   nawzajem.
+
+**Zweryfikowane end-to-end** (kompilacja + build frontendu + `spring-boot:run`
++ realne żądania HTTP, log startowy BEZ żadnego `ERROR`): `GET
+.../00_JavaPlatformBasics/theory` → 6 bloków; `.../exercises` → 10 zadań;
+`.../quiz` → 20 pytań z poprawnymi `correct`; `GET .../lessons` → `hasContent:
+true` TYLKO dla `00_JavaPlatformBasics`, pozostałe 16 lekcji `false`; `GET
+.../nope/theory` → 404; `GET /rozdzial/_01_fundamentals/00_JavaPlatformBasics`
+(twarde wejście) → 200 (fallback SPA nadal działa dla zagnieżdżonych tras).
+
+**Następny krok**: kontynuacja Fazy 2 dla POZOSTAŁYCH 16 lekcji
+`_01_fundamentals`, każda w PEŁNEJ, docelowej skali (30 zadań z odpowiadającego
+pliku `_Exercises_LessonXX_*.java` + hint/solution dopisane, 100 pytań
+quizowych, kilka bloków teorii z przynajmniej jedną wizualną analogią) —
+metoda opisana wyżej (czytaj istniejący plik ćwiczeń, wyciągaj prompty,
+dopisuj hint+solution; quiz pisz od zera dla tematyki danej lekcji). Jedna
+lekcja = jedna sensowna porcja pracy do commitowania. Po ukończeniu całego
+`_01_fundamentals` (17/17 lekcji) — przejście do `_02_oop` jako kolejnego
+rozdziału.

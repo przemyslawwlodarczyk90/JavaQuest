@@ -18,3 +18,19 @@ export function getChapters() {
 export function getLessons(chapterSlug) {
   return getJson(`/api/chapters/${encodeURIComponent(chapterSlug)}/lessons`)
 }
+
+function lessonPath(chapterSlug, lessonSlug, suffix) {
+  return `/api/chapters/${encodeURIComponent(chapterSlug)}/lessons/${encodeURIComponent(lessonSlug)}/${suffix}`
+}
+
+export function getTheory(chapterSlug, lessonSlug) {
+  return getJson(lessonPath(chapterSlug, lessonSlug, 'theory'))
+}
+
+export function getExercises(chapterSlug, lessonSlug) {
+  return getJson(lessonPath(chapterSlug, lessonSlug, 'exercises'))
+}
+
+export function getQuiz(chapterSlug, lessonSlug) {
+  return getJson(lessonPath(chapterSlug, lessonSlug, 'quiz'))
+}
