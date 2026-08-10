@@ -9,6 +9,14 @@
 >    potrzebna tylko gdy faktycznie referencjonujesz konkretną lekcję.
 > 3. Zacznij pracę dokładnie od miejsca opisanego w "Stan aktualny / następny krok".
 > 4. Commituj lokalnie często (patrz "Zasady gita" niżej), **bez pusha**.
+>
+> **Protokół wznowienia (ważne):** użytkownik NIE musi za każdym razem tłumaczyć całej
+> wizji od nowa. Krótkie "lecimy dalej" / "kontynuuj" / "leć dalej" (w kontekście tego
+> projektu) = sygnał, żeby: przeczytać ten plik, przejść do sekcji "Stan aktualny /
+> następny krok" i kontynuować dokładnie od tego miejsca, bez dodatkowych pytań o zakres
+> (chyba że pojawi się realna, blokująca niejasność). Po każdej sesji/większym przyroście
+> pracy **zaktualizuj sekcję "Stan aktualny / następny krok"**, żeby kolejne wznowienie
+> było trafne.
 
 ## 1. Wizja (spisana z rozmowy z użytkownikiem, 2026-08-10)
 
@@ -209,9 +217,64 @@ zasobów), ale to zdecydowanie nie jest problem Fazy 1-3.
 
 ## 7. Stan aktualny / następny krok
 
-**Stan na 2026-08-10**: Faza 0 zakończona i zweryfikowana (patrz sekcja 3).
-Ten plik właśnie utworzony, jeszcze nie zacommitowany.
+**Stan na 2026-08-10: Faza 0 i Faza 1 ZAKOŃCZONE i zweryfikowane end-to-end.**
 
-**Następny krok**: rozpocząć Fazę 1 — encje `Chapter`/`Lesson`, loader z
-`_TableOfContents.java`, REST API, frontend z routingiem i pełną (choć pustą
-treściowo) nawigacją po wszystkich 31 rozdziałach.
+Faza 1 zaimplementowana w `com.example.javaquest.platform.chapter`:
+- `Chapter`/`Lesson` — encje JPA (H2 in-memory, własny, niezależny schemat
+  tworzony przez Hibernate `ddl-auto=create-drop`, BEZ Flyway).
+- `ChapterSeedData` — własna, ręcznie zsynchronizowana kopia listy 31
+  rozdziałów/lekcji z `_TableOfContents.java` (celowo NIE import — tamten plik
+  jest podstawą programową i jego `ROZDZIALY`/`Chapter` są pakietowo-prywatne).
+  **Gdy w kursie przybędzie nowy rozdział/lekcja, trzeba dopisać go RĘCZNIE
+  też tutaj.**
+- `ContentSeeder` (`ApplicationRunner`) — zasila bazę przy starcie, jeśli pusta.
+- `ChapterRepository`/`LessonRepository` (Spring Data JPA) + `ChapterController`
+  (`GET /api/chapters`, `GET /api/chapters/{slug}/lessons`, 404 dla nieznanego
+  rozdziału).
+- `LessonSlugTitles` — prowizoryczny "humanizer" slugów lekcji (np.
+  `06_StringsAndBuilder` → "Strings And Builder") do czasu prawdziwych,
+  redakcyjnie napisanych tytułów w Fazie 2+.
+- `SpaFallbackController` (`com.example.javaquest.web`) — `GET /rozdzial/**`
+  → forward do `index.html`, żeby twarde przeładowanie/bezpośredni link na
+  trasę React Routera nie dawał 404 z domyślnego handlera zasobów statycznych.
+
+Frontend (`frontend/src/`): `react-router-dom` dodany, routing `/` (lista
+rozdziałów, kafelki) i `/rozdzial/:chapterSlug` (lista lekcji z odznaką "treść
+w przygotowaniu"), `api.js` (cienka warstwa nad `fetch`).
+
+**Dwie pułapki napotkane i naprawione przy pisaniu Fazy 1 (WAŻNE dla
+kontynuacji, opisane pełniej w kodzie/komentarzach):**
+1. `spring-boot-starter-data-r2dbc` (z `_29_spring_reactive`) auto-konfiguruje
+   globalny bean `ConnectionFactory`, a `DataSourceAutoConfiguration` ma
+   `@ConditionalOnMissingBean(ConnectionFactory.class)` — bez jawnego
+   `@SpringBootApplication(exclude = R2dbcAutoConfiguration.class)` na
+   `JavaQuestApplication`, `entityManagerFactory` NIE POWSTAWAŁ WCALE (błąd
+   bez żadnej wzmianki o DataSource w logu — zdiagnozowane dopiero przez
+   `--debug` i raport warunków auto-konfiguracji). Wykluczenie musi być przez
+   ATRYBUT adnotacji, nie przez `spring.autoconfigure.exclude` we
+   `.properties(...)` — globalny `application.properties` już ustawia ten
+   klucz (Security/Rabbit/ActiveMQ), więc `.properties(...)` (niższy
+   priorytet) zostałby całkowicie nadpisany, nie zmergowany.
+2. Osierocony proces `java` z wcześniejszego, nigdy poprawnie niezabitego
+   `spring-boot:run` blokował port podczas kolejnych prób uruchomienia
+   (`Web server failed to start. Port ... was already in use`) — jeśli
+   `spring-boot:run` nagle nie startuje mimo poprawnego kodu, sprawdź
+   `Get-NetTCPConnection -LocalPort <port>` / `Get-Process java` przed
+   szukaniem błędu w kodzie.
+
+**Zweryfikowane end-to-end (kompilacja + `spring-boot:run` + realne żądania
+HTTP)**: `GET /api/chapters` → 31 rozdziałów; `GET
+/api/chapters/_01_fundamentals/lessons` → 17 lekcji z czytelnymi tytułami;
+`GET /api/chapters/_nope/lessons` → 404; `GET /rozdzial/_01_fundamentals`
+(twarde wejście, nie SPA-nawigacja) → 200 + `index.html` (fallback działa).
+
+**Następny krok: Faza 2** — pełna treść (`ContentBlock`, `Exercise`,
+`QuizQuestion` z prawdziwymi 100 pytaniami quizowymi na lekcję) dla
+**`_01_fundamentals`** (17 lekcji) jako pionowy przekrój/wzorzec formatu,
+zanim rozmnożymy go na pozostałe 30 rozdziałów. Zacząć od zaprojektowania
+konkretnego kształtu `ContentBlock` (typy: `CONCEPT`/`ANALOGY`/`CODE_EXAMPLE`/
+`DIAGRAM` — dopracować dokładny JSON-owy kształt payloadu każdego typu PRZED
+napisaniem treści pierwszej lekcji, żeby nie przepisywać 17 lekcji po
+zmianie formatu) i miejsca przechowywania (`content/_01_fundamentals/*.json`,
+patrz sekcja 4.1 — założenie do potwierdzenia/doprecyzowania na starcie tej
+fazy, jeśli jeszcze nie ustalone ostatecznie).
