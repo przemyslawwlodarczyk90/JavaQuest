@@ -56,6 +56,28 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * UnsupportedOperationException: getSubject is not supported` (niezgodnosc Artemis-owego
  * kodu natywnego z JAAS `Subject` API na nowszych JDK). Wykluczenie usuwa ten szum i
  * skraca start o kilka sekund.
+ *
+ * <p><b>Domyslny port 8082, NIE 8080</b>: na tej konkretnej maszynie deweloperskiej port
+ * 8080 jest TRWALE zajety przez systemowy proces "AgentService" (prawdopodobnie
+ * agent bezpieczenstwa/antywirus, PID staly miedzy restartami, nie da sie go zabic -
+ * proba `taskkill` konczy sie "Odmowa dostepu") - zweryfikowane empirycznie zarowno
+ * PRZED pierwszym uruchomieniem tej appki (Faza 0), jak i wielokrotnie pozniej.
+ *
+ * <p><b>Dlaczego port jest ustawiany przez {@code System.setProperty}, NIE przez
+ * {@code .properties(...)} ponizej ani przez globalny {@code application.properties}</b>:
+ * pierwsza proba (`server.port=8081` w `.properties(...)`) PO CICHU nie zadzialala -
+ * appka i tak probowala 8082, bo ktos/cos wczesniej dopisal `server.port = 8082`
+ * BEZPOSREDNIO do globalnego `application.properties` (WYZSZY priorytet niz
+ * `.properties(...)`, dokladnie ta sama pulapka co z `spring.autoconfigure.exclude`
+ * opisana nizej). Docelowo TA linia zostala USUNIETA z globalnego pliku (zbyt
+ * ryzykowna - `server.port` w globalnym pliku nadpisalby "server.port=0" ustawiane
+ * WEWNATRZ kazdej z 31 lekcji kursu, psujac je WSZYSTKIE naraz). Zamiast tego port
+ * jest ustawiany przez {@code System.setProperty("server.port", "8082")} PRZED
+ * {@code .run()} - System properties maja WYZSZY priorytet niz classpath'owy
+ * `application.properties`, wiec to JEDYNY niezawodny sposob nadpisania czegokolwiek,
+ * co (teraz lub w przyszlosci) mogloby zostac ustawione globalnie. Nadal mozna
+ * nadpisac port z linii polecen: `--server.port=X` (argumenty CLI maja NAJWYZSZY
+ * priorytet ze wszystkich).
  */
 @SpringBootApplication(
         scanBasePackages = {"com.example.javaquest.web", "com.example.javaquest.platform"},
@@ -66,6 +88,10 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 public class JavaQuestApplication {
 
     public static void main(String[] args) {
+        // Patrz javadoc klasy - System property (nie .properties() ponizej, nie globalny
+        // application.properties) to jedyny niezawodny sposob ustawienia domyslnego portu.
+        System.setProperty("server.port", "8082");
+
         new SpringApplicationBuilder(JavaQuestApplication.class)
                 // Flyway na classpath (uzywany przez inne rozdzialy kursu, np. _10_dao/_23_spring_data_jpa)
                 // wylaczylby domyslne tworzenie schematu przez Hibernate (ddl-auto=none) i probowalby

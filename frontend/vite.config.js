@@ -14,11 +14,13 @@ export default defineConfig({
   },
   server: {
     // Podczas "npm run dev" wywolania /api/** przekazujemy do lokalnie
-    // uruchomionego Spring Boota (domyslny port 8080), zeby dev-server Vite
-    // dzialal razem z backendem bez CORS-a.
+    // uruchomionego Spring Boota, zeby dev-server Vite dzialal razem z
+    // backendem bez CORS-a. Port 8082, NIE domyslny 8080 - na tej maszynie
+    // 8080 jest trwale zajety przez systemowy "AgentService" (patrz
+    // JavaQuestApplication.java), wiec backend startuje na 8082.
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8082',
         changeOrigin: true,
       },
     },

@@ -9,7 +9,7 @@ serwuje statyczne zasoby pod `/`, bez żadnej dodatkowej konfiguracji.
 
 ```bash
 npm install
-npm run dev      # dev-server Vite na http://localhost:5173, proxy /api -> :8080
+npm run dev      # dev-server Vite na http://localhost:5173, proxy /api -> :8082
 ```
 
 ## Build produkcyjny
@@ -24,6 +24,10 @@ Backend uruchamiasz osobno (patrz katalog główny repo):
 $env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"
 .\mvnw.cmd spring-boot:run
 ```
+
+Backend startuje domyślnie na porcie **8082** (nie 8080 — na tej maszynie 8080
+jest trwale zajęty przez systemowy proces `AgentService`, patrz komentarz w
+`JavaQuestApplication.java`). Appka dostępna pod `http://localhost:8082`.
 
 Wynik `npm run build` **nie jest** commitowany do repo (patrz `.gitignore`:
 `/src/main/resources/static/`) — to artefakt budowania, nie źródło. Po

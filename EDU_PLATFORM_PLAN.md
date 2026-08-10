@@ -375,6 +375,34 @@ na końcu **scalić jednym skryptem merge** i zapisać do
 escapowania i łatwa walidacja (`node -e` sprawdzające liczby elementów i
 poprawność `correct`/opcji przed zapisem).
 
+**Incydent i naprawa (2026-08-10, po "lecimy dalej")**: użytkownik zgłosił
+`Web server failed to start. Port 8080 was already in use` przy próbie
+uruchomienia z IDE, mimo "zabicia portu". Diagnoza: (1) port 8080 na tej
+maszynie jest TRWALE zajęty przez systemowy proces `AgentService` (PID stały
+między restartami, `taskkill` daje "Odmowa dostępu" — to nie coś, co da się
+trwale zabić); (2) w międzyczasie ktoś/coś dopisało `server.port = 8082`
+BEZPOŚREDNIO do globalnego `application.properties` (niezacommitowana
+zmiana) — ale osierocony proces `java` z wcześniejszej próby wciąż siedział
+na porcie 8082, więc KOLEJNE próby też się wywalały. Naprawa:
+1. Zabity osierocony proces trzymający 8082.
+2. **Usunięta** linia `server.port = 8082` z globalnego `application.properties`
+   — zostawienie jej TAM byłoby niebezpieczne: ten plik ma WYŻSZY priorytet
+   niż `.properties(...)` używane przez KAŻDĄ z 31 lekcji kursu, które
+   zakładają `server.port=0` (losowy port) — globalny `server.port` nadpisałby
+   je WSZYSTKIE naraz.
+3. Port **8082 jest teraz ustawiany przez `System.setProperty("server.port",
+   "8082")`** w `JavaQuestApplication.main()` — TYLKO System property ma
+   wystarczająco wysoki priorytet, żeby nadpisać cokolwiek, co globalny plik
+   mógłby w przyszłości ustawić, bez ryzyka dla innych lekcji.
+4. Zaktualizowane `frontend/vite.config.js` (proxy dev-server) i
+   `frontend/README.md` na port 8082.
+
+Zweryfikowane: **`mvnw.cmd spring-boot:run` bez ŻADNEGO argumentu** poprawnie
+startuje na porcie 8082, `GET /` i `GET /api/chapters` zwracają 200, log
+startowy bez `ERROR`. **Appka jest teraz dostępna pod `http://localhost:8082`
+(NIE 8080)** — zapamiętaj to przy każdym kolejnym uruchomieniu/instrukcji dla
+użytkownika.
+
 **Następny krok**: kontynuacja Fazy 2 dla POZOSTAŁYCH 15 lekcji
 `_01_fundamentals` (02_Operators, 03_Conditionals, 04_Loops, ...,
 16_Exceptions), każda w PEŁNEJ, docelowej skali (30 zadań z odpowiadającego
