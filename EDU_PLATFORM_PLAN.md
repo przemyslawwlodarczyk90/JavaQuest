@@ -945,8 +945,44 @@ weryfikacji): `.../_02_oop/lessons/02_Encapsulation/theory` → 7;
 zero brakujących opcji); `GET .../_02_oop/lessons` → `hasContent: true` dla
 `01_ClassesAndObjects`/`02_Encapsulation`, `false` dla pozostałych 13.
 
-**Następny krok**: `03_Constructors` (kolejna z 15 lekcji `_02_oop`), tym
-samym workflow (czytaj `_Exercises_Lesson03_Constructors.java` po prompty
+**Lekcja 3/15 (`03_Constructors`) UKOŃCZONA w pełnej skali** — 7 bloków
+teorii (analogia "konstruktor jako recepcja hotelowa przygotowująca pokój"
+— gość NIE MOŻE wejść do pokoju z pominięciem recepcji, każdy obiekt musi
+przejść przez konstruktor; konstruktor domyślny vs z parametrami + pułapka
+znikającego domyślnego, łańcuchowanie przez this(), kolejność inicjalizacji
+pola→bloki→konstruktor + bloki statyczne, konstruktor kopiujący + płytka
+vs głęboka kopia, statyczne metody fabryczne, podsumowanie pełnego
+arsenału technik), 30 zadań (prompty z
+`_Exercises_Lesson03_Constructors.java` + dopisane hint/solution — w tym
+generator unikalnych ID, deep copy, blok statyczny, wzorzec Builder
+(DatabaseConfig, Report, Order jako Step Builder), Registry Pattern
+(Animal), Object Pool (Connection), Singleton (Logger), abstrakcyjna klasa
+Shape z super(color), ImmutableList z with(), rekurencyjne TreeNode),
+100 pytań quizowych w 4 paczkach po 25 (podstawy konstruktorów +
+this()/domyślny/przeciążanie/kopiujący; kolejność inicjalizacji pola/bloki/
+konstruktor głębiej + static factory + Object Pool + Registry Pattern +
+Step Builder; this() vs super() + abstrakcyjne klasy z konstruktorem +
+niezmienna ImmutableList + rekurencyjne struktury + wybór wzorca wg
+potrzeb; podsumowanie łączące z Lesson02_Encapsulation + zapowiedź
+Lesson05_Inheritance + race condition przy statycznych licznikach + dobre
+praktyki "konstruktor ma być szybki"). Wygenerowane tym samym, sprawdzonym
+workflow skryptem Node.js w scratchpadzie (walidacja liczby elementów +
+poprawności `correct`/opcji PRZED zapisem — wielokrotnie uzupełniała
+niedobór do 25 w poszczególnych paczkach quizu, w tym jedno pytanie
+zastąpione czytelniejszą wersją po przeglądzie jakości), scalone do
+`src/main/resources/content/_02_oop/03_Constructors.json`, robocze pliki
+scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../_02_oop/lessons/03_Constructors/theory` → 7;
+`.../exercises` → 30; `.../quiz` → 100 (wszystkie `correct` w zbiorze A-D,
+zero brakujących opcji); `GET .../_02_oop/lessons` → `hasContent: true` dla
+`01_ClassesAndObjects`/`02_Encapsulation`/`03_Constructors`, `false` dla
+pozostałych 12.
+
+**Następny krok**: `04_StaticKeyword` (kolejna z 15 lekcji `_02_oop`), tym
+samym workflow (czytaj `_Exercises_Lesson04_StaticKeyword.java` po prompty
 zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
 scal i zweryfikuj end-to-end, zaktualizuj tę sekcję). Użytkownik poprosił
 (2026-08-11), żeby między lekcjami/etapami NIE pytać o zgodę — kontynuować
