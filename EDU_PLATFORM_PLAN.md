@@ -834,13 +834,49 @@ weryfikacji): `.../15_RandomAndSecureRandom/theory` → 7; `.../exercises` →
 opcji); `GET .../lessons` → `hasContent: true` dla lekcji 00-15, `false` dla
 `16_Exceptions` (ostatnia lekcja rozdziału).
 
-**Następny krok**: `16_Exceptions` (OSTATNIA z 17 lekcji `_01_fundamentals`),
-tym samym workflow (czytaj `_Exercises_Lesson16_Exceptions.java` po prompty
-zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
-scal i zweryfikuj end-to-end, zaktualizuj tę sekcję). Po ukończeniu tej
-lekcji `_01_fundamentals` będzie w 100% ukończony (17/17) — `_02_oop` jako
-kolejny rozdział (brak jeszcze szczegółowego planu lekcja-po-lekcji dla
-`_02_oop` w tym pliku — trzeba go rozpocząć od zera po ukończeniu `_01`).
-Użytkownik poprosił (2026-08-11), żeby między lekcjami/etapami NIE pytać o
-zgodę — kontynuować automatycznie ten sam rytm pracy bez przerywania na
-potwierdzenia.
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 17/17 (`16_Exceptions`) UKOŃCZONA
+w pełnej skali — TYM SAMYM `_01_fundamentals` JEST W 100% UKOŃCZONY NA
+PLATFORMIE (17/17 lekcji z pełną treścią).** 7 bloków teorii (analogia
+"wyjątek jako przekazywanie problemu w górę łańcucha dowodzenia w firmie" —
+pracownik szeregowy nie potrafiący rozwiązać problemu zgłasza go
+kierownikowi, kierownik dyrektorowi, aż ktoś go obsłuży albo cały "projekt"
+zostaje przerwany z pełnym raportem; hierarchia Throwable - Error vs
+Exception, checked vs unchecked i dlaczego ta różnica ma znaczenie,
+try-catch-finally + throw vs throws, multi-catch + własne wyjątki,
+łańcuchowanie wyjątków (exception chaining) z cause, stack trace + dobre
+praktyki), 30 zadań (prompty z `_Exercises_Lesson16_Exceptions.java` +
+dopisane hint/solution — w tym własna hierarchia wyjątków checked, retry z
+limitem prób, agregacja błędów z batcha bez przerywania pętli, symulacja
+rollbacku transakcji bankowej, suppressed exceptions, maszyna stanów
+zamówienia oparta na wyjątkach, pełny pipeline walidacji rejestracji z
+lancuchowaniem NumberFormatException), 100 pytań quizowych w 4 paczkach po
+25 (hierarchia Throwable + checked vs unchecked podstawy; try-catch-finally
++ throw vs throws + multi-catch + kolejność bloków catch + pułapka return w
+finally; własne wyjątki + łańcuchowanie (cause) + hierarchia wyjątków
+domenowych + wzorzec "zbierz wszystkie błędy naraz"; stack trace +
+suppressed exceptions + rollback + retry + maszyna stanów + dobre praktyki
+logowania błędów zamiast pustego catch). Wygenerowane tym samym, sprawdzonym
+workflow skryptem Node.js w scratchpadzie (walidacja liczby elementów +
+poprawności `correct`/opcji PRZED zapisem — kilkukrotnie złapała niedobór do
+25 w poszczególnych paczkach quizu, uzupełnione przed zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/16_Exceptions.json`, robocze
+pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../16_Exceptions/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D, zero brakujących
+opcji); `GET .../lessons` → **`hasContent: true` dla WSZYSTKICH 17/17
+lekcji rozdziału `_01_fundamentals`** (00_JavaPlatformBasics przez
+16_Exceptions) — pierwszy w pełni ukończony rozdział na platformie edukacyjnej.
+
+**Następny krok**: rozpoczęcie rozdziału `_02_oop` na platformie (ten sam
+workflow lekcja-po-lekcji: teoria+30 zadań+100 quizów, weryfikacja
+end-to-end, aktualizacja tej sekcji po każdej lekcji). `_02_oop` NIE ma
+jeszcze szczegółowego planu lekcja-po-lekcji w tym pliku — trzeba
+najpierw sprawdzić strukturę `src/main/java/com/example/javaquest/_02_oop/`
+(liczbę i nazwy lekcji), tak jak przy każdym poprzednim rozdziale, zanim
+zacznie się pisać treść pierwszej lekcji. Użytkownik poprosił (2026-08-11),
+żeby między lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie
+ten sam rytm pracy bez przerywania na potwierdzenia; to dotyczy też
+przejścia między rozdziałami (_01 → _02).
