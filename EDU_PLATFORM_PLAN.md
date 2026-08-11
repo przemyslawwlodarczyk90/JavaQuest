@@ -488,8 +488,36 @@ weryfikacji): `.../04_Loops/theory` → 7; `.../exercises` → 30; `.../quiz` �
 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent:
 true` dla lekcji 00-04, `false` dla `05_Arrays` i pozostałych.
 
-**Następny krok**: `05_Arrays` (kolejna z 12 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson05_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 6/17 (`05_Arrays`) UKOŃCZONA w
+pełnej skali** — 7 bloków teorii (analogia "tablica jako rząd ponumerowanych
+skrytek na dworcu" — stała liczba, indeksowanie od 0, ArrayIndexOutOfBounds
+jako "ochrona zatrzymująca Cię przy nieistniejącej skrytce"; deklaracja/
+inicjalizacja na 3 sposoby, indeksowanie, `length` jako pole nie metoda,
+wartości domyślne, klasa `Arrays` (sort/toString/copyOf/equals), tablice 2D
+jako tablica tablic z jagged arrays), 30 zadań (prompty z
+`_Exercises_Lesson05_Arrays.java` + dopisane hint/solution — w tym
+wyszukiwanie binarne, sortowanie bąbelkowe, transpozycja i mnożenie macierzy,
+usuwanie duplikatów bez kolekcji, przechodzenie spiralne macierzy), 100 pytań
+quizowych w 4 paczkach po 25 (deklaracja/indeksowanie/`length`/wartości
+domyślne; klasa `Arrays` + semantyka referencyjna — `==` vs `Arrays.equals`,
+płytkie kopiowanie przez przypisanie vs `copyOf`/`clone`; algorytmy na
+tablicach — max/min/suma/średnia/odwracanie/duplikaty/wyszukiwanie liniowe i
+binarne, złożoność O(n²) vs O(log n); tablice 2D — jagged arrays, `length` vs
+`matrix[row].length`, transpozycja, `Arrays.deepToString`). Wygenerowane tym
+samym, sprawdzonym workflow skryptem Node.js w scratchpadzie (walidacja
+liczby elementów + poprawności `correct`/opcji PRZED zapisem — złapała 1
+błędną odpowiedź w pytaniu o `binarySearch`, poprawione przed zapisem),
+scalone do `src/main/resources/content/_01_fundamentals/05_Arrays.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../05_Arrays/theory` → 7; `.../exercises` → 30; `.../quiz` →
+100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent:
+true` dla lekcji 00-05, `false` dla `06_StringsAndBuilder` i pozostałych.
+
+**Następny krok**: `06_StringsAndBuilder` (kolejna z 11 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson06_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
