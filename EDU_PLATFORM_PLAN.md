@@ -438,8 +438,31 @@ razem, dopiero potem kolejna lekcja) — NIE przechodzimy na 3 osobne obiegi
 rozważenia tej opcji. Powód: każda ukończona lekcja jest od razu w pełni
 użyteczna w appce, mniejsze ryzyko przy przerwaniu sesji w połowie.
 
-**Następny krok**: `03_Conditionals` (kolejna z 14 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson03_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 4/17 (`03_Conditionals`) UKOŃCZONA w
+pełnej skali** — 7 bloków teorii (analogia "if/else jako bramki kontrolne na
+lotnisku, switch jako sortownia paczek"; if/else if/else, operator trójkowy,
+klasyczny switch z pułapką fall-through, nowa składnia switch (`->`), switch z
+`yield`, zagnieżdżone ify + switch bezpieczny na null), 30 zadań (prompty z
+`_Exercises_Lesson03_Conditionals.java` + dopisane hint/solution), 100 pytań
+quizowych w 4 paczkach po 25 (podstawy if/else+trójnik; klasyczny switch
+case/break/fall-through/default; nowa składnia switch z `->`/wieloma
+etykietami/`yield`; zagnieżdżone ify + null-safe switch + priorytet `&&`
+vs `||` + pułapki typu dangling-else i short-circuit z auto-unboxingiem).
+Wygenerowane tym samym, sprawdzonym workflow skryptem Node.js w scratchpadzie
+(walidacja liczby elementów + poprawności `correct`/opcji PRZED zapisem),
+scalone do `src/main/resources/content/_01_fundamentals/03_Conditionals.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (kompilacja niepotrzebna — czysty plik treści;
+`spring-boot:run` na porcie 8082 + realne żądania HTTP, log startowy bez
+`ERROR`, proces zatrzymany i posprzątany po weryfikacji):
+`.../03_Conditionals/theory` → 7; `.../exercises` → 30; `.../quiz` → 100
+(wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent: true`
+dla `00_JavaPlatformBasics`/`01_Variables`/`02_Operators`/`03_Conditionals`,
+`false` dla `04_Loops` i pozostałych.
+
+**Następny krok**: `04_Loops` (kolejna z 13 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson04_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
