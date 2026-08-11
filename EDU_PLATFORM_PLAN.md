@@ -547,8 +547,38 @@ weryfikacji — przy okazji zauważone i posprzątane 2 osierocone procesy
 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent:
 true` dla lekcji 00-06, `false` dla `07_DateAndTime` i pozostałych.
 
-**Następny krok**: `07_DateAndTime` (kolejna z 10 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson07_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 8/17 (`07_DateAndTime`) UKOŃCZONA
+w pełnej skali** — 7 bloków teorii (analogia "java.time jako różne narzędzia
+do mierzenia czasu" — LocalDate jako kartka z kalendarza, LocalTime jako
+zegarek, LocalDateTime jako kalendarz z zegarem, ZonedDateTime jako to samo
+z metką strefy, Instant jako uniwersalny stoper; LocalDate, LocalTime,
+LocalDateTime, ZonedDateTime + Instant, DateTimeFormatter formatowanie i
+parsowanie, ChronoUnit obliczenia między datami + niemutowalność całego
+`java.time`), 30 zadań (prompty z `_Exercises_Lesson07_DateAndTime.java` +
+dopisane hint/solution — w tym odliczanie do urodzin, kalkulator wieku,
+konwersja stref czasowych, generator cyklicznych spotkań, parsowanie
+wielu formatów dat), 100 pytań quizowych w 4 paczkach po 25 (LocalDate/
+LocalTime/LocalDateTime — niemutowalność, przepełnienia godzin/miesięcy,
+isBefore/isAfter/isEqual; ZonedDateTime i Instant — strefy czasowe,
+`withZoneSameInstant`, epoch, dlaczego regionalne nazwy stref są lepsze niż
+stałe offsety; DateTimeFormatter — litery wzorca dd/MM/yyyy/HH/EEEE/MMMM,
+Locale, `format()` vs `parse()`, pułapka europejski vs amerykański format;
+ChronoUnit + niemutowalność całego `java.time` + historyczne porównanie z
+`java.util.Date`/`Calendar`). Wygenerowane tym samym, sprawdzonym workflow
+skryptem Node.js w scratchpadzie (walidacja liczby elementów + poprawności
+`correct`/opcji PRZED zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/07_DateAndTime.json`, robocze
+pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../07_DateAndTime/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-07, `false` dla `08_MathOperations` i
+pozostałych.
+
+**Następny krok**: `08_MathOperations` (kolejna z 9 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson08_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
