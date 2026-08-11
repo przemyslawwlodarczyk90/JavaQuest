@@ -870,13 +870,50 @@ opcji); `GET .../lessons` → **`hasContent: true` dla WSZYSTKICH 17/17
 lekcji rozdziału `_01_fundamentals`** (00_JavaPlatformBasics przez
 16_Exceptions) — pierwszy w pełni ukończony rozdział na platformie edukacyjnej.
 
-**Następny krok**: rozpoczęcie rozdziału `_02_oop` na platformie (ten sam
-workflow lekcja-po-lekcji: teoria+30 zadań+100 quizów, weryfikacja
-end-to-end, aktualizacja tej sekcji po każdej lekcji). `_02_oop` NIE ma
-jeszcze szczegółowego planu lekcja-po-lekcji w tym pliku — trzeba
-najpierw sprawdzić strukturę `src/main/java/com/example/javaquest/_02_oop/`
-(liczbę i nazwy lekcji), tak jak przy każdym poprzednim rozdziale, zanim
-zacznie się pisać treść pierwszej lekcji. Użytkownik poprosił (2026-08-11),
-żeby między lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie
-ten sam rytm pracy bez przerywania na potwierdzenia; to dotyczy też
-przejścia między rozdziałami (_01 → _02).
+**Stan na 2026-08-11: rozdział `_02_oop` ROZPOCZĘTY na platformie.** Rozdział
+ma 15 lekcji (01–15, foldery `Lesson01_ClassesAndObjects` … `Lesson15_
+DesignPatterns`), już w pełni zarejestrowane w `ChapterSeedData.java`
+(slugi `01_ClassesAndObjects` … `15_DesignPatterns`) — NIE trzeba nic zmieniać
+w kodzie platformy, tylko dopisywać pliki treści `content/_02_oop/<slug>.json`.
+
+**Lekcja 1/15 (`01_ClassesAndObjects`) UKOŃCZONA w pełnej skali** — 7 bloków
+teorii (analogia "klasa jako plan architektoniczny, obiekt jako gotowy dom" —
+plan sam w sobie nie jest domem, ale z tego samego planu można zbudować wiele
+niezależnych domów; pola instancyjne vs statyczne + wartości domyślne, metody
++ sygnatura, słowo kluczowe this (odróżnianie pól od parametrów + method
+chaining), konstruktory (domyślny, przeciążanie), przeciążanie konstruktorów/
+metod statycznych, podsumowanie fundamentu OOP), 30 zadań (prompty z
+`_Exercises_Lesson01_ClassesAndObjects.java` + dopisane hint/solution — w tym
+własne implementacje Stack/Queue/SimpleLinkedList, Matrix2x2 z mnożeniem
+macierzy, niezmienna klasa Money, static factory methods (Color.ofRGB/ofHex),
+wzorzec Singleton (EventLog), object pool (ConnectionPool), fluent builder
+(Pizza)), 100 pytań quizowych w 4 paczkach po 25 (klasa vs obiekt + pola
+instancyjne/statyczne + wartości domyślne + metody + this + konstruktory +
+przeciążanie + metody statyczne; głębsze mechanizmy konstruktorów (this(...),
+brak domyślnego po zdefiniowaniu własnego) + niezmienność (Money) + Singleton
++ struktury danych Stack/Queue/LinkedList; tablice obiektów + Money jako long
+zamiast double + Fluent API + object pool + static factory methods + parsing
+hex; command vs query methods + mutowalność vs niezmienność + pamięć
+klasa/obiekt + przeciążanie sygnatur + podsumowanie całej lekcji). Wygenerowane
+tym samym, sprawdzonym workflow skryptem Node.js w scratchpadzie (walidacja
+liczby elementów + poprawności `correct`/opcji PRZED zapisem — wielokrotnie
+złapała niedobór do 25 w poszczególnych paczkach quizu, uzupełnione przed
+zapisem), scalone do
+`src/main/resources/content/_02_oop/01_ClassesAndObjects.json` (nowy katalog
+`content/_02_oop/` utworzony przy tej okazji), robocze pliki scratchpadu
+usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../_02_oop/lessons/01_ClassesAndObjects/theory` → 7;
+`.../exercises` → 30; `.../quiz` → 100 (wszystkie `correct` w zbiorze A-D,
+zero brakujących opcji); `GET .../_02_oop/lessons` → 15 lekcji, `hasContent:
+true` dla `01_ClassesAndObjects`, `false` dla pozostałych 14.
+
+**Następny krok**: `02_Encapsulation` (kolejna z 15 lekcji `_02_oop`), tym
+samym workflow (czytaj `_Exercises_Lesson02_Encapsulation.java` po prompty
+zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
+scal i zweryfikuj end-to-end, zaktualizuj tę sekcję). Użytkownik poprosił
+(2026-08-11), żeby między lekcjami/etapami NIE pytać o zgodę — kontynuować
+automatycznie ten sam rytm pracy bez przerywania na potwierdzenia; to dotyczy
+też przejścia między rozdziałami.
