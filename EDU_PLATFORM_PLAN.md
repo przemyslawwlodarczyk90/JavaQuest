@@ -671,8 +671,40 @@ weryfikacji): `.../10_HeapAndStack/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-10, `false` dla `11_TypeCasting` i
 pozostałych.
 
-**Następny krok**: `11_TypeCasting` (kolejna z 6 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson11_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 12/17 (`11_TypeCasting`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "widening jako
+przelewanie do większego naczynia, narrowing jako przelewanie do
+mniejszego" — ryzyko rozlania jako utrata danych; widening automatyczny
+byte→short→int→long→float→double, narrowing z ryzykiem obcięcia/
+przepełnienia (arytmetyka modularna, cicho bez wyjątku), upcasting zawsze
+bezpieczny vs downcasting wymagający `instanceof`+`ClassCastException`,
+konwersje String↔liczba przez `parseXxx`/`valueOf`, autoboxing/unboxing +
+pułapki `NullPointerException`/Integer Cache, konwersje char + brak
+konwersji boolean + nowoczesny `instanceof` pattern matching Java 16+),
+30 zadań (prompty z `_Exercises_Lesson11_TypeCasting.java` + dopisane hint/
+solution — w tym hierarchia Vehicle→Car→ElectricCar, tablica Object[] z
+mieszanymi typami, konwersje liczb na binarny/hex/ósemkowy), 100 pytań
+quizowych w 4 paczkach po 25 (widening/narrowing prymitywów + arytmetyka
+modularna przy przepełnieniu; upcasting/downcasting + `instanceof` +
+`ClassCastException` + `getClass()`; konwersje String↔liczba +
+autoboxing/unboxing + Integer Cache + `NumberFormatException`; konwersje
+char + brak konwersji boolean + binarna promocja numeryczna + `toHexString`/
+`toBinaryString` + klasa `Number` jako wspólna nadklasa wrapperów).
+Wygenerowane tym samym, sprawdzonym workflow skryptem Node.js w
+scratchpadzie (walidacja liczby elementów + poprawności `correct`/opcji
+PRZED zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/11_TypeCasting.json`, robocze
+pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../11_TypeCasting/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-11, `false` dla `12_BinaryAndHex` i
+pozostałych.
+
+**Następny krok**: `12_BinaryAndHex` (kolejna z 5 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson12_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
