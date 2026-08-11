@@ -516,8 +516,39 @@ weryfikacji): `.../05_Arrays/theory` → 7; `.../exercises` → 30; `.../quiz` �
 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent:
 true` dla lekcji 00-05, `false` dla `06_StringsAndBuilder` i pozostałych.
 
-**Następny krok**: `06_StringsAndBuilder` (kolejna z 11 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson06_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 7/17 (`06_StringsAndBuilder`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "String jako tekst
+wyryty w kamieniu, StringBuilder jako tablica z kredą" — niemutowalność,
+String Pool jako "wspólna biblioteka gotowych kamieni"; niemutowalność String,
+String Pool + `==` vs `equals()` + `intern()`, metody analityczne (length/
+charAt/contains/startsWith/indexOf/isEmpty/isBlank), przekształcanie tekstu
+(substring/trim/strip/replace warianty/split/join), StringBuilder jako
+mutowalna alternatywa + dlaczego wydajniejszy w pętli, przykład method
+chaining), 30 zadań (prompty z `_Exercises_Lesson06_StringsAndBuilder.java` +
+dopisane hint/solution — w tym String Pool/`intern()`, konwersja
+camelCase→snake_case, budowanie HTML przez StringBuilder, ekstrakcja liczb
+przez regex), 100 pytań quizowych w 4 paczkach po 25 (niemutowalność + String
+Pool + `==` vs `equals()` + `intern()` + konkatenacja stałych kompilowana
+statycznie; metody analityczne/wyszukujące; substring/trim vs strip/replace
+warianty/split/join/repeat/`String.format`; StringBuilder — append/insert/
+delete/replace/reverse, method chaining, StringBuffer, referencyjność).
+Wygenerowane tym samym, sprawdzonym workflow skryptem Node.js w scratchpadzie
+(walidacja liczby elementów + poprawności `correct`/opcji PRZED zapisem —
+złapała 1 samosprzeczne, źle oznaczone pytanie o `equals()` z różną
+wielkością liter, poprawione przed zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/06_StringsAndBuilder.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji — przy okazji zauważone i posprzątane 2 osierocone procesy
+`java` z wcześniejszej sesji, blokujące nic, ale warte wyczyszczenia):
+`.../06_StringsAndBuilder/theory` → 7; `.../exercises` → 30; `.../quiz` →
+100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent:
+true` dla lekcji 00-06, `false` dla `07_DateAndTime` i pozostałych.
+
+**Następny krok**: `07_DateAndTime` (kolejna z 10 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson07_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
