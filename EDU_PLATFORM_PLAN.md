@@ -461,8 +461,38 @@ robocze pliki scratchpadu usunięte po scaleniu.
 dla `00_JavaPlatformBasics`/`01_Variables`/`02_Operators`/`03_Conditionals`,
 `false` dla `04_Loops` i pozostałych.
 
-**Następny krok**: `04_Loops` (kolejna z 13 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson04_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 5/17 (`04_Loops`) UKOŃCZONA w
+pełnej skali** — 7 bloków teorii (analogia "pętle jako różne rodzaje treningu
+na siłowni" — while jako trener sprawdzający puls PRZED serią, do-while jako
+trener każący zrobić pierwszą serię zawsze; while, do-while, for, foreach,
+break vs continue, zagnieżdżone pętle na przykładzie tablicy 2D), 30 zadań
+(prompty z `_Exercises_Lesson04_Loops.java` + dopisane hint/solution — w tym
+algorytm Euklidesa, konwersja na binarny/szesnastkowy, trójkąt Pascala,
+sprawdzanie liczb pierwszych/palindromów), 100 pytań quizowych w 4 paczkach
+po 25 (while/do-while — miejsce sprawdzania warunku, gwarancja min. 1
+wykonania; klasyczny for — inicjalizacja/warunek/krok, zasięg zmiennej
+licznikowej, wielokrotna inicjalizacja przecinkami; foreach + break/continue
+— brak dostępu do indeksu, kopia wartości a nie referencja, etykietowany
+break, ConcurrentModificationException; zagnieżdżone pętle — tablice
+"zębate"/jagged arrays, złożoność O(n²), off-by-one errors,
+ArrayIndexOutOfBoundsException). Wygenerowane tym samym, sprawdzonym
+workflow skryptem Node.js w scratchpadzie (walidacja liczby elementów +
+poprawności `correct`/opcji PRZED zapisem — złapała 2 literówki w liczbie
+pytań w tej sesji, poprawione przed zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/04_Loops.json`, robocze pliki
+scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../04_Loops/theory` → 7; `.../exercises` → 30; `.../quiz` →
+100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` → `hasContent:
+true` dla lekcji 00-04, `false` dla `05_Arrays` i pozostałych.
+
+**Następny krok**: `05_Arrays` (kolejna z 12 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson05_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
+Użytkownik poprosił (2026-08-11), żeby między lekcjami/etapami NIE pytać o
+zgodę — kontynuować automatycznie ten sam rytm pracy bez przerywania na
+potwierdzenia.
