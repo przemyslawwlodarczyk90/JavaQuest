@@ -736,8 +736,41 @@ weryfikacji): `.../12_BinaryAndHex/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-12, `false` dla `13_BitwiseOperators` i
 pozostałych.
 
-**Następny krok**: `13_BitwiseOperators` (kolejna z 4 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson13_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 14/17 (`13_BitwiseOperators`)
+UKOŃCZONA w pełnej skali** — celowo NIE powtarza materiału z `12_BinaryAndHex`
+(tamta lekcja: systemy liczbowe + konwersje; ta: mechanika samych operatorów
+bitowych + głębsze algorytmy). 7 bloków teorii (analogia "operatory bitowe
+jako rząd malutkich bramek logicznych" — AND/OR/XOR jak różne typy
+przełączników korytarzowych, NOT jak dźwignia odwracająca lampki; tabele
+prawdy AND/OR/XOR, NOT + przesunięcie w lewo jako mnożenie, przesunięcie w
+prawo ze znakiem vs bez znaku, praktyczne algorytmy parzystości/wartości
+bezwzględnej bez if, XOR swap + wyodrębnianie nibble, pełny przykład systemu
+uprawnień), 30 zadań (prompty z `_Exercises_Lesson13_BitwiseOperators.java` +
+dopisane hint/solution — w tym proste szyfrowanie XOR, odwracanie bitów,
+dodawanie tylko operatorami bitowymi, pakowanie 4 wartości w jeden int,
+znajdowanie najwyższego ustawionego bitu), 100 pytań quizowych w 4 paczkach
+po 25 (AND/OR/XOR/NOT + tabele prawdy + różnica `&`/`&&`; przesunięcia `<<`/
+`>>`/`>>>` + pułapka przepełnienia + przesunięcie modulo rozmiar typu +
+`>>31` jako ekstraktor znaku; algorytmy — parzystość, wartość bezwzględna,
+XOR swap + pułapka aliasingu, nibble, potęga dwójki, liczenie bitów,
+pakowanie/rozpakowywanie bajtów; systemy flag/uprawnień + szyfrowanie XOR +
+pułapka XOR do usuwania flagi + `EnumSet` jako czytelniejsza alternatywa).
+Wygenerowane tym samym, sprawdzonym workflow skryptem Node.js w
+scratchpadzie (walidacja liczby elementów + poprawności `correct`/opcji
+PRZED zapisem — złapała 1 błąd składniowy z powielonym kluczem obiektu),
+scalone do
+`src/main/resources/content/_01_fundamentals/13_BitwiseOperators.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../13_BitwiseOperators/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-13, `false` dla `14_GarbageCollector` i
+pozostałych.
+
+**Następny krok**: `14_GarbageCollector` (kolejna z 3 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson14_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
