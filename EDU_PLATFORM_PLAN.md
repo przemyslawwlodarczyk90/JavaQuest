@@ -403,40 +403,43 @@ startowy bez `ERROR`. **Appka jest teraz dostępna pod `http://localhost:8082`
 (NIE 8080)** — zapamiętaj to przy każdym kolejnym uruchomieniu/instrukcji dla
 użytkownika.
 
-**Stan na 2026-08-10 (koniec sesji, praca przerwana W TRAKCIE lekcji 3/17):
-`02_Operators` jest CZĘŚCIOWO napisana, NIE scalona, NIE w `src/main/resources/`,
-NIE zweryfikowana, NIE zacommitowana.** Żeby nic nie przepadło, gotowe
-fragmenty zapisano w `content-drafts/_01_fundamentals/` (poza
-`src/main/resources/`, więc `LessonContentLoader` ich NIE widzi — to
-świadomie tymczasowy schowek roboczy, nie treść produkcyjna):
-- `02_Operators-theory-exercises.json` — 7 bloków teorii (analogia "operatory
-  logiczne jako bramki strzegące skarbca" + short-circuit jako "leniwy
-  strażnik") + KOMPLETNE 30 zadań (prompty z `_Exercises_Lesson02_Operators.java`
-  + hint/solution) — ta część jest GOTOWA, nic tu nie trzeba dopisywać.
-- `02_Operators-quiz-part1.json` — pytania 1-25 (GOTOWE).
-- `02_Operators-quiz-part2.json` — pytania 26-50 (GOTOWE).
-- **BRAKUJE: pytania 51-75 i 76-100** (part3/part4) — sesja przerwana dokładnie
-  w tym miejscu.
+**Stan na 2026-08-11: lekcja 3/17 (`02_Operators`) UKOŃCZONA w pełnej skali —
+dokończona dokładnie od miejsca przerwania (part1/part2 quizu i
+theory+exercises były już gotowe z poprzedniej sesji, dopisano part3/part4).**
+7 bloków teorii (bez zmian), 30 zadań (bez zmian), **100 pytań quizowych**
+(part1-2 z poprzedniej sesji: podstawy arytmetyki/inkrementacji/przypisań
+złożonych/porównań/logiki/short-circuit/priorytetu/trójkowego/bitowych
+podstaw; nowe part3-4 tej sesji: złożone wyrażenia mieszane, przepełnienie
+`int` (`Integer.MAX_VALUE+1`, `MIN_VALUE/-1`), dzielenie przez zero
+int-vs-double (`ArithmeticException` vs `Infinity`/`NaN`), `NaN != NaN`,
+promocja typu w operatorze trójkowym (`true ? intX : 2.5` → `"5.0"`),
+arytmetyka na `char`, konkatenacja `+` zależna od kolejności operandów,
+cache'owanie `Integer` (-128..127) i pułapka `==`, `>>` vs `>>>` na liczbach
+ujemnych, znak wyniku `%` (podąża za dzielną), pełna tabela priorytetów
+(`&` > `&&`, addytywne > shift, relacyjne > rówości, przypisanie/trójkowy
+najniżej), idiomy bitowe (ustawianie/czyszczenie/przełączanie bitu,
+sprawdzanie potęgi dwójki). Scalone przez ten sam skrypt Node.js co
+`01_Variables` (walidacja liczby elementów + poprawności `correct`/opcji
+PRZED zapisem), zapisane do
+`src/main/resources/content/_01_fundamentals/02_Operators.json`,
+robocze pliki `content-drafts/` USUNIĘTE po scaleniu.
 
-**Następny krok — dokończyć `02_Operators` (NIE zaczynać jej od nowa!):**
-1. Napisać `quiz02-part3.js` i `quiz02-part4.js` w scratchpadzie (po 25 pytań,
-   tematy do pokrycia: bardziej złożone wyrażenia z operatorami mieszanymi,
-   pułapki priorytetu operatorów, `Integer.toBinaryString`, operator trójkowy
-   w praktycznych scenariuszach, edge case'y arytmetyki - part1/part2 już
-   pokryły podstawy arytmetyczne/inkrementację/logiczne/bitowe/priorytet/
-   trójkowy, więc part3/4 powinny pogłębiać i różnicować, nie powtarzać).
-2. Skryptem `merge` (wzorem `merge-lesson01.js`) połączyć
-   `content-drafts/_01_fundamentals/02_Operators-theory-exercises.json` +
-   4 części quizu → zapisać do
-   `src/main/resources/content/_01_fundamentals/02_Operators.json`.
-3. Usunąć robocze pliki z `content-drafts/` (posprzątać po scaleniu, żeby nie
-   zaśmiecać repo — ten katalog to tylko tymczasowy schowek, nie ma być
-   trwałą częścią repo).
-4. Standardowa weryfikacja: `mvnw.cmd compile` + `spring-boot:run` (pamiętaj:
-   appka teraz startuje na porcie **8082**, nie 8080!) + sprawdzenie API
-   (`.../02_Operators/exercises` → 30, `.../quiz` → 100, log bez `ERROR`).
-5. Zaktualizować tę sekcję planu, zacommitować.
+**Zweryfikowane end-to-end** (kompilacja + `spring-boot:run` na porcie 8082 +
+realne żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany
+po weryfikacji): `.../02_Operators/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla `00_JavaPlatformBasics`/`01_Variables`/`02_Operators`,
+`false` dla `03_Conditionals` i pozostałych.
 
-Dopiero PO ukończeniu `02_Operators` przejść do `03_Conditionals` i kolejnych
-13 lekcji `_01_fundamentals`, tym samym workflow. Po całym `_01_fundamentals`
-(17/17) — `_02_oop` jako kolejny rozdział.
+**Decyzja z tej sesji (potwierdzona przez użytkownika)**: rytm pracy
+POZOSTAJE pionowym przekrojem lekcja-po-lekcji (teoria+30 zadań+100 quizów
+razem, dopiero potem kolejna lekcja) — NIE przechodzimy na 3 osobne obiegi
+(najpierw cała teoria, potem wszystkie zadania, potem wszystkie quizy) mimo
+rozważenia tej opcji. Powód: każda ukończona lekcja jest od razu w pełni
+użyteczna w appce, mniejsze ryzyko przy przerwaniu sesji w połowie.
+
+**Następny krok**: `03_Conditionals` (kolejna z 14 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson03_*.java`
+po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
+mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
+Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
