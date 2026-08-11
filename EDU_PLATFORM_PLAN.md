@@ -703,8 +703,41 @@ weryfikacji): `.../11_TypeCasting/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-11, `false` dla `12_BinaryAndHex` i
 pozostałych.
 
-**Następny krok**: `12_BinaryAndHex` (kolejna z 5 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson12_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 13/17 (`12_BinaryAndHex`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "systemy liczbowe
+jako różne alfabety liczenia" — dziesiętny jak palce obu rąk, binarny jak
+rząd przełączników światła, hex jako skrót grupujący 4 bity naraz; system
+binarny + wartości pozycyjne, system szesnastkowy + dlaczego 1 cyfra hex =
+4 bity, konwersje przez `Integer.toBinaryString`/`toHexString`/`parseInt`
+z podstawą, literały `0b`/`0x`/wiodące zero + podkreślenia jako separator,
+system ósemkowy + pułapka przypadkowego wiodącego zera, praktyczny przykład
+flag bitowych z formatowaniem `String.format`+`replace`), 30 zadań (prompty
+z `_Exercises_Lesson12_BinaryAndHex.java` + dopisane hint/solution — w tym
+parser koloru HTML, ręczna konwersja dziesiętny↔binarny bez wbudowanych
+metod, pakowanie/rozpakowywanie RGB przez przesunięcia bitowe, sprawdzanie
+potęgi dwójki, licznik bitów, kalkulator binarny AND/OR/XOR), 100 pytań
+quizowych w 4 paczkach po 25 (system binarny — wartości pozycyjne, literały
+`0b`, `toBinaryString`/`parseInt`; system hex + literały `0x` + system
+ósemkowy + pułapka wiodącego zera; konwersje krzyżowe przez wspólny
+mianownik dziesiętny + parser kolorów RGB + ręczne algorytmy konwersji +
+`Integer.bitCount`; flagi bitowe — sprawdzanie/ustawianie/czyszczenie/
+przełączanie bitu, sprawdzanie potęgi dwójki, bitmaski uprawnień, oszczędność
+pamięci względem `boolean[]`). Wygenerowane tym samym, sprawdzonym workflow
+skryptem Node.js w scratchpadzie (walidacja liczby elementów + poprawności
+`correct`/opcji PRZED zapisem — złapała 1 niedokończone, samosprzeczne
+wyjaśnienie z resztkami "obliczania na głos", poprawione przed zapisem),
+scalone do `src/main/resources/content/_01_fundamentals/12_BinaryAndHex.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../12_BinaryAndHex/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-12, `false` dla `13_BitwiseOperators` i
+pozostałych.
+
+**Następny krok**: `13_BitwiseOperators` (kolejna z 4 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson13_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
