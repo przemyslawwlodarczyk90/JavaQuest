@@ -799,12 +799,48 @@ weryfikacji): `.../14_GarbageCollector/theory` → 7; `.../exercises` → 30;
 `GET .../lessons` → `hasContent: true` dla lekcji 00-14, `false` dla
 `15_RandomAndSecureRandom` i pozostałych.
 
-**Następny krok**: `15_RandomAndSecureRandom` (przedostatnia z pozostałych
-lekcji `_01_fundamentals`), tym samym workflow (czytaj
-`_Exercises_Lesson15_RandomAndSecureRandom.java` po prompty zadań, generuj
-treść skryptem Node.js w scratchpadzie w mniejszych częściach, scal i
-zweryfikuj end-to-end, zaktualizuj tę sekcję). Potem `16_Exceptions` jako
-ostatnia lekcja rozdziału. Po całym `_01_fundamentals` (17/17) — `_02_oop`
-jako kolejny rozdział. Użytkownik poprosił (2026-08-11), żeby między
-lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
-pracy bez przerywania na potwierdzenia.
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 16/17 (`15_RandomAndSecureRandom`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "losowość jako rzut
+kostką (Random) vs sejf bankowy generujący PIN (SecureRandom)" — Random jako
+pseudolosowy i przewidywalny przy znajomości seeda, SecureRandom jako
+kryptograficznie bezpieczny; Math.random() i jego ograniczenia, Random z
+pełną kontrolą (zakresy, seed, powtarzalność testów), losowanie elementu z
+listy + Collections.shuffle() + algorytm Fishera-Yatesa, ThreadLocalRandom
+dla środowisk wielowątkowych, SecureRandom + źródła entropii systemowej,
+podsumowująca tabela decyzyjna "którego generatora użyć"), 30 zadań (prompty
+z `_Exercises_Lesson15_RandomAndSecureRandom.java` + dopisane hint/solution —
+w tym symulacja rzutu kostką/monetą, losowanie Lotto z unikalnością, hasła i
+tokeny przez SecureRandom, random walk, aproksymacja Pi metodą Monte Carlo,
+rozkład Gaussa/IQ, porównanie wydajności Random vs SecureRandom), 100 pytań
+quizowych w 4 paczkach po 25 (Math.random()/Random podstawy — przedziały,
+seed, powtarzalność, losowanie z kolekcji, Collections.shuffle;
+ThreadLocalRandom + zakresy + pułapki typu duplikaty w losowaniu Lotto +
+Arrays.asList vs List.of przy shuffle; SecureRandom w głąb — CSPRNG, źródła
+entropii, nextBytes, generowanie haseł/tokenów/OTP, dobre praktyki
+bezpieczeństwa przy przechowywaniu haseł w pamięci; algorytmy praktyczne —
+metoda Monte Carlo dla Pi, histogramy statystyczne, budowa talii kart, random
+walk, rozkład Gaussa, podsumowanie całej lekcji). Wygenerowane tym samym,
+sprawdzonym workflow skryptem Node.js w scratchpadzie (walidacja liczby
+elementów + poprawności `correct`/opcji PRZED zapisem — kilkukrotnie złapała
+niedobór do 25 w poszczególnych paczkach quizu, uzupełnione przed zapisem),
+scalone do
+`src/main/resources/content/_01_fundamentals/15_RandomAndSecureRandom.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../15_RandomAndSecureRandom/theory` → 7; `.../exercises` →
+30; `.../quiz` → 100 (wszystkie `correct` w zbiorze A-D, zero brakujących
+opcji); `GET .../lessons` → `hasContent: true` dla lekcji 00-15, `false` dla
+`16_Exceptions` (ostatnia lekcja rozdziału).
+
+**Następny krok**: `16_Exceptions` (OSTATNIA z 17 lekcji `_01_fundamentals`),
+tym samym workflow (czytaj `_Exercises_Lesson16_Exceptions.java` po prompty
+zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
+scal i zweryfikuj end-to-end, zaktualizuj tę sekcję). Po ukończeniu tej
+lekcji `_01_fundamentals` będzie w 100% ukończony (17/17) — `_02_oop` jako
+kolejny rozdział (brak jeszcze szczegółowego planu lekcja-po-lekcji dla
+`_02_oop` w tym pliku — trzeba go rozpocząć od zera po ukończeniu `_01`).
+Użytkownik poprosił (2026-08-11), żeby między lekcjami/etapami NIE pytać o
+zgodę — kontynuować automatycznie ten sam rytm pracy bez przerywania na
+potwierdzenia.
