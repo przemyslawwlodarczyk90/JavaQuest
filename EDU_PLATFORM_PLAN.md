@@ -577,8 +577,37 @@ weryfikacji): `.../07_DateAndTime/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-07, `false` dla `08_MathOperations` i
 pozostałych.
 
-**Następny krok**: `08_MathOperations` (kolejna z 9 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson08_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 9/17 (`08_MathOperations`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "klasa Math jako
+skrzynka narzędziowa na ścianie warsztatu" — wszystkie metody statyczne, bez
+`new Math()`; podstawowe operacje abs/max/min, potęgowanie i pierwiastki
+pow/sqrt/cbrt, zaokrąglanie ceil/floor/round/rint z pułapką "round half to
+even", trygonometria + `toRadians`/`toDegrees`, logarytmy/`exp`/stałe PI i E,
+`Math.random()` + wzorzec generowania zakresu), 30 zadań (prompty z
+`_Exercises_Lesson08_MathOperations.java` + dopisane hint/solution — w tym
+metoda Newtona dla pierwiastka, aproksymacja Pi metodą Monte Carlo, procent
+składany, odchylenie standardowe, odległość euklidesowa), 100 pytań
+quizowych w 4 paczkach po 25 (abs/max/min + pow/sqrt/cbrt w tym pułapka
+`Math.abs(Integer.MIN_VALUE)`; zaokrąglanie — różnica `round()` vs `rint()`
+przy `.5`, `ceil`/`floor` dla liczb ujemnych, `(int)` rzutowanie vs
+`Math.floor()`; trygonometria/logarytmy/stałe — radiany vs stopnie, brak
+wbudowanego log o dowolnej podstawie; `Math.random()` + zastosowania
+praktyczne — wzorzec zakresu, Monte Carlo, metoda Newtona, `SecureRandom`
+jako właściwy wybór kryptograficzny). Wygenerowane tym samym, sprawdzonym
+workflow skryptem Node.js w scratchpadzie (walidacja liczby elementów +
+poprawności `correct`/opcji PRZED zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/08_MathOperations.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../08_MathOperations/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-08, `false` dla `09_BigNumberTypes` i
+pozostałych.
+
+**Następny krok**: `09_BigNumberTypes` (kolejna z 8 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson09_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
