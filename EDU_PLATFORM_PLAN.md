@@ -639,8 +639,40 @@ weryfikacji): `.../09_BigNumberTypes/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-09, `false` dla `10_HeapAndStack` i
 pozostałych.
 
-**Następny krok**: `10_HeapAndStack` (kolejna z 7 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson10_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 11/17 (`10_HeapAndStack`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "Stack jako plecak na
+wycieczkę per wywołanie metody, Heap jako wspólny magazyn z kwitami" —
+plecak oddawany natychmiast po zakończeniu metody, paczka w magazynie żyje
+dopóki istnieje choć jeden kwit; stos jako ramki LIFO, sterta jako
+współdzielona pula obiektów, Java ZAWSZE pass-by-value (dla obiektów: kopia
+referencji, nie obiektu), modyfikacja pola obiektu vs przypisanie nowej
+referencji wewnątrz metody, Garbage Collector + `System.gc()` jako tylko
+sugestia, przykład Dog z modifyPrimitive/modifyObject), 30 zadań (prompty z
+`_Exercises_Lesson10_HeapAndStack.java` + dopisane hint/solution — w tym
+Integer Cache, płytka vs głęboka kopia macierzy, diagnostyka pamięci przez
+`Runtime`, `printStackTrace()` bez `throw`, porównanie wydajności String `+`
+vs StringBuilder), 100 pytań quizowych w 4 paczkach po 25 (stos — ramki,
+LIFO, StackOverflowError, per-wątek; sterta + Garbage Collector — GC roots,
+osiągalność, `System.gc()` jako sugestia, wycieki pamięci przez statyczne
+kolekcje; przekazywanie argumentów — pass-by-value dla prymitywów i
+referencji, modyfikacja pola vs reassignment, niemożność "prawdziwego" swap;
+Integer Cache + płytka/głęboka kopia + method chaining + diagnostyka pamięci
++ podsumowanie całej lekcji). Wygenerowane tym samym, sprawdzonym workflow
+skryptem Node.js w scratchpadzie (walidacja liczby elementów + poprawności
+`correct`/opcji PRZED zapisem — złapała 1 literówkę w wyjaśnieniu
+`maxMemory()`, poprawioną przed zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/10_HeapAndStack.json`, robocze
+pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../10_HeapAndStack/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-10, `false` dla `11_TypeCasting` i
+pozostałych.
+
+**Następny krok**: `11_TypeCasting` (kolejna z 6 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson11_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
