@@ -910,8 +910,43 @@ weryfikacji): `.../_02_oop/lessons/01_ClassesAndObjects/theory` → 7;
 zero brakujących opcji); `GET .../_02_oop/lessons` → 15 lekcji, `hasContent:
 true` dla `01_ClassesAndObjects`, `false` dla pozostałych 14.
 
-**Następny krok**: `02_Encapsulation` (kolejna z 15 lekcji `_02_oop`), tym
-samym workflow (czytaj `_Exercises_Lesson02_Encapsulation.java` po prompty
+**Lekcja 2/15 (`02_Encapsulation`) UKOŃCZONA w pełnej skali** — 7 bloków
+teorii (analogia "enkapsulacja jako bankomat, a nie sejf z otwartymi
+drzwiami" — bankomat udostepnia TYLKO kontrolowane operacje z wbudowaną
+walidacją, zamiast bezposredniego dostępu do gotówki; zasada private
+fields + public methods, gettery/settery + konwencje nazewnictwa
+(get/is), zarys modyfikatorów dostępu, walidacja w setterach (ignoruj/
+ustaw domyślną/rzuć wyjątek), computed gettery (obliczanie zamiast
+przechowywania), podsumowanie), 30 zadań (prompty z
+`_Exercises_Lesson02_Encapsulation.java` + dopisane hint/solution — w tym
+defensive copy (SafeData, DateContainer), SecurePassword bez gettera dla
+hasła, lazy initialization (ExpensiveData), wzorzec Builder (ServerConfig),
+w pełni niezmienna klasa Money, SimpleCache, TrafficLight jako maszyna
+stanów, PriceHistory z analizą trendu), 100 pytań quizowych w 4 paczkach
+po 25 (podstawy enkapsulacji + gettery/settery + konwencje + modyfikatory
+dostępu + walidacja podstawowa; defensive copy + wyciek referencji +
+SecurePassword + lazy init + wzorzec Builder + BoundedList; niezmienność
+(Money) głębiej + protected vs private + zasada minimalnego dostępu +
+setter z wieloma parametrami + złożoność algorytmiczna SimpleCache;
+podsumowanie całej lekcji + relacja do Lesson09/Lesson14 + enkapsulacja
+jako uniwersalny koncept OOP + styl API boolean vs wyjątek). Wygenerowane
+tym samym, sprawdzonym workflow skryptem Node.js w scratchpadzie
+(walidacja liczby elementów + poprawności `correct`/opcji PRZED zapisem —
+złapała 1 przypadkowo wpisany fragment cyrylicą w rozwiązaniu zadania 30,
+poprawione przed zapisem; wielokrotnie uzupełniała niedobór do 25 w
+poszczególnych paczkach quizu), scalone do
+`src/main/resources/content/_02_oop/02_Encapsulation.json`, robocze pliki
+scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../_02_oop/lessons/02_Encapsulation/theory` → 7;
+`.../exercises` → 30; `.../quiz` → 100 (wszystkie `correct` w zbiorze A-D,
+zero brakujących opcji); `GET .../_02_oop/lessons` → `hasContent: true` dla
+`01_ClassesAndObjects`/`02_Encapsulation`, `false` dla pozostałych 13.
+
+**Następny krok**: `03_Constructors` (kolejna z 15 lekcji `_02_oop`), tym
+samym workflow (czytaj `_Exercises_Lesson03_Constructors.java` po prompty
 zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
 scal i zweryfikuj end-to-end, zaktualizuj tę sekcję). Użytkownik poprosił
 (2026-08-11), żeby między lekcjami/etapami NIE pytać o zgodę — kontynuować
