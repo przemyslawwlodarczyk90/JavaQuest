@@ -769,11 +769,42 @@ weryfikacji): `.../13_BitwiseOperators/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-13, `false` dla `14_GarbageCollector` i
 pozostałych.
 
-**Następny krok**: `14_GarbageCollector` (kolejna z 3 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson14_*.java`
-po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
-mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
-Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
-Użytkownik poprosił (2026-08-11), żeby między lekcjami/etapami NIE pytać o
-zgodę — kontynuować automatycznie ten sam rytm pracy bez przerywania na
-potwierdzenia.
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 15/17 (`14_GarbageCollector`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "GC jako dozorca
+budynku sprawdzający, kto jeszcze mieszka" — dozorca NIE wyrzuca lokatora,
+dopóki choć jeden klucz/referencja do niego istnieje; osiągalność obiektów +
+GC roots, `WeakReference` jako "klucz, który nie liczy się dla dozorcy",
+`SoftReference` jako "trzymaj, dopóki nie brakuje miejsca", deprecated
+`finalize()` + dlaczego jest niebezpieczny/nieprzewidywalny, `AutoCloseable`
++ try-with-resources jako właściwa alternatywa dla sprzątania zasobów, mity
+vs fakty o GC + wycieki pamięci w Javie mimo automatycznego GC), 30 zadań
+(prompty z `_Exercises_Lesson14_GarbageCollector.java` + dopisane hint/
+solution), 100 pytań quizowych w 4 paczkach po 25 (osiągalność + GC roots +
+podstawy działania GC; `WeakReference`/`SoftReference`/`PhantomReference` w
+głąb — różnice zastosowań, `ReferenceQueue`, WeakHashMap; deprecacja
+`finalize()` + `AutoCloseable`/try-with-resources jako zamiennik;
+mity vs fakty o GC + wzorce wycieków pamięci — statyczne kolekcje, listenery,
+`ThreadLocal`, monitoring przez `Runtime` + nawiązanie podsumowujące do
+`10_HeapAndStack`). Wygenerowane tym samym, sprawdzonym workflow skryptem
+Node.js w scratchpadzie (walidacja liczby elementów + poprawności
+`correct`/opcji PRZED zapisem — kilkukrotnie złapała niedobór do 25 w
+poszczególnych paczkach quizu, uzupełnione przed zapisem), scalone do
+`src/main/resources/content/_01_fundamentals/14_GarbageCollector.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../14_GarbageCollector/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D, zero brakujących opcji);
+`GET .../lessons` → `hasContent: true` dla lekcji 00-14, `false` dla
+`15_RandomAndSecureRandom` i pozostałych.
+
+**Następny krok**: `15_RandomAndSecureRandom` (przedostatnia z pozostałych
+lekcji `_01_fundamentals`), tym samym workflow (czytaj
+`_Exercises_Lesson15_RandomAndSecureRandom.java` po prompty zadań, generuj
+treść skryptem Node.js w scratchpadzie w mniejszych częściach, scal i
+zweryfikuj end-to-end, zaktualizuj tę sekcję). Potem `16_Exceptions` jako
+ostatnia lekcja rozdziału. Po całym `_01_fundamentals` (17/17) — `_02_oop`
+jako kolejny rozdział. Użytkownik poprosił (2026-08-11), żeby między
+lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
+pracy bez przerywania na potwierdzenia.
