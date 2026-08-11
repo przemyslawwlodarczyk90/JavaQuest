@@ -606,8 +606,41 @@ weryfikacji): `.../08_MathOperations/theory` → 7; `.../exercises` → 30;
 `hasContent: true` dla lekcji 00-08, `false` dla `09_BigNumberTypes` i
 pozostałych.
 
-**Następny krok**: `09_BigNumberTypes` (kolejna z 8 pozostałych lekcji
-`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson09_*.java`
+**Stan na 2026-08-11 (ciąg dalszy): lekcja 10/17 (`09_BigNumberTypes`)
+UKOŃCZONA w pełnej skali** — 7 bloków teorii (analogia "BigInteger/
+BigDecimal jako nieskończona kartka papieru, int/double jako mały kalkulator
+kieszonkowy" — twardy limit kalkulatora vs ręczne liczenie bez ograniczeń;
+BigInteger podstawy, operacje na BigInteger metodami nie operatorami,
+dlaczego NIE double dla pieniędzy (binarna niedokładność 0.1+0.2), dzielenie
+BigDecimal wymaga RoundingMode, pułapka `equals()` vs `compareTo()` przy
+różnej skali, praktyczny VAT + obsługa dzielenia przez zero), 30 zadań
+(prompty z `_Exercises_Lesson09_BigNumberTypes.java` + dopisane hint/
+solution — w tym silnia 50!, 100. liczba Fibonacciego, aproksymacja Pi
+szeregiem Leibniza, kalkulator raty kredytu hipotecznego, konwersja walut),
+100 pytań quizowych w 4 paczkach po 25 (BigInteger podstawy — brak
+operatorów, niemutowalność, `pow`/`gcd`/`isProbablePrime`, cicha utrata
+precyzji przy `intValue()`; BigDecimal podstawy — dlaczego nie double,
+tworzenie ZAWSZE ze Stringa nie z double, `ArithmeticException` przy
+nieskończonym rozwinięciu dziesiętnym, pułapka skali w `equals()`;
+RoundingMode szczegółowo — HALF_UP/HALF_DOWN/HALF_EVEN/FLOOR/CEILING/UP/DOWN,
+bankierskie zaokrąglanie, konwersje, obliczenia finansowe; algorytmy
+zaawansowane — silnia/Fibonacci/szereg Leibniza/rata kredytu + przegląd
+mieszany różnic BigInteger vs BigDecimal). Wygenerowane tym samym,
+sprawdzonym workflow skryptem Node.js w scratchpadzie (walidacja liczby
+elementów + poprawności `correct`/opcji PRZED zapisem — złapała 1 pytanie z
+niedokończonym, samosprzecznym tekstem opcji, poprawione przed zapisem),
+scalone do `src/main/resources/content/_01_fundamentals/09_BigNumberTypes.json`,
+robocze pliki scratchpadu usunięte po scaleniu.
+
+**Zweryfikowane end-to-end** (`spring-boot:run` na porcie 8082 + realne
+żądania HTTP, log startowy bez `ERROR`, proces zatrzymany i posprzątany po
+weryfikacji): `.../09_BigNumberTypes/theory` → 7; `.../exercises` → 30;
+`.../quiz` → 100 (wszystkie `correct` w zbiorze A-D); `GET .../lessons` →
+`hasContent: true` dla lekcji 00-09, `false` dla `10_HeapAndStack` i
+pozostałych.
+
+**Następny krok**: `10_HeapAndStack` (kolejna z 7 pozostałych lekcji
+`_01_fundamentals`), tym samym workflow (czytaj `_Exercises_Lesson10_*.java`
 po prompty zadań, generuj treść skryptem Node.js w scratchpadzie w
 mniejszych częściach, scal i zweryfikuj end-to-end, zaktualizuj tę sekcję).
 Po całym `_01_fundamentals` (17/17) — `_02_oop` jako kolejny rozdział.
