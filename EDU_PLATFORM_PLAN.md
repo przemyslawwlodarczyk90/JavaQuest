@@ -1050,18 +1050,33 @@ DOPIERO PO ich zakończeniu. Polling samego `/api/chapters` do statusu 200
 już wcześniej znany endpoint treści (np. `.../04_StaticKeyword/quiz`) aż
 zwróci PEŁNĄ, oczekiwaną liczbę elementów (100), nie tylko kod 200.**
 
-**Następny krok**: `07_AbstractClasses` (kolejna z 15 lekcji `_02_oop`), tym
-samym workflow (czytaj `_Exercises_Lesson07_AbstractClasses.java` po prompty
-zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach
-— UWAGA na powtarzającą się pułapkę: KAŻDA sekcja pytań quizowych dopisywana
-osobną edycją MUSI kończyć się PRZECINKIEM, nie średnikiem/`];`, bo tablica
-`quiz` jest kontynuowana w kolejnej edycji — dopiero OSTATNIA sekcja kończy
-się `];` przed blokiem walidacji, scal, ZRESTARTUJ `spring-boot:run`, ale
-sprawdzaj gotowość WŁAŚCIWYM sposobem opisanym wyżej (nie samym kodem 200
-z `/api/chapters`), zweryfikuj end-to-end, zaktualizuj tę sekcję). Po
-ukończeniu `_02_oop` (9 lekcji do końca: 07-15), rozważyć w kolejnej sesji
-naprawienie diakrytyków w 20 istniejących lekcjach (patrz wyżej). Użytkownik
-poprosił (2026-08-11 i dwukrotnie ponownie 2026-08-12), żeby między
-lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
-pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
-rozdziałami.
+**Stan na 2026-08-12 (ciąg dalszy): `07_AbstractClasses` też DOKOŃCZONE**
+(7/15 lekcji `_02_oop` gotowe: 01-07). Zweryfikowane RAZEM z 04-06 po jednym
+restarcie (regresja potwierdzona — wszystkie cztery nadal 7/30/100).
+
+**WAŻNA, POWTARZAJĄCA SIĘ pułapka przy pisaniu quizu (wystąpiła 3x pod rząd
+w tej sesji — 05, 06, 07) — ZASADA NA PRZYSZŁOŚĆ, żeby przestać na nią
+wpadać**: dopisywanie kolejnych 10-20 pytań do tablicy `quiz` przez Edit
+(dopasowanie starego fragmentu kończącego się `if (quiz.length...)`) jest
+mylące, bo TEN fragment zwykle jest poprzedzony przez `];` zamykające tablicę
+— podmiana samego bloku walidacji zostawia `];` NA MIEJSCU, więc nowe pytania
+lądują POZA tablicą (błąd składni `Unexpected token ':'`). **Poprawny,
+niezawodny sposób: napisz CAŁĄ tablicę `quiz` (wszystkie 100 pytań) w JEDNYM
+wywołaniu Write, bez późniejszych doklejań przez Edit** — jeśli mimo to
+trzeba dopisać brakujące pytania (bo np. przeliczyłeś się przy pisaniu), przy
+Edit ZAWSZE jawnie sprawdź (`grep -n "^\];"`), czy `];` nie zostało
+"osierocone" w środku pliku, i usuń/przesuń je RĘCZNIE do nowego końca tablicy
+— nie polegaj na tym, że stary fragment dopasowania obejmował go automatycznie.
+
+**Następny krok**: `08_Interfaces` (kolejna z 15 lekcji `_02_oop`), tym samym
+workflow (czytaj `_Exercises_Lesson08_Interfaces.java` po prompty zadań,
+napisz teorię+zadania w gen08.js i CAŁY quiz w JEDNYM pliku/Write - patrz
+zasada wyżej, scal, ZRESTARTUJ `spring-boot:run`, sprawdzaj gotowość przez
+polling KONKRETNEGO endpointu treści aż zwróci pełną liczbę elementów - patrz
+wcześniejsza notatka o `/api/chapters` dającym fałszywie dodatni sygnał,
+zweryfikuj end-to-end, zaktualizuj tę sekcję). Po ukończeniu `_02_oop` (8
+lekcji do końca: 08-15), rozważyć w kolejnej sesji naprawienie diakrytyków w
+20 istniejących lekcjach (patrz wyżej). Użytkownik poprosił (2026-08-11 i
+dwukrotnie ponownie 2026-08-12), żeby między lekcjami/etapami NIE pytać o
+zgodę — kontynuować automatycznie ten sam rytm pracy bez przerywania na
+potwierdzenia; to dotyczy też przejścia między rozdziałami.
