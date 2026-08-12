@@ -75,8 +75,14 @@ public class _Lesson12_DistributedTracingWithZipkin {
             System.out.println("FAKTYCZNIE wyslalby spany, Z przyjaznym komunikatem ZAMIAST bledu.");
         }
 
+        // "--spring.autoconfigure.exclude=" (pusty string) PRZYWRACA ZipkinAutoConfiguration -
+        // globalnie WYLACZONA W application.properties (patrz komentarz tamze), bo bez niej KAZDA
+        // dlugo dzialajaca aplikacja W repo (NP. platforma edukacyjna) SPAMOWALABY W konsoli
+        // cyklicznymi "Connection refused" PRZY braku dzialajacego Zipkina. TA lekcja - jako
+        // JEDYNA - FAKTYCZNIE demonstruje probe wysylki spanow, WIEC jawnie ja tu przywraca.
         ConfigurableApplicationContext context = new SpringApplicationBuilder(DemoApp.class)
                 .run(
+                        "--spring.autoconfigure.exclude=",
                         "--spring.application.name=orders-service",
                         "--server.port=0",
                         "--management.tracing.sampling.probability=1.0",

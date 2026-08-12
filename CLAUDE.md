@@ -2699,6 +2699,22 @@ projekcie):**
    `--eureka.client.enabled=false` jawnie w `.run(...)` TEGO KONKRETNEGO kontekstu (argument
    wiersza poleceń MA WYŻSZY priorytet niż System property, więc lokalnie nadpisuje globalne
    `true`).
+7. **(Dopisane 2026-08-12, ODKRYTE PO FAKCIE, na żywej platformie edukacyjnej, nie podczas
+   pisania lekcji) `micrometer-tracing-bridge-brave`+`zipkin-reporter-brave` na WSPÓLNYM
+   classpath sprawiają, że KAŻDA aplikacja Spring Boot w repo z aktywnym tracingiem (Boot
+   domyślnie próbkuje `management.tracing.sampling.probability=0.10`, WIĘC dzieje się to NAWET
+   BEZ jawnej konfiguracji) asynchronicznie próbuje wysyłać spany na `localhost:9411/api/v2/spans`
+   — przy braku Zipkina daje to CYKLICZNE, pełne stack trace'y "Connection refused" w konsoli.
+   Dla krótkotrwałych demo lekcji (`exec:java` kończy się szybko) to niemal niezauważalne, ale
+   DLA DŁUGO działającej platformy edukacyjnej (`com.example.javaquest.web.JavaQuestApplication`)
+   to ciągły spam w logu. Naprawa: `org.springframework.boot.actuate.autoconfigure.tracing.
+   zipkin.ZipkinAutoConfiguration` dodana do globalnego `spring.autoconfigure.exclude` w
+   `application.properties` (Tracer/BraveAutoConfiguration ZOSTAJE aktywny — Lesson11/18/19 dalej
+   poprawnie tworzą i wypisują spany/traceId, tylko nikt nie próbuje ich nigdzie wysyłać).
+   `_31_spring_cloud_microservices/Lesson12_DistributedTracingWithZipkin` — JEDYNA lekcja, która
+   FAKTYCZNIE demonstruje próbę wysyłki (z przyjaznym fallbackiem gdy Zipkin niedostępny) —
+   jawnie przywraca ją przez `"--spring.autoconfigure.exclude="` (pusty string) w swoim
+   `.run(...)`, TYM SAMYM wzorcem co Security w `_24_spring_security`.**
 
 Kolejność logiczna zaplanowanego łuku `_29`→`_30`→`_31` (Reactive najbardziej samodzielny,
 Messaging/Async buduje częściowo na nim, Cloud/mikroserwisy najbardziej złożony i zamykający
