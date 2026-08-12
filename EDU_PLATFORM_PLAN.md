@@ -1035,13 +1035,33 @@ biało-fioletowej) — poprzednia wersja mieszała hardkodowane kolory
 light-mode z prawdziwymi zmiennymi dark-mode, dając biały tekst/przyciski na
 ciemnym tle.
 
-**Następny krok**: `06_Polymorphism` (kolejna z 15 lekcji `_02_oop`), tym
-samym workflow (czytaj `_Exercises_Lesson06_Polymorphism.java` po prompty
-zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
-scal, ZRESTARTUJ `spring-boot:run` (patrz uwaga wyżej!), zweryfikuj
-end-to-end, zaktualizuj tę sekcję). Po ukończeniu `_02_oop` (10 lekcji do
-końca: 06-15), rozważyć w kolejnej sesji naprawienie diakrytyków w 20
-istniejących lekcjach (patrz wyżej). Użytkownik poprosił (2026-08-11 i
-ponownie 2026-08-12), żeby między lekcjami/etapami NIE pytać o zgodę —
-kontynuować automatycznie ten sam rytm pracy bez przerywania na
-potwierdzenia; to dotyczy też przejścia między rozdziałami.
+**Stan na 2026-08-12 (ciąg dalszy): `06_Polymorphism` też DOKOŃCZONE** (6/15
+lekcji `_02_oop` gotowe: 01-06). Zweryfikowane RAZEM z 04 i 05 po jednym
+restarcie (regresja potwierdzona - wszystkie trzy nadal 7/30/100).
+
+**Pułapka odkryta przy weryfikacji tej partii**: `GET /api/chapters`
+zaczyna zwracać 200 ZANIM `LessonContentLoader` (`ApplicationRunner`,
+`@Order(2)`) zdąży skończyć seedowanie treści — embedded Tomcat startuje
+i przyjmuje połączenia JUŻ W TRAKCIE wykonywania `ApplicationRunner`-ów, nie
+DOPIERO PO ich zakończeniu. Polling samego `/api/chapters` do statusu 200
+(jak robiono dotychczas) daje więc FAŁSZYWIE dodatni sygnał gotowości —
+`.../quiz` może chwilowo zwracać `[]` (0 elementów), mimo że serwer już
+"odpowiada". **Poprawny sposób sprawdzania gotowości: pollować KONKRETNY,
+już wcześniej znany endpoint treści (np. `.../04_StaticKeyword/quiz`) aż
+zwróci PEŁNĄ, oczekiwaną liczbę elementów (100), nie tylko kod 200.**
+
+**Następny krok**: `07_AbstractClasses` (kolejna z 15 lekcji `_02_oop`), tym
+samym workflow (czytaj `_Exercises_Lesson07_AbstractClasses.java` po prompty
+zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach
+— UWAGA na powtarzającą się pułapkę: KAŻDA sekcja pytań quizowych dopisywana
+osobną edycją MUSI kończyć się PRZECINKIEM, nie średnikiem/`];`, bo tablica
+`quiz` jest kontynuowana w kolejnej edycji — dopiero OSTATNIA sekcja kończy
+się `];` przed blokiem walidacji, scal, ZRESTARTUJ `spring-boot:run`, ale
+sprawdzaj gotowość WŁAŚCIWYM sposobem opisanym wyżej (nie samym kodem 200
+z `/api/chapters`), zweryfikuj end-to-end, zaktualizuj tę sekcję). Po
+ukończeniu `_02_oop` (9 lekcji do końca: 07-15), rozważyć w kolejnej sesji
+naprawienie diakrytyków w 20 istniejących lekcjach (patrz wyżej). Użytkownik
+poprosił (2026-08-11 i dwukrotnie ponownie 2026-08-12), żeby między
+lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
+pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
+rozdziałami.
