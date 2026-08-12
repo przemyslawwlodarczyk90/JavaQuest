@@ -1099,21 +1099,37 @@ upewnij się, że jest DOKŁADNIE JEDNO wystąpienie `];` w całym pliku, tuż
 przed `if (quiz.length...)` - nie polegaj na tym, że Edit "na pewno" trafił
 we właściwe miejsce.**
 
-**Następny krok**: `11_ObjectClass` (kolejna z 15 lekcji `_02_oop`), tym
-samym, sprawdzonym workflow: czytaj `_Exercises_Lesson11_ObjectClass.java`
-po prompty zadań, napisz `gen11.js` (teoria 7 bloków + 30 zadań) i CAŁY
-`quiz11.js` (100 pytań, docelowo w JEDNYM Write - jeśli trzeba dopisywać
-brakujące pytania, patrz zaostrzona zasada wyżej), scal do
-`src/main/resources/content/_02_oop/11_ObjectClass.json`, ZRESTARTUJ
+**Stan na 2026-08-12 (ciąg dalszy): `11_ObjectClass` też DOKOŃCZONE**
+(11/15 lekcji `_02_oop` gotowe: 01-11). `quiz11.js` napisany JEDNYM Write i
+zwalidowany bezbłędnie za pierwszym razem (bez pułapki osieroconego `]` -
+zaostrzona zasada z lekcji 10 nie była nawet potrzebna). Zweryfikowane API
+end-to-end dla WSZYSTKICH 8 lekcji tej sesji (04-11) po jednym restarcie
+backendu - każda: theory=7, exercises=30, quiz=100, zero regresji. Playwright
+screenshot pominięty w tym kroku (frontend dev server nie był akurat
+uruchomiony, a wizualna poprawność quizu była już zweryfikowana wcześniej w
+tej sesji przy naprawie buga pustej strony) - do rozważenia w kolejnym kroku,
+jeśli dev server będzie już uruchomiony.
+
+**Następny krok**: `12_InnerClasses` (kolejna z 15 lekcji `_02_oop`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson12_InnerClasses.java` i
+`_Exercises_Lesson12_InnerClasses.java` po treść/prompty zadań, napisz
+`gen12.js` (teoria 7 bloków + 30 zadań) i CAŁY `quiz12.js` (100 pytań,
+docelowo w JEDNYM Write - jeśli trzeba dopisywać brakujące pytania, ZAWSZE
+`grep -n "^\];"` przed i po edycji, dokładnie JEDNO wystąpienie tuż przed
+`if (quiz.length...)`), scal do
+`src/main/resources/content/_02_oop/12_InnerClasses.json`, ZRESTARTUJ
 `spring-boot:run` (Stop-Process na PID z portu 8082 + Start-Process mvnw.cmd
 spring-boot:run w tle z $env:JAVA_HOME ustawionym), sprawdzaj gotowość przez
-polling KONKRETNEGO endpointu treści (np. `.../04_StaticKeyword/quiz`) aż
-zwróci pełną liczbę elementów - NIE samym kodem 200 z `/api/chapters`,
-zweryfikuj end-to-end (API dla WSZYSTKICH dotychczas gotowych lekcji +
-Playwright screenshot nowej), zaktualizuj tę sekcję. Po ukończeniu `_02_oop`
-(5 lekcji do końca: 11-15), rozważyć w kolejnej sesji naprawienie
-diakrytyków w 20 istniejących lekcjach (00-16 w `_01_fundamentals`, 01-03 w
-`_02_oop` - patrz wyżej). Użytkownik poprosił (2026-08-11 i wielokrotnie
-ponownie 2026-08-12), żeby między lekcjami/etapami NIE pytać o zgodę —
-kontynuować automatycznie ten sam rytm pracy bez przerywania na
-potwierdzenia; to dotyczy też przejścia między rozdziałami.
+polling KONKRETNEGO endpointu treści pod poprawną ścieżką
+`/api/chapters/_02_oop/lessons/<slug>/quiz` (NIE `/api/lessons/...` - to
+błędny wzorzec, UWAGA na dokładne nazwy plików/slugów w
+`content/_02_oop/` przy regresji, np. `05_Inheritance` nie
+`05_AbstractClasses`) aż zwróci pełną liczbę elementów - NIE samym kodem 200
+z `/api/chapters`, zweryfikuj end-to-end (API dla WSZYSTKICH dotychczas
+gotowych lekcji). Po ukończeniu `_02_oop` (4 lekcje do końca: 12-15),
+rozważyć w kolejnej sesji naprawienie diakrytyków w 20 istniejących lekcjach
+(00-16 w `_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej). Użytkownik
+poprosił (2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby między
+lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
+pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
+rozdziałami.
