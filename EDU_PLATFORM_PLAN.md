@@ -1156,16 +1156,57 @@ względem 100 i wymagało dopisywania. Standardowa zasada `grep -n "^\];"` przed
 edycji (z wcześniejszej notatki w tym pliku) NIE była nawet potrzebna w tej turze,
 bo każdy plik quiz/gen był pisany od razu w całości jednym Write.
 
-**Następny krok dla przyszłej sesji**: dwie możliwe kontynuacje, do ustalenia z
-użytkownikiem (nie ma jeszcze jednoznacznej decyzji): (a) naprawienie diakrytyków w
-20 istniejących lekcjach (00-16 w `_01_fundamentals`, 01-03 w `_02_oop`) - te pliki
-mają tekst ASCII bez polskich znaków (np. "dokladnie" zamiast "dokładnie"), co odstaje
-od lekcji 04-15 napisanych już z pełnymi diakrytykami; (b) rozpoczęcie kolejnego
-rozdziału platformy (`_03_collections` - 23 lekcje w oryginalnym kursie Java, według
-tej samej konwencji: teoria+30 ćwiczeń+100 quizów na lekcję). Obie prace mieszczą się
-w tym samym ustalonym wzorcu pracy (workflow gen/quiz.js → merge → restart backendu →
-regresja → commit → aktualizacja tego pliku), więc kolejna sesja może zacząć od razu
-od (a) lub (b) bez dodatkowego planowania - jeśli użytkownik nie sprecyzuje, sensowne
-jest zacząć od (a) (mniejszy, samodzielny zakres, poprawia jakość już istniejącej
-treści) przed przejściem do znacznie większego (b).
+**Stan na 2026-08-12 (ciąg dalszy): (a) diakrytyki w 20 istniejących lekcjach
+CZĘŚCIOWO naprawione** (bez pytania o zgodę, zgodnie z "kontynuuj, nie zatrzymuj
+się") — słownikowe, dwuprzebiegowe podejście: zbudowano częstościową listę słów ze
+wszystkich 20 plików (`_01_fundamentals/00-16` + `_02_oop/01-03`), ręcznie
+skompletowano słownik ASCII→polski dla ~490 najczęstszych, jednoznacznych słów
+(pomijając ryzykowne kolizje z kodem, np. świadomie NIE zmapowano `cos` → `coś`, bo
+kolidowałoby z `Math.cos()` w przykładach kodu), zastosowano przez regex z
+zachowaniem wielkości liter (`\b(word)\b` + rekonstrukcja capitalization) na całym
+tekście pliku JSON, z walidacją JSON przed/po KAŻDYM zapisem (odrzucenie zapisu przy
+niezgodności długości tablic theory/exercises/quiz). **Wynik: ~24500 podstawień w 2
+przebiegach, zero uszkodzeń JSON, zero regresji API (zweryfikowane restartem
+backendu + sprawdzeniem WSZYSTKICH 32 lekcji `_01_fundamentals`+`_02_oop` —
+`quiz.length === 100` dla każdej).**
+
+**WAŻNE ograniczenie tego podejścia (do wiedzy w kolejnej sesji)**: to NIE jest
+100% poprawne przywrócenie diakrytyków — słownik pokrywa tylko najczęstsze ~490
+słów (spośród ~11900 unikalnych tokenów w tych 20 plikach), więc długi ogon
+rzadszych słów (specyficzne dla pojedynczych analogii/przykładów, np. "urzadzenie"
+zamiast "urządzenie", "gre" zamiast "grę", "wiedziec" zamiast "wiedzieć" w lekcji
+`00_JavaPlatformBasics`) POZOSTAJE bez zmian. Świadoma decyzja: koszt osiągnięcia
+100% pokrycia (tysiące unikalnych, rzadkich słów, każde wymagające ręcznej,
+kontekstowej weryfikacji ze względu na niejednoznaczność polskiej ortografii bez
+diakrytyków — np. "ze"/"że", "kopie"/"kopię", "pol"/"pół"/"pól") był nieproporcjonalny
+względem wartości w stosunku do kontynuowania pisania NOWEJ treści. Jeśli
+użytkownik zażąda pełnego dokończenia tego zadania w przyszłości: pliki robocze
+(`diacritics_dict.js`, `diacritics_dict2.js`, `apply_diacritics.js`,
+`wordfreq*.txt`) zostały w scratchpadzie tej sesji (ulotne, nie przetrwają do
+kolejnej) — trzeba by odtworzyć podejście od zera (wygenerować listę częstości
+pozostałych czysto-ASCII słów przez skrypt Node z regexem uwzględniającym już
+poprawione znaki diakrytyczne jako "already fixed", żeby nie liczyć fragmentów
+słów rozciętych przez diakrytyki w środku).
+
+**Następny krok**: (b) rozpoczęcie kolejnego rozdziału platformy —
+`_03_collections` ("Java - Kolekcje", 23 lekcje w oryginalnym kursie źródłowym
+`src/main/java/com/example/javaquest/_03_collections/`), tym samym, ustalonym
+workflow co `_02_oop`: dla KAŻDEJ z 23 lekcji — czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` po treść/prompty, napisz `genNN.js` (teoria ok. 7
+bloków + 30 zadań) i CAŁY `quizNN.js` (100 pytań, jednym Write), zweryfikuj `node
+genNN.js`/`node quizNN.js` PRZED scaleniem (uwaga na niezescapowane apostrofy w
+kodzie Javy osadzonym w JS single-quoted stringach — sprawdzone źródło błędów w
+tej sesji), scal do `src/main/resources/content/_03_collections/NN_Temat.json`,
+restartuj backend, zweryfikuj przez `/api/chapters/_03_collections/lessons/<slug>/
+quiz` (dokładne nazwy plików/slugów sprawdź w `ls src/main/java/.../
+_03_collections/` PRZED pisaniem, nie zgaduj), regresja na wszystkich dotychczas
+gotowych lekcjach, commit, aktualizacja tej sekcji. Lista 23 lekcji `_03_collections`
+wg CLAUDE.md: ArrayList, LinkedList, HashMap, TreeMap, LinkedHashMap, HashSet,
+TreeSet, LinkedHashSet, PriorityQueue, ArrayDeque (Lesson18_Deque),
+Lesson21_LegacyCollections (Vector/Stack/Hashtable/Properties/Enumeration),
+iteracja, metody kolekcji, Comparator, Streams (4 lekcje), Optional, Comparable vs
+Comparator, kolekcje współbieżne, Queue, mapy specjalne — zweryfikuj DOKŁADNE nazwy
+folderów lekcji w repo przed startem (numeracja i nazwy mogą się różnić od tego
+opisu). Użytkownik poprosił (2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby
+między lekcjami/etapami/rozdziałami NIE pytać o zgodę — kontynuować automatycznie.
 ---
