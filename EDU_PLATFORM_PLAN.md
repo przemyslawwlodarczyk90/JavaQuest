@@ -1125,28 +1125,37 @@ Zweryfikowane API end-to-end dla WSZYSTKICH 10 lekcji tej sesji (04-13) po
 jednym restarcie backendu - każda: theory=7, exercises=30, quiz=100, zero
 regresji.
 
-**Następny krok**: `14_Records` (kolejna z 15 lekcji `_02_oop`), tym samym,
-sprawdzonym workflow: czytaj `_Lesson14_Records.java` i
-`_Exercises_Lesson14_Records.java` po treść/prompty zadań, napisz
-`gen14.js` (teoria 7 bloków + 30 zadań) i CAŁY `quiz14.js` (100 pytań,
-docelowo w JEDNYM Write - jeśli trzeba dopisywać brakujące pytania, ZAWSZE
-`grep -n "^\];"` przed i po edycji, dokładnie JEDNO wystąpienie tuż przed
-`if (quiz.length...)`; UWAGA na niezescapowane apostrofy wewnątrz
-Javowych stringów osadzonych w JS single-quoted stringach - sprawdź
-`node genNN.js` od razu po napisaniu), scal do
-`src/main/resources/content/_02_oop/14_Records.json`, ZRESTARTUJ
-`spring-boot:run` (Stop-Process na PID z portu 8082 + Start-Process mvnw.cmd
-spring-boot:run w tle z $env:JAVA_HOME ustawionym), sprawdzaj gotowość przez
-polling KONKRETNEGO endpointu treści pod poprawną ścieżką
-`/api/chapters/_02_oop/lessons/<slug>/quiz` (NIE `/api/lessons/...` - to
-błędny wzorzec, UWAGA na dokładne nazwy plików/slugów w
+**Stan na 2026-08-12 (ciąg dalszy): `14_Records` też DOKOŃCZONE**
+(14/15 lekcji `_02_oop` gotowe: 01-14). `gen14.js` i `quiz14.js` napisane i
+zwalidowane bezbłędnie za pierwszym razem. Zweryfikowane API end-to-end dla
+WSZYSTKICH 11 lekcji tej sesji (04-14) po jednym restarcie backendu - każda:
+theory=7, exercises=30, quiz=100, zero regresji.
+
+**Następny krok**: `15_DesignPatterns` (OSTATNIA z 15 lekcji `_02_oop` -
+KOMPLETUJE CAŁY ROZDZIAŁ), tym samym, sprawdzonym workflow: czytaj
+`_Lesson15_DesignPatterns.java` i `_Exercises_Lesson15_DesignPatterns.java`
+po treść/prompty zadań, napisz `gen15.js` (teoria 7 bloków + 30 zadań) i
+CAŁY `quiz15.js` (100 pytań, docelowo w JEDNYM Write - jeśli trzeba
+dopisywać brakujące pytania, ZAWSZE `grep -n "^\];"` przed i po edycji,
+dokładnie JEDNO wystąpienie tuż przed `if (quiz.length...)`; UWAGA na
+niezescapowane apostrofy wewnątrz Javowych stringów osadzonych w JS
+single-quoted stringach - sprawdź `node genNN.js` od razu po napisaniu),
+scal do `src/main/resources/content/_02_oop/15_DesignPatterns.json`,
+ZRESTARTUJ `spring-boot:run` (Stop-Process na PID z portu 8082 +
+Start-Process mvnw.cmd spring-boot:run w tle z $env:JAVA_HOME ustawionym),
+sprawdzaj gotowość przez polling KONKRETNEGO endpointu treści pod poprawną
+ścieżką `/api/chapters/_02_oop/lessons/<slug>/quiz` (NIE `/api/lessons/...`
+- to błędny wzorzec, UWAGA na dokładne nazwy plików/slugów w
 `content/_02_oop/` przy regresji, np. `05_Inheritance` nie
 `05_AbstractClasses`) aż zwróci pełną liczbę elementów - NIE samym kodem 200
-z `/api/chapters`, zweryfikuj end-to-end (API dla WSZYSTKICH dotychczas
-gotowych lekcji). Po ukończeniu `_02_oop` (2 lekcje do końca: 14-15),
-rozważyć w kolejnej sesji naprawienie diakrytyków w 20 istniejących lekcjach
-(00-16 w `_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej). Użytkownik
-poprosił (2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby między
+z `/api/chapters`, zweryfikuj end-to-end (API dla WSZYSTKICH 15 lekcji
+rozdziału). **PO UKOŃCZENIU `15_DesignPatterns` CAŁY ROZDZIAŁ `_02_oop`
+BĘDZIE KOMPLETNY (15/15)** - następnym krokiem po tym jest rozważenie w
+kolejnej sesji naprawienia diakrytyków w 20 istniejących lekcjach (00-16 w
+`_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej), oraz ewentualnie
+rozpoczęcie kolejnego rozdziału platformy (`_03_collections` itd. - do
+ustalenia z użytkownikiem, jeśli będzie taka wola). Użytkownik poprosił
+(2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby między
 lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
 pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
 rozdziałami.
