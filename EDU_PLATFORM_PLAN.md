@@ -1068,15 +1068,28 @@ Edit ZAWSZE jawnie sprawdź (`grep -n "^\];"`), czy `];` nie zostało
 "osierocone" w środku pliku, i usuń/przesuń je RĘCZNIE do nowego końca tablicy
 — nie polegaj na tym, że stary fragment dopasowania obejmował go automatycznie.
 
-**Następny krok**: `08_Interfaces` (kolejna z 15 lekcji `_02_oop`), tym samym
-workflow (czytaj `_Exercises_Lesson08_Interfaces.java` po prompty zadań,
-napisz teorię+zadania w gen08.js i CAŁY quiz w JEDNYM pliku/Write - patrz
-zasada wyżej, scal, ZRESTARTUJ `spring-boot:run`, sprawdzaj gotowość przez
-polling KONKRETNEGO endpointu treści aż zwróci pełną liczbę elementów - patrz
-wcześniejsza notatka o `/api/chapters` dającym fałszywie dodatni sygnał,
-zweryfikuj end-to-end, zaktualizuj tę sekcję). Po ukończeniu `_02_oop` (8
-lekcji do końca: 08-15), rozważyć w kolejnej sesji naprawienie diakrytyków w
-20 istniejących lekcjach (patrz wyżej). Użytkownik poprosił (2026-08-11 i
-dwukrotnie ponownie 2026-08-12), żeby między lekcjami/etapami NIE pytać o
-zgodę — kontynuować automatycznie ten sam rytm pracy bez przerywania na
-potwierdzenia; to dotyczy też przejścia między rozdziałami.
+**Stan na 2026-08-12 (ciąg dalszy): `08_Interfaces` też DOKOŃCZONE** (8/15
+lekcji `_02_oop` gotowe: 01-08 — DOKŁADNIE POŁOWA rozdziału). Zapisywanie
+CAŁEGO quizu jednym `Write` (zamiast doklejania przez Edit) zadziałało czysto
+składniowo od razu - jedyna korekta to doliczenie brakujących ~9 pytań na
+końcu (normalne niedoszacowanie przy ręcznym liczeniu, NIE powtórka pułapki
+z osieroconym `]`). Zweryfikowane RAZEM z 04-07 po jednym restarcie (regresja
+potwierdzona - wszystkich 5 lekcji nadal 30 zadań/100 quizów).
+
+**Następny krok**: `09_AccessModifiers` (kolejna z 15 lekcji `_02_oop`, dokładnie
+w połowie rozdziału), tym samym workflow: czytaj `_Exercises_Lesson09_
+AccessModifiers.java` po prompty zadań, napisz `gen09.js` (teoria 7 bloków +
+30 zadań) i CAŁY `quiz09.js` (100 pytań) każdy JEDNYM wywołaniem Write, scal
+do `src/main/resources/content/_02_oop/09_AccessModifiers.json`, ZRESTARTUJ
+`spring-boot:run` (Stop-Process na PID z portu 8082 + Start-Process mvnw.cmd
+spring-boot:run w tle), sprawdzaj gotowość przez polling KONKRETNEGO
+endpointu treści (np. `.../04_StaticKeyword/quiz`) aż zwróci pełną liczbę
+elementów - NIE samym kodem 200 z `/api/chapters` (fałszywie pozytywny,
+patrz notatka wyżej), zweryfikuj end-to-end (API + Playwright screenshot),
+zaktualizuj tę sekcję. Po ukończeniu `_02_oop` (7 lekcji do końca: 09-15),
+rozważyć w kolejnej sesji naprawienie diakrytyków w 20 istniejących lekcjach
+(00-16 w `_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej). Użytkownik
+poprosił (2026-08-11 i dwukrotnie ponownie 2026-08-12), żeby między
+lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
+pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
+rozdziałami.
