@@ -20,11 +20,11 @@ export default function ChapterListPage() {
   }, [])
 
   if (status === 'loading') {
-    return <p className="hint">Wczytywanie rozdzialow...</p>
+    return <p className="hint">Wczytywanie rozdziałów...</p>
   }
 
   if (status === 'error') {
-    return <p className="error">Nie udalo sie wczytac rozdzialow: {error}</p>
+    return <p className="error">Nie udało się wczytać rozdziałów: {error}</p>
   }
 
   return (

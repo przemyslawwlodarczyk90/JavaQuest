@@ -2,6 +2,7 @@ import { Link, Route, Routes } from 'react-router-dom'
 import ChapterListPage from './pages/ChapterListPage'
 import LessonListPage from './pages/LessonListPage'
 import LessonDetailPage from './pages/LessonDetailPage'
+import ErrorBoundary from './components/ErrorBoundary'
 import './App.css'
 
 function App() {
@@ -14,11 +15,13 @@ function App() {
         <p className="subtitle">Platforma edukacyjna oparta na kursie Java.</p>
       </header>
 
-      <Routes>
-        <Route path="/" element={<ChapterListPage />} />
-        <Route path="/rozdzial/:chapterSlug" element={<LessonListPage />} />
-        <Route path="/rozdzial/:chapterSlug/:lessonSlug" element={<LessonDetailPage />} />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<ChapterListPage />} />
+          <Route path="/rozdzial/:chapterSlug" element={<LessonListPage />} />
+          <Route path="/rozdzial/:chapterSlug/:lessonSlug" element={<LessonDetailPage />} />
+        </Routes>
+      </ErrorBoundary>
     </main>
   )
 }

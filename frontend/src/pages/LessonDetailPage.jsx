@@ -19,18 +19,31 @@ export default function LessonDetailPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    // Uwaga: bez flagi "cancelled" szybkie przelaczenie zakladki (np. klik
+    // w Quiz zanim fetch Teorii zdazyl sie skonczyc) powodowalo, ze
+    // PozNIEJ rozwiazujacy sie, JUZ NIEAKTUALNY fetch nadpisywal "data"
+    // ksztaltem z INNEJ zakladki (np. bloki teorii zamiast pytan quizu) -
+    // QuizView probowal wtedy zrobic Object.entries(question.options) na
+    // obiekcie bez pola "options" i caly komponent sie wywalal (brak
+    // Error Boundary w aplikacji = pusta biala strona, blad tylko w konsoli).
+    let cancelled = false
     setStatus('loading')
     const tab = TABS.find((t) => t.key === activeTab)
     tab
       .loader(chapterSlug, lessonSlug)
       .then((result) => {
+        if (cancelled) return
         setData(result)
         setStatus('ok')
       })
       .catch((err) => {
+        if (cancelled) return
         setError(err.message)
         setStatus('error')
       })
+    return () => {
+      cancelled = true
+    }
   }, [chapterSlug, lessonSlug, activeTab])
 
   return (
@@ -46,7 +59,20 @@ export default function LessonDetailPage() {
             key={tab.key}
             type="button"
             className={activeTab === tab.key ? 'active' : ''}
-            onClick={() => setActiveTab(tab.key)}
+            onClick={() => {
+              // setStatus('loading') TU (nie tylko wewnatrz useEffect ponizej) jest
+              // KLUCZOWE: React commituje ten re-render OD RAZU po kliknieciu, ZANIM
+              // efekt zdazy w ogole wystartowac (efekty odpalaja sie PO namalowaniu).
+              // Bez tego, przez JEDNA klatke renderu "activeTab" byl juz nowy (np.
+              // 'quiz'), ale "status"/"data" byly WCIAZ stare (np. 'ok' + bloki
+              // teorii z poprzedniej zakladki) - QuizView dostawal dane w zlym
+              // ksztalcie i wywalal sie na Object.entries(question.options).
+              // Wywolane w TYM SAMYM handlerze co setActiveTab, React batchuje obie
+              // aktualizacje w JEDEN render, wiec "status" i "activeTab" zmieniaja
+              // sie RAZEM, nigdy osobno.
+              setStatus('loading')
+              setActiveTab(tab.key)
+            }}
           >
             {tab.label}
           </button>
