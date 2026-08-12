@@ -1215,23 +1215,28 @@ regresji między rozdziałami po restarcie backendu).
 zwalidowane bezbłędnie za pierwszym razem. Zweryfikowane API end-to-end: nowa
 lekcja + regresja na `01_ArrayList` i `_02_oop/15_DesignPatterns` po restarcie.
 
-**Następny krok**: `03_CollectionMethods` (kolejna z 23 lekcji
-`_03_collections`), tym samym, sprawdzonym workflow: czytaj
-`_Lesson03_CollectionMethods.java` i `_Exercises_Lesson03_CollectionMethods.java`
-po treść/prompty zadań, napisz `gen03c.js` (teoria ok. 7 bloków + 30 zadań) i CAŁY
-`quiz03c.js` (100 pytań, jednym Write — UWAGA na niezescapowane apostrofy w
-kodzie Javy osadzonym w JS single-quoted stringach, sprawdź `node genNNc.js`/
-`node quizNNc.js` OD RAZU po napisaniu przed scaleniem), scal do
-`src/main/resources/content/_03_collections/03_CollectionMethods.json`
+**Stan na 2026-08-12 (ciąg dalszy): `03_CollectionMethods` też DOKOŃCZONE**
+(3/23 lekcji `_03_collections` gotowe: 01-03). `gen03c.js` i `quiz03c.js`
+napisane i zwalidowane bezbłędnie za pierwszym razem. Zweryfikowane API
+end-to-end: nowa lekcja + regresja na `01_ArrayList`, `02_Iteration` i
+`_01_fundamentals/16_Exceptions` po restarcie.
+
+**Następny krok**: `04_LinkedList` (kolejna z 23 lekcji `_03_collections`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson04_LinkedList.java` i
+`_Exercises_Lesson04_LinkedList.java` po treść/prompty zadań, napisz `gen04c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz04c.js` (100 pytań, jednym Write —
+UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w JS single-quoted
+stringach, sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu przed
+scaleniem), scal do `src/main/resources/content/_03_collections/04_LinkedList.json`
 (konwencja nazewnictwa plików scratchpad w tej sesji: `genNNc.js`/`quizNNc.js`
 z sufiksem "c" jak "collections"), restartuj backend (Stop-Process na PID z
 portu 8082 + Start-Process mvnw.cmd spring-boot:run w tle z $env:JAVA_HOME
 ustawionym), sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/03_CollectionMethods/quiz` aż zwróci 100
-elementów, zweryfikuj regresję (co najmniej `01_ArrayList`+`02_Iteration` + 1
-lekcja z innego rozdziału), commit, aktualizacja tej sekcji. Kontynuować przez
-wszystkie 23 lekcje bez przerywania na potwierdzenia — użytkownik poprosił o to
-wielokrotnie (2026-08-11, 2026-08-12).
+`/api/chapters/_03_collections/lessons/04_LinkedList/quiz` aż zwróci 100
+elementów, zweryfikuj regresję (co najmniej 2-3 z dotychczas gotowych lekcji
+`_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
+sekcji. Kontynuować przez wszystkie 23 lekcje bez przerywania na potwierdzenia —
+użytkownik poprosił o to wielokrotnie (2026-08-11, 2026-08-12).
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
