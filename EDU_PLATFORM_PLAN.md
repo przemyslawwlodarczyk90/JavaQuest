@@ -1188,25 +1188,50 @@ pozostałych czysto-ASCII słów przez skrypt Node z regexem uwzględniającym j
 poprawione znaki diakrytyczne jako "already fixed", żeby nie liczyć fragmentów
 słów rozciętych przez diakrytyki w środku).
 
-**Następny krok**: (b) rozpoczęcie kolejnego rozdziału platformy —
-`_03_collections` ("Java - Kolekcje", 23 lekcje w oryginalnym kursie źródłowym
-`src/main/java/com/example/javaquest/_03_collections/`), tym samym, ustalonym
-workflow co `_02_oop`: dla KAŻDEJ z 23 lekcji — czytaj `_LessonNN_Temat.java` i
-`_Exercises_LessonNN_Temat.java` po treść/prompty, napisz `genNN.js` (teoria ok. 7
-bloków + 30 zadań) i CAŁY `quizNN.js` (100 pytań, jednym Write), zweryfikuj `node
-genNN.js`/`node quizNN.js` PRZED scaleniem (uwaga na niezescapowane apostrofy w
-kodzie Javy osadzonym w JS single-quoted stringach — sprawdzone źródło błędów w
-tej sesji), scal do `src/main/resources/content/_03_collections/NN_Temat.json`,
-restartuj backend, zweryfikuj przez `/api/chapters/_03_collections/lessons/<slug>/
-quiz` (dokładne nazwy plików/slugów sprawdź w `ls src/main/java/.../
-_03_collections/` PRZED pisaniem, nie zgaduj), regresja na wszystkich dotychczas
-gotowych lekcjach, commit, aktualizacja tej sekcji. Lista 23 lekcji `_03_collections`
-wg CLAUDE.md: ArrayList, LinkedList, HashMap, TreeMap, LinkedHashMap, HashSet,
-TreeSet, LinkedHashSet, PriorityQueue, ArrayDeque (Lesson18_Deque),
-Lesson21_LegacyCollections (Vector/Stack/Hashtable/Properties/Enumeration),
-iteracja, metody kolekcji, Comparator, Streams (4 lekcje), Optional, Comparable vs
-Comparator, kolekcje współbieżne, Queue, mapy specjalne — zweryfikuj DOKŁADNE nazwy
-folderów lekcji w repo przed startem (numeracja i nazwy mogą się różnić od tego
-opisu). Użytkownik poprosił (2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby
-między lekcjami/etapami/rozdziałami NIE pytać o zgodę — kontynuować automatycznie.
+**Stan na 2026-08-12 (ciąg dalszy): rozdział `_03_collections` ROZPOCZĘTY**
+(bez pytania o zgodę, zgodnie z "kontynuuj, nie zatrzymuj się"). Utworzono nowy
+katalog `src/main/resources/content/_03_collections/` (nie istniał wcześniej).
+Zweryfikowano DOKŁADNE nazwy 23 folderów lekcji w
+`src/main/java/com/example/javaquest/_03_collections/` (`ls`, nie zgadywanie) —
+lista: `01_ArrayList, 02_Iteration, 03_CollectionMethods, 04_LinkedList,
+05_HashSet, 06_TreeSet, 07_Comparator, 08_HashMap, 09_PriorityQueue,
+10_StreamsIntro, 11_StreamsCollectors, 12_StreamsTerminal, 13_StreamsAdvanced,
+14_Optional, 15_LinkedHashSet, 16_LinkedHashMap, 17_TreeMap, 18_Deque,
+19_ComparableVsComparator, 20_ConcurrentCollections, 21_LegacyCollections,
+22_Queue, 23_SpecialMaps`. Zweryfikowano też, że `ChapterSeedData.java` JUŻ MA
+zarejestrowany rozdział `_03_collections` z DOKŁADNIE tymi samymi 23 slugami
+(linia ~43) — więc NIE trzeba nic zmieniać w kodzie platformy, tylko dopisywać
+pliki treści `content/_03_collections/NN_Temat.json`, dokładnie jak przy
+`_02_oop`.
+
+**`01_ArrayList` DOKOŃCZONE** (1/23 lekcji `_03_collections` gotowe). `gen01c.js`
+i `quiz01c.js` napisane i zwalidowane bezbłędnie za pierwszym razem. Zweryfikowane
+API end-to-end: nowa lekcja (theory=7/exercises=30/quiz=100) ORAZ regresja na
+`_02_oop/15_DesignPatterns` i `_01_fundamentals/00_JavaPlatformBasics` (zero
+regresji między rozdziałami po restarcie backendu).
+
+**Następny krok**: `02_Iteration` (kolejna z 23 lekcji `_03_collections`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson02_Iteration.java` i
+`_Exercises_Lesson02_Iteration.java` po treść/prompty zadań, napisz `gen02c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz02c.js` (100 pytań, jednym Write —
+UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w JS single-quoted
+stringach, sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu przed
+scaleniem), scal do `src/main/resources/content/_03_collections/02_Iteration.json`
+(konwencja nazewnictwa plików scratchpad w tej sesji: `genNNc.js`/`quizNNc.js`
+z sufiksem "c" jak "collections", żeby nie kolidować z plikami `genNN.js` z
+`_02_oop` zostawionymi w tym samym katalogu scratchpad), restartuj backend
+(Stop-Process na PID z portu 8082 + Start-Process mvnw.cmd spring-boot:run w tle
+z $env:JAVA_HOME ustawionym), sprawdzaj gotowość przez polling
+`/api/chapters/_03_collections/lessons/02_Iteration/quiz` aż zwróci 100 elementów,
+zweryfikuj regresję (co najmniej `01_ArrayList` + 1 lekcja z innego rozdziału),
+commit, aktualizacja tej sekcji. Kontynuować przez wszystkie 23 lekcje bez
+przerywania na potwierdzenia — użytkownik poprosił o to wielokrotnie
+(2026-08-11, 2026-08-12).
+
+**Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
+znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
+01-03) NIE zostało osiągnięte — zrobiono tylko częściowy, słownikowy przebieg
+(patrz wyżej). Jeśli użytkownik o to zapyta w przyszłości, wyjaśnić że jest to
+świadomie odłożone ze względu na nieproporcjonalny koszt względem pisania nowej
+treści.
 ---
