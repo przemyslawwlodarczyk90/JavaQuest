@@ -1076,20 +1076,29 @@ końcu (normalne niedoszacowanie przy ręcznym liczeniu, NIE powtórka pułapki
 z osieroconym `]`). Zweryfikowane RAZEM z 04-07 po jednym restarcie (regresja
 potwierdzona - wszystkich 5 lekcji nadal 30 zadań/100 quizów).
 
-**Następny krok**: `09_AccessModifiers` (kolejna z 15 lekcji `_02_oop`, dokładnie
-w połowie rozdziału), tym samym workflow: czytaj `_Exercises_Lesson09_
-AccessModifiers.java` po prompty zadań, napisz `gen09.js` (teoria 7 bloków +
-30 zadań) i CAŁY `quiz09.js` (100 pytań) każdy JEDNYM wywołaniem Write, scal
-do `src/main/resources/content/_02_oop/09_AccessModifiers.json`, ZRESTARTUJ
+**Stan na 2026-08-12 (ciąg dalszy): `09_AccessModifiers` też DOKOŃCZONE**
+(9/15 lekcji `_02_oop` gotowe: 01-09 - WIĘCEJ NIŻ POŁOWA rozdziału).
+Zweryfikowane RAZEM z 04-08 po jednym restarcie (regresja potwierdzona -
+wszystkich 6 lekcji tej sesji nadal 30 zadań/100 quizów). Ustalony workflow
+(gen0N.js + quizN.js każdy JEDNYM Write, merge, restart, polling
+KONKRETNEGO endpointu, Playwright screenshot, commit, aktualizacja tej
+sekcji) działa już w pełni gładko od lekcji 08 - żadnych nowych pułapek
+technicznych w tej lekcji.
+
+**Następny krok**: `10_FinalKeyword` (kolejna z 15 lekcji `_02_oop`), tym
+samym, sprawdzonym workflow: czytaj `_Exercises_Lesson10_FinalKeyword.java`
+po prompty zadań, napisz `gen10.js` (teoria 7 bloków + 30 zadań) i CAŁY
+`quiz10.js` (100 pytań) każdy JEDNYM wywołaniem Write, scal do
+`src/main/resources/content/_02_oop/10_FinalKeyword.json`, ZRESTARTUJ
 `spring-boot:run` (Stop-Process na PID z portu 8082 + Start-Process mvnw.cmd
-spring-boot:run w tle), sprawdzaj gotowość przez polling KONKRETNEGO
-endpointu treści (np. `.../04_StaticKeyword/quiz`) aż zwróci pełną liczbę
-elementów - NIE samym kodem 200 z `/api/chapters` (fałszywie pozytywny,
-patrz notatka wyżej), zweryfikuj end-to-end (API + Playwright screenshot),
-zaktualizuj tę sekcję. Po ukończeniu `_02_oop` (7 lekcji do końca: 09-15),
-rozważyć w kolejnej sesji naprawienie diakrytyków w 20 istniejących lekcjach
-(00-16 w `_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej). Użytkownik
-poprosił (2026-08-11 i dwukrotnie ponownie 2026-08-12), żeby między
-lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
-pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
-rozdziałami.
+spring-boot:run w tle z $env:JAVA_HOME ustawionym), sprawdzaj gotowość
+przez polling KONKRETNEGO endpointu treści (np. `.../04_StaticKeyword/quiz`)
+aż zwróci pełną liczbę elementów - NIE samym kodem 200 z `/api/chapters`
+(fałszywie pozytywny), zweryfikuj end-to-end (API dla WSZYSTKICH dotychczas
+gotowych lekcji + Playwright screenshot nowej), zaktualizuj tę sekcję. Po
+ukończeniu `_02_oop` (6 lekcji do końca: 10-15), rozważyć w kolejnej sesji
+naprawienie diakrytyków w 20 istniejących lekcjach (00-16 w
+`_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej). Użytkownik poprosił
+(2026-08-11 i dwukrotnie ponownie 2026-08-12), żeby między lekcjami/etapami
+NIE pytać o zgodę — kontynuować automatycznie ten sam rytm pracy bez
+przerywania na potwierdzenia; to dotyczy też przejścia między rozdziałami.
