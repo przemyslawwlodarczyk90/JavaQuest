@@ -981,10 +981,67 @@ zero brakujących opcji); `GET .../_02_oop/lessons` → `hasContent: true` dla
 `01_ClassesAndObjects`/`02_Encapsulation`/`03_Constructors`, `false` dla
 pozostałych 12.
 
-**Następny krok**: `04_StaticKeyword` (kolejna z 15 lekcji `_02_oop`), tym
-samym workflow (czytaj `_Exercises_Lesson04_StaticKeyword.java` po prompty
+**Stan na 2026-08-12: `04_StaticKeyword` i `05_Inheritance` DOKOŃCZONE** (5/15
+lekcji `_02_oop` gotowe: 01-05). Tym samym workflow co dotychczas (czytaj
+`_ExercisesLessonNN_*.java` po 30 promptów zadań, generuj teorię (7 bloków)
++ hint/solution + 100 pytań quizu skryptem Node.js w scratchpadzie, waliduj
+liczby elementów + poprawność `correct`/opcji PRZED zapisem, scal do
+`src/main/resources/content/_02_oop/NN_Temat.json`).
+
+**WAŻNA POPRAWKA procesu odkryta w tej sesji**: `LessonContentLoader`
+(`ApplicationRunner`) zasila bazę TYLKO RAZ, przy starcie aplikacji — samo
+dodanie nowego pliku `.json` do `src/main/resources/content/` (nawet
+skopiowane ręcznie do `target/classes/content/`) NIE WYSTARCZY, żeby nowa
+lekcja stała się dostępna przez API na już działającym procesie. **Po
+KAŻDYM dopisaniu nowej lekcji (lub paczki lekcji) TRZEBA zrestartować
+`spring-boot:run`**, dopiero wtedy `hasContent`/`.../theory`/`.../exercises`/
+`.../quiz` zwrócą nową treść — inaczej API milcząco zwraca puste `[]` dla
+nowo dopisanej lekcji, mimo że plik JSON fizycznie istnieje i jest poprawny.
+Zweryfikowany, powtarzalny sposób restartu w tej sesji: znaleźć PID na porcie
+8082 (`netstat -ano | grep :8082`), `Stop-Process -Id <pid> -Force`, potem
+`Start-Process .\mvnw.cmd -ArgumentList "spring-boot:run" -NoNewWindow
+-RedirectStandardOutput backend_run.log -RedirectStandardError
+backend_run_err.log -PassThru` (PowerShell, z `$env:JAVA_HOME` ustawionym),
+odczekać aż `GET /api/chapters` zacznie zwracać 200 (zwykle ~60-70s).
+
+**Druga ważna zmiana w tej sesji**: dotychczasowa treść (lekcje 00-16 w
+`_01_fundamentals` i 01-03 w `_02_oop`, czyli WSZYSTKO napisane PRZED tą
+sesją) ma tekst BEZ polskich znaków diakrytycznych (np. "Co dokladnie" zamiast
+"Co dokładnie") — zgłoszone i potwierdzone przez użytkownika bezpośrednio w
+UI (widoczne w zrzutach ekranu quizu). **Lekcje 04 i 05 (ta sesja) są PIERWSZĄ
+treścią platformy napisaną z pełnymi polskimi znakami diakrytycznymi od
+początku** — ZASADA NA PRZYSZŁOŚĆ: każda kolejna lekcja MUSI być pisana z
+pełnymi ogonkami (ą/ć/ę/ł/ń/ó/ś/ź/ż), tak jak reszta tego repo. Naprawienie
+WSTECZNE 20 istniejących lekcji (00-16 w `_01`, 01-03 w `_02_oop`) na pełne
+diakrytyki to ODDZIELNE, jeszcze nie rozpoczęte zadanie — do zrobienia w
+kolejnej sesji (przejście plik po pliku, zamiana ASCII-owych słów na wersje
+z ogonkami, bez zmiany treści merytorycznej).
+
+**Trzecia rzecz naprawiona w tej sesji (nie treść, ale blokujący bug w
+UI)**: `LessonDetailPage.jsx` miał race condition powodujący, że kliknięcie
+zakładki Quiz (lub dowolnej innej) potrafiło na jedną klatkę renderu pokazać
+dane z POPRZEDNIEJ zakładki w NOWYM komponencie (np. bloki teorii przekazane
+do `QuizView`) — `QuizView` wtedy wywalał się na `Object.entries(question.
+options)` z obiektu bez pola `options`, dając CAŁKOWICIE pustą, białą stronę
+(zero informacji o błędzie, bo brakowało Error Boundary). Naprawione przez
+`setStatus('loading')` w TYM SAMYM handlerze onClick co `setActiveTab(...)`
+(React batchuje oba stany w jeden render) — zweryfikowane empirycznie przez
+Playwright (rzeczywisty klik dawał 100% odtwarzalny crash PRZED fixem, 0
+błędów PO fixie, także przy szybkim przełączaniu zakładek). Dodano też
+`components/ErrorBoundary.jsx` jako siatkę bezpieczeństwa na przyszłość.
+Przy okazji przeprojektowano całą paletę kolorów na "ciepły industrialny"
+motyw (rdza/miedź jako akcent, ciepły pergamin/węglowy brąz zamiast
+biało-fioletowej) — poprzednia wersja mieszała hardkodowane kolory
+light-mode z prawdziwymi zmiennymi dark-mode, dając biały tekst/przyciski na
+ciemnym tle.
+
+**Następny krok**: `06_Polymorphism` (kolejna z 15 lekcji `_02_oop`), tym
+samym workflow (czytaj `_Exercises_Lesson06_Polymorphism.java` po prompty
 zadań, generuj treść skryptem Node.js w scratchpadzie w mniejszych częściach,
-scal i zweryfikuj end-to-end, zaktualizuj tę sekcję). Użytkownik poprosił
-(2026-08-11), żeby między lekcjami/etapami NIE pytać o zgodę — kontynuować
-automatycznie ten sam rytm pracy bez przerywania na potwierdzenia; to dotyczy
-też przejścia między rozdziałami.
+scal, ZRESTARTUJ `spring-boot:run` (patrz uwaga wyżej!), zweryfikuj
+end-to-end, zaktualizuj tę sekcję). Po ukończeniu `_02_oop` (10 lekcji do
+końca: 06-15), rozważyć w kolejnej sesji naprawienie diakrytyków w 20
+istniejących lekcjach (patrz wyżej). Użytkownik poprosił (2026-08-11 i
+ponownie 2026-08-12), żeby między lekcjami/etapami NIE pytać o zgodę —
+kontynuować automatycznie ten sam rytm pracy bez przerywania na
+potwierdzenia; to dotyczy też przejścia między rozdziałami.
