@@ -1131,31 +1131,41 @@ zwalidowane bezbłędnie za pierwszym razem. Zweryfikowane API end-to-end dla
 WSZYSTKICH 11 lekcji tej sesji (04-14) po jednym restarcie backendu - każda:
 theory=7, exercises=30, quiz=100, zero regresji.
 
-**Następny krok**: `15_DesignPatterns` (OSTATNIA z 15 lekcji `_02_oop` -
-KOMPLETUJE CAŁY ROZDZIAŁ), tym samym, sprawdzonym workflow: czytaj
-`_Lesson15_DesignPatterns.java` i `_Exercises_Lesson15_DesignPatterns.java`
-po treść/prompty zadań, napisz `gen15.js` (teoria 7 bloków + 30 zadań) i
-CAŁY `quiz15.js` (100 pytań, docelowo w JEDNYM Write - jeśli trzeba
-dopisywać brakujące pytania, ZAWSZE `grep -n "^\];"` przed i po edycji,
-dokładnie JEDNO wystąpienie tuż przed `if (quiz.length...)`; UWAGA na
-niezescapowane apostrofy wewnątrz Javowych stringów osadzonych w JS
-single-quoted stringach - sprawdź `node genNN.js` od razu po napisaniu),
-scal do `src/main/resources/content/_02_oop/15_DesignPatterns.json`,
-ZRESTARTUJ `spring-boot:run` (Stop-Process na PID z portu 8082 +
-Start-Process mvnw.cmd spring-boot:run w tle z $env:JAVA_HOME ustawionym),
-sprawdzaj gotowość przez polling KONKRETNEGO endpointu treści pod poprawną
-ścieżką `/api/chapters/_02_oop/lessons/<slug>/quiz` (NIE `/api/lessons/...`
-- to błędny wzorzec, UWAGA na dokładne nazwy plików/slugów w
-`content/_02_oop/` przy regresji, np. `05_Inheritance` nie
-`05_AbstractClasses`) aż zwróci pełną liczbę elementów - NIE samym kodem 200
-z `/api/chapters`, zweryfikuj end-to-end (API dla WSZYSTKICH 15 lekcji
-rozdziału). **PO UKOŃCZENIU `15_DesignPatterns` CAŁY ROZDZIAŁ `_02_oop`
-BĘDZIE KOMPLETNY (15/15)** - następnym krokiem po tym jest rozważenie w
-kolejnej sesji naprawienia diakrytyków w 20 istniejących lekcjach (00-16 w
-`_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej), oraz ewentualnie
-rozpoczęcie kolejnego rozdziału platformy (`_03_collections` itd. - do
-ustalenia z użytkownikiem, jeśli będzie taka wola). Użytkownik poprosił
-(2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby między
-lekcjami/etapami NIE pytać o zgodę — kontynuować automatycznie ten sam rytm
-pracy bez przerywania na potwierdzenia; to dotyczy też przejścia między
-rozdziałami.
+---
+### ✅ ROZDZIAŁ `_02_oop` NA PLATFORMIE KOMPLETNY (stan na 2026-08-12): 15/15 lekcji
+
+**Wszystkie 15 lekcji rozdziału `_02_oop` mają teraz komplet treści na platformie
+(teoria 7 bloków + 30 ćwiczeń + 100 pytań quizowych każda)**: 01_ClassesAndObjects,
+02_Encapsulation, 03_Constructors, 04_StaticKeyword, 05_Inheritance, 06_Polymorphism,
+07_AbstractClasses, 08_Interfaces, 09_AccessModifiers, 10_FinalKeyword, 11_ObjectClass,
+12_InnerClasses, 13_Enums, 14_Records, 15_DesignPatterns. Zweryfikowane KOŃCOWYM,
+pełnym przebiegiem regresyjnym po restarcie backendu - wszystkie 15/15 lekcji zwraca
+dokładnie theory=7/exercises=30/quiz=100, zero błędów. Lekcje 04-15 (12 lekcji) zostały
+napisane w tej sesji (2026-08-12), w jednym ciągłym przebiegu bez zatrzymywania się na
+potwierdzenia (zgodnie z wyraźnym życzeniem użytkownika); 01-03 były gotowe z
+poprzednich sesji.
+
+Warte odnotowania z tej sesji: `gen11.js`/`gen12.js`/`quiz15.js` miały po 1 drobnym
+błędzie składniowym JS (niezescapowany apostrof w Javowym kodzie osadzonym w JS
+single-quoted stringu / brakujący dwukropek po literze opcji) - każdy złapany
+natychmiast przez `node genNN.js`/`node quizNN.js` i naprawiony przed scaleniem do
+JSON. Reszta plików (gen04-10,13,14 i quiz04-10,12,13,14) przeszła walidację od razu,
+bez poprawek - w przeciwieństwie do wcześniejszej fazy tej sesji (lekcje przed tym
+podsumowaniem), gdzie liczenie "z ręki" pytań quizowych regularnie dawało niedobór
+względem 100 i wymagało dopisywania. Standardowa zasada `grep -n "^\];"` przed/po
+edycji (z wcześniejszej notatki w tym pliku) NIE była nawet potrzebna w tej turze,
+bo każdy plik quiz/gen był pisany od razu w całości jednym Write.
+
+**Następny krok dla przyszłej sesji**: dwie możliwe kontynuacje, do ustalenia z
+użytkownikiem (nie ma jeszcze jednoznacznej decyzji): (a) naprawienie diakrytyków w
+20 istniejących lekcjach (00-16 w `_01_fundamentals`, 01-03 w `_02_oop`) - te pliki
+mają tekst ASCII bez polskich znaków (np. "dokladnie" zamiast "dokładnie"), co odstaje
+od lekcji 04-15 napisanych już z pełnymi diakrytykami; (b) rozpoczęcie kolejnego
+rozdziału platformy (`_03_collections` - 23 lekcje w oryginalnym kursie Java, według
+tej samej konwencji: teoria+30 ćwiczeń+100 quizów na lekcję). Obie prace mieszczą się
+w tym samym ustalonym wzorcu pracy (workflow gen/quiz.js → merge → restart backendu →
+regresja → commit → aktualizacja tego pliku), więc kolejna sesja może zacząć od razu
+od (a) lub (b) bez dodatkowego planowania - jeśli użytkownik nie sprecyzuje, sensowne
+jest zacząć od (a) (mniejszy, samodzielny zakres, poprawia jakość już istniejącej
+treści) przed przejściem do znacznie większego (b).
+---
