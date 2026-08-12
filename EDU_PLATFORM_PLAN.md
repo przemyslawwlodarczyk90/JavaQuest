@@ -1228,21 +1228,29 @@ grupę (91-100) dopisano i zwalidowano. Zweryfikowane API end-to-end: nowa
 lekcja + regresja na wszystkich 3 poprzednich `_03_collections` lekcjach +
 `_02_oop/15_DesignPatterns` po restarcie.
 
-**Następny krok**: `05_HashSet` (kolejna z 23 lekcji `_03_collections`), tym
-samym, sprawdzonym workflow: czytaj `_Lesson05_HashSet.java` i
-`_Exercises_Lesson05_HashSet.java` po treść/prompty zadań, napisz `gen05c.js`
-(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz05c.js` (100 pytań, jednym Write —
-UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w JS single-quoted
-stringach, sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu przed
-scaleniem; JEŚLI walidacja pokaże np. 90 zamiast 100 pytań - jak zdarzyło się
-przy quiz04c.js - PO PROSTU dopisz brakującą grupę(y) pytań na końcu tablicy,
-nie przepisuj całości od nowa), scal do
-`src/main/resources/content/_03_collections/05_HashSet.json` (konwencja
+**Stan na 2026-08-12 (ciąg dalszy): `05_HashSet` też DOKOŃCZONE**
+(5/23 lekcji `_03_collections` gotowe: 01-05). `gen05c.js` i `quiz05c.js`
+napisane i zwalidowane bezbłędnie za pierwszym razem (10/10 grup pytań od
+razu, żadnej brakującej). Zweryfikowane API end-to-end: nowa lekcja +
+regresja na wszystkich 4 poprzednich `_03_collections` lekcjach +
+`_02_oop/15_DesignPatterns` po restarcie.
+
+**Następny krok**: `06_TreeSet` (kolejna z 23 lekcji `_03_collections`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson06_TreeSet.java` i
+`_Exercises_Lesson06_TreeSet.java` po treść/prompty zadań, napisz `gen06c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz06c.js` (100 pytań w 10 grupach po
+10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w
+JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup - w
+quiz04c.js zdarzyło się przypadkowe pominięcie ostatniej grupy, dające tylko 90
+zamiast 100 pytań; sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po
+napisaniu przed scaleniem, jeśli liczba się nie zgadza, PO PROSTU dopisz
+brakującą grupę na końcu tablicy, nie przepisuj całości od nowa), scal do
+`src/main/resources/content/_03_collections/06_TreeSet.json` (konwencja
 nazewnictwa plików scratchpad w tej sesji: `genNNc.js`/`quizNNc.js` z sufiksem
 "c" jak "collections"), restartuj backend (Stop-Process na PID z portu 8082 +
 Start-Process mvnw.cmd spring-boot:run w tle z $env:JAVA_HOME ustawionym),
 sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/05_HashSet/quiz` aż zwróci 100
+`/api/chapters/_03_collections/lessons/06_TreeSet/quiz` aż zwróci 100
 elementów, zweryfikuj regresję (co najmniej 2-3 z dotychczas gotowych lekcji
 `_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
 sekcji. Kontynuować przez wszystkie 23 lekcje bez przerywania na potwierdzenia —
