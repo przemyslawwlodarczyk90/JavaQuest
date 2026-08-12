@@ -1110,14 +1110,24 @@ uruchomiony, a wizualna poprawność quizu była już zweryfikowana wcześniej w
 tej sesji przy naprawie buga pustej strony) - do rozważenia w kolejnym kroku,
 jeśli dev server będzie już uruchomiony.
 
-**Następny krok**: `12_InnerClasses` (kolejna z 15 lekcji `_02_oop`), tym
-samym, sprawdzonym workflow: czytaj `_Lesson12_InnerClasses.java` i
-`_Exercises_Lesson12_InnerClasses.java` po treść/prompty zadań, napisz
-`gen12.js` (teoria 7 bloków + 30 zadań) i CAŁY `quiz12.js` (100 pytań,
-docelowo w JEDNYM Write - jeśli trzeba dopisywać brakujące pytania, ZAWSZE
+**Stan na 2026-08-12 (ciąg dalszy): `12_InnerClasses` też DOKOŃCZONE**
+(12/15 lekcji `_02_oop` gotowe: 01-12). `gen12.js` i `quiz12.js` napisane i
+zwalidowane bezbłędnie (jeden drobny JS syntax bug w gen12.js - niezescapowany
+apostrof wewnątrz stringa w Javowym kodzie przykładu - złapany od razu przez
+`node gen12.js` i naprawiony). Zweryfikowane API end-to-end dla WSZYSTKICH 9
+lekcji tej sesji (04-12) po jednym restarcie backendu - każda: theory=7,
+exercises=30, quiz=100, zero regresji.
+
+**Następny krok**: `13_Enums` (kolejna z 15 lekcji `_02_oop`), tym samym,
+sprawdzonym workflow: czytaj `_Lesson13_Enums.java` i
+`_Exercises_Lesson13_Enums.java` po treść/prompty zadań, napisz `gen13.js`
+(teoria 7 bloków + 30 zadań) i CAŁY `quiz13.js` (100 pytań, docelowo w
+JEDNYM Write - jeśli trzeba dopisywać brakujące pytania, ZAWSZE
 `grep -n "^\];"` przed i po edycji, dokładnie JEDNO wystąpienie tuż przed
-`if (quiz.length...)`), scal do
-`src/main/resources/content/_02_oop/12_InnerClasses.json`, ZRESTARTUJ
+`if (quiz.length...)`; UWAGA na niezescapowane apostrofy wewnątrz
+Javowych stringów osadzonych w JS single-quoted stringach - sprawdź
+`node genNN.js` od razu po napisaniu), scal do
+`src/main/resources/content/_02_oop/13_Enums.json`, ZRESTARTUJ
 `spring-boot:run` (Stop-Process na PID z portu 8082 + Start-Process mvnw.cmd
 spring-boot:run w tle z $env:JAVA_HOME ustawionym), sprawdzaj gotowość przez
 polling KONKRETNEGO endpointu treści pod poprawną ścieżką
@@ -1126,7 +1136,7 @@ błędny wzorzec, UWAGA na dokładne nazwy plików/slugów w
 `content/_02_oop/` przy regresji, np. `05_Inheritance` nie
 `05_AbstractClasses`) aż zwróci pełną liczbę elementów - NIE samym kodem 200
 z `/api/chapters`, zweryfikuj end-to-end (API dla WSZYSTKICH dotychczas
-gotowych lekcji). Po ukończeniu `_02_oop` (4 lekcje do końca: 12-15),
+gotowych lekcji). Po ukończeniu `_02_oop` (3 lekcje do końca: 13-15),
 rozważyć w kolejnej sesji naprawienie diakrytyków w 20 istniejących lekcjach
 (00-16 w `_01_fundamentals`, 01-03 w `_02_oop` - patrz wyżej). Użytkownik
 poprosił (2026-08-11 i wielokrotnie ponownie 2026-08-12), żeby między
