@@ -1315,29 +1315,60 @@ end-to-end po restarcie: nowe lekcje (20, 21) + regresja na
 19_ComparableVsComparator, 06_TreeSet, `_02_oop/15_DesignPatterns` — zero
 regresji. Oba commity wykonane.
 
-**Następny krok**: `22_Queue` (przedostatnia z 23 lekcji `_03_collections`),
-tym samym, sprawdzonym workflow: czytaj `_Lesson22_Queue.java` i
-`_Exercises_Lesson22_Queue.java` po treść/prompty zadań, napisz `gen22c.js`
-(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz22c.js` (100 pytań w 10 grupach
-po 10, jednym Write, używając helpera `addGroup(arr)` zamiast ręcznego
-`quiz.concat` — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w
-JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup —
-sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu), scal do
-`src/main/resources/content/_03_collections/NN_Temat.json`, potem od razu
-kontynuuj `23_SpecialMaps` (OSTATNIA lekcja rozdziału — po jej ukończeniu
-`_03_collections` osiąga 23/23, komplet) tym samym workflow. Batch-restart
-backendu (najlepiej raz dla obu lekcji 22+23 naraz, NIE po każdej pojedynczej
-— zgodnie z jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne
-testowanie w trakcie pisania dużych partii treści; restart backendu jest
-OBOWIĄZKOWY, żeby nowe pliki treści były w ogóle widoczne przez API — seed
-dzieje się tylko raz przy starcie), sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100
-elementów, zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1
-lekcja z innego rozdziału), commit, aktualizacja tej sekcji. Po ukończeniu
-CAŁEGO rozdziału `_03_collections` (23/23) kontynuować automatycznie dalszą
-pracą nad platformą wg tego planu, BEZ przerywania na potwierdzenia —
-użytkownik jawnie potwierdził (2026-08-13) kontynuowanie automatycznie
-zarówno między lekcjami, jak i między rozdziałami platformy.
+**Stan na 2026-08-13 (ciąg dalszy): `22_Queue` i `23_SpecialMaps` też
+DOKOŃCZONE — CAŁY ROZDZIAŁ `_03_collections` JEST TERAZ KOMPLETNY (23/23
+lekcji, 01-23)!** `22_Queue` pokrywa interfejs Queue (offer/poll/peek vs
+add/remove/element), ArrayDeque/LinkedList/PriorityQueue/LinkedBlockingQueue
+jako implementacje, BFS z Queue, producer-consumer. `23_SpecialMaps` (ostatnia
+lekcja rozdziału) pokrywa EnumMap, IdentityHashMap, WeakHashMap — z naciskiem
+na to, KIEDY która specjalna mapa ma sens (klucze enum -> zawsze EnumMap,
+porównanie przez == -> IdentityHashMap, cache nieblokujący GC -> WeakHashMap).
+Oba pliki `genNNc.js`/`quizNNc.js` zwalidowane bezbłędnie za pierwszym razem.
+Backend zrestartowany batch-owo dla obu lekcji naraz. Zweryfikowane API
+end-to-end po restarcie: nowe lekcje (22, 23) + regresja na
+21_LegacyCollections, 20_ConcurrentCollections, 01_ArrayList,
+`_02_oop/15_DesignPatterns`, `_01_fundamentals/00_JavaPlatformBasics` — zero
+regresji (theory=6 dla `00_JavaPlatformBasics` to znana, oczekiwana wartość,
+nie regresja). Oba commity wykonane.
+
+**Stan całej platformy na 2026-08-13**: 3 rozdziały mają w pełni gotową
+treść w `src/main/resources/content/`: `_01_fundamentals` (17/17),
+`_02_oop` (15/15), `_03_collections` (23/23) — wszystkie zweryfikowane
+end-to-end. `ChapterSeedData.java` ma już ZAREJESTROWANE (nazwy
+rozdziałów/lekcji, gotowe do seedowania, ale BEZ treści JSON) WSZYSTKIE 31
+rozdziałów kursu (`_01_fundamentals` … `_31_spring_cloud_microservices`),
+więc kolejne kroki pracy nad platformą to PISANIE TREŚCI (JSON) dla
+rozdziałów `_04_io` … `_31_spring_cloud_microservices`, w tej samej
+kolejności co numeracja rozdziałów bazowego kursu — backend nie wymaga
+żadnych zmian kodu, tylko nowych plików `content/_NN_temat/NN_Lekcja.json`.
+
+**Następny krok**: rozpocząć rozdział `_04_io` ("Input/Output i praca z
+plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
+nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON).
+Tym samym, sprawdzonym workflow co `_03_collections`: dla każdej lekcji NN
+czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
+zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
+`quizNNd.js` (100 pytań w 10 grupach po 10, jednym Write, używając helpera
+`addGroup(arr)` — sprawdzony wzorzec od lekcji 16 `_03_collections`, zero
+błędów liczenia grup odkąd go używamy), sprawdź `node genNNd.js`/
+`node quizNNd.js` OD RAZU po napisaniu (oczekiwane theory:7 exercises:30 /
+quiz:100), scal do `src/main/resources/content/_04_io/NN_Temat.json` (nazwa
+pliku MUSI dokładnie odpowiadać nazwie w `ChapterSeedData.java`, np.
+`01_IOIntroduction.json`). Batch-restart backendu co 2-4 lekcje (NIE po
+każdej pojedynczej — zgodnie z jawną wcześniejszą prośbą użytkownika o mniej
+rygorystyczne testowanie w trakcie pisania dużych partii treści; restart
+backendu jest OBOWIĄZKOWY, żeby nowe pliki treści były w ogóle widoczne przez
+API — seed dzieje się tylko raz przy starcie), sprawdzaj gotowość przez
+polling `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
+zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
+gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
+aktualizacja tej sekcji. Kontynuować przez wszystkie 24 lekcje `_04_io`, a po
+jego ukończeniu automatycznie przejść do `_05_multithreading` (37 lekcji) i
+kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania na
+potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
+potwierdził (2026-08-13) kontynuowanie w pełni automatyczne aż do wyczerpania
+zadania/limitu.
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
