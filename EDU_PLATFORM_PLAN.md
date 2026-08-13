@@ -1285,27 +1285,35 @@ Zweryfikowane API end-to-end po restarcie backendu: nowe lekcje (14, 15) +
 regresja na 13_StreamsAdvanced, 01_ArrayList, `_02_oop/15_DesignPatterns` —
 zero regresji.
 
-**Następny krok**: `16_LinkedHashMap` (kolejna z 23 lekcji `_03_collections`),
-tym samym, sprawdzonym workflow: czytaj `_Lesson16_LinkedHashMap.java` i
-`_Exercises_Lesson16_LinkedHashMap.java` po treść/prompty zadań, napisz
-`gen16c.js` (teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz16c.js` (100 pytań w
-10 grupach po 10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie
-Javy osadzonym w JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE
-10 grup — sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu,
-licz dokładnie ile grup/pytań zostało napisanych, jeśli mniej niż 100, dopisz
-brakującą grupę PRZED zamykającym `]);` OSTATNIEGO bloku `quiz.concat([...])`,
-nie na końcu pliku), scal do `src/main/resources/content/_03_collections/
-NN_Temat.json`, batch-restart backendu co 2-4 lekcje (NIE po każdej pojedynczej
-— zgodnie z jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne
-testowanie w trakcie pisania dużych partii treści; restart backendu jest
-OBOWIĄZKOWY, żeby nowe pliki treści były w ogóle widoczne przez API — seed
-dzieje się tylko raz przy starcie), sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
-zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1 lekcja z innego
-rozdziału), commit, aktualizacja tej sekcji. Kontynuować przez wszystkie
-pozostałe 8 lekcji `_03_collections` (16-23) BEZ przerywania na potwierdzenia
-— użytkownik jawnie potwierdził (2026-08-13) kontynuowanie automatycznie
-zarówno między lekcjami, jak i między rozdziałami platformy.
+**Stan na 2026-08-13 (ciąg dalszy): `16_LinkedHashMap` i `17_TreeMap` też
+DOKOŃCZONE** (17/23 lekcji `_03_collections` gotowe: 01-17). Od lekcji 16
+zmieniona technika pisania plików `quizNNc.js` na funkcję pomocniczą
+`addGroup(arr)` zamiast `quiz = quiz.concat([...])` powtarzanego ręcznie —
+eliminuje ryzyko pominięcia/duplikacji zamykającego `]);` przy 10 blokach
+(które spowodowało błąd w `quiz15c.js`). Zweryfikowane API end-to-end po
+restarcie backendu: nowe lekcje (16, 17) + regresja na 15_LinkedHashSet,
+01_ArrayList, `_02_oop/15_DesignPatterns` — zero regresji.
+
+**Następny krok**: `18_Deque` (kolejna z 23 lekcji `_03_collections`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson18_Deque.java` i
+`_Exercises_Lesson18_Deque.java` po treść/prompty zadań, napisz `gen18c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz18c.js` (100 pytań w 10 grupach po
+10, jednym Write, używając helpera `addGroup(arr)` zamiast ręcznego
+`quiz.concat` — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w JS
+single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup — sprawdź
+`node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu), scal do
+`src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
+backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z jawną wcześniejszą
+prośbą użytkownika o mniej rygorystyczne testowanie w trakcie pisania dużych
+partii treści; restart backendu jest OBOWIĄZKOWY, żeby nowe pliki treści były
+w ogóle widoczne przez API — seed dzieje się tylko raz przy starcie), sprawdzaj
+gotowość przez polling `/api/chapters/_03_collections/lessons/NN_Temat/quiz`
+aż zwróci 100 elementów, zweryfikuj regresję (2-3 gotowe lekcje
+`_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
+sekcji. Kontynuować przez wszystkie pozostałe 6 lekcji `_03_collections`
+(18-23) BEZ przerywania na potwierdzenia — użytkownik jawnie potwierdził
+(2026-08-13) kontynuowanie automatycznie zarówno między lekcjami, jak i między
+rozdziałami platformy.
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
