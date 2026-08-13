@@ -1250,22 +1250,38 @@ lekcjami, ani między rozdziałami — kontynuować automatycznie przez cały
 weryfikacji/uzupełniania kolejnych rozdziałów platformy, aż do wyczerpania
 limitu/zadania.
 
-**Następny krok**: `08_HashMap` (kolejna z 23 lekcji `_03_collections`), tym
-samym, sprawdzonym workflow: czytaj `_Lesson08_HashMap.java` i
-`_Exercises_Lesson08_HashMap.java` po treść/prompty zadań, napisz `gen08c.js`
-(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz08c.js` (100 pytań w 10 grupach po
-10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w
-JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup),
-sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu, scal do
-`src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
+**Stan na 2026-08-13 (ciąg dalszy): `08_HashMap` i `09_PriorityQueue` też
+DOKOŃCZONE** (9/23 lekcji `_03_collections` gotowe: 01-09). `gen08c.js`/
+`quiz08c.js` i `gen09c.js`/`quiz09c.js` napisane i zwalidowane bezbłędnie za
+pierwszym razem. `09_PriorityQueue` obejmuje też klasyczne algorytmy oparte na
+kopcu (Dijkstra, Prim MST, running median, task scheduler cooldown, reorganize
+string, connect ropes, merge k sorted lists) w ćwiczeniach 21-30. Backend
+wymagał PEŁNEGO restartu, żeby zobaczyć nowe pliki 08/09 (seed treści dzieje
+się raz przy starcie `ApplicationRunner`) — poprzedni proces (2 procesy javac/
+java z wcześniejszego startu) zatrzymany przez `Stop-Process -Force` po PID z
+`Get-Process java`, potem świeży `mvnw.cmd spring-boot:run` w tle. Zweryfikowane
+API end-to-end po restarcie: nowe lekcje (08, 09) + regresja na 06_TreeSet,
+07_Comparator, 01_ArrayList, `_02_oop/15_DesignPatterns` — zero regresji.
+
+**Następny krok**: `10_StreamsIntro` (kolejna z 23 lekcji `_03_collections`),
+tym samym, sprawdzonym workflow: czytaj `_Lesson10_StreamsIntro.java` i
+`_Exercises_Lesson10_StreamsIntro.java` po treść/prompty zadań, napisz
+`gen10c.js` (teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz10c.js` (100 pytań w
+10 grupach po 10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie
+Javy osadzonym w JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE
+10 grup), sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu, scal
+do `src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
 backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z jawną wcześniejszą
 prośbą użytkownika o mniej rygorystyczne testowanie w trakcie pisania dużych
-partii treści), sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100
-elementów, zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1 lekcja
-z innego rozdziału), commit, aktualizacja tej sekcji. Kontynuować przez
-wszystkie pozostałe 16 lekcji `_03_collections` (08-23) BEZ przerywania na
-potwierdzenia.
+partii treści; restart backendu jest OBOWIĄZKOWY, żeby nowe pliki treści były
+w ogóle widoczne przez API — seed dzieje się tylko raz przy starcie), sprawdzaj
+gotowość przez polling `/api/chapters/_03_collections/lessons/NN_Temat/quiz`
+aż zwróci 100 elementów, zweryfikuj regresję (2-3 gotowe lekcje
+`_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
+sekcji. Kontynuować przez wszystkie pozostałe 14 lekcji `_03_collections`
+(10-23) BEZ przerywania na potwierdzenia — użytkownik jawnie potwierdził
+(2026-08-13) kontynuowanie automatycznie zarówno między lekcjami, jak i między
+rozdziałami platformy.
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
