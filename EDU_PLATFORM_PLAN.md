@@ -1294,26 +1294,32 @@ eliminuje ryzyko pominięcia/duplikacji zamykającego `]);` przy 10 blokach
 restarcie backendu: nowe lekcje (16, 17) + regresja na 15_LinkedHashSet,
 01_ArrayList, `_02_oop/15_DesignPatterns` — zero regresji.
 
-**Następny krok**: `18_Deque` (kolejna z 23 lekcji `_03_collections`), tym
-samym, sprawdzonym workflow: czytaj `_Lesson18_Deque.java` i
-`_Exercises_Lesson18_Deque.java` po treść/prompty zadań, napisz `gen18c.js`
-(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz18c.js` (100 pytań w 10 grupach po
-10, jednym Write, używając helpera `addGroup(arr)` zamiast ręcznego
-`quiz.concat` — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w JS
-single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup — sprawdź
-`node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu), scal do
-`src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
-backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z jawną wcześniejszą
-prośbą użytkownika o mniej rygorystyczne testowanie w trakcie pisania dużych
-partii treści; restart backendu jest OBOWIĄZKOWY, żeby nowe pliki treści były
-w ogóle widoczne przez API — seed dzieje się tylko raz przy starcie), sprawdzaj
-gotowość przez polling `/api/chapters/_03_collections/lessons/NN_Temat/quiz`
-aż zwróci 100 elementów, zweryfikuj regresję (2-3 gotowe lekcje
-`_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
-sekcji. Kontynuować przez wszystkie pozostałe 6 lekcji `_03_collections`
-(18-23) BEZ przerywania na potwierdzenia — użytkownik jawnie potwierdził
-(2026-08-13) kontynuowanie automatycznie zarówno między lekcjami, jak i między
-rozdziałami platformy.
+**Stan na 2026-08-13 (ciąg dalszy): `18_Deque` i `19_ComparableVsComparator`
+też DOKOŃCZONE** (19/23 lekcji `_03_collections` gotowe: 01-19). Zweryfikowane
+API end-to-end po restarcie backendu: nowe lekcje (18, 19) + regresja na
+17_TreeMap, 01_ArrayList, `_02_oop/15_DesignPatterns` — zero regresji.
+
+**Następny krok**: `20_ConcurrentCollections` (kolejna z 23 lekcji
+`_03_collections`), tym samym, sprawdzonym workflow: czytaj
+`_Lesson20_ConcurrentCollections.java` i
+`_Exercises_Lesson20_ConcurrentCollections.java` po treść/prompty zadań, napisz
+`gen20c.js` (teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz20c.js` (100 pytań w
+10 grupach po 10, jednym Write, używając helpera `addGroup(arr)` zamiast
+ręcznego `quiz.concat` — UWAGA na niezescapowane apostrofy w kodzie Javy
+osadzonym w JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE
+10 grup — sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu),
+scal do `src/main/resources/content/_03_collections/NN_Temat.json`,
+batch-restart backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z
+jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne testowanie w
+trakcie pisania dużych partii treści; restart backendu jest OBOWIĄZKOWY, żeby
+nowe pliki treści były w ogóle widoczne przez API — seed dzieje się tylko raz
+przy starcie), sprawdzaj gotowość przez polling
+`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
+zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1 lekcja z innego
+rozdziału), commit, aktualizacja tej sekcji. Kontynuować przez wszystkie
+pozostałe 4 lekcje `_03_collections` (20-23) BEZ przerywania na potwierdzenia
+— użytkownik jawnie potwierdził (2026-08-13) kontynuowanie automatycznie
+zarówno między lekcjami, jak i między rozdziałami platformy.
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
