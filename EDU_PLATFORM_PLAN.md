@@ -1235,26 +1235,37 @@ razu, żadnej brakującej). Zweryfikowane API end-to-end: nowa lekcja +
 regresja na wszystkich 4 poprzednich `_03_collections` lekcjach +
 `_02_oop/15_DesignPatterns` po restarcie.
 
-**Następny krok**: `06_TreeSet` (kolejna z 23 lekcji `_03_collections`), tym
-samym, sprawdzonym workflow: czytaj `_Lesson06_TreeSet.java` i
-`_Exercises_Lesson06_TreeSet.java` po treść/prompty zadań, napisz `gen06c.js`
-(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz06c.js` (100 pytań w 10 grupach po
+**Stan na 2026-08-13: `06_TreeSet` i `07_Comparator` też DOKOŃCZONE**
+(7/23 lekcji `_03_collections` gotowe: 01-07). `gen06c.js`/`quiz06c.js` i
+`gen07c.js`/`quiz07c.js` napisane i zwalidowane bezbłędnie za pierwszym razem
+(wszystkie 10 grup quizu od razu, bez brakujących pytań). Zweryfikowane API
+end-to-end po jednym restarcie backendu: nowe lekcje (06, 07) +
+regresja na 05_HashSet, 01_ArrayList, `_02_oop/15_DesignPatterns`,
+`_01_fundamentals/00_JavaPlatformBasics` — zero regresji (theory=7/
+exercises=30/quiz=100 dla wszystkich oprócz `_01_fundamentals/00`, która ma
+theory=6 - to nie jest regresja, tak było zawsze, niezwiązane z tą sesją).
+Użytkownik jawnie potwierdził (2026-08-13): nie pytać o zgodę ani między
+lekcjami, ani między rozdziałami — kontynuować automatycznie przez cały
+`_03_collections`, a po jego ukończeniu automatycznie przechodzić do
+weryfikacji/uzupełniania kolejnych rozdziałów platformy, aż do wyczerpania
+limitu/zadania.
+
+**Następny krok**: `08_HashMap` (kolejna z 23 lekcji `_03_collections`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson08_HashMap.java` i
+`_Exercises_Lesson08_HashMap.java` po treść/prompty zadań, napisz `gen08c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz08c.js` (100 pytań w 10 grupach po
 10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w
-JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup - w
-quiz04c.js zdarzyło się przypadkowe pominięcie ostatniej grupy, dające tylko 90
-zamiast 100 pytań; sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po
-napisaniu przed scaleniem, jeśli liczba się nie zgadza, PO PROSTU dopisz
-brakującą grupę na końcu tablicy, nie przepisuj całości od nowa), scal do
-`src/main/resources/content/_03_collections/06_TreeSet.json` (konwencja
-nazewnictwa plików scratchpad w tej sesji: `genNNc.js`/`quizNNc.js` z sufiksem
-"c" jak "collections"), restartuj backend (Stop-Process na PID z portu 8082 +
-Start-Process mvnw.cmd spring-boot:run w tle z $env:JAVA_HOME ustawionym),
-sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/06_TreeSet/quiz` aż zwróci 100
-elementów, zweryfikuj regresję (co najmniej 2-3 z dotychczas gotowych lekcji
-`_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
-sekcji. Kontynuować przez wszystkie 23 lekcje bez przerywania na potwierdzenia —
-użytkownik poprosił o to wielokrotnie (2026-08-11, 2026-08-12).
+JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup),
+sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu, scal do
+`src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
+backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z jawną wcześniejszą
+prośbą użytkownika o mniej rygorystyczne testowanie w trakcie pisania dużych
+partii treści), sprawdzaj gotowość przez polling
+`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100
+elementów, zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1 lekcja
+z innego rozdziału), commit, aktualizacja tej sekcji. Kontynuować przez
+wszystkie pozostałe 16 lekcji `_03_collections` (08-23) BEZ przerywania na
+potwierdzenia.
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
