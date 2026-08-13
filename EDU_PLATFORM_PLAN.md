@@ -1269,14 +1269,20 @@ API end-to-end po restarcie backendu: nowe lekcje (10, 11) + regresja na
 08_HashMap, 09_PriorityQueue, 01_ArrayList, `_02_oop/15_DesignPatterns` — zero
 regresji.
 
-**Następny krok**: `12_StreamsTerminal` (kolejna z 23 lekcji `_03_collections`),
-tym samym, sprawdzonym workflow: czytaj `_Lesson12_StreamsTerminal.java` i
-`_Exercises_Lesson12_StreamsTerminal.java` po treść/prompty zadań, napisz
-`gen12c.js` (teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz12c.js` (100 pytań w
-10 grupach po 10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie
-Javy osadzonym w JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE
-10 grup), sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu, scal
-do `src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
+**Stan na 2026-08-13 (ciąg dalszy): `12_StreamsTerminal` i `13_StreamsAdvanced`
+też DOKOŃCZONE** (13/23 lekcji `_03_collections` gotowe: 01-13). Zweryfikowane
+API end-to-end po restarcie backendu: nowe lekcje (12, 13) + regresja na
+10_StreamsIntro, 01_ArrayList, `_02_oop/15_DesignPatterns` — zero regresji.
+Cały blok Streams (Lesson10-13) rozdziału `_03_collections` ukończony.
+
+**Następny krok**: `14_Optional` (kolejna z 23 lekcji `_03_collections`), tym
+samym, sprawdzonym workflow: czytaj `_Lesson14_Optional.java` i
+`_Exercises_Lesson14_Optional.java` po treść/prompty zadań, napisz `gen14c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz14c.js` (100 pytań w 10 grupach po
+10, jednym Write — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w
+JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup), sprawdź
+`node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu, scal do
+`src/main/resources/content/_03_collections/NN_Temat.json`, batch-restart
 backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z jawną wcześniejszą
 prośbą użytkownika o mniej rygorystyczne testowanie w trakcie pisania dużych
 partii treści; restart backendu jest OBOWIĄZKOWY, żeby nowe pliki treści były
@@ -1284,8 +1290,8 @@ w ogóle widoczne przez API — seed dzieje się tylko raz przy starcie), sprawd
 gotowość przez polling `/api/chapters/_03_collections/lessons/NN_Temat/quiz`
 aż zwróci 100 elementów, zweryfikuj regresję (2-3 gotowe lekcje
 `_03_collections` + 1 lekcja z innego rozdziału), commit, aktualizacja tej
-sekcji. Kontynuować przez wszystkie pozostałe 12 lekcji `_03_collections`
-(12-23) BEZ przerywania na potwierdzenia — użytkownik jawnie potwierdził
+sekcji. Kontynuować przez wszystkie pozostałe 10 lekcji `_03_collections`
+(14-23) BEZ przerywania na potwierdzenia — użytkownik jawnie potwierdził
 (2026-08-13) kontynuowanie automatycznie zarówno między lekcjami, jak i między
 rozdziałami platformy.
 
