@@ -1299,26 +1299,44 @@ też DOKOŃCZONE** (19/23 lekcji `_03_collections` gotowe: 01-19). Zweryfikowane
 API end-to-end po restarcie backendu: nowe lekcje (18, 19) + regresja na
 17_TreeMap, 01_ArrayList, `_02_oop/15_DesignPatterns` — zero regresji.
 
-**Następny krok**: `20_ConcurrentCollections` (kolejna z 23 lekcji
-`_03_collections`), tym samym, sprawdzonym workflow: czytaj
-`_Lesson20_ConcurrentCollections.java` i
-`_Exercises_Lesson20_ConcurrentCollections.java` po treść/prompty zadań, napisz
-`gen20c.js` (teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz20c.js` (100 pytań w
-10 grupach po 10, jednym Write, używając helpera `addGroup(arr)` zamiast
-ręcznego `quiz.concat` — UWAGA na niezescapowane apostrofy w kodzie Javy
-osadzonym w JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE
-10 grup — sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu),
-scal do `src/main/resources/content/_03_collections/NN_Temat.json`,
-batch-restart backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z
-jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne testowanie w
-trakcie pisania dużych partii treści; restart backendu jest OBOWIĄZKOWY, żeby
-nowe pliki treści były w ogóle widoczne przez API — seed dzieje się tylko raz
-przy starcie), sprawdzaj gotowość przez polling
-`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
-zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1 lekcja z innego
-rozdziału), commit, aktualizacja tej sekcji. Kontynuować przez wszystkie
-pozostałe 4 lekcje `_03_collections` (20-23) BEZ przerywania na potwierdzenia
-— użytkownik jawnie potwierdził (2026-08-13) kontynuowanie automatycznie
+**Stan na 2026-08-13 (ciąg dalszy): `20_ConcurrentCollections` i
+`21_LegacyCollections` też DOKOŃCZONE** (21/23 lekcji `_03_collections`
+gotowe: 01-21). `20_ConcurrentCollections` pokrywa ConcurrentHashMap,
+CopyOnWriteArrayList, rodzine BlockingQueue, ConcurrentLinkedQueue,
+ConcurrentSkipListMap/Set, AtomicInteger/AtomicLong, wzorce producer-consumer
+z poison-pill. `21_LegacyCollections` pokrywa Vector, Stack (w tym problem
+wadliwej hierarchii Stack extends Vector), Hashtable, Properties, Enumeration
+— z naciskiem na mapowanie legacy->nowoczesny odpowiednik (Vector->ArrayList,
+Stack->ArrayDeque, Hashtable->HashMap, Enumeration->Iterator). Oba pliki
+`genNNc.js`/`quizNNc.js` zwalidowane bezbłędnie za pierwszym razem (helper
+`addGroup(arr)` nadal się sprawdza — zero błędów liczenia grup od lekcji 16).
+Backend zrestartowany batch-owo dla obu lekcji naraz. Zweryfikowane API
+end-to-end po restarcie: nowe lekcje (20, 21) + regresja na
+19_ComparableVsComparator, 06_TreeSet, `_02_oop/15_DesignPatterns` — zero
+regresji. Oba commity wykonane.
+
+**Następny krok**: `22_Queue` (przedostatnia z 23 lekcji `_03_collections`),
+tym samym, sprawdzonym workflow: czytaj `_Lesson22_Queue.java` i
+`_Exercises_Lesson22_Queue.java` po treść/prompty zadań, napisz `gen22c.js`
+(teoria ok. 7 bloków + 30 zadań) i CAŁY `quiz22c.js` (100 pytań w 10 grupach
+po 10, jednym Write, używając helpera `addGroup(arr)` zamiast ręcznego
+`quiz.concat` — UWAGA na niezescapowane apostrofy w kodzie Javy osadzonym w
+JS single-quoted stringach, oraz UWAGA żeby napisać WSZYSTKIE 10 grup —
+sprawdź `node genNNc.js`/`node quizNNc.js` OD RAZU po napisaniu), scal do
+`src/main/resources/content/_03_collections/NN_Temat.json`, potem od razu
+kontynuuj `23_SpecialMaps` (OSTATNIA lekcja rozdziału — po jej ukończeniu
+`_03_collections` osiąga 23/23, komplet) tym samym workflow. Batch-restart
+backendu (najlepiej raz dla obu lekcji 22+23 naraz, NIE po każdej pojedynczej
+— zgodnie z jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne
+testowanie w trakcie pisania dużych partii treści; restart backendu jest
+OBOWIĄZKOWY, żeby nowe pliki treści były w ogóle widoczne przez API — seed
+dzieje się tylko raz przy starcie), sprawdzaj gotowość przez polling
+`/api/chapters/_03_collections/lessons/NN_Temat/quiz` aż zwróci 100
+elementów, zweryfikuj regresję (2-3 gotowe lekcje `_03_collections` + 1
+lekcja z innego rozdziału), commit, aktualizacja tej sekcji. Po ukończeniu
+CAŁEGO rozdziału `_03_collections` (23/23) kontynuować automatycznie dalszą
+pracą nad platformą wg tego planu, BEZ przerywania na potwierdzenia —
+użytkownik jawnie potwierdził (2026-08-13) kontynuowanie automatycznie
 zarówno między lekcjami, jak i między rozdziałami platformy.
 
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
