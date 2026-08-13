@@ -1383,29 +1383,46 @@ late-stage walidacji. Zweryfikowane API end-to-end po restarcie: nowe lekcje
 `_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns` — zero
 regresji. Oba commity wykonane.
 
+**Stan na 2026-08-13 (ciąg dalszy _04_io): `05_DataStreams` i
+`06_PrintWriterAndStream` też DOKOŃCZONE** (6/24 lekcji `_04_io` gotowe:
+01-06). `05_DataStreams` pokrywa DataInputStream/DataOutputStream (binarny
+zapis typów prostych, writeInt/writeUTF/readInt itd., EOFException jako
+sygnał końca danych, zasada "kolejność zapisu = kolejność odczytu").
+`06_PrintWriterAndStream` pokrywa PrintWriter/PrintStream (print/println/
+printf, autoFlush, System.setOut() do przekierowania konsoli, checkError()
+zamiast checked exceptions) — razem domykają "wygodne" API do zapisu danych
+w rozdziale. Oba pliki `genNNd.js`/`quizNNd.js` napisane poprawnie za
+pierwszym razem z DOKŁADNIE 10 grupami w `quizNNd.js` (liczenie wywołań
+`addGroup()` na bieżąco — zgodnie z zasadą zapisaną w poprzedniej notatce —
+całkowicie wyeliminowało błędy liczby grup, które wystąpiły przy lekcjach
+02-04). Zweryfikowane API end-to-end po restarcie: nowe lekcje (05, 06) +
+regresja na 03_BufferedReaderWriter, 04_BufferedStreams,
+`_03_collections/23_SpecialMaps`, `_01_fundamentals/16_Exceptions` — zero
+regresji. Oba commity wykonane.
+
 **Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
 plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
 nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `05_DataStreams`. Tym samym, sprawdzonym workflow: dla każdej
-lekcji NN czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+od lekcji `07_Scanner`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
 `quizNNd.js` (100 pytań w DOKŁADNIE 10 grupach po 10 — LICZ wywołania
-`addGroup()` na bieżąco podczas pisania, nie tylko na końcu — jeden blok
-walidacyjny `if (quiz.length !== 100) throw ...` NA SAMYM KOŃCU pliku, po
-wszystkich 10 `addGroup()`), sprawdź `node genNNd.js`/`node quizNNd.js` OD
-RAZU po napisaniu (oczekiwane theory:7 exercises:30 / quiz:100), scal do
+`addGroup()` na bieżąco podczas pisania, jeden blok walidacyjny `if
+(quiz.length !== 100) throw ...` NA SAMYM KOŃCU pliku, po wszystkich 10
+`addGroup()`), sprawdź `node genNNd.js`/`node quizNNd.js` OD RAZU po
+napisaniu (oczekiwane theory:7 exercises:30 / quiz:100), scal do
 `src/main/resources/content/_04_io/NN_Temat.json` (nazwa pliku MUSI
-dokładnie odpowiadać nazwie w `ChapterSeedData.java`, np.
-`05_DataStreams.json`). Batch-restart backendu co 2-4 lekcje (NIE po każdej
-pojedynczej — zgodnie z jawną wcześniejszą prośbą użytkownika o mniej
-rygorystyczne testowanie w trakcie pisania dużych partii treści; restart
-backendu jest OBOWIĄZKOWY, żeby nowe pliki treści były w ogóle widoczne przez
-API — seed dzieje się tylko raz przy starcie), sprawdzaj gotowość przez
-polling `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
+dokładnie odpowiadać nazwie w `ChapterSeedData.java`, np. `07_Scanner.json`).
+Batch-restart backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z
+jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne testowanie w
+trakcie pisania dużych partii treści; restart backendu jest OBOWIĄZKOWY, żeby
+nowe pliki treści były w ogóle widoczne przez API — seed dzieje się tylko raz
+przy starcie), sprawdzaj gotowość przez polling
+`/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
 zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
 gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 20 lekcji
+aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 18 lekcji
 `_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
 (37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
 na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
