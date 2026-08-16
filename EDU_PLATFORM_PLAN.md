@@ -1400,10 +1400,26 @@ regresja na 03_BufferedReaderWriter, 04_BufferedStreams,
 `_03_collections/23_SpecialMaps`, `_01_fundamentals/16_Exceptions` — zero
 regresji. Oba commity wykonane.
 
+**Stan na 2026-08-16 (ciąg dalszy _04_io): `07_Scanner`, `08_FileClass` i
+`09_PathAndPaths` też DOKOŃCZONE** (9/24 lekcji `_04_io` gotowe: 01-09).
+`07_Scanner.json` był już przygotowany (niezacommitowany) z poprzedniej
+sesji — zweryfikowany (7 teorii/30 zadań/100 quizów, poprawne opcje A-D) i
+scommitowany bez zmian. `08_FileClass` i `09_PathAndPaths` napisane od zera
+tym samym, sprawdzonym workflow (`genNNd.js`/`quizNNd.js` w scratchpadzie,
+walidacja Node PRZED zapisem). Jedna literówka złapana przez walidację: w
+`gen08d.js` brakowało całego zadania 28 (FileNameSanitizer) — walidacja
+`exercises.length !== 30` złapała to od razu (29 zamiast 30), dopisane przed
+zapisem. Zweryfikowane API end-to-end po restarcie backendu: nowe lekcje
+(07, 08, 09) — każda 7/30/100 — oraz regresja na
+`_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns` — zero
+regresji (100/100 quizów w obu). Wszystkie 3 commity wykonane. Sprzątnięto
+też przy okazji stertę niezacommitowanych plików `backend_out*.log`/
+`backend_err*.log` z poprzednich sesji (czyste śmieci w repo).
+
 **Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
 plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
 nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `07_Scanner`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+od lekcji `10_FilesClass`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
 czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
@@ -1422,7 +1438,7 @@ przy starcie), sprawdzaj gotowość przez polling
 `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
 zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
 gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 18 lekcji
+aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 15 lekcji
 `_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
 (37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
 na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
