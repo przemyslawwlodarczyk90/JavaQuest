@@ -1449,10 +1449,25 @@ dały poprawne 7/30/100) — najpewniej chwilowy problem z równoległym
 odpytywaniem w pętli bash, nie błąd w treści/seedowaniu; nie wymaga
 żadnej naprawy kodu. Oba commity wykonane.
 
+**Stan na 2026-08-16 (ciąg dalszy _04_io): `16_ObjectSerialization` i
+`17_SerialVersionUID` też DOKOŃCZONE** (17/24 lekcji `_04_io` gotowe:
+01-17). Ten sam, sprawdzony workflow — przy `17_SerialVersionUID` pierwsza
+wersja `quiz17d.js` miała tylko 8 z 10 wymaganych grup (80 pytań) — złapane
+od razu przez `node quiz17d.js` (błąd "mismatch: 80"), naprawione dopisaniem
+brakujących grup 9-10 przed blokiem walidacyjnym. Zweryfikowane API
+end-to-end po restarcie backendu (tym razem KAŻDE zapytanie curl osobnym
+wywołaniem Bash, nie w pętli/łańcuchu — poprzednia sesja miała dwa fałszywe
+alarmy "0 zamiast 100" przy łączeniu wielu curl w jednej komendzie, oba
+okazały się nieszkodliwym artefaktem, nie realnym błędem seedowania): nowe
+lekcje (16, 17) — każda 7/30/100 — oraz regresja na
+`_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns` i
+`_04_io/15_NioChannelsAndBuffers` — zero regresji (100/100 quizów we
+wszystkich trzech). Oba commity wykonane.
+
 **Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
 plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
 nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `16_ObjectSerialization`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+od lekcji `18_TransientKeyword`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
 czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
@@ -1471,7 +1486,7 @@ przy starcie), sprawdzaj gotowość przez polling
 `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
 zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
 gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 9 lekcji
+aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 7 lekcji
 `_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
 (37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
 na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
