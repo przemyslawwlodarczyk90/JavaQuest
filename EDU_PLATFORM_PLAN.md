@@ -1464,10 +1464,24 @@ lekcje (16, 17) — każda 7/30/100 — oraz regresja na
 `_04_io/15_NioChannelsAndBuffers` — zero regresji (100/100 quizów we
 wszystkich trzech). Oba commity wykonane.
 
+**Stan na 2026-08-16 (ciąg dalszy _04_io): `18_TransientKeyword` i
+`19_JsonIntro` też DOKOŃCZONE** (19/24 lekcji `_04_io` gotowe: 01-19).
+Ten sam, sprawdzony workflow — w `quiz18d.js` pierwsza wersja miała tylko 9
+z 10 grup (90 pytań), złapane od razu przez `node quiz18d.js` ("mismatch:
+90"), naprawione dopisaniem 10. grupy. Zweryfikowane API end-to-end po
+restarcie backendu (znów pierwszy pojedynczy request po świeżym restarcie
+dał `0` dla `18_TransientKeyword/theory`, powtórzenie dało poprawne `7` —
+ten sam nieszkodliwy, powtarzalny "cold start" artefakt zanotowany już przy
+lekcjach 16-17, potwierdzony przez `hasContent: true` w listingu; nie jest
+to błąd seedowania): nowe lekcje (18, 19) — każda 7/30/100 — oraz regresja
+na `_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns` i
+`_04_io/16_ObjectSerialization` — zero regresji (100/100 quizów we
+wszystkich trzech). Oba commity wykonane.
+
 **Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
 plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
 nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `18_TransientKeyword`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+od lekcji `20_Gson`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
 czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
@@ -1486,7 +1500,15 @@ przy starcie), sprawdzaj gotowość przez polling
 `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
 zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
 gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 7 lekcji
+aktualizacja tej sekcji. **Zauważona (2026-08-16) drobna, powtarzalna
+osobliwość weryfikacyjna, WARTA zapamiętania**: pierwsze zapytanie curl do
+API zaraz po restarcie backendu czasem zwraca `0` dla `theory`/`exercises`/
+`quiz` nowo dodanej lekcji, mimo że seed przebiegł poprawnie — powtórzenie
+DOKŁADNIE tego samego zapytania od razu daje poprawny wynik. Zawsze
+potwierdzone przez `hasContent: true` w `/lessons` — to nieszkodliwy
+artefakt (najpewniej JIT/connection warm-up), NIE błąd seedowania. Jeśli
+pierwsze sprawdzenie po restarcie da `0`, PRZED szukaniem błędu w kodzie
+po prostu powtórz to samo zapytanie. Kontynuować przez wszystkie pozostałe 5 lekcji
 `_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
 (37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
 na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
