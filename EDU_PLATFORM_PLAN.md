@@ -1424,10 +1424,18 @@ backendu: nowe lekcje (10, 11) — każda 7/30/100 — oraz regresja na
 `_04_io/07_Scanner` — zero regresji (100/100 quizów we wszystkich trzech).
 Oba commity wykonane.
 
+**Stan na 2026-08-16 (ciąg dalszy _04_io): `12_Charset` i
+`13_TryWithResources` też DOKOŃCZONE** (13/24 lekcji `_04_io` gotowe: 01-13 —
+POŁOWA rozdziału). Ten sam, sprawdzony workflow. Zweryfikowane API
+end-to-end po restarcie backendu: nowe lekcje (12, 13) — każda 7/30/100 —
+oraz regresja na `_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns`
+i `_04_io/09_PathAndPaths` — zero regresji (100/100 quizów we wszystkich
+trzech). Oba commity wykonane.
+
 **Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
 plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
 nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `12_Charset`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+od lekcji `14_FileExceptions`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
 czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
@@ -1446,7 +1454,7 @@ przy starcie), sprawdzaj gotowość przez polling
 `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
 zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
 gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 13 lekcji
+aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 11 lekcji
 `_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
 (37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
 na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
