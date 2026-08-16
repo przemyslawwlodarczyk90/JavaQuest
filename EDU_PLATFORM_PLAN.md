@@ -1432,10 +1432,27 @@ oraz regresja na `_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns`
 i `_04_io/09_PathAndPaths` — zero regresji (100/100 quizów we wszystkich
 trzech). Oba commity wykonane.
 
+**Stan na 2026-08-16 (ciąg dalszy _04_io): `14_FileExceptions` i
+`15_NioChannelsAndBuffers` też DOKOŃCZONE** (15/24 lekcji `_04_io` gotowe:
+01-15). Ten sam, sprawdzony workflow — `15_NioChannelsAndBuffers` był
+najbardziej złożoną lekcją dotychczas w tym rozdziale (ByteBuffer,
+FileChannel, transferTo/From, memory-mapped files), mimo to wygenerowana
+bezbłędnie za pierwszym razem. Zweryfikowane API end-to-end po restarcie
+backendu: nowe lekcje (14, 15) — każda 7/30/100 — oraz regresja na
+`_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns` i
+`_04_io/13_TryWithResources` — zero regresji (100/100 quizów we wszystkich
+trzech). Drobna uwaga: pierwsza runda zapytań API tuż po starcie dała
+myląco `theory=0/exercises=0/quiz=0` dla obu nowych lekcji mimo poprawnie
+zasianej treści (potwierdzone przez `hasContent: true` w
+`/lessons` i przez powtórzenie tych samych zapytań, które za drugim razem
+dały poprawne 7/30/100) — najpewniej chwilowy problem z równoległym
+odpytywaniem w pętli bash, nie błąd w treści/seedowaniu; nie wymaga
+żadnej naprawy kodu. Oba commity wykonane.
+
 **Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
 plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
 nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `14_FileExceptions`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+od lekcji `16_ObjectSerialization`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
 czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
@@ -1454,7 +1471,7 @@ przy starcie), sprawdzaj gotowość przez polling
 `/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
 zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
 gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 11 lekcji
+aktualizacja tej sekcji. Kontynuować przez wszystkie pozostałe 9 lekcji
 `_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
 (37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
 na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
