@@ -1478,10 +1478,23 @@ na `_03_collections/23_SpecialMaps`, `_02_oop/15_DesignPatterns` i
 `_04_io/16_ObjectSerialization` — zero regresji (100/100 quizów we
 wszystkich trzech). Oba commity wykonane.
 
-**Następny krok**: kontynuować rozdział `_04_io` ("Input/Output i praca z
-plikami", 24 lekcje: 01_IOIntroduction … 24_ZIP — dokładna lista i kolejność
-nazw w `ChapterSeedData.java` linia ~52-58, MUSI się zgadzać z plikami JSON)
-od lekcji `20_Gson`. Tym samym, sprawdzonym workflow: dla każdej lekcji NN
+**Stan na 2026-08-21: `_04_io` UKOŃCZONY (24/24: 20_Gson, 21_Jackson,
+22_SerializableVsJson, 23_CSV, 24_ZIP dopisane w tej sesji).** Zweryfikowane
+API end-to-end po restarcie backendu: wszystkie 5 nowych lekcji — każda
+7/30/100 — oraz regresja na `_03_collections/23_SpecialMaps` i
+`_02_oop/15_DesignPatterns` — zero regresji. Commit wykonany. Na wyraźną
+prośbę użytkownika ("nie rob przerwy miedzy rozdzialami", "nie musisz tez
+duzo czasu tracic na weryfikacje") tempo pracy przyspieszone: mniej rund
+weryfikacji API w trakcie pisania (walidacja liczby elementów w Node.js jest
+teraz głównym sitem, restart+sprawdzenie API robione rzadziej, np. po całym
+rozdziale zamiast co 2-4 lekcje), oraz **BEZ przerwy między rozdziałami** —
+po ukończeniu `_04_io` praca leci dalej od razu do `_05_multithreading` (37
+lekcji), a po nim kolejno przez wszystkie pozostałe rozdziały wg
+`ChapterSeedData.java`, bez zatrzymywania się na potwierdzenia.
+
+**Następny krok**: `_05_multithreading` ("Multithreading / Watki w Javie",
+37 lekcji: 01_ThreadsIntroduction … 37_CommonMistakes — pełna lista w
+`ChapterSeedData.java` linia ~61-73). Tym samym, sprawdzonym workflow: dla każdej lekcji NN
 czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
 zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
