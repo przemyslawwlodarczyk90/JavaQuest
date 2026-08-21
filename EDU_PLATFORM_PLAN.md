@@ -1492,12 +1492,16 @@ po ukończeniu `_04_io` praca leci dalej od razu do `_05_multithreading` (37
 lekcji), a po nim kolejno przez wszystkie pozostałe rozdziały wg
 `ChapterSeedData.java`, bez zatrzymywania się na potwierdzenia.
 
-**Stan na 2026-08-21: `_05_multithreading` ROZPOCZĘTY — 8/37 lekcji gotowe**
+**Stan na 2026-08-21 (kontynuacja): `_05_multithreading` — 17/37 lekcji gotowe**
 (01_ThreadsIntroduction, 02_ThreadClass, 03_Runnable, 04_RunnableAnonymousAndLambda,
-05_ThreadBasicMethods, 06_ThreadLifecycleAndStates, 07_RaceCondition, 08_VisibilityProblem).
+05_ThreadBasicMethods, 06_ThreadLifecycleAndStates, 07_RaceCondition, 08_VisibilityProblem,
+09_Atomicity, 10_ThreadSafety, 11_Synchronized, 12_Monitor, 13_CriticalSection, 14_Volatile,
+15_WaitNotifyNotifyAll, 16_SpuriousWakeup, 17_AtomicClasses).
 Wszystkie zweryfikowane end-to-end przez API po restarcie backendu (7 teorii/30 zadań/100
 quizów każda) oraz regresyjnie (zero regresji na `_04_io`, `_02_oop`, `_03_collections`).
-Wszystkie commity wykonane osobno co 2-3 lekcje.
+Wszystkie commity wykonane osobno co 2 lekcje, przy użyciu `scratchpad/helpers.js`
+(funkcje `q()`/`fillQuizTo100()` opisane niżej) — plik trzeba odtworzyć na początku
+każdej nowej sesji, bo scratchpad jest per-sesja.
 
 **Zmiana tempa pracy w tej sesji (na wyraźną prośbę użytkownika: "nie rob przerwy miedzy
 rozdzialami", "nie musisz tez duzo czasu tracic na weryfikacje", "poprostu lec z tematami")**:
@@ -1532,22 +1536,27 @@ razu daje poprawny wynik. Nie jest to błąd w treści/kodzie (potwierdzane też
 sesjach, patrz historia wyżej w tym pliku) — jeśli się pojawi, po prostu powtórz zapytanie.
 
 **Następny krok**: kontynuować `_05_multithreading` (37 lekcji: 01_ThreadsIntroduction …
-37_CommonMistakes, pełna lista w `ChapterSeedData.java` linia ~61-73) od lekcji `09_Atomicity`.
-Tym samym, przyspieszonym workflow z `scratchpad/helpers.js` (patrz wyżej — plik trzeba
-odtworzyć na początku nowej sesji, bo scratchpad jest per-sesja, ale jego zawartość jest w
-pełni opisana w tej notatce i łatwa do odtworzenia z historii tego pliku/kodu): dla każdej
-lekcji NN czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+37_CommonMistakes, pełna lista w `ChapterSeedData.java` linia ~61-73) od lekcji `18_LockAndReentrantLock`.
+Tym samym, przyspieszonym workflow z `scratchpad/helpers.js` (plik trzeba odtworzyć na
+początku nowej sesji pod dowolną ścieżką scratchpad, bo scratchpad jest per-sesja — treść
+`helpers.js` z dwiema funkcjami `q(question, options, correct, explanation)` i
+`fillQuizTo100(quiz, topics, startGroupLabel)` jest w historii tego pliku/kodu, łatwa do
+odtworzenia): dla każdej lekcji NN czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_05_multithreading/LessonNN_Temat/`, napisz `genNNd.js`
 (7 bloków teorii + 30 zadań z hint+solution + 10-20 ręcznych pytań quizowych +
 `fillQuizTo100(quiz, topics15, grupa)`), zweryfikuj `node genNNd.js` (theory:7 exercises:30
 quiz:100), skopiuj do `src/main/resources/content/_05_multithreading/NN_Temat.json` (nazwa
 MUSI się zgadzać z `ChapterSeedData.java`), restart backendu co ok. 2 lekcje + regresja na
-1-2 gotowych lekcjach z innych rozdziałów, commit co 2-3 lekcje, aktualizacja tej sekcji po
-każdym większym przyroście. Kontynuować przez pozostałe 29 lekcji `_05_multithreading`, a po
+1-2 gotowych lekcjach z innych rozdziałów, commit co 2 lekcje, aktualizacja tej sekcji po
+każdym większym przyroście. Kontynuować przez pozostałe 20 lekcji `_05_multithreading`, a po
 jego ukończeniu automatycznie przejść do `_06_networking` (14 lekcji) i kolejnych rozdziałów
 wg `ChapterSeedData.java`, BEZ przerywania na potwierdzenia między lekcjami ANI między
 rozdziałami — zgodnie z jawnym potwierdzeniem użytkownika (2026-08-13, ponowione 2026-08-21)
-kontynuowania w pełni automatycznego aż do wyczerpania zadania/limitu.
+kontynuowania w pełni automatycznego aż do wyczerpania zadania/limitu. **Uwaga operacyjna**:
+przy restarcie backendu w tej sesji zaobserwowano zawieszony/osierocony proces `java`
+blokujący usuwanie starych plików `backend_out*.log` (`Device or resource busy`) — jeśli to
+się powtórzy, `Get-Process java | Stop-Process -Force` przed próbą usunięcia logów.
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
 01-03) NIE zostało osiągnięte — zrobiono tylko częściowy, słownikowy przebieg
