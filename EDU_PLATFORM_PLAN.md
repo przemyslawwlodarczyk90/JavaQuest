@@ -1563,4 +1563,41 @@ znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
 (patrz wyżej). Jeśli użytkownik o to zapyta w przyszłości, wyjaśnić że jest to
 świadomie odłożone ze względu na nieproporcjonalny koszt względem pisania nowej
 treści.
+
+**Stan na 2026-08-21 (kontynuacja, dokończenie): `_05_multithreading` UKOŃCZONY —
+37/37 lekcji.** Dokończono lekcje 18-37 (18_LockAndReentrantLock, 19_ReadWriteLock,
+20_Synchronizers, 21_ExecutorService, 22_CallableAndFuture, 23_ScheduledExecutorService,
+24_ConcurrentCollectionsAndBlockingQueue, 25_Deadlock, 26_Livelock, 27_Starvation,
+28_Interrupt, 29_DaemonThreads, 30_ThreadLocal, 31_ForkJoinPool, 32_CompletableFuture,
+33_VirtualThreads, 34_ThreadDebugging, 35_SafeThreadTermination, 36_BestPractices,
+37_CommonMistakes) tym samym workflow (`scratchpad/helpers.js` + `genNNd.js` per
+lekcja), w 3 seriach commitów (18-27, 28-32, 33-37). Każda z 20 lekcji zweryfikowana
+`node genNNd.js` (theory:7/exercises:30/quiz:100) PRZED skopiowaniem do
+`src/main/resources/content/_05_multithreading/`, a po każdej serii — restart
+backendu + weryfikacja API end-to-end (`curl .../theory`, `.../exercises`, `.../quiz`
+dla każdej nowej lekcji tej serii, z re-query przy znanej, nieszkodliwej osobliwości
+"pierwsze zapytanie po restarcie = 0"). Zero regresji na wcześniej gotowych lekcjach
+(spot-check `18_LockAndReentrantLock`, `25_Deadlock` przy finalnej weryfikacji).
+Wszystkie 3 serie commitów wykonane (`git log`: commity "Platforma: dodaj tresc lekcji
+18-27/28-32/33-37 w _05_multithreading"). **Powtarzający się drobny błąd w tej sesji**:
+tablica `exPromptsLevel3` w wielu `genNNd.js` regularnie wychodziła na 9 (czasem 7-8)
+zamiast 10 pozycji przy pierwszym napisaniu — zawsze wykrywane od razu przez
+`if (allPrompts.length !== 30) throw ...` w `node genNNd.js`, naprawiane dopisaniem
+brakującego zadania/zadań. Nie wpłynęło na finalną jakość (każdy plik ostatecznie miał
+dokładnie 30 zadań), ale warto to mieć na uwadze przy pisaniu kolejnych rozdziałów —
+licz elementy tablicy `exPromptsLevel3` (i pozostałych) na bieżąco, nie tylko na końcu.
+
+**Następny krok**: `_05_multithreading` jest KOMPLETNY. Zgodnie z jawnym, wielokrotnie
+potwierdzonym poleceniem użytkownika ("nie rob przerwy miedzy rozdzialami", "lec z
+tematami", "nie pytaj sie o zgode") — przejść automatycznie, BEZ pytania o potwierdzenie,
+do **`_06_networking`** (14 lekcji: 01_NetworkingIntroduction … 14_HtmlUnit, pełna lista
+w `ChapterSeedData.java` i w sekcji `_06_networking` w `CLAUDE.md`), tym samym workflow
+(`scratchpad/helpers.js` + `genNNd.js` per lekcja, weryfikacja liczby elementów w
+Node.js PRZED restartem backendu, restart+API-check co ok. 2 lekcje z regresją na 1-2
+gotowych lekcjach z innych rozdziałów, commit co ok. 5-10 lekcji), a po jego ukończeniu
+kolejno przez `_07_servlets`, `_08_sql`, `_09_jdbc`, `_10_dao`, `_11_buildtools`, ... aż
+do wyczerpania zadania/limitu, zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`.
+Pamiętać: `$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w
+KAŻDEJ nowej sesji PowerShell (nie jest ustawione globalnie), i `scratchpad/helpers.js`
+trzeba odtworzyć na początku nowej sesji (scratchpad jest per-sesja).
 ---
