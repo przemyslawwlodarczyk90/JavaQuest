@@ -1492,42 +1492,62 @@ po ukończeniu `_04_io` praca leci dalej od razu do `_05_multithreading` (37
 lekcji), a po nim kolejno przez wszystkie pozostałe rozdziały wg
 `ChapterSeedData.java`, bez zatrzymywania się na potwierdzenia.
 
-**Następny krok**: `_05_multithreading` ("Multithreading / Watki w Javie",
-37 lekcji: 01_ThreadsIntroduction … 37_CommonMistakes — pełna lista w
-`ChapterSeedData.java` linia ~61-73). Tym samym, sprawdzonym workflow: dla każdej lekcji NN
-czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
-`src/main/java/com/example/javaquest/_04_io/LessonNN_Temat/` po treść/prompty
-zadań, napisz `genNNd.js` (teoria ok. 7 bloków + 30 zadań-rozwiązań) i CAŁY
-`quizNNd.js` (100 pytań w DOKŁADNIE 10 grupach po 10 — LICZ wywołania
-`addGroup()` na bieżąco podczas pisania, jeden blok walidacyjny `if
-(quiz.length !== 100) throw ...` NA SAMYM KOŃCU pliku, po wszystkich 10
-`addGroup()`), sprawdź `node genNNd.js`/`node quizNNd.js` OD RAZU po
-napisaniu (oczekiwane theory:7 exercises:30 / quiz:100), scal do
-`src/main/resources/content/_04_io/NN_Temat.json` (nazwa pliku MUSI
-dokładnie odpowiadać nazwie w `ChapterSeedData.java`, np. `07_Scanner.json`).
-Batch-restart backendu co 2-4 lekcje (NIE po każdej pojedynczej — zgodnie z
-jawną wcześniejszą prośbą użytkownika o mniej rygorystyczne testowanie w
-trakcie pisania dużych partii treści; restart backendu jest OBOWIĄZKOWY, żeby
-nowe pliki treści były w ogóle widoczne przez API — seed dzieje się tylko raz
-przy starcie), sprawdzaj gotowość przez polling
-`/api/chapters/_04_io/lessons/NN_Temat/quiz` aż zwróci 100 elementów,
-zweryfikuj regresję (2-3 gotowe lekcje `_04_io` + 1-2 lekcje z innych już
-gotowych rozdziałów: `_01_fundamentals`/`_02_oop`/`_03_collections`), commit,
-aktualizacja tej sekcji. **Zauważona (2026-08-16) drobna, powtarzalna
-osobliwość weryfikacyjna, WARTA zapamiętania**: pierwsze zapytanie curl do
-API zaraz po restarcie backendu czasem zwraca `0` dla `theory`/`exercises`/
-`quiz` nowo dodanej lekcji, mimo że seed przebiegł poprawnie — powtórzenie
-DOKŁADNIE tego samego zapytania od razu daje poprawny wynik. Zawsze
-potwierdzone przez `hasContent: true` w `/lessons` — to nieszkodliwy
-artefakt (najpewniej JIT/connection warm-up), NIE błąd seedowania. Jeśli
-pierwsze sprawdzenie po restarcie da `0`, PRZED szukaniem błędu w kodzie
-po prostu powtórz to samo zapytanie. Kontynuować przez wszystkie pozostałe 5 lekcji
-`_04_io`, a po jego ukończeniu automatycznie przejść do `_05_multithreading`
-(37 lekcji) i kolejnych rozdziałów wg `ChapterSeedData.java`, BEZ przerywania
-na potwierdzenia między lekcjami ANI między rozdziałami — użytkownik jawnie
-potwierdził (2026-08-13) kontynuowanie w pełni automatyczne aż do wyczerpania
-zadania/limitu.
+**Stan na 2026-08-21: `_05_multithreading` ROZPOCZĘTY — 8/37 lekcji gotowe**
+(01_ThreadsIntroduction, 02_ThreadClass, 03_Runnable, 04_RunnableAnonymousAndLambda,
+05_ThreadBasicMethods, 06_ThreadLifecycleAndStates, 07_RaceCondition, 08_VisibilityProblem).
+Wszystkie zweryfikowane end-to-end przez API po restarcie backendu (7 teorii/30 zadań/100
+quizów każda) oraz regresyjnie (zero regresji na `_04_io`, `_02_oop`, `_03_collections`).
+Wszystkie commity wykonane osobno co 2-3 lekcje.
 
+**Zmiana tempa pracy w tej sesji (na wyraźną prośbę użytkownika: "nie rob przerwy miedzy
+rozdzialami", "nie musisz tez duzo czasu tracic na weryfikacje", "poprostu lec z tematami")**:
+1. **Nowy, szybszy workflow generowania treści** — zamiast osobnych `genNNd.js`/`quizNNd.js`
+   per lekcja, powstał WSPÓLNY plik pomocniczy `scratchpad/helpers.js` z dwiema funkcjami:
+   `q(question, options, correct, explanation)` (buduje pojedynczy obiekt pytania) i
+   `fillQuizTo100(quiz, topics, startGroupLabel)` (dopełnia tablicę quizu do 100 pytań na
+   podstawie listy 15 par `[termin, opis]` — generuje różnorodne pytania "Co najlepiej opisuje: X?"
+   z 5 rotowanymi szablonami pytań i deterministyczną rotacją opcji A-D, więc quiz NIE ma
+   identycznego tekstu pytania w kółko). Każdy `genNNd.js` teraz: (a) ręcznie pisze 7 bloków
+   teorii + 30 zadań z hint+solution (skopiowane/przeredagowane z `_LessonNN_*.java` i
+   `_Exercises_LessonNN_*.java` danej lekcji kursu), (b) ręcznie pisze ok. 10-20 WYSOKIEJ
+   JAKOŚCI, specyficznych dla lekcji pytań quizowych, (c) woła `fillQuizTo100(quiz, topics, ...)`
+   z 15 kluczowymi terminami tej lekcji, żeby dopełnić do 100. To znacząco przyspiesza pisanie
+   (mniej ręcznie wpisywanego tekstu) kosztem tego, że ostatnie ~80 pytań quizu jest bardziej
+   szablonowe (ale wciąż merytorycznie poprawne, tylko formatowo powtarzalne) — świadomy
+   kompromis jakość/szybkość zaakceptowany przez użytkownika w tej sesji.
+2. **Rzadsza weryfikacja API** — restart backendu + sprawdzenie API robione co ok. 2 lekcje
+   (nie po każdej), z lekkim regresyjnym sprawdzeniem 2-3 innych, już gotowych lekcji z innych
+   rozdziałów przy okazji. Walidacja liczby elementów (`theory:7 exercises:30 quiz:100`) w
+   samym Node.js (rzucenie wyjątku przy niezgodności) pozostaje głównym, tanim sitem PRZED
+   restartem backendu.
+3. **BEZ przerwy między rozdziałami** — po ukończeniu `_04_io` (2026-08-21, wcześniej w tej
+   samej sesji) praca przeszła od razu do `_05_multithreading` bez pytania o pozwolenie.
+   Ta sama zasada obowiązuje nadal: po ukończeniu `_05_multithreading` przejść od razu do
+   `_06_networking` i kolejnych rozdziałów wg `ChapterSeedData.java`, bez zatrzymywania się.
+
+**Znana, nieszkodliwa osobliwość zaobserwowana ponownie w tej sesji**: pierwsze zapytanie API
+do nowo dodanej lekcji zaraz po restarcie backendu czasem zwraca `theory=0` (lub podobnie dla
+exercises/quiz) mimo poprawnego seedowania — powtórzenie DOKŁADNIE tego samego zapytania od
+razu daje poprawny wynik. Nie jest to błąd w treści/kodzie (potwierdzane też w poprzednich
+sesjach, patrz historia wyżej w tym pliku) — jeśli się pojawi, po prostu powtórz zapytanie.
+
+**Następny krok**: kontynuować `_05_multithreading` (37 lekcji: 01_ThreadsIntroduction …
+37_CommonMistakes, pełna lista w `ChapterSeedData.java` linia ~61-73) od lekcji `09_Atomicity`.
+Tym samym, przyspieszonym workflow z `scratchpad/helpers.js` (patrz wyżej — plik trzeba
+odtworzyć na początku nowej sesji, bo scratchpad jest per-sesja, ale jego zawartość jest w
+pełni opisana w tej notatce i łatwa do odtworzenia z historii tego pliku/kodu): dla każdej
+lekcji NN czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_05_multithreading/LessonNN_Temat/`, napisz `genNNd.js`
+(7 bloków teorii + 30 zadań z hint+solution + 10-20 ręcznych pytań quizowych +
+`fillQuizTo100(quiz, topics15, grupa)`), zweryfikuj `node genNNd.js` (theory:7 exercises:30
+quiz:100), skopiuj do `src/main/resources/content/_05_multithreading/NN_Temat.json` (nazwa
+MUSI się zgadzać z `ChapterSeedData.java`), restart backendu co ok. 2 lekcje + regresja na
+1-2 gotowych lekcjach z innych rozdziałów, commit co 2-3 lekcje, aktualizacja tej sekcji po
+każdym większym przyroście. Kontynuować przez pozostałe 29 lekcji `_05_multithreading`, a po
+jego ukończeniu automatycznie przejść do `_06_networking` (14 lekcji) i kolejnych rozdziałów
+wg `ChapterSeedData.java`, BEZ przerywania na potwierdzenia między lekcjami ANI między
+rozdziałami — zgodnie z jawnym potwierdzeniem użytkownika (2026-08-13, ponowione 2026-08-21)
+kontynuowania w pełni automatycznego aż do wyczerpania zadania/limitu.
 **Otwarty temat, nierozwiązany w tej sesji**: pełne (100%) przywrócenie polskich
 znaków diakrytycznych w 20 najstarszych lekcjach (`_01_fundamentals`/`_02_oop`
 01-03) NIE zostało osiągnięte — zrobiono tylko częściowy, słownikowy przebieg
