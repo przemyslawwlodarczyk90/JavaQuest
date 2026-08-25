@@ -1600,4 +1600,34 @@ do wyczerpania zadania/limitu, zgodnie z pełną listą rozdziałów w `ChapterS
 Pamiętać: `$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w
 KAŻDEJ nowej sesji PowerShell (nie jest ustawione globalnie), i `scratchpad/helpers.js`
 trzeba odtworzyć na początku nowej sesji (scratchpad jest per-sesja).
+
+**Stan na 2026-08-25: `_06_networking` UKOŃCZONY — 14/14 lekcji.** Dokończono lekcje
+06-14 (06_ServerSocket, 07_ServerSocketMultithreaded, 08_URL, 09_URLConnection,
+10_HttpURLConnection, 11_HttpProtocol, 12_JsonOverNetwork, 13_XmlParsing, 14_HtmlUnit) —
+01-05 były już gotowe z poprzedniej sesji. Tym samym, sprawdzonym workflow
+(`scratchpad/helpers.js` z `q()`/`fillQuizTo100()`, plik trzeba odtworzyć na początku
+nowej sesji), każda lekcja zweryfikowana `node genNNd.js` (theory:7/exercises:30/
+quiz:100) PRZED skopiowaniem do `src/main/resources/content/_06_networking/`. Format
+docelowego JSON-a zweryfikowany na istniejącym pliku `06_ServerSocket.json` PRZED
+napisaniem reszty — kluczowe pola: `theory[].{type,heading,body}` (NIE `payload`/`title`/
+`text` jak błędnie założono na starcie tej sesji), `exercises[].{prompt,hint,solution}`
+(NIE `solutionExplanation`/`difficulty`/`order` — kolejność w tablicy JSON wystarcza),
+`quiz[].{question,options:{A,B,C,D},correct,explanation}` (NIE `order`). Commitowano
+partiami (06 osobno, 07-09, 10-11, 12-14) — każda partia zweryfikowana restartem
+backendu + realnym zapytaniem API (`GET .../theory`, `.../exercises`, `.../quiz`) PRZED
+commitem.
+
+**Następny krok**: zgodnie z ustalonym trybem pracy (bez przerw między rozdziałami,
+bez pytania o zgodę) przejść automatycznie do **`_07_servlets`** (19 lekcji:
+01_ServletApiIntroduction … 19_JSP, pełna lista w `ChapterSeedData.java` i w sekcji
+`_07_servlets` w `CLAUDE.md`), tym samym workflow: dla każdej lekcji NN czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_07_servlets/LessonNN_Temat/`, napisz `genNNe.js`
+w scratchpadzie (sufiks `e` dla `_07_servlets`, żeby odróżnić od `d` użytego w `_06`),
+zweryfikuj `node genNNe.js` (theory:7 exercises:30 quiz:100), skopiuj do
+`src/main/resources/content/_07_servlets/NN_Temat.json`, restart backendu co ok. 2-3
+lekcje + regresja na 1-2 gotowych lekcjach z innych rozdziałów, commit co kilka lekcji.
+Po ukończeniu `_07_servlets` kontynuować kolejno przez `_08_sql`, `_09_jdbc`, `_10_dao`,
+`_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
+zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami.
 ---
