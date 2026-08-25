@@ -1631,17 +1631,34 @@ znanej, nieszkodliwej osobliwości "pierwsze zapytanie po restarcie = 0") i regr
 `_06_networking/14_HtmlUnit` oraz `_07_servlets/01_ServletApiIntroduction` — zero
 regresji. Zacommitowane jako finalna partia rozdziału.
 
-**Następny krok**: zgodnie z ustalonym trybem pracy (bez przerw między rozdziałami,
-bez pytania o zgodę) przejść automatycznie do **`_08_sql`** (20 lekcji:
-01_DatabaseIntroduction … 20_TransactionIsolationLevels, pełna lista w
-`ChapterSeedData.java` i w sekcji "Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w
-`CLAUDE.md`), tym samym workflow: dla każdej lekcji NN czytaj `_LessonNN_Temat.java`
+**Stan na 2026-08-25 (ciąg dalszy): `_08_sql` lekcje 06-09 też DOKOŃCZONE** (9/20
+lekcji `_08_sql` gotowe: 01-09). Ten sam, sprawdzony workflow (`scratchpad/helpers.js`
++ `genNNf.js` per lekcja, sufiks `f`). Zweryfikowane API end-to-end po restarcie
+backendu: lekcje 06-09 — każda 7/30/100 — oraz regresja na `_02_oop/15_DesignPatterns`
+— zero regresji. Zacommitowane w 2 partiach (06-07, 08-09).
+
+**Drobna operacyjna obserwacja z tej sesji**: przy łączeniu WIELU `curl | node` w
+JEDNYM złożonym poleceniu bash (kilka pipeline'ów jeden po drugim w tym samym
+wywołaniu narzędzia) zdarzyło się dostać fałszywe `0` dla WSZYSTKICH zapytań naraz
+(włącznie z dawno zweryfikowanymi lekcjami) — to NIE był błąd seedowania/API, tylko
+artefakt uruchamiania wielu pipe'ów curl->node w jednym wywołaniu (prawdopodobnie
+race/buforowanie w Git Bash na Windows) — powtórzenie KAŻDEGO zapytania OSOBNYM
+wywołaniem narzędzia dało poprawne wyniki. Odróżnij to od udokumentowanej wcześniej
+osobliwości "pierwsze zapytanie po restarcie = 0" (patrz wpisy z 2026-08-16) — obie
+się zdarzają, ale mają różne przyczyny; w obu przypadkach lekarstwem jest po prostu
+ponowne, pojedyncze zapytanie.
+
+**Następny krok**: kontynuować `_08_sql` (20 lekcji: 01_DatabaseIntroduction …
+20_TransactionIsolationLevels, pełna lista w `ChapterSeedData.java` i w sekcji
+"Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w `CLAUDE.md`) od lekcji **`10_Select`**,
+tym samym workflow: dla każdej lekcji NN czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
-w scratchpadzie (sufiks `f` dla `_08_sql`, żeby odróżnić od `e` użytego w `_07`),
-zweryfikuj `node genNNf.js` (theory:7 exercises:30 quiz:100), skopiuj do
+w scratchpadzie (sufiks `f` dla `_08_sql`), zweryfikuj `node genNNf.js`
+(theory:7 exercises:30 quiz:100), skopiuj do
 `src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu co ok. 2-3
-lekcje + regresja na 1-2 gotowych lekcjach z innych rozdziałów, commit co kilka lekcji.
+lekcje + regresja na 1-2 gotowych lekcjach z innych rozdziałów (zapytania API
+POJEDYNCZO, nie łączone w jednym poleceniu bash), commit co kilka lekcji.
 Po ukończeniu `_08_sql` kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
 `_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
 zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami.
