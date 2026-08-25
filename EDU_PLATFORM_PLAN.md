@@ -1648,17 +1648,30 @@ osobliwości "pierwsze zapytanie po restarcie = 0" (patrz wpisy z 2026-08-16) �
 się zdarzają, ale mają różne przyczyny; w obu przypadkach lekarstwem jest po prostu
 ponowne, pojedyncze zapytanie.
 
+**Stan na 2026-08-25 (ciąg dalszy): `_08_sql` lekcje 10-13 też DOKOŃCZONE** (13/20
+lekcji `_08_sql` gotowe: 01-13). Ten sam, sprawdzony workflow. Zweryfikowane API
+end-to-end po restarcie backendu: lekcje 10-13 — każda 7/30/100 — oraz regresja na
+`_02_oop/15_DesignPatterns` — zero regresji. Zacommitowane w 2 partiach (10-11, 12-13).
+
+**Ważne potwierdzenie z tej sesji**: fałszywe `0` przy odpytywaniu API (znana wcześniej
+osobliwość) NIE jest zjawiskiem serwerowym — zweryfikowane `curl -v`, że serwer
+ZAWSZE zwraca poprawną, pełną odpowiedź; `0` pojawia się WYŁĄCZNIE po stronie klienta
+przy parsowaniu w `node -e` przez pipe w Git Bash (najpewniej race/buforowanie).
+Lekarstwo pozostaje takie samo: powtórz DOKŁADNIE to samo zapytanie pojedynczym
+wywołaniem — nie ma potrzeby restartu backendu ani podejrzewania błędu w treści.
+
 **Następny krok**: kontynuować `_08_sql` (20 lekcji: 01_DatabaseIntroduction …
 20_TransactionIsolationLevels, pełna lista w `ChapterSeedData.java` i w sekcji
-"Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w `CLAUDE.md`) od lekcji **`10_Select`**,
+"Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w `CLAUDE.md`) od lekcji **`14_Joins`**,
 tym samym workflow: dla każdej lekcji NN czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
 w scratchpadzie (sufiks `f` dla `_08_sql`), zweryfikuj `node genNNf.js`
 (theory:7 exercises:30 quiz:100), skopiuj do
-`src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu co ok. 2-3
-lekcje + regresja na 1-2 gotowych lekcjach z innych rozdziałów (zapytania API
-POJEDYNCZO, nie łączone w jednym poleceniu bash), commit co kilka lekcji.
+`src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu co ok. 2
+lekcje + regresja na 1 gotowej lekcji z innego rozdziału (zapytania API
+POJEDYNCZO, nie łączone w jednym poleceniu bash — a jeśli któreś i tak zwróci
+fałszywe 0, powtórz je zanim podejrzewasz błąd w treści), commit co 2 lekcje.
 Po ukończeniu `_08_sql` kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
 `_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
 zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami.
