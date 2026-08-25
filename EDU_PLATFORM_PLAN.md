@@ -1660,11 +1660,14 @@ przy parsowaniu w `node -e` przez pipe w Git Bash (najpewniej race/buforowanie).
 Lekarstwo pozostaje takie samo: powtórz DOKŁADNIE to samo zapytanie pojedynczym
 wywołaniem — nie ma potrzeby restartu backendu ani podejrzewania błędu w treści.
 
-**Następny krok**: kontynuować `_08_sql` (20 lekcji: 01_DatabaseIntroduction …
-20_TransactionIsolationLevels, pełna lista w `ChapterSeedData.java` i w sekcji
-"Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w `CLAUDE.md`) od lekcji **`14_Joins`**,
-tym samym workflow: dla każdej lekcji NN czytaj `_LessonNN_Temat.java`
-i `_Exercises_LessonNN_Temat.java` w
+**Stan na 2026-08-25 (ciąg dalszy): `_08_sql` lekcje 14-15 też DOKOŃCZONE** (15/20
+lekcji `_08_sql` gotowe: 01-15). Zweryfikowane API end-to-end po restarcie
+backendu: lekcje 14-15 — każda 7/30/100 — zero regresji. Zacommitowane.
+
+**Następny krok**: kontynuować `_08_sql` (20 lekcji, pełna lista w
+`ChapterSeedData.java` i w sekcji "Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w
+`CLAUDE.md`) od lekcji **`16_Subqueries`**, tym samym workflow: dla każdej lekcji
+NN czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
 w scratchpadzie (sufiks `f` dla `_08_sql`), zweryfikuj `node genNNf.js`
 (theory:7 exercises:30 quiz:100), skopiuj do
