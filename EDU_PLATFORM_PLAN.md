@@ -1617,17 +1617,32 @@ partiami (06 osobno, 07-09, 10-11, 12-14) — każda partia zweryfikowana restar
 backendu + realnym zapytaniem API (`GET .../theory`, `.../exercises`, `.../quiz`) PRZED
 commitem.
 
+**Stan na 2026-08-25 (ciąg dalszy): `_07_servlets` UKOŃCZONY — 19/19 lekcji.** Dokończono
+lekcje 18-19 (18_FileUpload, 19_JSP) tym samym workflow (`scratchpad/helpers.js` +
+`genNNe.js` per lekcja, sufiks `e` dla tego rozdziału) — 01-17 były już gotowe z
+wcześniejszej pracy tej sesji. 18_FileUpload: 7 bloków teorii o multipart/form-data,
+`Part` API i wymogu `MultipartConfigElement` na `Wrapper` PRZED `tomcat.start()`, 30
+zadań (prompty z `_Exercises_Lesson18_FileUpload.java`). 19_JSP: lekcja czysto
+teoretyczna (kurs celowo NIE uruchamia żywego Jaspera — patrz `_Lesson19_JSP.java`),
+teoria/zadania/quiz zbudowane wokół scriptletów, Expression Language, JSTL i wzorca
+Model 2. Obie lekcje zweryfikowane `node genNNe.js` (theory:7/exercises:30/quiz:100)
+PRZED skopiowaniem, potem restartem backendu + realnym zapytaniem API (z re-query przy
+znanej, nieszkodliwej osobliwości "pierwsze zapytanie po restarcie = 0") i regresją na
+`_06_networking/14_HtmlUnit` oraz `_07_servlets/01_ServletApiIntroduction` — zero
+regresji. Zacommitowane jako finalna partia rozdziału.
+
 **Następny krok**: zgodnie z ustalonym trybem pracy (bez przerw między rozdziałami,
-bez pytania o zgodę) przejść automatycznie do **`_07_servlets`** (19 lekcji:
-01_ServletApiIntroduction … 19_JSP, pełna lista w `ChapterSeedData.java` i w sekcji
-`_07_servlets` w `CLAUDE.md`), tym samym workflow: dla każdej lekcji NN czytaj
-`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
-`src/main/java/com/example/javaquest/_07_servlets/LessonNN_Temat/`, napisz `genNNe.js`
-w scratchpadzie (sufiks `e` dla `_07_servlets`, żeby odróżnić od `d` użytego w `_06`),
-zweryfikuj `node genNNe.js` (theory:7 exercises:30 quiz:100), skopiuj do
-`src/main/resources/content/_07_servlets/NN_Temat.json`, restart backendu co ok. 2-3
+bez pytania o zgodę) przejść automatycznie do **`_08_sql`** (20 lekcji:
+01_DatabaseIntroduction … 20_TransactionIsolationLevels, pełna lista w
+`ChapterSeedData.java` i w sekcji "Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w
+`CLAUDE.md`), tym samym workflow: dla każdej lekcji NN czytaj `_LessonNN_Temat.java`
+i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
+w scratchpadzie (sufiks `f` dla `_08_sql`, żeby odróżnić od `e` użytego w `_07`),
+zweryfikuj `node genNNf.js` (theory:7 exercises:30 quiz:100), skopiuj do
+`src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu co ok. 2-3
 lekcje + regresja na 1-2 gotowych lekcjach z innych rozdziałów, commit co kilka lekcji.
-Po ukończeniu `_07_servlets` kontynuować kolejno przez `_08_sql`, `_09_jdbc`, `_10_dao`,
+Po ukończeniu `_08_sql` kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
 `_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
 zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami.
 ---
