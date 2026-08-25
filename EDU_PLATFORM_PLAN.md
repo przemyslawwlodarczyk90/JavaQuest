@@ -1672,19 +1672,43 @@ powtórzeń zamiast 1-2 — nadal ten sam, nieszkodliwy artefakt, potwierdzony p
 sprawdzenie surowej długości odpowiedzi (`wc -c`) i bezpośrednich zapytań o
 konkretne lekcje, które zwracały pełne dane mimo że `/lessons` pokazywało `false`.)
 
-**Następny krok**: dokończyć `_08_sql` (20 lekcji, pełna lista w
-`ChapterSeedData.java` i w sekcji "Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w
-`CLAUDE.md`) od lekcji **`18_Indexes`** (pozostają 18, 19, 20 —
-`TransactionIsolationLevels`), tym samym workflow: dla każdej lekcji NN czytaj
-`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
-`src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
-w scratchpadzie (sufiks `f` dla `_08_sql`), zweryfikuj `node genNNf.js`
-(theory:7 exercises:30 quiz:100), skopiuj do
-`src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu co ok. 2
-lekcje + regresja na 1 gotowej lekcji z innego rozdziału (zapytania API
-POJEDYNCZO, nie łączone w jednym poleceniu bash — a jeśli któreś i tak zwróci
-fałszywe 0/false, powtórz je 2-3 razy zanim podejrzewasz błąd w treści), commit co
-2 lekcje. Po ukończeniu `_08_sql` kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
+**Stan na 2026-08-25 (koniec sesji, na wyraźną prośbę użytkownika "konczymy na
+dzis"): lekcje 18-19 w `_08_sql` NAPISANE i strukturalnie zweryfikowane
+(`node genNNf.js` dał theory:7/exercises:30/quiz:100 dla obu), skopiowane do
+`src/main/resources/content/_08_sql/` i ZACOMMITOWANE — ALE, w odróżnieniu od
+wszystkich wcześniejszych lekcji tej sesji, BEZ pełnej rundy weryfikacji
+uruchomieniowej (restart backendu + realne zapytania API + regresja). Commit ma
+to jawnie zaznaczone w treści ("NIEZWERYFIKOWANE runtime w tej sesji").**
+
+**Następny krok (PIERWSZA rzecz w kolejnej sesji, PRZED pisaniem lekcji 20)**:
+zweryfikować lekcje 18-19 uruchomieniowo — `$env:JAVA_HOME =
+"C:\Users\kapit\.jdks\openjdk-25.0.2"` (PowerShell, nie jest ustawione globalnie),
+uruchomić `mvnw.cmd spring-boot:run`, poczekać na "Started JavaQuestApplication"
+w logu (zwykle ~15-20s), potem osobnymi wywołaniami curl sprawdzić
+`.../18_Indexes/theory`, `/exercises`, `/quiz` i `.../19_Transactions/theory`,
+`/exercises`, `/quiz` (każde osobno przez `node -e` parsujący JSON.parse(d).length
+— oczekiwane 7/30/100), plus regresja na 1 wcześniej gotowej lekcji z innego
+rozdziału (np. `_02_oop/15_DesignPatterns/quiz` → 100). Pamiętać o znanej,
+NIESZKODLIWEJ osobliwości: pierwsze 1-3 zapytania po świeżym restarcie czasem
+zwracają fałszywe `0`/`false` nawet dla starych, dawno działających lekcji —
+zweryfikowane wielokrotnie w tej sesji przez `curl -v`/`wc -c`, że to WYŁĄCZNIE
+klient (najpewniej race w Git Bash pipe), NIGDY realny błąd danych — po prostu
+powtórz DOKŁADNIE to samo zapytanie 2-3 razy, zanim zaczniesz podejrzewać treść.
+Jeśli coś faktycznie okaże się złe, napraw plik JSON i zacommituj poprawkę.
+
+Po potwierdzeniu 18-19, kontynuować `_08_sql` od lekcji **`20_TransactionIsolationLevels`**
+(OSTATNIA lekcja rozdziału — po niej `_08_sql` będzie w pełni KOMPLETNY 20/20),
+tym samym workflow: czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java`
+w `src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
+w scratchpadzie (sufiks `f`, plik `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
+trzeba odtworzyć na początku nowej sesji), zweryfikuj `node genNNf.js`
+(theory:7 exercises:30 quiz:100) PRZED skopiowaniem, skopiuj do
+`src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu + PEŁNA
+weryfikacja uruchomieniowa (API + regresja, zapytania POJEDYNCZO) PRZED commitem —
+wróć do pełnej dyscypliny weryfikacji z reszty tej sesji, jednorazowe pominięcie
+dla lekcji 18-19 było wyjątkiem podyktowanym końcem sesji, nie nową normą.
+Po ukończeniu `_08_sql` (20/20) kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
 `_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
-zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami.
+zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami (zgodnie
+z wielokrotnie potwierdzoną przez użytkownika zasadą pełnej automatyczności).
 ---
