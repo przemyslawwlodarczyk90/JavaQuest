@@ -1664,18 +1664,27 @@ wywołaniem — nie ma potrzeby restartu backendu ani podejrzewania błędu w tr
 lekcji `_08_sql` gotowe: 01-15). Zweryfikowane API end-to-end po restarcie
 backendu: lekcje 14-15 — każda 7/30/100 — zero regresji. Zacommitowane.
 
-**Następny krok**: kontynuować `_08_sql` (20 lekcji, pełna lista w
+**Stan na 2026-08-25 (ciąg dalszy): `_08_sql` lekcje 16-17 też DOKOŃCZONE** (17/20
+lekcji `_08_sql` gotowe: 01-17). Zweryfikowane API end-to-end po restarcie
+backendu: lekcje 16-17 — każda 7/30/100 — zero regresji. Zacommitowane. (Tym razem
+osobliwość "pierwsze zapytania po restarcie = fałszywe false/0" wymagała 3
+powtórzeń zamiast 1-2 — nadal ten sam, nieszkodliwy artefakt, potwierdzony przez
+sprawdzenie surowej długości odpowiedzi (`wc -c`) i bezpośrednich zapytań o
+konkretne lekcje, które zwracały pełne dane mimo że `/lessons` pokazywało `false`.)
+
+**Następny krok**: dokończyć `_08_sql` (20 lekcji, pełna lista w
 `ChapterSeedData.java` i w sekcji "Rozdziały `_08_sql`, `_09_jdbc`, `_10_dao`" w
-`CLAUDE.md`) od lekcji **`16_Subqueries`**, tym samym workflow: dla każdej lekcji
-NN czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`CLAUDE.md`) od lekcji **`18_Indexes`** (pozostają 18, 19, 20 —
+`TransactionIsolationLevels`), tym samym workflow: dla każdej lekcji NN czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_08_sql/LessonNN_Temat/`, napisz `genNNf.js`
 w scratchpadzie (sufiks `f` dla `_08_sql`), zweryfikuj `node genNNf.js`
 (theory:7 exercises:30 quiz:100), skopiuj do
 `src/main/resources/content/_08_sql/NN_Temat.json`, restart backendu co ok. 2
 lekcje + regresja na 1 gotowej lekcji z innego rozdziału (zapytania API
 POJEDYNCZO, nie łączone w jednym poleceniu bash — a jeśli któreś i tak zwróci
-fałszywe 0, powtórz je zanim podejrzewasz błąd w treści), commit co 2 lekcje.
-Po ukończeniu `_08_sql` kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
+fałszywe 0/false, powtórz je 2-3 razy zanim podejrzewasz błąd w treści), commit co
+2 lekcje. Po ukończeniu `_08_sql` kontynuować kolejno przez `_09_jdbc`, `_10_dao`,
 `_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
 zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami.
 ---
