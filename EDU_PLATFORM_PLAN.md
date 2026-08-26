@@ -1711,4 +1711,33 @@ Po ukończeniu `_08_sql` (20/20) kontynuować kolejno przez `_09_jdbc`, `_10_dao
 `_11_buildtools`, ... zgodnie z pełną listą rozdziałów w `ChapterSeedData.java`, BEZ
 zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami (zgodnie
 z wielokrotnie potwierdzoną przez użytkownika zasadą pełnej automatyczności).
+
+**Stan na 2026-08-26: `_08_sql` UKOŃCZONY (20/20, lekcja 20_TransactionIsolationLevels
+dopisana i w pełni zweryfikowana runtime na początku tej sesji — potwierdziła też, że
+lekcje 18-19 zostawione niezweryfikowane w poprzedniej sesji były poprawne).**
+Rozpoczęto `_09_jdbc` (20 lekcji): **lekcje 01-06 UKOŃCZONE** (01_JdbcIntroduction,
+02_JdbcDriver, 03_Connection, 04_Statement, 05_PreparedStatement, 06_ResultSet) — każda
+7 teorii/30 zadań/100 quizów, zweryfikowana end-to-end po restarcie backendu (API
+zwraca poprawne liczby) plus regresja na poprzedniej lekcji tej sesji. Commitowano co
+1-2 lekcje. Ten sam, sprawdzony workflow: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w `src/main/java/com/example/javaquest/_09_jdbc/`,
+napisz `genNNg.js` w scratchpadzie (sufiks `g` dla tego rozdziału, korzysta z
+`scratchpad/helpers.js` z `q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku
+nowej sesji), zweryfikuj `node genNNg.js` (theory:7 exercises:30 quiz:100) PRZED
+skopiowaniem do `src/main/resources/content/_09_jdbc/NN_Temat.json`.
+
+**Następny krok**: kontynuować `_09_jdbc` od lekcji **`07_JdbcInsert`** (pozostałe:
+07_JdbcInsert, 08_JdbcSelect, 09_JdbcUpdate, 10_JdbcDelete, 11_CreateAndDropTableFromJava,
+12_TryWithResourcesInJdbc, 13_JdbcExceptions, 14_SqlInjection, 15_JdbcTransactions,
+16_BatchProcessing, 17_ResultSetMapping, 18_DomainModel, 19_Dto, 20_Mapper — pełna lista
+w `ChapterSeedData.java` linia ~98-105), tym samym workflow, restart backendu + pełna
+weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszkodliwej
+osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
+zapytanie") PRZED każdym commitem. Po ukończeniu `_09_jdbc` (20/20) kontynuować kolejno
+przez `_10_dao` (28 lekcji), `_11_buildtools` (30 lekcji), ... zgodnie z pełną listą
+rozdziałów w `ChapterSeedData.java`, BEZ zatrzymywania się na potwierdzenia między
+lekcjami ani między rozdziałami. Pamiętać: `$env:JAVA_HOME =
+"C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell
+(nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba odtworzyć na początku
+nowej sesji (scratchpad jest per-sesja).
 ---
