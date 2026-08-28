@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "CONCEPT",
+      "heading": "Czym jest Unit of Work?",
+      "body": "W lekcjach 17-18 recznie pisalismy ten sam szablon w kazdej metodzie Service, ktora potrzebowala transakcji: connection.setAutoCommit(false); try { ...kilka wywolan DAO...; connection.commit(); } catch (Exception e) { connection.rollback(); } finally { connection.setAutoCommit(true); }. UNIT OF WORK to nazwa na ten wlasnie wzorzec: JEDNA operacja biznesowa = JEDNA transakcja = JEDNA \"jednostka pracy\", ktora albo w calosci sie powiedzie (commit), albo w calosci zostanie cofnieta (rollback)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Jedno zdanie do zapamietania",
+      "body": "Unit of Work to opakowanie na \"otworz transakcje, wykonaj blok kodu, zacommituj albo wycofaj\" - tak, zeby Service nie musial za kazdym razem pisac tego recznie. Zamiast przepisywac ten szablon w kazdej metodzie Service, wydzielamy go RAZ do malej, reuzywalnej klasy pomocniczej."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Funkcyjny interfejs SqlWork<T>",
+      "body": "@FunctionalInterface interface SqlWork<T> { T execute(Connection connection) throws SQLException; }. To interfejs opisujacy \"kawalek pracy\", ktory ma sie wykonac w JEDNEJ transakcji - przyjmuje Connection i zwraca wynik dowolnego typu T. Dzieki generykom, UnitOfWork moze obslugiwac operacje zwracajace long, String, wlasny record, albo nic konkretnego."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Generyczna klasa UnitOfWork",
+      "body": "<T> T execute(SqlWork<T> work) { try (Connection c = DriverManager.getConnection(url)) { c.setAutoCommit(false); try { T result = work.execute(c); c.commit(); return result; } catch (Exception e) { c.rollback(); throw new RuntimeException(\"Transakcja wycofana: \" + e.getMessage(), e); } finally { c.setAutoCommit(true); } } catch (SQLException e) { throw new RuntimeException(e); } }. Cala logika otwierania transakcji, commitu i rollbacku jest napisana RAZ, wewnatrz UnitOfWork."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Service korzystajacy z UnitOfWork",
+      "body": "long placeOrder(long productId, int quantity) { return unitOfWork.execute(connection -> { productDao.decreaseStock(connection, productId, quantity); return orderDao.insert(connection, productId, quantity); }); }. Service pisze WYLACZNIE logike biznesowa wewnatrz przekazanego bloku kodu (lambda) - caly \"boilerplate\" transakcyjny (setAutoCommit, commit, rollback, finally) jest ukryty wewnatrz UnitOfWork.execute()."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Ten sam mechanizm, wydzielony do wielokrotnego uzytku",
+      "body": "Unit of Work to NIE nowy mechanizm transakcyjny - to ten sam wzorzec setAutoCommit/commit/rollback/finally z lekcji 17-18, tylko WYDZIELONY do wielokrotnego uzytku. Unikamy w ten sposob kopiowania identycznego bloku try/catch/finally w kazdej metodzie Service, ktora potrzebuje transakcji - kazda metoda biznesowa po prostu przekazuje SWOJA logike jako lambde do execute()."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Podsumowanie",
+      "body": "Unit of Work formalizuje wzorzec z lekcji 17/18: jedna operacja biznesowa = jedna transakcja = jeden commit albo jeden rollback. Generyczna klasa UnitOfWork przyjmuje blok kodu (SqlWork<T>) i SAMA zajmuje sie otwarciem polaczenia, wylaczeniem autocommit, commitem/rollbackiem i zamknieciem polaczenia. Service pisze WYLACZNIE logike biznesowa wewnatrz przekazanego bloku kodu - caly \"boilerplate\" transakcyjny jest ukryty. To ten sam mechanizm co w lekcji 17-18, tylko wydzielony do wielokrotnego uzytku."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zdefiniuj funkcyjny interfejs SqlWork<T> (jak w lekcji: T execute(Connection connection) throws SQLException). Na bazie \"jdbc:h2:mem:lesson19ex01;DB_CLOSE_DELAY=-1\" z tabela products, napisz najprostsza implementacje jako lambda liczaca COUNT(*) i wywolaj ja recznie (bez klasy UnitOfWork) przekazujac Connection - wypisz wynik.",
+      "hint": "SqlWork<T> jako funkcyjny interfejs pozwala napisac implementacje jako zwykla lambde: connection -> { ... }.",
+      "solution": "@FunctionalInterface\ninterface SqlWork<T> { T execute(Connection c) throws SQLException; }\nSqlWork<Long> countWork = c -> { ... \"SELECT COUNT(*) FROM products\" ...; return count; };\nlong result = countWork.execute(connection);"
+    },
+    {
+      "prompt": "Zaimplementuj klase UnitOfWork z lekcji (execute(SqlWork<T>): otwiera polaczenie, wylacza autocommit, wykonuje blok, commituje, zwraca wynik, zamyka polaczenie). Uzyj jej na bazie \"jdbc:h2:mem:lesson19ex02;DB_CLOSE_DELAY=-1\" do wstawienia jednego produktu i zwrocenia jego wygenerowanego id.",
+      "hint": "Skopiuj klase UnitOfWork 1:1 z teorii lekcji.",
+      "solution": "UnitOfWork uow = new UnitOfWork(url);\nlong id = uow.execute(connection -> insertProduct(connection, \"Klawiatura\"));"
+    },
+    {
+      "prompt": "Uzywajac UnitOfWork z Zadania 2, przekaz blok kodu, ktory wstawia produkt, a POTEM rzuca recznie RuntimeException(\"blad testowy\"). Zlap RuntimeException zwrocony przez execute() (opakowany, jak w lekcji) i sprawdz SELECT COUNT(*) - wiersz NIE zostal zapisany (rollback zadzialal).",
+      "hint": "Wyjatek rzucony WEWNATRZ lambdy SqlWork jest lapany przez wewnetrzny catch(Exception e) w UnitOfWork.execute(), co wywoluje rollback.",
+      "solution": "try {\n  uow.execute(c -> { insertProduct(c, \"test\"); throw new RuntimeException(\"blad testowy\"); });\n} catch (RuntimeException e) {\n  System.out.println(e.getMessage());\n}\n// SELECT COUNT(*) -> 0"
+    },
+    {
+      "prompt": "Zaimplementuj OrderService z lekcji (konstruktor przyjmuje UnitOfWork, metoda placeOrder(productId, quantity) wywoluje unitOfWork.execute z lambda laczaca ProductDao.decreaseStock i OrderDao.insert). Wywolaj dla poprawnej ilosci i wypisz zwrocone id zamowienia.",
+      "hint": "Skopiuj OrderService 1:1 z teorii lekcji - konstruktor przyjmuje TYLKO UnitOfWork, nie URL ani Connection.",
+      "solution": "long orderId = orderService.placeOrder(productId, 3);\nSystem.out.println(\"id zamowienia: \" + orderId);"
+    },
+    {
+      "prompt": "Uzywajac OrderService z Zadania 4, wywolaj placeOrder z quantity WIEKSZA niz stan magazynowy - zlap RuntimeException i sprawdz stan po probie: 0 zamowien w tabeli orders, stan magazynowy NIEZMIENIONY.",
+      "hint": "decreaseStock rzuci IllegalStateException wewnatrz lambdy, co UnitOfWork zlapie i opakuje w RuntimeException, wywolujac rollback.",
+      "solution": "try { orderService.placeOrder(productId, 999); }\ncatch (RuntimeException e) { System.out.println(e.getMessage()); }\n// COUNT(*) FROM orders -> 0, stan magazynowy niezmieniony"
+    },
+    {
+      "prompt": "Uzyj JEDNEGO obiektu UnitOfWork do wykonania DWOCH ROZNYCH operacji z ROZNYMI typami wyniku T: raz execute() zwracajace Long (id nowego produktu), raz execute() zwracajace String (nazwa najdrozszego produktu z SELECT). Pokaz, ze ta sama metoda generyczna obsluguje oba przypadki.",
+      "hint": "Generyczny typ T jest wywnioskowany z typu zwracanego przez lambde - ten sam obiekt UnitOfWork moze zwracac rozne typy w roznych wywolaniach.",
+      "solution": "Long newId = uow.execute(c -> insertProduct(c, \"Nowy\"));\nString topName = uow.execute(c -> findMostExpensiveProductName(c));"
+    },
+    {
+      "prompt": "Napisz metode printState(url, label) (jak w lekcji: liczba zamowien, stan magazynowy produktu #1) i uzyj jej PRZED i PO wywolaniu udanego placeOrder - pokaz zmiane stanu magazynowego.",
+      "hint": "Skopiuj printState 1:1 z teorii lekcji.",
+      "solution": "printState(url, \"przed\");\norderService.placeOrder(productId, 3);\nprintState(url, \"po\");"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson19ex08;DB_CLOSE_DELAY=-1\" z produktem o stanie 10, wywolaj unitOfWork.execute() TRZY RAZY z rzedu (kazde: insert zamowienia + decreaseStock o 2). Sprawdz stan magazynowy po kazdym wywolaniu (kolejno 8, 6, 4) - kazde wywolanie execute() to WLASNA, niezalezna transakcja.",
+      "hint": "Kazde wywolanie execute() otwiera i zamyka WLASNE Connection - to trzy calkowicie osobne transakcje, chociaz operuja na tej samej bazie.",
+      "solution": "for (int i = 0; i < 3; i++) {\n  orderService.placeOrder(productId, 2);\n  printState(url, \"po wywolaniu \" + (i+1));\n}"
+    },
+    {
+      "prompt": "Zweryfikuj (np. przez logowanie w SqlWork), ze OrderService.placeOrder NIGDZIE sam nie wywoluje DriverManager.getConnection - CALE otwieranie polaczenia jest ukryte wewnatrz UnitOfWork.execute(). Pokaz to poprzez przegladniecie kodu Service w komentarzu i praktyczne dzialanie (Service dostaje TYLKO obiekt UnitOfWork w konstruktorze, nigdy url/Connection).",
+      "hint": "Konstruktor OrderService przyjmuje TYLKO UnitOfWork - brak jakiegokolwiek parametru String url czy Connection.",
+      "solution": "// OrderService(UnitOfWork unitOfWork) - konstruktor NIE przyjmuje url ani Connection\n// cale otwieranie polaczenia zyje WYLACZNIE wewnatrz UnitOfWork.execute()"
+    },
+    {
+      "prompt": "Napisz najpierw RECZNA wersje placeOrderManual (bez UnitOfWork - caly boilerplate setAutoCommit/try/commit/catch/rollback/finally wpisany wprost w metodzie Service). Porownaj ja z placeOrder korzystajacym z UnitOfWork - wykonaj obie dla tych samych danych i w komentarzu porownaj liczbe linii \"logiki biznesowej\" w kazdej z wersji.",
+      "hint": "placeOrderManual ma caly szablon transakcyjny WYMIESZANY z logika biznesowa; placeOrder z UnitOfWork ma TYLKO logike biznesowa w lambdzie.",
+      "solution": "// placeOrderManual: ~15 linii (10 boilerplate + 5 logiki biznesowej, wymieszane)\n// placeOrder z UnitOfWork: ~5 linii (tylko logika biznesowa, boilerplate ukryty w UnitOfWork)"
+    },
+    {
+      "prompt": "Dodaj tabele users i UserDao.findNameById (przyjmujace Connection). Rozbuduj placeOrder, by lambda przekazana do unitOfWork.execute wywolywala TRZY DAO: UserDao, ProductDao, OrderDao - wszystkie na tym samym Connection otrzymanym z execute(). Zasymuluj blad w kroku UserDao (nieistniejacy user) i sprawdz, ze rollback cofa rowniez ewentualne wczesniejsze kroki (jesli je przestawisz przed user check).",
+      "hint": "Connection przekazane do lambdy przez execute() jest UDOSTEPNIANE wszystkim trzem DAO wywolywanym wewnatrz tej samej lambdy.",
+      "solution": "unitOfWork.execute(connection -> {\n  if (userDao.findNameById(connection, userId).isEmpty()) throw new IllegalStateException(\"brak usera\");\n  productDao.decreaseStock(connection, productId, quantity);\n  return orderDao.insert(connection, productId, quantity);\n});"
+    },
+    {
+      "prompt": "Napisz metode placeOrderWithLogging(unitOfWork, productId, quantity) przekazujaca do execute() lambde, ktora WEWNATRZ SIEBIE (na tym samym Connection) najpierw wypisuje log \"rozpoczynam\", potem wykonuje decreaseStock+insert, potem wypisuje \"zakonczono\" - wszystko w JEDNEJ lambda-metodzie SqlWork.",
+      "hint": "Lambda SqlWork moze zawierac dowolna liczbe instrukcji, wlacznie z logami, przed i po faktycznych operacjach SQL.",
+      "solution": "unitOfWork.execute(connection -> {\n  System.out.println(\"rozpoczynam\");\n  productDao.decreaseStock(connection, productId, quantity);\n  long id = orderDao.insert(connection, productId, quantity);\n  System.out.println(\"zakonczono\");\n  return id;\n});"
+    },
+    {
+      "prompt": "Zdefiniuj record OrderResult(long orderId, int remainingStock). Zmodyfikuj placeOrder, by execute() zwracalo OBIEKT OrderResult (T=OrderResult) zamiast samego long - lambda po insercie zamowienia wykonuje dodatkowy SELECT stanu magazynowego i pakuje oba wyniki w rekord. Wypisz zwrocony rekord.",
+      "hint": "Ostatnia linia lambdy (return) MUSI zwracac wartosc typu T - tu T=OrderResult, wiec return new OrderResult(orderId, remainingStock).",
+      "solution": "record OrderResult(long orderId, int remainingStock) {}\nOrderResult result = unitOfWork.execute(c -> {\n  productDao.decreaseStock(c, productId, quantity);\n  long orderId = orderDao.insert(c, productId, quantity);\n  int remaining = readStock(c, productId);\n  return new OrderResult(orderId, remaining);\n});"
+    },
+    {
+      "prompt": "Utworz DWA obiekty UnitOfWork wskazujace na DWIE ROZNE bazy H2 (\"jdbc:h2:mem:lesson19ex14a\" i \"...ex14b\"), kazda z WLASNYM schematem i danymi. Uzyj OrderService z KAZDYM z nich osobno i pokaz, ze operacje na jednej bazie NIE wplywaja na druga.",
+      "hint": "Dwa niezalezne obiekty UnitOfWork z roznymi URL-ami tworza polaczenia do dwoch calkowicie oddzielnych baz H2 in-memory.",
+      "solution": "UnitOfWork uowA = new UnitOfWork(\"jdbc:h2:mem:lesson19ex14a;DB_CLOSE_DELAY=-1\");\nUnitOfWork uowB = new UnitOfWork(\"jdbc:h2:mem:lesson19ex14b;DB_CLOSE_DELAY=-1\");\nnew OrderService(uowA).placeOrder(1L, 2);\nnew OrderService(uowB).placeOrder(1L, 5);"
+    },
+    {
+      "prompt": "Wywolaj unitOfWork.execute z lambda rzucajaca celowo SQLException (np. zapytanie do nieistniejacej tabeli). Zlap RuntimeException zwrocony przez execute(), wypisz e.getMessage() ORAZ e.getCause() - sprawdz, ze oryginalny SQLException jest zachowany jako cause (jak w implementacji z lekcji: \"Transakcja wycofana (rollback): \" + e.getMessage()).",
+      "hint": "new RuntimeException(wiadomosc, oryginalnyWyjatek) zachowuje oryginalny wyjatek jako cause, dostepny przez getCause().",
+      "solution": "try {\n  uow.execute(c -> { c.createStatement().execute(\"SELECT * FROM nieistniejaca_tabela\"); return null; });\n} catch (RuntimeException e) {\n  System.out.println(e.getMessage());\n  System.out.println(e.getCause()); // oryginalny SQLException\n}"
+    },
+    {
+      "prompt": "Uzyj UnitOfWork.execute() do wykonania CZYSTO ODCZYTOWEGO zapytania (SELECT listy produktow, T=List<String>) - bez zadnego INSERT/UPDATE. Sprawdz, ze mechanizm commit/rollback dziala identycznie (commit \"na sucho\", bez zmian danych) i nie powoduje bledow.",
+      "hint": "commit() na transakcji, ktora nie zmienila zadnych danych (tylko SELECT), jest calkowicie bezpieczny i nie ma zadnego efektu ubocznego.",
+      "solution": "List<String> names = uow.execute(c -> {\n  ... \"SELECT name FROM products\" ...\n  return lista;\n});\n// commit \"na sucho\" - bez zadnego bledu"
+    },
+    {
+      "prompt": "Napisz DRUGI OrderService (OrderServiceLegacy) uzywajacy WLASNEGO, recznego kodu transakcyjnego (bez UnitOfWork). Wywolaj TE SAMA operacje (placeOrder) na obu wersjach dla identycznych danych i porownaj wyniki koncowe (stan magazynowy, liczba zamowien) - powinny byc identyczne.",
+      "hint": "OrderServiceLegacy implementuje TA SAMA logike biznesowa, ale pisze cala transakcje recznie (setAutoCommit/commit/rollback) zamiast delegowac do UnitOfWork.",
+      "solution": "class OrderServiceLegacy {\n  long placeOrder(long productId, int quantity) {\n    // reczny setAutoCommit/try/commit/catch/rollback/finally\n  }\n}\n// wyniki obu wersji identyczne dla tych samych danych wejsciowych"
+    },
+    {
+      "prompt": "Rozbuduj lambda przekazywana do execute() o walidacje quantity > 0 NA SAMYM POCZATKU bloku (przed jakimkolwiek SQL) - jesli niepoprawna, rzuc IllegalArgumentException wewnatrz lambdy. Sprawdz, ze UnitOfWork.execute() poprawnie wykonuje rollback (mimo ze polaczenie nie mialo jeszcze zadnych zmian) i opakowuje wyjatek tak samo jak przy bledzie SQL.",
+      "hint": "IllegalArgumentException rzucony na SAMYM POCZATKU lambdy (przed jakimkolwiek SQL) jest lapany przez ten sam catch(Exception e) w UnitOfWork.",
+      "solution": "unitOfWork.execute(c -> {\n  if (quantity <= 0) throw new IllegalArgumentException(\"ilosc musi byc dodatnia\");\n  ...\n});\n// zlapane jako RuntimeException, rollback (na \"pustej\" transakcji) wykonany bez bledu"
+    },
+    {
+      "prompt": "Wywolaj unitOfWork.execute() DWUKROTNIE z rzedu - pierwsze wywolanie wstawia zamowienie #1, DRUGIE (uzywajac id zwroconego z pierwszego jako danych wejsciowych) wstawia powiazany wpis w order_log. Zwroc uwage w komentarzu, ze to SA DWIE OSOBNE transakcje (nie jedna wspolna) - to swiadomy kompromis tego podejscia.",
+      "hint": "Kazde wywolanie execute() to WLASNA transakcja - jesli DRUGIE wywolanie zawiedzie, PIERWSZE (juz zacommitowane) NIE zostanie cofniete.",
+      "solution": "long orderId = unitOfWork.execute(c -> orderDao.insert(c, productId, qty));\nunitOfWork.execute(c -> { orderLogDao.insert(c, orderId, \"utworzono\"); return null; });\n// DWIE OSOBNE transakcje - swiadomy kompromis, nie atomowosc na poziomie obu wywolan"
+    },
+    {
+      "prompt": "Zmierz (System.nanoTime()) czas wykonania 100 operacji placeOrder DWOMA sposobami: przez UnitOfWork i przez rownoznaczny, reczny kod transakcyjny (bez abstrakcji). Wypisz oba czasy i skomentuj, czy narzut samej abstrakcji UnitOfWork jest zauwazalny (oczekiwana odpowiedz: znikomy w porownaniu do kosztu samego SQL).",
+      "hint": "Otocz obie petle 100 iteracji osobnymi pomiarami System.nanoTime() - roznica miedzy nimi to \"narzut\" samej abstrakcji UnitOfWork (lambda + dodatkowe wywolanie metody).",
+      "solution": "long uowTime = measure(() -> { for (int i=0;i<100;i++) orderService.placeOrder(id, 1); });\nlong manualTime = measure(() -> { for (int i=0;i<100;i++) orderServiceLegacy.placeOrder(id, 1); });\n// roznica powinna byc znikoma - narzut lambdy jest pomijalny wzgledem kosztu SQL"
+    },
+    {
+      "prompt": "Uzyj JEDNEGO obiektu UnitOfWork w TRZECH ROZNYCH klasach Service: OrderService (placeOrder), InventoryService (metoda restock(productId, qty) zwiekszajaca stan) i ReportService (metoda countTotalOrders() - tylko SELECT). Wywolaj po jednej operacji z kazdego i pokaz, ze wszystkie korzystaja z tego samego mechanizmu transakcyjnego bez duplikacji kodu.",
+      "hint": "Wszystkie trzy klasy Service otrzymuja TEN SAM obiekt UnitOfWork w konstruktorze - zaden z nich nie pisze wlasnego kodu transakcyjnego.",
+      "solution": "UnitOfWork uow = new UnitOfWork(url);\nOrderService orderService = new OrderService(uow);\nInventoryService inventoryService = new InventoryService(uow);\nReportService reportService = new ReportService(uow);"
+    },
+    {
+      "prompt": "Rozbuduj UnitOfWork o druga metode executeAndLog(SqlWork<T> work, String successMessage, String failureMessagePrefix), ktora PO nieudanej probie (rollback glownej pracy) zapisuje wpis do order_log w OSOBNEJ, NIEZALEZNEJ transakcji (nowe polaczenie, wlasny commit) - tak, by log przetrwal rollback. Zademonstruj na nieudanym zamowieniu.",
+      "hint": "Log MUSI byc zapisany w OSOBNEJ, dodatkowej metodzie UnitOfWork.execute() (nowe polaczenie), NIE w tej samej transakcji, ktora wlasnie zostala cofnieta.",
+      "solution": "<T> T executeAndLog(SqlWork<T> work, String successMsg, String failMsgPrefix) {\n  try { T result = execute(work); logIndependently(successMsg); return result; }\n  catch (RuntimeException e) { logIndependently(failMsgPrefix + e.getMessage()); throw e; }\n}"
+    },
+    {
+      "prompt": "Napisz metode <T> T executeWithRetry(UnitOfWork unitOfWork, SqlWork<T> work, int maxAttempts) probujaca wywolac unitOfWork.execute(work) do maxAttempts razy, lapiac RuntimeException miedzy probami (z krotkim Thread.sleep). Zademonstruj scenariusz, w ktorym pierwsza proba zawodzi (stan=0), a druga (po recznym \"doladowaniu\" stanu miedzy probami) sie udaje.",
+      "hint": "Petla for probujaca execute(work), lapiaca RuntimeException i kontynuujaca do nastepnej proby, az do wyczerpania maxAttempts.",
+      "solution": "<T> T executeWithRetry(UnitOfWork uow, SqlWork<T> work, int maxAttempts) throws InterruptedException {\n  for (int i = 1; i <= maxAttempts; i++) {\n    try { return uow.execute(work); }\n    catch (RuntimeException e) { if (i == maxAttempts) throw e; Thread.sleep(50); }\n  }\n  throw new IllegalStateException(\"unreachable\");\n}"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson19ex24;DB_CLOSE_DELAY=-1\" z produktem o stanie 100, uruchom DWA WATKI, kazdy wywolujacy unitOfWork.execute() (placeOrder, quantity=1) 30 razy w petli (60 zamowien lacznie). Poczekaj na zakonczenie obu (join z limitem) i sprawdz, ze stan magazynowy koncowy wynosi DOKLADNIE 40 (100-60) - kazda transakcja UnitOfWork jest atomowa nawet przy wspolbieznym uzyciu z roznych watkow (rozne Connection z tego samego URL).",
+      "hint": "Kazde wywolanie execute() otwiera WLASNE Connection - dwa watki naturalnie uzywaja roznych polaczen, wiec nie ma konfliktu na poziomie Connection.",
+      "solution": "Thread t1 = new Thread(() -> { for (int i=0;i<30;i++) orderService.placeOrder(id, 1); });\nThread t2 = new Thread(() -> { for (int i=0;i<30;i++) orderService.placeOrder(id, 1); });\nt1.start(); t2.start(); t1.join(10000); t2.join(10000);\n// stan magazynowy == 40"
+    },
+    {
+      "prompt": "Rozbuduj UnitOfWork.execute() o pomiar czasu (System.nanoTime() na starcie i koncu metody, NIEZALEZNIE od sukcesu/porazki - policz w finally) i wypisywanie \"Transakcja trwala Xms\" po KAZDYM wywolaniu execute(). Wywolaj 5 operacji o roznej zlozonosci i porownaj zmierzone czasy.",
+      "hint": "Umiesc System.nanoTime() na poczatku metody execute() i drugie wywolanie w bloku finally (zewnetrznym, obejmujacym CALA metode).",
+      "solution": "<T> T execute(SqlWork<T> work) {\n  long start = System.nanoTime();\n  try { ... }\n  finally {\n    long ms = (System.nanoTime() - start) / 1_000_000;\n    System.out.println(\"Transakcja trwala \" + ms + \"ms\");\n  }\n}"
+    },
+    {
+      "prompt": "Napisz klase UnitOfWorkFactory z metoda statyczna UnitOfWork forDatabase(String dbName) tworzaca UnitOfWork na url \"jdbc:h2:mem:\" + dbName + \";DB_CLOSE_DELAY=-1\" oraz od razu wywolujaca setUpSchema na nowo otwartym polaczeniu. Uzyj tej fabryki do stworzenia 3 niezaleznych \"instancji\" aplikacji (rozne bazy) w jednym main().",
+      "hint": "Fabryka laczy budowe URL-a, utworzenie UnitOfWork i jednorazowe wywolanie setUpSchema w jednej, wygodnej metodzie statycznej.",
+      "solution": "static UnitOfWork forDatabase(String dbName) throws SQLException {\n  String url = \"jdbc:h2:mem:\" + dbName + \";DB_CLOSE_DELAY=-1\";\n  try (Connection c = DriverManager.getConnection(url)) { setUpSchema(c); }\n  return new UnitOfWork(url);\n}"
+    },
+    {
+      "prompt": "Zaimplementuj metode processReturnAndRestock(unitOfWork, orderId, productId, quantity) - w JEDNYM wywolaniu unitOfWork.execute(): usuwa zamowienie z orders, PRZYWRACA stan magazynowy (increaseStock), wstawia wpis do order_log o zwrocie. Zademonstruj na zamowieniu zlozonym wczesniej przez placeOrder - stan magazynowy powinien wrocic do wartosci poczatkowej.",
+      "hint": "Wszystkie trzy operacje (DELETE + UPDATE + INSERT do order_log) sa w JEDNEJ lambda, wiec dziela ta sama, atomowa transakcje.",
+      "solution": "unitOfWork.execute(c -> {\n  deleteOrder(c, orderId);\n  increaseStock(c, productId, quantity);\n  insertLog(c, \"zwrot zamowienia #\" + orderId);\n  return null;\n});"
+    },
+    {
+      "prompt": "Zbuduj scenariusz \"wstrzykiwania bledu\" (np. metoda pomocnicza rzucajaca wyjatek po N-tym wywolaniu SQL, poprzez licznik statyczny) i uzyj go w OBIE wersjach Service (z UnitOfWork i reczna, z Zadania 17) dla identycznej sekwencji operacji. Porownaj, czy OBIE wersje poprawnie wycofuja zmiany po wstrzykniętym bledzie - pokaz, ze abstrakcja UnitOfWork nie zmienia SEMANTYKI transakcji, tylko ja ukrywa.",
+      "hint": "Licznik statyczny inkrementowany przy kazdym wywolaniu \"wrazliwej\" metody, rzucajacy wyjatek po osiagnieciu progu N - identyczny mechanizm uzyty w obu wersjach Service.",
+      "solution": "static int callCount = 0;\nvoid maybeFailAfterN(int n) { if (++callCount == n) throw new RuntimeException(\"wstrzykniety blad\"); }\n// wywolane wewnatrz obu wersji placeOrder - obie powinny poprawnie wycofac zmiany"
+    },
+    {
+      "prompt": "Zademonstruj \"pulapke\": lambda przekazana do execute() wysyla (symulowane, System.out.println) powiadomienie e-mail PRZED commitem, a transakcja PONIZEJ w tej samej lambda konczy sie rollbackiem. Pokaz, ze powiadomienie \"wyslalo sie\" mimo ze transakcja zostala wycofana (efekt uboczny NIE jest transakcyjny) - i zaproponuj w komentarzu poprawke (wyslac powiadomienie PO udanym commit, poza lambda execute()).",
+      "hint": "System.out.println (i kazdy inny efekt uboczny spoza bazy danych) wykonuje sie NATYCHMIAST, niezaleznie od tego, czy transakcja pozniej zostanie zacommitowana czy wycofana.",
+      "solution": "try {\n  uow.execute(c -> {\n    System.out.println(\"wysylam e-mail...\"); // TO SIE WYKONA, nawet gdy transakcja sie nie powiedzie\n    productDao.decreaseStock(c, productId, 999); // to rzuci wyjatek -> rollback\n    return null;\n  });\n} catch (RuntimeException e) { }\n// POPRAWKA: wyslac e-mail DOPIERO po udanym execute(), poza lambda"
+    },
+    {
+      "prompt": "Polacz wszystkie techniki z lekcji w jeden mini \"framework\": UnitOfWork + executeAndLog (audit przetrwaly rollback, Zadanie 22) + executeWithRetry (Zadanie 23) + pomiar czasu (Zadanie 25). Przetestuj na 3 scenariuszach: udane zamowienie, nieudane (bez retry, blad biznesowy), zamowienie ktore udaje sie przy 2. probie (zasymulowane \"doladowaniem\" stanu miedzy probami). Wypisz pelny log wykonania dla wszystkich trzech przypadkow.",
+      "hint": "Polacz WSZYSTKIE wczesniejsze rozszerzenia UnitOfWork w jeden spojny obiekt, uzywany identycznie dla wszystkich trzech scenariuszy testowych.",
+      "solution": "// scenariusz 1: uow.executeAndLog(normalnaOperacja, \"sukces\", \"blad: \")\n// scenariusz 2: executeWithRetry z maxAttempts=1 - blad biznesowy, bez sensu ponawiac\n// scenariusz 3: executeWithRetry z maxAttempts=2 - \"dostawa\" miedzy probami, sukces przy 2."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co to jest wzorzec Unit of Work?",
+      "options": {
+        "A": "Sposob na przyspieszenie zapytan SQL",
+        "B": "Opakowanie na \"otworz transakcje, wykonaj blok kodu, zacommituj albo wycofaj\" - tak, by Service nie pisal tego recznie za kazdym razem",
+        "C": "Nazwa dla pojedynczej tabeli w bazie",
+        "D": "Mechanizm cache dla zapytan"
+      },
+      "correct": "B",
+      "explanation": "Unit of Work to formalizacja wzorca transakcyjnego z lekcji 17-18, wydzielona do reuzywalnej klasy - \"jedna operacja biznesowa = jedna jednostka pracy\"."
+    },
+    {
+      "question": "Co przyjmuje metoda UnitOfWork.execute() jako parametr?",
+      "options": {
+        "A": "Nazwe tabeli jako String",
+        "B": "Funkcyjny interfejs SqlWork<T> - blok kodu, ktory dostaje Connection i zwraca wynik typu T",
+        "C": "Gotowy obiekt Connection",
+        "D": "Liste DAO do wywolania"
+      },
+      "correct": "B",
+      "explanation": "execute(SqlWork<T> work) przyjmuje lambde reprezentujaca logike biznesowa - UnitOfWork sam otwiera Connection i przekazuje je do tej lambdy."
+    },
+    {
+      "question": "Co robi UnitOfWork.execute() PRZED wywolaniem przekazanej lambdy?",
+      "options": {
+        "A": "Nic, od razu wywoluje lambde",
+        "B": "Otwiera Connection i wylacza autocommit (setAutoCommit(false))",
+        "C": "Usuwa wszystkie dane z tabeli",
+        "D": "Tworzy nowa baze danych"
+      },
+      "correct": "B",
+      "explanation": "execute() otwiera polaczenie i ustawia setAutoCommit(false) PRZED wywolaniem przekazanej lambdy - to przygotowanie transakcji."
+    },
+    {
+      "question": "Co sie stanie, jesli lambda przekazana do execute() rzuci wyjatek?",
+      "options": {
+        "A": "Wyjatek jest ignorowany",
+        "B": "UnitOfWork lapie go, wywoluje rollback() i rzuca opakowany RuntimeException z oryginalnym wyjatkiem jako cause",
+        "C": "Program natychmiast sie konczy bez komunikatu",
+        "D": "Transakcja jest automatycznie ponawiana"
+      },
+      "correct": "B",
+      "explanation": "Wyjatek z lambdy jest lapany przez wewnetrzny catch w UnitOfWork, powoduje rollback, a nastepnie jest opakowany w RuntimeException z zachowanym cause."
+    },
+    {
+      "question": "Co zawiera metoda placeOrder w Service korzystajacym z UnitOfWork?",
+      "options": {
+        "A": "Caly boilerplate setAutoCommit/commit/rollback wpisany wprost",
+        "B": "TYLKO logike biznesowa wewnatrz lambdy przekazanej do unitOfWork.execute() - boilerplate transakcyjny jest ukryty",
+        "C": "Bezposrednie polaczenie z baza danych",
+        "D": "Konfiguracje puli polaczen"
+      },
+      "correct": "B",
+      "explanation": "Dzieki UnitOfWork, Service pisze WYLACZNIE logike biznesowa - caly szablon transakcyjny (setAutoCommit/commit/rollback/finally) jest ukryty wewnatrz UnitOfWork."
+    },
+    {
+      "question": "Jaka jest glowna zaleta wydzielenia wzorca transakcyjnego do klasy UnitOfWork?",
+      "options": {
+        "A": "Przyspiesza wykonanie zapytan SQL",
+        "B": "Eliminuje powielanie identycznego kodu try/catch/finally w kazdej metodzie Service potrzebujacej transakcji",
+        "C": "Automatycznie tworzy indeksy w bazie",
+        "D": "Zmniejsza rozmiar bazy danych"
+      },
+      "correct": "B",
+      "explanation": "To zastosowanie zasady DRY - zamiast kopiowac ten sam szablon transakcyjny w wielu miejscach, piszemy go RAZ w UnitOfWork i uzywamy wielokrotnie."
+    },
+    {
+      "question": "Czy dwa OSOBNE wywolania unitOfWork.execute() (jedno po drugim) naleza do TEJ SAMEJ transakcji?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Nie - kazde wywolanie execute() to WLASNA, niezalezna transakcja z wlasnym Connection",
+        "C": "Tylko jesli maja ten sam typ zwracany T",
+        "D": "Zalezy od typu bazy danych"
+      },
+      "correct": "B",
+      "explanation": "Kazde wywolanie execute() otwiera WLASNE Connection - dwa kolejne wywolania to dwie OSOBNE transakcje, nawet jesli logicznie sa powiazane."
+    },
+    {
+      "question": "Dlaczego efekty uboczne spoza bazy danych (np. System.out.println symulujace wyslanie e-maila) wewnatrz lambdy execute() sa \"pulapka\"?",
+      "options": {
+        "A": "Bo powoduja bledy kompilacji",
+        "B": "Bo wykonuja sie NATYCHMIAST, niezaleznie od tego, czy transakcja pozniej zostanie zacommitowana czy wycofana - nie sa transakcyjne",
+        "C": "Bo dzialaja tylko na H2",
+        "D": "Bo spowalniaja dzialanie programu"
+      },
+      "correct": "B",
+      "explanation": "Efekt uboczny jak wyslanie e-maila NIE jest cofany przez rollback bazy danych - \"wysyla sie\" nawet gdy reszta transakcji zostanie wycofana, co moze byc niepozadane."
+    },
+    {
+      "question": "Co gwarantuje generyczny typ T w SqlWork<T>?",
+      "options": {
+        "A": "Ze kazde wywolanie execute() musi zwracac ten sam typ",
+        "B": "Ze TA SAMA metoda execute() moze byc uzyta dla roznych typow wyniku (np. Long, String, wlasny record) w roznych wywolaniach",
+        "C": "Ze T zawsze musi byc typem prymitywnym",
+        "D": "Ze wynik jest zawsze null"
+      },
+      "correct": "B",
+      "explanation": "Dzieki generykom, jedna, generyczna metoda execute() moze byc wywolana z lambdami zwracajacymi rozne typy - kompilator wywnioskuje T z kazdego konkretnego wywolania."
+    },
+    {
+      "question": "Czy Unit of Work zmienia SEMANTYKE transakcji w porownaniu z recznym kodem z lekcji 17-18?",
+      "options": {
+        "A": "Tak, dziala zupelnie inaczej",
+        "B": "Nie - to ten sam mechanizm transakcyjny, tylko WYDZIELONY do reuzywalnej klasy - semantyka commit/rollback pozostaje identyczna",
+        "C": "Tak, UnitOfWork nie wspiera rollbacku",
+        "D": "Nie da sie tego porownac"
+      },
+      "correct": "B",
+      "explanation": "UnitOfWork nie wprowadza nowej logiki transakcyjnej - to ta sama logika co w lekcji 17-18, tylko ukryta za wygodniejszym, reuzywalnym API."
+    },
+    {
+      "question": "Co najlepiej opisuje: Unit of Work?",
+      "options": {
+        "A": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "B": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+    },
+    {
+      "question": "Co najlepiej opisuje: SqlWork<T>?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: UnitOfWork.execute(work)?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+    },
+    {
+      "question": "Co najlepiej opisuje: boilerplate transakcyjny ukryty?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+    },
+    {
+      "question": "Co najlepiej opisuje: wyjatek z lambdy SqlWork?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+    },
+    {
+      "question": "Co najlepiej opisuje: generyczny typ T w SqlWork?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+    },
+    {
+      "question": "Co najlepiej opisuje: dwa osobne wywolania execute()?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+    },
+    {
+      "question": "Co najlepiej opisuje: efekt uboczny poza baza danych?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+    },
+    {
+      "question": "Co najlepiej opisuje: zasada DRY w kontekscie transakcji?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+    },
+    {
+      "question": "Co najlepiej opisuje: executeAndLog jako rozszerzenie?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+    },
+    {
+      "question": "Co najlepiej opisuje: executeWithRetry?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+    },
+    {
+      "question": "Co najlepiej opisuje: UnitOfWorkFactory?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+    },
+    {
+      "question": "Co najlepiej opisuje: wspolbiezne wywolania execute() z roznych watkow?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+    },
+    {
+      "question": "Co najlepiej opisuje: pomiar czasu execute()?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: ta sama semantyka co reczny kod transakcyjny?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"Unit of Work\"?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"SqlWork<T>\"?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"UnitOfWork.execute(work)\"?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"boilerplate transakcyjny ukryty\"?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"wyjatek z lambdy SqlWork\"?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"generyczny typ T w SqlWork\"?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"dwa osobne wywolania execute()\"?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"efekt uboczny poza baza danych\"?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"zasada DRY w kontekscie transakcji\"?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"executeAndLog jako rozszerzenie\"?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"executeWithRetry\"?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"UnitOfWorkFactory\"?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"wspolbiezne wywolania execute() z roznych watkow\"?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"pomiar czasu execute()\"?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"ta sama semantyka co reczny kod transakcyjny\"?",
+      "options": {
+        "A": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: Unit of Work.",
+      "options": {
+        "A": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "B": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: SqlWork<T>.",
+      "options": {
+        "A": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "B": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "C": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "D": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: UnitOfWork.execute(work).",
+      "options": {
+        "A": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "B": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "C": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "D": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: boilerplate transakcyjny ukryty.",
+      "options": {
+        "A": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "B": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "C": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "D": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: wyjatek z lambdy SqlWork.",
+      "options": {
+        "A": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "B": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "C": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "D": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: generyczny typ T w SqlWork.",
+      "options": {
+        "A": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "B": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "C": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "D": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: dwa osobne wywolania execute().",
+      "options": {
+        "A": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "B": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "C": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "D": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: efekt uboczny poza baza danych.",
+      "options": {
+        "A": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "B": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "C": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "D": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: zasada DRY w kontekscie transakcji.",
+      "options": {
+        "A": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "B": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "C": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "D": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: executeAndLog jako rozszerzenie.",
+      "options": {
+        "A": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "B": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "C": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "D": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: executeWithRetry.",
+      "options": {
+        "A": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "B": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "C": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "D": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: UnitOfWorkFactory.",
+      "options": {
+        "A": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "B": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "C": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "D": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: wspolbiezne wywolania execute() z roznych watkow.",
+      "options": {
+        "A": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "B": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "C": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "D": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: pomiar czasu execute().",
+      "options": {
+        "A": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "B": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "C": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "D": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: ta sama semantyka co reczny kod transakcyjny.",
+      "options": {
+        "A": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "B": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "C": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "D": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"Unit of Work\"?",
+      "options": {
+        "A": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "B": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "C": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "D": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"SqlWork<T>\"?",
+      "options": {
+        "A": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "B": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "C": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "D": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"UnitOfWork.execute(work)\"?",
+      "options": {
+        "A": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "B": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "C": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "D": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"boilerplate transakcyjny ukryty\"?",
+      "options": {
+        "A": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "B": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "C": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "D": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"wyjatek z lambdy SqlWork\"?",
+      "options": {
+        "A": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "B": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "C": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "D": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"generyczny typ T w SqlWork\"?",
+      "options": {
+        "A": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "B": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "C": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "D": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"dwa osobne wywolania execute()\"?",
+      "options": {
+        "A": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "B": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "C": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "D": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"efekt uboczny poza baza danych\"?",
+      "options": {
+        "A": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "B": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "C": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "D": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"zasada DRY w kontekscie transakcji\"?",
+      "options": {
+        "A": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "B": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "C": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "D": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"executeAndLog jako rozszerzenie\"?",
+      "options": {
+        "A": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "B": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "C": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "D": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"executeWithRetry\"?",
+      "options": {
+        "A": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "B": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "C": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "D": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"UnitOfWorkFactory\"?",
+      "options": {
+        "A": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "B": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "C": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "D": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"wspolbiezne wywolania execute() z roznych watkow\"?",
+      "options": {
+        "A": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "B": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "C": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "D": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"pomiar czasu execute()\"?",
+      "options": {
+        "A": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "B": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "C": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "D": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"ta sama semantyka co reczny kod transakcyjny\"?",
+      "options": {
+        "A": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "B": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"Unit of Work\"?",
+      "options": {
+        "A": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "B": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"SqlWork<T>\"?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"UnitOfWork.execute(work)\"?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"boilerplate transakcyjny ukryty\"?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"wyjatek z lambdy SqlWork\"?",
+      "options": {
+        "A": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"generyczny typ T w SqlWork\"?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"dwa osobne wywolania execute()\"?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"efekt uboczny poza baza danych\"?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"zasada DRY w kontekscie transakcji\"?",
+      "options": {
+        "A": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"executeAndLog jako rozszerzenie\"?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"executeWithRetry\"?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"UnitOfWorkFactory\"?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"wspolbiezne wywolania execute() z roznych watkow\"?",
+      "options": {
+        "A": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"pomiar czasu execute()\"?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"ta sama semantyka co reczny kod transakcyjny\"?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+    },
+    {
+      "question": "Co najlepiej opisuje: Unit of Work?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy"
+    },
+    {
+      "question": "Co najlepiej opisuje: SqlWork<T>?",
+      "options": {
+        "A": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: UnitOfWork.execute(work)?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie"
+    },
+    {
+      "question": "Co najlepiej opisuje: boilerplate transakcyjny ukryty?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: Service pisze tylko logike biznesowa, caly setAutoCommit/commit/rollback jest w UnitOfWork"
+    },
+    {
+      "question": "Co najlepiej opisuje: wyjatek z lambdy SqlWork?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: lapany przez UnitOfWork, powoduje rollback i opakowanie w RuntimeException z cause"
+    },
+    {
+      "question": "Co najlepiej opisuje: generyczny typ T w SqlWork?",
+      "options": {
+        "A": "pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: pozwala jednej metodzie execute() obslugiwac rozne typy wyniku w roznych wywolaniach"
+    },
+    {
+      "question": "Co najlepiej opisuje: dwa osobne wywolania execute()?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: to DWIE niezalezne transakcje, nie jedna wspolna - swiadomy kompromis"
+    },
+    {
+      "question": "Co najlepiej opisuje: efekt uboczny poza baza danych?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: nie jest transakcyjny - wykonuje sie natychmiast, niezaleznie od pozniejszego rollbacku"
+    },
+    {
+      "question": "Co najlepiej opisuje: zasada DRY w kontekscie transakcji?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: eliminacja powielania identycznego szablonu try/catch/finally w wielu metodach Service"
+    },
+    {
+      "question": "Co najlepiej opisuje: executeAndLog jako rozszerzenie?",
+      "options": {
+        "A": "zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zapisuje audyt w OSOBNEJ, niezaleznej transakcji, przetrwajacej rollback glownej"
+    },
+    {
+      "question": "Co najlepiej opisuje: executeWithRetry?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: ponawia probe execute() do maxAttempts razy z opoznieniem miedzy probami"
+    },
+    {
+      "question": "Co najlepiej opisuje: UnitOfWorkFactory?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: fabryka tworzaca gotowy UnitOfWork z automatycznym setUpSchema dla nowej bazy"
+    },
+    {
+      "question": "Co najlepiej opisuje: wspolbiezne wywolania execute() z roznych watkow?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazde ma wlasne Connection, transakcje pozostaja atomowe niezaleznie"
+    },
+    {
+      "question": "Co najlepiej opisuje: pomiar czasu execute()?",
+      "options": {
+        "A": "System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: System.nanoTime() w finally, niezaleznie od sukcesu czy porazki transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: ta sama semantyka co reczny kod transakcyjny?",
+      "options": {
+        "A": "otwiera Connection, wylacza autocommit, wykonuje lambde, commituje lub cofa, zamyka polaczenie",
+        "B": "UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback",
+        "C": "wzorzec: jedna operacja biznesowa = jedna transakcja, wydzielony do reuzywalnej klasy",
+        "D": "funkcyjny interfejs opisujacy blok pracy do wykonania w jednej transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: UnitOfWork ukrywa boilerplate, ale nie zmienia zachowania commit/rollback"
+    }
+  ]
+}
