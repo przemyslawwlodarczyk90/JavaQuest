@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "CONCEPT",
+      "heading": "Problem: operacja biznesowa = wiele zapytan SQL",
+      "body": "W poprzedniej lekcji OrderService.placeOrder wykonywal DWIE osobne operacje insert (order + order_item) BEZ wspolnej transakcji. Kazdy insert mial WLASNY, niejawny autocommit. Co sie stanie, jesli DRUGI insert (albo trzeci krok - zmniejszenie stanu magazynowego) sie nie powiedzie, PO TYM jak pierwszy insert juz sie wykonal i zacommitowal? Odpowiedz: zostaniemy z NIESPOJNYMI danymi - zamowienie istnieje w tabeli orders, ale nie ma dla niego zadnej pozycji w order_items."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Jedno zdanie do zapamietania",
+      "body": "JEDNA operacja biznesowa (np. \"zloz zamowienie\") powinna byc JEDNA transakcja: albo WSZYSTKIE kroki sie powioda (jeden commit), albo ZADEN z nich nie zostawi sladu (jeden rollback). To jest dokladnie problem, ktory TRANSAKCJE maja rozwiazywac."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Transakcja obejmujaca wiele DAO",
+      "body": "OrderService.placeOrder: 1) otwiera JEDNO polaczenie i wylacza autocommit, 2) przekazuje TO SAMO polaczenie do WSZYSTKICH DAO (order, order_item, product), 3) po wszystkich krokach wola JEDEN commit, 4) jesli ktorykolwiek krok rzuci wyjatek - wola JEDEN rollback, cofajacy WSZYSTKIE kroki wykonane do tej pory. Connection NIE jest juz tworzone osobno w kazdym DAO - jest tworzone RAZ, w Service, i PRZEKAZYWANE jako parametr do metod DAO."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "placeOrder z prawdziwa transakcja",
+      "body": "try { connection.setAutoCommit(false); long orderId = orderDao.insert(connection, productId); orderItemDao.insert(connection, orderId, productId, quantity); productDao.decreaseStock(connection, productId, quantity); connection.commit(); } catch (SQLException | IllegalStateException e) { connection.rollback(); } finally { connection.setAutoCommit(true); }. Commit wolamy RAZ, na samym koncu, gdy WSZYSTKIE kroki sie powiodly. Rollback wolamy RAZ, w bloku catch, gdy KTORYKOLWIEK krok zawiodl."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "DAO przyjmujace Connection jako parametr",
+      "body": "long insert(Connection connection, long productId) throws SQLException { ... }. DAO w tej lekcji NIE tworzy WLASNEGO polaczenia (w odroznieniu od poprzednich lekcji) - przyjmuje je jako PARAMETR metody. Dzieki temu wszystkie operacje wielu DAO wykonuja sie na TYM SAMYM Connection, wiec naleza do TEJ SAMEJ transakcji."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "finally zawsze przywraca autocommit",
+      "body": "Blok finally { connection.setAutoCommit(true); } wykonuje sie ZAWSZE - niezaleznie od tego, czy transakcja zakonczyla sie commitem, czy rollbackiem. To wazne, bo Connection moze byc pozniej reuzywane (np. z puli) i powinno wrocic do domyslnego stanu autocommit=true, w ktorym je otrzymalismy."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Podsumowanie",
+      "body": "JEDNA operacja biznesowa (placeOrder) = JEDNA transakcja = JEDNO Connection ze setAutoCommit(false). To SAMO Connection trzeba przekazac do WSZYSTKICH DAO bioracych udzial w tej operacji (order, order_items, products). Commit wolamy RAZ, na samym koncu, gdy WSZYSTKIE kroki sie powiodly. Rollback wolamy RAZ, w bloku catch, gdy KTORYKOLWIEK krok zawiodl - cofa to WSZYSTKIE zmiany zrobione od poczatku transakcji, nie tylko ten jeden nieudany krok. Kolejna lekcja pokaze, dlaczego to podejscie (Connection przekazywane jako parametr) jest KONIECZNE, a nie tylko \"ladniejsze\"."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson17ex01;DB_CLOSE_DELAY=-1\" utworz tabele products i orders/order_items jak w lekcji. Otworz Connection i wypisz connection.getAutoCommit() PRZED wykonaniem jakiegokolwiek insertu - powinien byc true (tryb domyslny, tak jak przed wejsciem do OrderService).",
+      "hint": "Domyslnie kazde nowe Connection ma autocommit=true, dopoki nie wywolamy jawnie setAutoCommit(false).",
+      "solution": "try (Connection c = DriverManager.getConnection(url)) {\n  System.out.println(c.getAutoCommit()); // true\n}"
+    },
+    {
+      "prompt": "Napisz OrderDao z metoda long insert(Connection connection, long productId) PRZYJMUJACA Connection jako PARAMETR (nie tworzaca wlasnego, jak w lekcji). Wywolaj ja dwukrotnie na tym samym, jawnie otwartym polaczeniu i sprawdz przez SELECT COUNT(*), ze powstaly 2 wiersze.",
+      "hint": "Metoda insert NIE otwiera wlasnego try-with-resources na Connection - dostaje je jako gotowy parametr od wywolujacego.",
+      "solution": "long insert(Connection connection, long productId) throws SQLException {\n  try (PreparedStatement stmt = connection.prepareStatement(\"INSERT INTO orders (product_id) VALUES (?)\", Statement.RETURN_GENERATED_KEYS)) {\n    ...\n  }\n}"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson17ex03;DB_CLOSE_DELAY=-1\" recznie (bez klasy Service) wykonaj: setAutoCommit(false), insert do orders, insert do order_items (na TYM SAMYM connection), potem commit(). Sprawdz SELECT COUNT(*) z obu tabel - obie powinny miec dokladnie 1 wiersz.",
+      "hint": "Wszystkie trzy kroki (setAutoCommit, dwa insert, commit) wykonaj na TEJ SAMEJ zmiennej Connection, bez zadnego posrednictwa Service.",
+      "solution": "connection.setAutoCommit(false);\norderDao.insert(connection, productId);\norderItemDao.insert(connection, orderId, productId, qty);\nconnection.commit();"
+    },
+    {
+      "prompt": "Zaimplementuj OrderService z lekcji (placeOrder wywolujace OrderDao, OrderItemDao, ProductDao.decreaseStock w jednej transakcji) na bazie \"jdbc:h2:mem:lesson17ex04;DB_CLOSE_DELAY=-1\" z produktem o stanie 10. Wywolaj placeOrder(productId, 3) i wypisz stan magazynowy PO operacji (powinien wynosic 7).",
+      "hint": "Skopiuj OrderService 1:1 z teorii lekcji, zweryfikuj wynik przez SELECT quantity_in_stock.",
+      "solution": "orderService.placeOrder(productId, 3);\n// SELECT quantity_in_stock FROM products WHERE id = ? -> 7 (10 - 3)"
+    },
+    {
+      "prompt": "Uzywajac OrderService z Zadania 4 (produkt o stanie 10), wywolaj placeOrder(productId, 999) (za duzo). Sprawdz PO tej probie: COUNT(*) z orders (powinno byc 0), COUNT(*) z order_items (powinno byc 0) oraz stan magazynowy (powinien wrocic do 10, NIEZMIENIONY) - dowod, ze rollback cofnal WSZYSTKIE kroki.",
+      "hint": "decreaseStock rzuci IllegalStateException dla ilosci wiekszej niz stan - to spowoduje rollback CALEJ transakcji, wlacznie z JUZ wykonanym insertem zamowienia.",
+      "solution": "orderService.placeOrder(productId, 999); // rzuci wewnetrznie, rollback\n// SELECT COUNT(*) FROM orders -> 0, stan_magazynowy -> 10 (niezmieniony)"
+    },
+    {
+      "prompt": "Uzywajac OrderService z Zadania 4, wypisz connection.getAutoCommit() PRZED wywolaniem placeOrder (powinno byc true), wykonaj UDANE zamowienie, a nastepnie wypisz getAutoCommit() PONOWNIE - musi znowu byc true (finally zadzialal), mimo ze wewnatrz metody bylo ustawione na false.",
+      "hint": "Blok finally { connection.setAutoCommit(true); } w OrderService gwarantuje przywrocenie stanu autocommit, niezaleznie od wyniku.",
+      "solution": "System.out.println(connection.getAutoCommit()); // true\norderService.placeOrder(productId, 3);\nSystem.out.println(connection.getAutoCommit()); // true, przywrocone przez finally"
+    },
+    {
+      "prompt": "Analogicznie do Zadania 6, ale wywolaj NIEUDANE zamowienie (za duza ilosc, wywolujace catch+rollback). Sprawdz, ze getAutoCommit() PO nieudanej probie TAKZE wraca do true - finally dziala niezaleznie od tego, czy transakcja sie powiodla, czy nie.",
+      "hint": "finally wykonuje sie ZAWSZE - zarowno po sciezce commit, jak i po sciezce catch+rollback.",
+      "solution": "orderService.placeOrder(productId, 999); // nieudane, rollback\nSystem.out.println(connection.getAutoCommit()); // true, finally zawsze dziala"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson17ex08;DB_CLOSE_DELAY=-1\" z produktem o stanie 10, wywolaj placeOrder DWA RAZY z rzedu (quantity=2 kazdy raz, na DWOCH ROZNYCH, jawnie otwieranych polaczeniach jak w lekcji). Wypisz stan magazynowy po kazdym wywolaniu (powinien wynosic kolejno 8, potem 6).",
+      "hint": "Kazde wywolanie placeOrder otrzymuje WLASNE, nowe Connection (jak w main() z teorii lekcji) - stan bazy jest jednak wspoldzielony, bo to ta sama baza H2 in-memory.",
+      "solution": "try (Connection c1 = DriverManager.getConnection(url)) { new OrderService(c1).placeOrder(productId, 2); } // -> 8\ntry (Connection c2 = DriverManager.getConnection(url)) { new OrderService(c2).placeOrder(productId, 2); } // -> 6"
+    },
+    {
+      "prompt": "Napisz wlasna wersje metody printState(url, label) z lekcji (liczba zamowien, liczba pozycji zamowien, stan magazynowy produktu #1) i uzyj jej PRZED i PO jednym udanym oraz jednym nieudanym zamowieniu - w sumie 4 wywolania printState pokazujace pelna historie zmian stanu.",
+      "hint": "Skopiuj printState 1:1 z teorii lekcji - trzy zapytania COUNT/SELECT wypisane pod wspolna etykieta.",
+      "solution": "printState(url, \"start\");\norderService.placeOrder(productId, 3); printState(url, \"po udanym\");\norderService.placeOrder(productId, 999); printState(url, \"po nieudanym (bez zmian)\");"
+    },
+    {
+      "prompt": "Napisz OrderItemDao.insert(Connection, orderId, productId, quantity) (jak w lekcji, Connection jako parametr). Wywolaj ja DWUKROTNIE na TYM SAMYM polaczeniu (bez commit miedzy wywolaniami), a nastepnie wywolaj JEDEN commit na koncu - sprawdz SELECT COUNT(*) z order_items (powinno byc 2).",
+      "hint": "Oba wywolania insert dziela TA SAMA transakcje - dopiero jeden, wspolny commit() na koncu zatwierdza OBA wiersze naraz.",
+      "solution": "orderItemDao.insert(connection, orderId, productId1, qty1);\norderItemDao.insert(connection, orderId, productId2, qty2);\nconnection.commit(); // zatwierdza OBA insert naraz"
+    },
+    {
+      "prompt": "Rozbuduj OrderService o CZWARTY krok (po decreaseStock): insert do tabeli order_log (id, message) - dodaj ta tabele. Zasymuluj blad W TRZECIM kroku (decreaseStock, za duza ilosc) i sprawdz, ze CZWARTY krok (log) NIGDY sie nie wykonal, a rollback cofnal wszystko az do (i wlacznie z) pierwszego kroku.",
+      "hint": "Jesli krok 3 rzuci wyjatek, kontrola przechodzi bezposrednio do catch - krok 4 (kod PO decreaseStock) fizycznie nigdy sie nie wykonuje.",
+      "solution": "productDao.decreaseStock(connection, productId, quantity); // rzuca wyjatek dla za duzej ilosci\n// orderLogDao.insert(...) - ten kod NIGDY sie nie wykonuje w przypadku bledu"
+    },
+    {
+      "prompt": "Zamien IllegalStateException w ProductDao.decreaseStock na WLASNY, niesprawdzany wyjatek InsufficientStockException(String message). Zmodyfikuj catch w OrderService, by lapal SQLException ORAZ InsufficientStockException w jednym bloku multi-catch. Zweryfikuj, ze rollback wciaz dziala identycznie jak w lekcji.",
+      "hint": "catch (SQLException | InsufficientStockException e) { ... } - multi-catch lapie oba typy wyjatkow w jednym bloku.",
+      "solution": "class InsufficientStockException extends RuntimeException {\n  InsufficientStockException(String message) { super(message); }\n}\ncatch (SQLException | InsufficientStockException e) { connection.rollback(); }"
+    },
+    {
+      "prompt": "Dodaj do schematu tabele users (id, name) i rozbuduj OrderService o KROK 0: sprawdzenie istnienia usera (UserDao.findNameById) PRZED insertem zamowienia - CALA operacja (4 kroki: user, order, order_item, stock) ma byc JEDNA transakcja. Zasymuluj blad w kroku 0 (nieistniejacy user) i sprawdz, ze ZADEN insert nie zostal wykonany.",
+      "hint": "Krok 0 (sprawdzenie usera) MUSI byc WEWNATRZ tego samego bloku try z setAutoCommit(false), zeby jego niepowodzenie tez wywolalo rollback.",
+      "solution": "try { connection.setAutoCommit(false);\n  if (userDao.findNameById(userId).isEmpty()) throw new IllegalStateException(\"brak usera\");\n  ... reszta krokow ...\n  connection.commit();\n} catch (...) { connection.rollback(); }"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson17ex14;DB_CLOSE_DELAY=-1\" z 2 produktami, wywolaj placeOrder DLA KAZDEGO produktu na WLASNYM, osobno otwieranym polaczeniu (2 wywolania OrderService, kazde z nowym Connection, jak w strukturze lekcji). Potwierdz w komentarzu, ze kazde wywolanie ma WLASNA, niezalezna transakcje (commit/rollback jednego NIE wplywa na drugie).",
+      "hint": "Kazde osobne Connection ma WLASNY, niezalezny stan autocommit/transakcji - commit/rollback jednego nie wplywa na transakcje na innym Connection.",
+      "solution": "// Connection c1 dla produktu A, Connection c2 dla produktu B - dwie CALKOWICIE niezalezne transakcje\n// rollback na c1 nie cofa niczego wykonanego na c2"
+    },
+    {
+      "prompt": "Zasymuluj sytuacje, w ktorej connection.rollback() SAM rzuca SQLException (np. zamknij connection.close() PRZED wywolaniem rollback() wewnatrz catch). Sprawdz, ze OrderService (jak w lekcji) lapie ten wyjatek i rzuca RuntimeException(\"Nie udalo sie wykonac rollbacku\", rollbackEx) - wypisz getCause() tego RuntimeException.",
+      "hint": "Wywolanie rollback() na JUZ ZAMKNIETYM Connection rzuca SQLException - to jest wlasnie ten \"wyjatek w wyjatku\" obslugiwany w wewnetrznym catch.",
+      "solution": "try {\n  orderService.placeOrder(productId, 999); // wewnatrz connection.close() przed rollback\n} catch (RuntimeException e) {\n  System.out.println(e.getCause()); // SQLException z rollback\n}"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson17ex16;DB_CLOSE_DELAY=-1\" z produktem o stanie 10, wywolaj placeOrder w petli 5 razy z quantity=2 kazdy raz (kazde wywolanie na nowym Connection). Po KAZDYM wywolaniu wypisz aktualny stan magazynowy - piate wywolanie powinno wyzerowac stan do 0, a szuste (jesli dodasz) powinno zostac odrzucone przez rollback.",
+      "hint": "Petla 5 iteracji zmniejsza stan po 2 sztuki: 10->8->6->4->2->0. Szosta proba zamowienia jakiejkolwiek ilosci > 0 zostanie odrzucona.",
+      "solution": "for (int i = 0; i < 5; i++) {\n  try (Connection c = DriverManager.getConnection(url)) { new OrderService(c).placeOrder(productId, 2); }\n  printState(url, \"po wywolaniu \" + (i+1));\n}"
+    },
+    {
+      "prompt": "Rozbuduj test z Zadania 5: po nieudanej probie zamowienia sprawdz WSZYSTKIE trzy elementy stanu jednoczesnie (COUNT orders, COUNT order_items, stan magazynowy) i porownaj je z wartosciami sprzed wywolania placeOrder - napisz prosta metode assertNoChange(before, after) rzucajaca AssertionError, jesli COKOLWIEK sie zmienilo.",
+      "hint": "record State(int orders, int items, int stock) przechowuje 3 wartosci przed i po - porownaj oba obiekty przez equals().",
+      "solution": "record State(int orders, int items, int stock) {}\nState before = readState(url);\norderService.placeOrder(productId, 999);\nState after = readState(url);\nif (!before.equals(after)) throw new AssertionError(\"stan sie zmienil!\");"
+    },
+    {
+      "prompt": "Napisz metode cancelOrderTransactional(connection, orderId) w OrderService, ktora w JEDNEJ transakcji: usuwa wiersze order_items dla danego orderId, usuwa wiersz z orders, i PRZYWRACA stan magazynowy (UPDATE products SET quantity_in_stock = quantity_in_stock + quantity). Przetestuj na zamowieniu zlozonym przez placeOrder - po anulowaniu stan magazynowy powinien wrocic do wartosci poczatkowej.",
+      "hint": "Trzy operacje (2x DELETE + 1x UPDATE) MUSZA byc w JEDNEJ transakcji - ten sam wzorzec setAutoCommit/commit/rollback co placeOrder.",
+      "solution": "void cancelOrderTransactional(Connection c, long orderId) throws SQLException {\n  c.setAutoCommit(false);\n  try {\n    int qty = findQuantityForOrder(c, orderId);\n    long productId = findProductIdForOrder(c, orderId);\n    deleteOrderItems(c, orderId);\n    deleteOrder(c, orderId);\n    restoreStock(c, productId, qty);\n    c.commit();\n  } catch (SQLException e) { c.rollback(); } finally { c.setAutoCommit(true); }\n}"
+    },
+    {
+      "prompt": "Zasymuluj blad w cancelOrderTransactional z Zadania 18 (np. przekaz nieistniejace orderId do UPDATE stanu magazynowego, powodujac 0 zmienionych wierszy - w tym zadaniu potraktuj to jako rzucony wyjatek recznie jesli getUpdateCount()==0). Sprawdz, ze rollback cofnal WSZYSTKIE 3 operacje DELETE/UPDATE tej \"nieudanej\" anulacji.",
+      "hint": "stmt.executeUpdate() zwraca liczbe zmienionych wierszy - sprawdz ja i rzuc wlasny wyjatek, jesli wynosi 0, mimo ze DELETE/UPDATE technicznie sie \"wykonaly\".",
+      "solution": "int updated = updateStmt.executeUpdate();\nif (updated == 0) throw new IllegalStateException(\"nie znaleziono zamowienia do anulowania\");\n// to spowoduje rollback CALEJ operacji anulowania, wlacznie z juz wykonanymi DELETE"
+    },
+    {
+      "prompt": "Rozbuduj placeOrder o pomiar czasu (System.nanoTime() przed setAutoCommit(false), po commit/rollback) i wypisanie czasu trwania calej transakcji w milisekundach. Wykonaj 3 zamowienia (roznej wielkosci) i porownaj zmierzone czasy w komentarzu.",
+      "hint": "Otocz caly blok try/catch/finally wywolaniami System.nanoTime() na poczatku i na koncu metody placeOrder.",
+      "solution": "long start = System.nanoTime();\ntry { connection.setAutoCommit(false); ...; connection.commit(); }\ncatch (...) { connection.rollback(); }\nfinally { connection.setAutoCommit(true); }\nlong czas = (System.nanoTime() - start) / 1_000_000;\nSystem.out.println(\"transakcja: \" + czas + \" ms\");"
+    },
+    {
+      "prompt": "Rozbuduj OrderService o piaty krok: walidacje limitu zamowienia (quantity <= 50) WEWNATRZ transakcji (po insercie zamowienia, przed decreaseStock). Zbierz liste nazw krokow, ktore SIE POWIODLY (np. [\"order\", \"order_item\"]) PRZED wystapieniem bledu, wypisz ja w catch (wraz z komunikatem bledu), a potem wywolaj rollback - dowodzac, ze mimo \"powodzenia\" czesciowego, cala transakcja jest wycofywana.",
+      "hint": "Lista List<String> completedSteps dopisywana po kazdym udanym kroku - w catch wypisz jej zawartosc PRZED rollbackiem, potem i tak wywolaj rollback.",
+      "solution": "List<String> completed = new ArrayList<>();\ntry {\n  ...; completed.add(\"order\");\n  if (quantity > 50) throw new IllegalStateException(\"limit przekroczony\");\n  ...\n} catch (Exception e) {\n  System.out.println(\"powiodly sie: \" + completed + \", blad: \" + e.getMessage());\n  connection.rollback();\n}"
+    },
+    {
+      "prompt": "Dodaj tabele order_log (id, message). Wykonaj NIEUDANE zamowienie (rollback glownej transakcji), ale ZAPISZ informacje o probie w order_log w OSOBNEJ, NIEZALEZNEJ transakcji (osobne Connection, wlasny commit) - tak, aby log PRZETRWAL rollback glownej operacji. Sprawdz na koniec, ze order_log ma wpis, a orders/order_items sa puste.",
+      "hint": "Log MUSI byc zapisany przez ZUPELNIE OSOBNE Connection (wlasny commit), niezalezne od Connection, na ktorym dzieje sie rollback glownej transakcji.",
+      "solution": "try (Connection logConn = DriverManager.getConnection(url)) {\n  orderLogDao.insert(logConn, \"proba nieudana: \" + e.getMessage());\n  logConn.commit(); // niezalezne od rollbacku glownej transakcji\n}"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson17ex23;DB_CLOSE_DELAY=-1\" z produktem o stanie 20, uruchom DWA WATKI, kazdy z WLASNYM Connection, kazdy wywolujacy placeOrder(productId, 3) 5 razy w petli (10 zamowien lacznie, wymagajace lacznie 30 sztuk - WIECEJ niz jest na stanie). Poczekaj na oba watki (join z limitem czasu) i sprawdz, ze stan magazynowy NIGDY nie spadl pod 0 (dzieki temu, ze kazda transakcja sprawdza stan PRZED odjeciem).",
+      "hint": "Kazdy watek MUSI miec WLASNE Connection - decreaseStock sprawdza dostepny stan PRZED UPDATE, wiec zadna transakcja nie odejmie wiecej niz jest dostepne.",
+      "solution": "Thread t1 = new Thread(() -> { try (Connection c = ...) { for (int i=0;i<5;i++) new OrderService(c).placeOrder(id, 3); } });\nThread t2 = new Thread(() -> { ... });\nt1.start(); t2.start(); t1.join(5000); t2.join(5000);\n// stan_magazynowy >= 0 zawsze"
+    },
+    {
+      "prompt": "Wydziel z OrderService WSPOLNY, generyczny fragment (setAutoCommit(false)+try+commit+catch+rollback+finally) do osobnej metody pomocniczej runInTransaction(Connection, Runnable) i przebuduj placeOrder, by z niej korzystala. Przetestuj, ze zachowanie (sukces/rollback) jest IDENTYCZNE jak przed refaktoryzacja, na tych samych 2 scenariuszach z lekcji.",
+      "hint": "runInTransaction przyjmuje lambde reprezentujaca \"kroki biznesowe\" i owija ja w standardowy szablon transakcyjny.",
+      "solution": "void runInTransaction(Connection c, TransactionalWork work) throws SQLException {\n  c.setAutoCommit(false);\n  try { work.run(); c.commit(); }\n  catch (Exception e) { c.rollback(); }\n  finally { c.setAutoCommit(true); }\n}\n// placeOrder woluje: runInTransaction(connection, () -> { ...3 kroki... });"
+    },
+    {
+      "prompt": "Napisz metode placeTwoOrdersAtomically(connection, productId, qty1, qty2) wykonujaca DWA zamowienia (dwa niezalezne insert+decreaseStock) w JEDNEJ, WSPOLNEJ transakcji. Ustaw stan magazynowy tak, by qty1 sie powiodlo, ale qty1+qty2 przekroczylo stan - sprawdz, ze DRUGIE zamowienie powoduje rollback OBU (nawet tego, ktore \"samo\" bylo poprawne).",
+      "hint": "Oba wywolania placeOrder MUSZA dzielic TA SAMA transakcje (jedno setAutoCommit(false)/commit na CALA metode) - wtedy blad w drugim cofa TAKZE efekty pierwszego.",
+      "solution": "void placeTwoOrdersAtomically(Connection c, long productId, int qty1, int qty2) throws SQLException {\n  c.setAutoCommit(false);\n  try {\n    placeOneOrderStep(c, productId, qty1); // OK\n    placeOneOrderStep(c, productId, qty2); // rzuci - za duzo lacznie\n    c.commit();\n  } catch (Exception e) { c.rollback(); }\n}"
+    },
+    {
+      "prompt": "Rozbuduj pomiar czasu z Zadania 20: jesli transakcja trwa dluzej niz 100ms, wypisz \"OSTRZEZENIE: wolna transakcja\". Zademonstruj to na DWOCH zamowieniach: szybkim (normalny placeOrder) i celowo spowolnionym (Thread.sleep(150) wstawiony miedzy krok insertu order_item a decreaseStock, WEWNATRZ tej samej transakcji, PRZED commitem).",
+      "hint": "Thread.sleep() WEWNATRZ bloku transakcyjnego (przed commit) sztucznie wydluza czas trwania transakcji - poza tym reszta logiki dziala normalnie.",
+      "solution": "orderItemDao.insert(connection, orderId, productId, quantity);\nThread.sleep(150); // symulacja wolnej transakcji\nproductDao.decreaseStock(connection, productId, quantity);\n// po pomiarze: if (czasMs > 100) System.out.println(\"OSTRZEZENIE: wolna transakcja\");"
+    },
+    {
+      "prompt": "Napisz placeOrderWithRetry(productId, quantity, maxAttempts) probujaca wywolac placeOrder do maxAttempts razy, z rosnacym opoznieniem miedzy probami (np. 50ms, 100ms, 150ms - Thread.sleep). Zasymuluj scenariusz, w ktorym pierwsza proba zawodzi (stan=0), a MIEDZY probami inny kod \"dostawia\" towar (reczny UPDATE), wiec DRUGA proba sie powiedzie - wypisz numer proby, ktora ostatecznie zadzialala.",
+      "hint": "Rosnace opoznienie (backoff) to Thread.sleep(50 * numerProby) - kazda kolejna proba czeka dluzej niz poprzednia.",
+      "solution": "for (int attempt = 1; attempt <= maxAttempts; attempt++) {\n  if (tryPlaceOrder(productId, quantity)) { System.out.println(\"powiodlo sie przy probie \" + attempt); return; }\n  Thread.sleep(50L * attempt);\n}"
+    },
+    {
+      "prompt": "Napisz metode generateOrdersReport(connection) wykonujaca W JEDNEJ, READ-ONLY \"transakcji\" (setAutoCommit(false), same SELECT-y, zawsze commit/rollback na koniec) TRZY zapytania: liczba zamowien, suma ilosci zamowionych sztuk, stan magazynowy produktu #1 - i sklada je w jeden sformatowany String raportu. Wywolaj ja po serii kilku zamowien.",
+      "hint": "Nawet zapytania TYLKO do odczytu (SELECT) moga byc otoczone transakcja dla spojnego \"zrzutu\" stanu bazy w jednym momencie czasu.",
+      "solution": "connection.setAutoCommit(false);\nint orderCount = ...; int totalQty = ...; int stock = ...;\nconnection.commit(); // read-only, ale spojny snapshot\nreturn \"Zamowien: \" + orderCount + \", suma sztuk: \" + totalQty + \", stan: \" + stock;"
+    },
+    {
+      "prompt": "Rozbuduj OrderService o metode placeMultiProductOrder(Map<Long, Integer> productIdToQuantity) wstawiajaca JEDNO zamowienie (orders) z WIELOMA pozycjami (order_items), zmniejszajaca stan KAZDEGO z produktow, w JEDNEJ transakcji. Ustaw dane tak, by JEDEN z produktow mial za maly stan - sprawdz, ze rollback cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z tymi dla produktow, ktore mialy wystarczajacy stan.",
+      "hint": "Petla for po mapie productIdToQuantity wykonuje insert+decreaseStock dla KAZDEGO produktu - jesli KTORYKOLWIEK rzuci wyjatek, cala transakcja (wlacznie z juz przetworzonymi produktami) jest wycofywana.",
+      "solution": "long orderId = orderDao.insert(connection, ...);\nfor (Map.Entry<Long, Integer> e : productIdToQuantity.entrySet()) {\n  orderItemDao.insert(connection, orderId, e.getKey(), e.getValue());\n  productDao.decreaseStock(connection, e.getKey(), e.getValue()); // moze rzucic dla ktoregos produktu\n}\nconnection.commit();"
+    },
+    {
+      "prompt": "Polacz techniki z calej lekcji w jeden pipeline: OrderService z transakcyjnym placeOrder (order+order_item+stock), niezaleznym audit-logiem przetrwajacym rollback (Zadanie 22), pomiarem czasu (Zadanie 20) i retry (Zadanie 27). Przetestuj na 3 scenariuszach: udane zamowienie, nieudane (za duza ilosc, bez retry - to blad biznesowy), oraz zamowienie, ktore udaje sie dopiero przy DRUGIEJ probie (zasymuluj to np. licznikiem prob w kodzie testowym, ktory \"donaplenia\" magazyn miedzy 1. a 2. proba).",
+      "hint": "Polacz wszystkie wczesniejsze wzorce: glowna transakcja z pomiarem czasu, osobna transakcja audytu NIEZALEZNA od rollbacku, petla retry z backoff wywolujaca glowna transakcje.",
+      "solution": "// scenariusz 1: placeOrderWithRetry(id, 2, 1) - udaje sie za pierwszym razem\n// scenariusz 2: placeOrderWithRetry(id, 999, 1) - zawsze zawodzi, blad biznesowy, bez sensu retry\n// scenariusz 3: placeOrderWithRetry(id, 5, 3) - zawodzi raz, \"dostawa\" miedzy probami, udaje sie za drugim razem"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co sie stanie, gdy dwa kolejne insert (order + order_item) wykonuja sie z WLASNYM, osobnym autocommit, a drugi z nich zawiedzie PO tym jak pierwszy juz sie zacommitowal?",
+      "options": {
+        "A": "Baza automatycznie cofnie oba insert",
+        "B": "Zostaniemy z NIESPOJNYMI danymi - zamowienie istnieje, ale bez zadnej pozycji",
+        "C": "Aplikacja sie zawiesi",
+        "D": "Drugi insert automatycznie sie powtorzy"
+      },
+      "correct": "B",
+      "explanation": "Bez wspolnej transakcji, pierwszy insert JUZ jest zacommitowany, gdy drugi zawiedzie - powstaje niespojny stan danych."
+    },
+    {
+      "question": "Co powinna reprezentowac JEDNA transakcja w kontekscie operacji biznesowej?",
+      "options": {
+        "A": "Pojedyncze zapytanie SQL",
+        "B": "CALA operacje biznesowa (np. \"zloz zamowienie\") - albo wszystkie kroki sie powioda, albo zaden nie zostawi sladu",
+        "C": "Caly czas dzialania aplikacji",
+        "D": "Jedno polaczenie z baza na caly czas zycia programu"
+      },
+      "correct": "B",
+      "explanation": "Jedna operacja biznesowa powinna byc jedna transakcja - zasada \"wszystko albo nic\" (atomicity)."
+    },
+    {
+      "question": "Dlaczego DAO w tej lekcji przyjmuje Connection jako PARAMETR metody, zamiast tworzyc wlasne?",
+      "options": {
+        "A": "Bo tak jest krocej w kodzie",
+        "B": "Zeby wszystkie operacje wielu DAO wykonywaly sie na TYM SAMYM polaczeniu i naleraly do TEJ SAMEJ transakcji",
+        "C": "Bo Connection nie moze byc tworzone wewnatrz DAO",
+        "D": "Zeby przyspieszyc dzialanie zapytan"
+      },
+      "correct": "B",
+      "explanation": "Wspolna transakcja wymaga WSPOLNEGO Connection - dlatego DAO musi przyjmowac je jako parametr, zamiast otwierac wlasne."
+    },
+    {
+      "question": "Kiedy w OrderService wolamy commit()?",
+      "options": {
+        "A": "Po kazdym pojedynczym kroku osobno",
+        "B": "RAZ, na samym koncu, gdy WSZYSTKIE kroki transakcji sie powiodly",
+        "C": "Przed rozpoczeciem transakcji",
+        "D": "Nigdy, H2 commituje automatycznie"
+      },
+      "correct": "B",
+      "explanation": "Commit wolamy JEDEN raz, po pomyslnym wykonaniu WSZYSTKICH krokow biznesowych transakcji."
+    },
+    {
+      "question": "Co robi rollback() w OrderService?",
+      "options": {
+        "A": "Cofa TYLKO ostatni, nieudany krok",
+        "B": "Cofa WSZYSTKIE zmiany wykonane od poczatku transakcji, nie tylko ten jeden nieudany krok",
+        "C": "Usuwa cala tabele z bazy",
+        "D": "Zamyka polaczenie z baza"
+      },
+      "correct": "B",
+      "explanation": "Rollback cofa CALA transakcje - wszystkie kroki wykonane od setAutoCommit(false), nie tylko ten, ktory bezposrednio rzucil wyjatek."
+    },
+    {
+      "question": "Dlaczego blok finally { connection.setAutoCommit(true); } jest wazny?",
+      "options": {
+        "A": "Bo bez niego program sie nie skompiluje",
+        "B": "Bo wykonuje sie ZAWSZE (niezaleznie od commit czy rollback) i przywraca Connection do domyslnego stanu autocommit=true",
+        "C": "Bo przyspiesza wykonanie zapytan",
+        "D": "Bo automatycznie tworzy nowa tabele"
+      },
+      "correct": "B",
+      "explanation": "finally gwarantuje przywrocenie autocommit=true niezaleznie od wyniku transakcji - wazne dla dalszego bezpiecznego uzycia Connection."
+    },
+    {
+      "question": "Co jest przekazywane jako parametr do metod DAO w tej lekcji, w odroznieniu od poprzednich lekcji?",
+      "options": {
+        "A": "Nazwa tabeli jako String",
+        "B": "Connection - to samo polaczenie uzywane przez WSZYSTKIE DAO w danej transakcji",
+        "C": "Obiekt HikariDataSource",
+        "D": "Plik .properties"
+      },
+      "correct": "B",
+      "explanation": "Kluczowa roznica: Connection jest tworzone RAZ w Service i PRZEKAZYWANE jako parametr do wszystkich DAO bioracych udzial w transakcji."
+    },
+    {
+      "question": "Co wyjatek IllegalStateException w metodzie decreaseStock sygnalizuje?",
+      "options": {
+        "A": "Blad skladni SQL",
+        "B": "Regule biznesowa naruszona - za malo produktu na stanie wzgledem zadanej ilosci",
+        "C": "Brak polaczenia z baza danych",
+        "D": "Bledny format daty"
+      },
+      "correct": "B",
+      "explanation": "To wyjatek reprezentujacy naruszenie reguly biznesowej (za malo produktu), zlapany razem z SQLException, powodujacy rollback."
+    },
+    {
+      "question": "Czy operacje z DWOCH ROZNYCH, osobno otwieranych Connection naleza do TEJ SAMEJ transakcji?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Nie - kazde Connection ma WLASNA, niezalezna transakcje, niepowiazana z innymi polaczeniami",
+        "C": "Tylko jesli uzywaja tego samego URL",
+        "D": "Tylko w H2"
+      },
+      "correct": "B",
+      "explanation": "Kazde osobne Connection ma wlasny, niezalezny stan transakcyjny - commit/rollback jednego nie wplywa na inne polaczenia."
+    },
+    {
+      "question": "Jaki jest cel wydzielenia wspolnego szablonu transakcyjnego (setAutoCommit+try+commit+catch+rollback+finally) do generycznej metody pomocniczej (np. runInTransaction)?",
+      "options": {
+        "A": "Przyspiesza dzialanie zapytan SQL",
+        "B": "Eliminuje powielanie tego samego, powtarzalnego wzorca kodu w kazdej metodzie biznesowej wymagajacej transakcji",
+        "C": "Automatycznie tworzy indeksy w bazie",
+        "D": "Nie ma zadnej praktycznej korzysci"
+      },
+      "correct": "B",
+      "explanation": "Wydzielenie wspolnego szablonu transakcyjnego to zastosowanie zasady DRY - unikamy powielania tego samego kodu przy kazdej nowej operacji transakcyjnej."
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcja jako \"wszystko albo nic\"?",
+      "options": {
+        "A": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "B": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+    },
+    {
+      "question": "Co najlepiej opisuje: setAutoCommit(false)?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+    },
+    {
+      "question": "Co najlepiej opisuje: commit() wolany raz?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+    },
+    {
+      "question": "Co najlepiej opisuje: rollback() cofa cala transakcje?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+    },
+    {
+      "question": "Co najlepiej opisuje: DAO przyjmujace Connection jako parametr?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: finally przywraca autocommit?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wykonuje sie zawsze, niezaleznie od commit czy rollback"
+    },
+    {
+      "question": "Co najlepiej opisuje: IllegalStateException jako sygnal reguly biznesowej?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: lapany razem z SQLException, powoduje rollback calej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: niespojne dane bez transakcji?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: niezalezne transakcje na roznych Connection?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+    },
+    {
+      "question": "Co najlepiej opisuje: runInTransaction jako generyczny szablon?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcyjne usuwanie (cancelOrder)?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: audit log przetrwajacy rollback?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+    },
+    {
+      "question": "Co najlepiej opisuje: retry z backoff?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+    },
+    {
+      "question": "Co najlepiej opisuje: wspolbiezne transakcje na tym samym produkcie?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcja wielu pozycji zamowienia?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"transakcja jako \"wszystko albo nic\"\"?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"setAutoCommit(false)\"?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"commit() wolany raz\"?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"rollback() cofa cala transakcje\"?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"DAO przyjmujace Connection jako parametr\"?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"finally przywraca autocommit\"?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wykonuje sie zawsze, niezaleznie od commit czy rollback"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"IllegalStateException jako sygnal reguly biznesowej\"?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: lapany razem z SQLException, powoduje rollback calej transakcji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"niespojne dane bez transakcji\"?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"niezalezne transakcje na roznych Connection\"?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"runInTransaction jako generyczny szablon\"?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"transakcyjne usuwanie (cancelOrder)\"?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"audit log przetrwajacy rollback\"?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"retry z backoff\"?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"wspolbiezne transakcje na tym samym produkcie\"?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"transakcja wielu pozycji zamowienia\"?",
+      "options": {
+        "A": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: transakcja jako \"wszystko albo nic\".",
+      "options": {
+        "A": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "B": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: setAutoCommit(false).",
+      "options": {
+        "A": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "B": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "C": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "D": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: commit() wolany raz.",
+      "options": {
+        "A": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "B": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "C": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "D": "wykonuje sie zawsze, niezaleznie od commit czy rollback"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: rollback() cofa cala transakcje.",
+      "options": {
+        "A": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "B": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "C": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "D": "wykonuje sie zawsze, niezaleznie od commit czy rollback"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: DAO przyjmujace Connection jako parametr.",
+      "options": {
+        "A": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "B": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "C": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "D": "wykonuje sie zawsze, niezaleznie od commit czy rollback"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: finally przywraca autocommit.",
+      "options": {
+        "A": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "B": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "C": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "D": "wykonuje sie zawsze, niezaleznie od commit czy rollback"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wykonuje sie zawsze, niezaleznie od commit czy rollback"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: IllegalStateException jako sygnal reguly biznesowej.",
+      "options": {
+        "A": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "B": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "C": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "D": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: lapany razem z SQLException, powoduje rollback calej transakcji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: niespojne dane bez transakcji.",
+      "options": {
+        "A": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "B": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "C": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "D": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: niezalezne transakcje na roznych Connection.",
+      "options": {
+        "A": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "B": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "C": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "D": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: runInTransaction jako generyczny szablon.",
+      "options": {
+        "A": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "B": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "C": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "D": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: transakcyjne usuwanie (cancelOrder).",
+      "options": {
+        "A": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "B": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "C": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "D": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: audit log przetrwajacy rollback.",
+      "options": {
+        "A": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "B": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "C": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "D": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: retry z backoff.",
+      "options": {
+        "A": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "B": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "C": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "D": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: wspolbiezne transakcje na tym samym produkcie.",
+      "options": {
+        "A": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "B": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "C": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "D": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: transakcja wielu pozycji zamowienia.",
+      "options": {
+        "A": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "B": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "C": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "D": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"transakcja jako \"wszystko albo nic\"\"?",
+      "options": {
+        "A": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "B": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "C": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "D": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"setAutoCommit(false)\"?",
+      "options": {
+        "A": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "B": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "C": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "D": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"commit() wolany raz\"?",
+      "options": {
+        "A": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "B": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "C": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "D": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"rollback() cofa cala transakcje\"?",
+      "options": {
+        "A": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "B": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "C": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "D": "lapany razem z SQLException, powoduje rollback calej transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"DAO przyjmujace Connection jako parametr\"?",
+      "options": {
+        "A": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "B": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "C": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "D": "lapany razem z SQLException, powoduje rollback calej transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"finally przywraca autocommit\"?",
+      "options": {
+        "A": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "B": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "C": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "D": "lapany razem z SQLException, powoduje rollback calej transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wykonuje sie zawsze, niezaleznie od commit czy rollback"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"IllegalStateException jako sygnal reguly biznesowej\"?",
+      "options": {
+        "A": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "B": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "C": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "D": "lapany razem z SQLException, powoduje rollback calej transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: lapany razem z SQLException, powoduje rollback calej transakcji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"niespojne dane bez transakcji\"?",
+      "options": {
+        "A": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "B": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "C": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "D": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"niezalezne transakcje na roznych Connection\"?",
+      "options": {
+        "A": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "B": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "C": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "D": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"runInTransaction jako generyczny szablon\"?",
+      "options": {
+        "A": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "B": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "C": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "D": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"transakcyjne usuwanie (cancelOrder)\"?",
+      "options": {
+        "A": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "B": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "C": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "D": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"audit log przetrwajacy rollback\"?",
+      "options": {
+        "A": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "B": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "C": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "D": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"retry z backoff\"?",
+      "options": {
+        "A": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "B": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "C": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "D": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"wspolbiezne transakcje na tym samym produkcie\"?",
+      "options": {
+        "A": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "B": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "C": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "D": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"transakcja wielu pozycji zamowienia\"?",
+      "options": {
+        "A": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "B": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"transakcja jako \"wszystko albo nic\"\"?",
+      "options": {
+        "A": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "B": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"setAutoCommit(false)\"?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"commit() wolany raz\"?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"rollback() cofa cala transakcje\"?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"DAO przyjmujace Connection jako parametr\"?",
+      "options": {
+        "A": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"finally przywraca autocommit\"?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wykonuje sie zawsze, niezaleznie od commit czy rollback"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"IllegalStateException jako sygnal reguly biznesowej\"?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: lapany razem z SQLException, powoduje rollback calej transakcji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"niespojne dane bez transakcji\"?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"niezalezne transakcje na roznych Connection\"?",
+      "options": {
+        "A": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"runInTransaction jako generyczny szablon\"?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"transakcyjne usuwanie (cancelOrder)\"?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"audit log przetrwajacy rollback\"?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"retry z backoff\"?",
+      "options": {
+        "A": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"wspolbiezne transakcje na tym samym produkcie\"?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"transakcja wielu pozycji zamowienia\"?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcja jako \"wszystko albo nic\"?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden"
+    },
+    {
+      "question": "Co najlepiej opisuje: setAutoCommit(false)?",
+      "options": {
+        "A": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+    },
+    {
+      "question": "Co najlepiej opisuje: commit() wolany raz?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly"
+    },
+    {
+      "question": "Co najlepiej opisuje: rollback() cofa cala transakcje?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wszystkie kroki wykonane od poczatku, nie tylko ten jeden nieudany"
+    },
+    {
+      "question": "Co najlepiej opisuje: DAO przyjmujace Connection jako parametr?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: gwarantuje, ze wszystkie operacje naleza do TEJ SAMEJ transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: finally przywraca autocommit?",
+      "options": {
+        "A": "wykonuje sie zawsze, niezaleznie od commit czy rollback",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wykonuje sie zawsze, niezaleznie od commit czy rollback"
+    },
+    {
+      "question": "Co najlepiej opisuje: IllegalStateException jako sygnal reguly biznesowej?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "lapany razem z SQLException, powoduje rollback calej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: lapany razem z SQLException, powoduje rollback calej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: niespojne dane bez transakcji?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: np. zamowienie istniejace bez odpowiadajacej mu pozycji, gdy brak wspolnej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: niezalezne transakcje na roznych Connection?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazde polaczenie ma wlasny stan transakcyjny, rollback jednego nie wplywa na inne"
+    },
+    {
+      "question": "Co najlepiej opisuje: runInTransaction jako generyczny szablon?",
+      "options": {
+        "A": "eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: eliminuje powielanie kodu setAutoCommit/commit/rollback/finally w wielu metodach"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcyjne usuwanie (cancelOrder)?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kilka operacji DELETE/UPDATE wykonane atomowo w jednej transakcji"
+    },
+    {
+      "question": "Co najlepiej opisuje: audit log przetrwajacy rollback?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zapisany w OSOBNEJ, niezaleznej transakcji na innym Connection"
+    },
+    {
+      "question": "Co najlepiej opisuje: retry z backoff?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: ponawianie proby transakcji z rosnacym opoznieniem miedzy kolejnymi probami"
+    },
+    {
+      "question": "Co najlepiej opisuje: wspolbiezne transakcje na tym samym produkcie?",
+      "options": {
+        "A": "kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazda sprawdza stan przed odjeciem, wiec stan nigdy nie spada ponizej zera"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcja wielu pozycji zamowienia?",
+      "options": {
+        "A": "na koncu transakcji, dopiero gdy WSZYSTKIE kroki biznesowe sie powiodly",
+        "B": "blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi",
+        "C": "jedna operacja biznesowa = jedna transakcja, wszystkie kroki albo zaden",
+        "D": "wylacza domyslny, niejawny commit po kazdym pojedynczym zapytaniu"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: blad przy jednym produkcie cofa WSZYSTKIE juz przetworzone pozycje, wlacznie z poprawnymi"
+    }
+  ]
+}
