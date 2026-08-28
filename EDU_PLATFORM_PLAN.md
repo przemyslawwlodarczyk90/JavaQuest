@@ -1752,24 +1752,24 @@ regresyjny 6 wcześniejszych lekcji `_10_dao` rozłożonych po całym rozdziale 
 15, 20, 25) — wszystkie nadal zwracają poprawne dane. Sesja kontynuowana w całości bez
 przerw na potwierdzenie, zgodnie z wyraźną, wielokrotnie powtórzoną prośbą użytkownika.
 
-### 🔄 `_11_buildtools` W TRAKCIE (stan na 2026-08-28): 14/30 lekcji — blok Ant KOMPLETNY, blok Maven w trakcie
+### 🔄 `_11_buildtools` W TRAKCIE (stan na 2026-08-28): 18/30 lekcji — bloki Ant i Maven KOMPLETNE
 
-Rozpoczęto `_11_buildtools` (30 lekcji, sufiks scratchpada `i`). **Lekcje 01-14
-UKOŃCZONE i zweryfikowane end-to-end**: 01_WhyBuildTools, 02_JavacJavaJarClasspath,
-03_AntBasics, 04_AntProjectStructure, 05_AntClasspath, 06_AntTesting, 07_AntPackaging,
-08_AntAdvanced, 09_AntIvy, 10_AntDebugging (blok Ant, KOMPLETNY), 11_MavenBasics,
-12_MavenDependencies, 13_MavenPlugins, 14_MavenAdvanced — każda 7 sekcji teorii/30
-zadań/100 quizów, commitowane parami (01-02, 03-04, 05-06, 07-08, 09-10, 11-12, 13-14),
-backend restartowany + zweryfikowany API end-to-end po każdej parze (z re-query przy
-znanej osobliwości "pierwsze zapytanie po restarcie bywa puste") + regresja na
+Rozpoczęto `_11_buildtools` (30 lekcji, sufiks scratchpada `i`). **Lekcje 01-18
+UKOŃCZONE i zweryfikowane end-to-end**: blok Ant 01-10 (KOMPLETNY) + blok Maven 11-18
+(KOMPLETNY): 11_MavenBasics, 12_MavenDependencies, 13_MavenPlugins, 14_MavenAdvanced,
+15_MavenWebAndDatabase, 16_MavenTestingAndCoverage, 17_MavenPublishing,
+18_MavenTroubleshootingAndPerformance — każda 7 sekcji teorii/30 zadań/100 quizów,
+commitowane parami przez całą sesję, backend restartowany + zweryfikowany API end-to-end
+po każdej parze (z re-query przy znanej osobliwości "pierwsze zapytanie po restarcie bywa
+puste" — czasem potrzeba więcej niż 6 prób, ale zawsze się rozwiązuje) + regresja na
 wcześniejszej lekcji — zero regresji przez całą sesję. Użytkownik wyraźnie polecił
 kontynuować BEZ pytania o zgodę w międzyczasie (wychodził z domu) — sesja kontynuowana w
 pełni autonomicznie, przetrwała reset limitu użycia w trakcie tej samej sesji bez utraty
-kontekstu (kontynuacja podjęta dokładnie od miejsca przerwania).
+kontekstu.
 
-**Następny krok**: kontynuować od **lekcji 15 (`15_MavenWebAndDatabase`)** w
-`_11_buildtools`. Tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
-`_Exercises_LessonNN_Temat.java` w
+**Następny krok**: kontynuować od **lekcji 19 (`19_GradleBasics`)** w `_11_buildtools` —
+pierwsza lekcja bloku Gradle (19-25). Tym samym, sprawdzonym workflow: czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_11_buildtools/LessonNN_Temat/`, napisz `genNNi.js`
 w scratchpadzie (sufiks `i`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji, treść podana niżej), zweryfikuj
@@ -1777,15 +1777,17 @@ w scratchpadzie (sufiks `i`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQui
 `src/main/resources/content/_11_buildtools/NN_Temat.json`, restart backendu + pełna
 weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszkodliwej
 osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
-zapytanie") PRZED każdym commitem, commitować co 2 lekcje. Pamiętać: lekcje 15-18 (reszta
-Maven) i 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń w SAMYM KODZIE JAVA lekcji (opisy proszą o
-realne komendy `mvn`/`gradle` w terminalu, `main()` w tych lekcjach głównie generuje/opisuje
-pliki konfiguracyjne zamiast wszystko faktycznie wykonywać — patrz notatka w `CLAUDE.md`
-sekcja "_11_buildtools") — ALE to NIE zmienia schematu treści platformy: JSON (7 teorii/30
-ćwiczeń/100 quizów) pozostaje identyczny, a ćwiczenia platformowe nadal opisują zadanie
-tekstowo (kursant i tak nie wykonuje kodu bezpośrednio na platformie na tym etapie) —
-kontynuuj pisać je tak samo jak dotychczasowe, tylko treść zadań będzie czasem odnosić się
-do prawdziwych komend terminalowych zamiast czysto programistycznych API.
+zapytanie, czasem potrzeba więcej niż 6 prób") PRZED każdym commitem, commitować co 2
+lekcje. Pamiętać: lekcje 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń w SAMYM KODZIE JAVA
+lekcji (opisy proszą o realne komendy `gradle`/`./gradlew` w terminalu, `main()` w tych
+lekcjach głównie generuje/opisuje pliki konfiguracyjne zamiast wszystko faktycznie
+wykonywać — patrz notatka w `CLAUDE.md` sekcja "_11_buildtools") — ALE to NIE zmienia
+schematu treści platformy: JSON (7 teorii/30 ćwiczeń/100 quizów) pozostaje identyczny, a
+ćwiczenia platformowe nadal opisują zadanie tekstowo (kursant i tak nie wykonuje kodu
+bezpośrednio na platformie na tym etapie) — kontynuuj pisać je tak samo jak
+dotychczasowe, tylko treść zadań będzie czasem odnosić się do prawdziwych komend
+terminalowych zamiast czysto programistycznych API. Po ukończeniu Gradle (25/30),
+pozostają lekcje 26-30 (porównanie/migracje/praktyka/troubleshooting/capstone).
 
 Po ukończeniu `_11_buildtools` (30/30) kontynuować kolejno przez `_12_hibernate` (30
 lekcji), `_13_libraries` (32 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do
