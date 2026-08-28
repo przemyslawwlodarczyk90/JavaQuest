@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "CONCEPT",
+      "heading": "Najczestszy blad poczatkujacych przy transakcjach",
+      "body": "W lekcji 17 podkreslilismy: metody DAO biorace udzial w jednej transakcji MUSZA dostawac TO SAMO Connection jako parametr. Bardzo czesty blad wyglada tak: kazdy DAO ma metode, ktora SAMA otwiera sobie polaczenie przez DriverManager.getConnection(url). Kiedy taki DAO jest wolany W IZOLACJI - to dziala bez zarzutu. Problem pojawia sie, gdy DWA takie DAO biora udzial w JEDNEJ operacji biznesowej, ktora ma sie wykonac \"wszystko albo nic\"."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Jedno zdanie do zapamietania",
+      "body": "Rollback cofa zmiany TYLKO na tym Connection, na ktorym zostal wywolany. Jesli inny DAO uzyl INNEGO polaczenia (a tamto mialo domyslny autocommit=true), jego zmiana jest JUZ ZATWIERDZONA i zaden rollback jej nie cofnie."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Zla wersja: kazdy DAO otwiera wlasne polaczenie",
+      "body": "BadOrderDao.insertOrderKeepingConnectionOpen(...) otwiera swoje polaczenie C1, wylacza autocommit i wstawia wiersz do orders - ale NIE commituje jeszcze. BadOrderItemDao.insert(...) otwiera SWOJE WLASNE, zupelnie inne polaczenie C2 - z DOMYSLNYM autocommit=true - i wstawia wiersz do order_items. Poniewaz autocommit=true, ten insert jest ZATWIERDZANY NATYCHMIAST, zanim jeszcze wiemy, czy cala operacja biznesowa sie powiedzie."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Efekt bledu: rollback \"wyglada\" na wykonany, ale...",
+      "body": "catch (SQLException | IllegalStateException e) { orderConnection.rollback(); }. Rollback wykonuje sie BEZ zadnego wyjatku na polaczeniu C1 (order) - ale polaczenie C2 (order_item) JUZ DAWNO zatwierdzilo swoj insert, zanim doszlo do bledu. Dane sa wiec NIESPOJNE: order_items ma \"osierocony\" wiersz wskazujacy na order_id, ktory NIGDY nie zostal trwale zapisany w tabeli orders."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Dobra wersja: jedno wspolne Connection przekazywane do DAO",
+      "body": "GoodOrderDao i GoodOrderItemDao maja identyczna logike SQL, ale ich metody PRZYJMUJA Connection jako parametr zamiast tworzyc wlasne. Business flow otwiera JEDNO polaczenie, wylacza autocommit RAZ i przekazuje je do obu DAO. Tym razem rollback() cofnie OBIE operacje, bo obie odbyly sie na tym samym Connection - dane pozostaja spojne, nawet gdy cos pojdzie zle."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Jak wykryc ten blad w praktyce",
+      "body": "Ten blad NIE rzuca zadnego wyjatku i program dziala \"normalnie\" - dlatego jest szczegolnie niebezpieczny. Objawem jest NIESPOJNOSC danych widoczna dopiero przy analizie stanu bazy (np. zapytanie LEFT JOIN znajdujace \"osierocone\" wiersze wskazujace kluczem obcym na nieistniejacy rodzic). Warto pamietac zasade: liczba otwartych polaczen w JEDNEJ operacji biznesowej powinna wynosic dokladnie JEDEN."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Podsumowanie",
+      "body": "Rollback dziala TYLKO w zakresie JEDNEGO Connection - nie \"widzi\" i nie cofa zmian zrobionych na innym polaczeniu. Jesli kazdy DAO otwiera wlasne polaczenie (z domyslnym autocommit=true), jego zmiany sa zatwierdzane NATYCHMIAST - zanim reszta operacji biznesowej zdazy sie nie powiesc. Efekt w ZLEJ wersji: rollback \"wyglada\" na wykonany, ale dane sa NIESPOJNE. Rozwiazanie: WSZYSTKIE DAO biorace udzial w jednej operacji biznesowej musza dostawac TO SAMO Connection jako parametr, a nie tworzyc je samodzielnie."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex01;DB_CLOSE_DELAY=-1\" utworz tabele orders (id, user_id). Napisz BadOrderDao z metoda insert(String url, long userId) SAMA OTWIERAJACA polaczenie przez DriverManager.getConnection(url) (jak w lekcji). Wywolaj ja 2 razy i sprawdz SELECT COUNT(*) - dziala poprawnie, gdy wywolywana W IZOLACJI (bez transakcji z innym DAO).",
+      "hint": "BadOrderDao dziala bez zarzutu, DOPOKI jest jedynym DAO w danej operacji - problem pojawia sie dopiero przy laczeniu z innym DAO w transakcji.",
+      "solution": "long insert(String url, long userId) throws SQLException {\n  try (Connection c = DriverManager.getConnection(url)) { ... }\n}\n// wywolane 2x w izolacji - dziala poprawnie, COUNT(*) == 2"
+    },
+    {
+      "prompt": "Napisz GoodOrderDao z metoda insert(Connection connection, long userId) PRZYJMUJACA polaczenie jako parametr (jak w lekcji). Otworz JEDNO polaczenie recznie, wywolaj insert dwukrotnie na nim, zamknij polaczenie - sprawdz nowym polaczeniem, ze sa 2 wiersze.",
+      "hint": "GoodOrderDao NIE tworzy wlasnego Connection - operuje na tym, ktore dostanie jako parametr.",
+      "solution": "try (Connection c = DriverManager.getConnection(url)) {\n  goodOrderDao.insert(c, 1L);\n  goodOrderDao.insert(c, 2L);\n}"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex03;DB_CLOSE_DELAY=-1\", otworz JEDNO polaczenie, wylacz autocommit, wstaw wiersz do orders przez GoodOrderDao, wywolaj rollback() NA TYM SAMYM polaczeniu. Sprawdz SELECT COUNT(*) - 0 wierszy, rollback zadzialal, bo operacja i rollback byly na tym samym Connection.",
+      "hint": "setAutoCommit(false) + insert + rollback() NA JEDNYM, wspolnym Connection zawsze cofa wykonana operacje.",
+      "solution": "connection.setAutoCommit(false);\ngoodOrderDao.insert(connection, 1L);\nconnection.rollback();\n// COUNT(*) == 0"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex04;DB_CLOSE_DELAY=-1\" otworz DWA ROZNE, niezalezne polaczenia (C1, C2) do TEJ SAMEJ bazy w pamieci. Wstaw wiersz przez C1 (autocommit domyslny=true, natychmiastowy commit), wywolaj rollback() na C2 (ktory NIC nie wstawil) i pokaz, ze wiersz z C1 mimo wszystko WCIAZ ISTNIEJE - rollback na C2 nie ma wplywu na dane z C1.",
+      "hint": "C2.rollback() nie \"widzi\" zadnych zmian z C1 - kazde polaczenie ma wlasny, calkowicie niezalezny kontekst transakcyjny.",
+      "solution": "goodOrderDao.insert(c1, 1L); // autocommit=true, zatwierdza natychmiast\nc2.rollback(); // nic nie cofa, bo c2 nic nie wstawil\n// wiersz z c1 nadal istnieje"
+    },
+    {
+      "prompt": "Otworz polaczenie z DOMYSLNYM autocommit (bez zmiany), wstaw wiersz do orders, ZAMKNIJ polaczenie BEZ wywolywania commit() recznie. Otworz NOWE polaczenie do tej samej bazy i sprawdz SELECT COUNT(*) - wiersz jest widoczny, bo autocommit=true zatwierdzil go natychmiast po executeUpdate.",
+      "hint": "Przy autocommit=true (domyslnym) KAZDY executeUpdate() jest natychmiast zatwierdzany - nie ma potrzeby jawnego commit().",
+      "solution": "try (Connection c = DriverManager.getConnection(url)) {\n  goodOrderDao.insert(c, 1L); // zatwierdzone natychmiast\n} // zamkniecie bez commit()\n// nowe polaczenie widzi wiersz"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex06;DB_CLOSE_DELAY=-1\" z tabelami orders i order_items (jak w lekcji), otworz JEDNO polaczenie, wylacz autocommit, wywolaj GoodOrderDao.insert i GoodOrderItemDao.insert NA TYM SAMYM polaczeniu, zacommituj RAZ na koniec. Sprawdz, ze obie tabele maja dokladnie 1 wiersz.",
+      "hint": "Oba wywolania insert dziela to samo Connection i te sama transakcje - jeden wspolny commit zatwierdza OBA insert-y naraz.",
+      "solution": "connection.setAutoCommit(false);\nlong orderId = goodOrderDao.insert(connection, 1L);\ngoodOrderItemDao.insert(connection, orderId, 1L, 3);\nconnection.commit();"
+    },
+    {
+      "prompt": "Odtworz DOKLADNIE scenariusz runBadScenario() z lekcji na bazie \"jdbc:h2:mem:lesson18ex07;DB_CLOSE_DELAY=-1\": BadOrderDao otwiera polaczenie C1 (autocommit=false, insert do orders, BEZ commit), BadOrderItemDao otwiera WLASNE polaczenie C2 (autocommit=true, insert do order_items - zatwierdzony natychmiast), potem symulowany blad + rollback TYLKO na C1. Wypisz stan obu tabel po tej probie.",
+      "hint": "Skopiuj runBadScenario() 1:1 z teorii lekcji, zmieniajac tylko URL bazy.",
+      "solution": "// C1: BadOrderDao.insertOrderKeepingConnectionOpen - autocommit=false, brak commit\n// C2: BadOrderItemDao.insert - autocommit=true, zatwierdzony natychmiast\n// throw + rollback tylko na C1 -> orders puste, order_items ma \"osierocony\" wiersz"
+    },
+    {
+      "prompt": "Odtworz runGoodScenario() z lekcji na TEJ SAMEJ bazie po wyczyszczeniu danych (DELETE FROM order_items; DELETE FROM orders) - JEDNO polaczenie przekazywane do obu DAO, symulowany blad, JEDEN rollback. Porownaj stan tabel z wynikiem Zadania 7 - w dobrej wersji obie tabele powinny byc puste, w zlej - order_items ma \"osierocony\" wiersz.",
+      "hint": "Skopiuj runGoodScenario() 1:1 z teorii lekcji po cleanUpData().",
+      "solution": "// wspolne Connection, obie operacje + throw + JEDEN rollback -> orders puste, order_items puste"
+    },
+    {
+      "prompt": "Po odtworzeniu ZLEGO scenariusza (Zadanie 7), napisz metode detectOrphanedOrderItems(connection) wykonujaca zapytanie LEFT JOIN pomiedzy order_items i orders, wyszukujace wiersze order_items, dla ktorych order_id NIE ISTNIEJE w orders (albo odwrotnie - w zaleznosci od tego, co \"przetrwalo\"). Wypisz znalezione niespojnosci.",
+      "hint": "SQL: SELECT oi.* FROM order_items oi LEFT JOIN orders o ON o.id = oi.order_id WHERE o.id IS NULL.",
+      "solution": "List<Long> detectOrphanedOrderItems(Connection c) throws SQLException {\n  ... \"SELECT oi.order_id FROM order_items oi LEFT JOIN orders o ON o.id = oi.order_id WHERE o.id IS NULL\"\n}"
+    },
+    {
+      "prompt": "Napisz metode cleanUpData(url) (jak w lekcji: DELETE FROM order_items; DELETE FROM orders) i uzyj jej MIEDZY dwoma niezaleznymi przebiegami testu (zla wersja, potem dobra wersja) na TEJ SAMEJ bazie, tak aby wyniki obu przebiegow nie \"zanieczyszczaly\" sie nawzajem.",
+      "hint": "Skopiuj cleanUpData 1:1 z teorii lekcji - wazna kolejnosc DELETE (najpierw order_items, potem orders, ze wzgledu na klucz obcy).",
+      "solution": "static void cleanUpData(String url) throws SQLException {\n  try (Connection c = DriverManager.getConnection(url); Statement s = c.createStatement()) {\n    s.execute(\"DELETE FROM order_items\");\n    s.execute(\"DELETE FROM orders\");\n  }\n}"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex11;DB_CLOSE_DELAY=-1\" dodaj trzeci DAO (ProductDao z decreaseStock przyjmujacym Connection). Zbuduj scenariusz, w ktorym DWA z trzech DAO (order, order_item) uzywaja WSPOLNEGO polaczenia, a TRZECI (product) OTWIERA WLASNE - pokaz, ze rollback wywolany na wspolnym polaczeniu NIE cofa zmiany stanu magazynowego zrobionej przez trzeci, \"odizolowany\" DAO.",
+      "hint": "Trzeci DAO uzywa WLASNEGO Connection (autocommit=true) - jego UPDATE jest zatwierdzony natychmiast, niezaleznie od tego, co dzieje sie na wspolnym polaczeniu pozostalych dwoch.",
+      "solution": "goodOrderDao.insert(sharedConn, ...);\ngoodOrderItemDao.insert(sharedConn, ...);\nbadProductDao.decreaseStock(url, productId, qty); // WLASNE polaczenie, zatwierdzone natychmiast\nsharedConn.rollback(); // cofa TYLKO order+order_item, NIE stan magazynowy"
+    },
+    {
+      "prompt": "Napraw scenariusz z Zadania 11 - przebuduj ProductDao, by przyjmowal Connection jako parametr, i przekaz do niego TO SAMO polaczenie co do pozostalych dwoch DAO. Sprawdz, ze teraz rollback cofa WSZYSTKIE trzy operacje (order, order_item, stock) razem.",
+      "hint": "Zmien sygnature decreaseStock(String url, ...) na decreaseStock(Connection connection, ...) i przekaz WSPOLNE polaczenie zamiast URL-a.",
+      "solution": "goodOrderDao.insert(sharedConn, ...);\ngoodOrderItemDao.insert(sharedConn, ...);\ngoodProductDao.decreaseStock(sharedConn, productId, qty); // TERAZ wspolne polaczenie\nsharedConn.rollback(); // cofa WSZYSTKIE trzy operacje"
+    },
+    {
+      "prompt": "Dodaj do BadOrderDao i BadOrderItemDao statyczny licznik \"openConnectionsCount\", inkrementowany PRZY KAZDYM DriverManager.getConnection. Wywolaj zly scenariusz i wypisz koncowa wartosc licznika (powinna byc >= 2 - dowod, ze powstaly DWA NIEZALEZNE polaczenia, mimo ze logicznie to JEDNA operacja biznesowa).",
+      "hint": "Inkrementuj statyczny licznik ZARAZ PO kazdym wywolaniu DriverManager.getConnection(url) w obu klasach DAO.",
+      "solution": "static int openConnectionsCount = 0;\n// wewnatrz kazdej metody DAO otwierajacej polaczenie: openConnectionsCount++;\n// po zlym scenariuszu: openConnectionsCount >= 2"
+    },
+    {
+      "prompt": "Powtorz licznik z Zadania 13 dla DOBREJ wersji (GoodOrderDao/GoodOrderItemDao, ktore NIE otwierajca wlasnego polaczenia). Sprawdz, ze licznik otwartych polaczen wynosi dokladnie 1 dla calej operacji biznesowej (jedno polaczenie otwarte w Service, przekazane do obu DAO).",
+      "hint": "W dobrej wersji licznik inkrementuje sie TYLKO RAZ - w miejscu, gdzie Service otwiera JEDYNE polaczenie dla calej operacji.",
+      "solution": "int openCount = 0;\ntry (Connection c = DriverManager.getConnection(url)) {\n  openCount++;\n  goodOrderDao.insert(c, ...); goodOrderItemDao.insert(c, ...); // BEZ dodatkowych otwarć\n}\n// openCount == 1"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex15;DB_CLOSE_DELAY=-1\" otworz WSPOLNE polaczenie, wylacz autocommit, wywolaj GoodOrderDao.insert, ale ZAPOMNIJ wywolac commit()/rollback() i po prostu zamknij polaczenie (close() bez commitu). Otworz NOWE polaczenie i sprawdz SELECT COUNT(*) - wypisz, czy wiersz przetrwal (H2 domyslnie robi rollback niezatwierdzonych zmian przy close()).",
+      "hint": "Wiele baz danych (w tym H2) domyslnie wykonuje rollback NIEZATWIERDZONYCH zmian, gdy Connection jest zamykane bez jawnego commit/rollback.",
+      "solution": "try (Connection c = DriverManager.getConnection(url)) {\n  c.setAutoCommit(false);\n  goodOrderDao.insert(c, 1L);\n  // BRAK commit()/rollback() - zamkniecie automatyczne\n}\n// nowe polaczenie: SELECT COUNT(*) najprawdopodobniej == 0 (H2 wycofal niezatwierdzone)"
+    },
+    {
+      "prompt": "Rozbuduj dobra wersje o CZWARTY krok (np. insert do tabeli order_log) na TYM SAMYM, wspolnym polaczeniu. Zasymuluj blad w trzecim kroku (product) i sprawdz, ze rollback cofa WSZYSTKIE CZTERY operacje - wlacznie z pierwszymi dwoma, ktore \"juz sie powiodly\".",
+      "hint": "Dodaj insert order_log ZARAZ PO decreaseStock (krok 3) - jesli krok 3 rzuci wyjatek, krok 4 nigdy sie nie wykona, a rollback cofnie kroki 1-2, ktore sie WYKONALY.",
+      "solution": "goodOrderDao.insert(c, ...); // krok 1\ngoodOrderItemDao.insert(c, ...); // krok 2\ngoodProductDao.decreaseStock(c, ...); // krok 3 - rzuca wyjatek\norderLogDao.insert(c, ...); // krok 4 - NIGDY sie nie wykonuje\n// rollback cofa kroki 1 i 2"
+    },
+    {
+      "prompt": "Napisz metody: placeOrder(connection, ...) -> insertOrderAndItem(connection, ...) -> GoodOrderDao.insert(connection, ...) - Connection PRZEPLYWA przez TRZY warstwy metod jako parametr, bez otwierania nowego w zadnej z nich. Zweryfikuj (np. przez System.identityHashCode(connection)), ze WSZYSTKIE trzy warstwy operuja na TYM SAMYM obiekcie Connection.",
+      "hint": "Wypisz identityHashCode(connection) na poczatku KAZDEJ z trzech metod - wszystkie trzy wartosci powinny byc identyczne.",
+      "solution": "void placeOrder(Connection c, ...) { System.out.println(System.identityHashCode(c)); insertOrderAndItem(c, ...); }\nvoid insertOrderAndItem(Connection c, ...) { System.out.println(System.identityHashCode(c)); dao.insert(c, ...); }"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex18;DB_CLOSE_DELAY=-1\" wykonaj DWIE ROZNE operacje biznesowe (dwa wywolania \"placeOrder\") - KAZDA z WLASNYM, osobno otwieranym polaczeniem (poprawnie, bo to DWIE ROZNE, niezalezne transakcje). Sprawdz, ze obie sie powiodly i ze uzycie DWOCH polaczen w TYM przypadku jest wlasciwe (to nie jest ten sam blad co w lekcji).",
+      "hint": "Blad z lekcji dotyczy DZIELENIA JEDNEJ operacji miedzy wieloma polaczeniami, NIE uzycia wielu polaczen dla WIELU niezaleznych operacji - to dwie rozne sytuacje.",
+      "solution": "try (Connection c1 = DriverManager.getConnection(url)) { placeOrder(c1, ...); } // operacja 1, WLASNA transakcja\ntry (Connection c2 = DriverManager.getConnection(url)) { placeOrder(c2, ...); } // operacja 2, INNA, niezalezna transakcja"
+    },
+    {
+      "prompt": "Napisz metode assertConsistentState(connection) sprawdzajaca, ze KAZDY order_id w order_items ISTNIEJE w orders (SELECT z NOT EXISTS albo LEFT JOIN) - rzuca AssertionError, jesli znajdzie niespojnosc. Wywolaj ja PO zlym scenariuszu (oczekuj AssertionError) i PO dobrym scenariuszu (oczekuj braku wyjatku).",
+      "hint": "Uzyj tej samej logiki co detectOrphanedOrderItems (Zadanie 9), ale opakuj wynik w if + throw AssertionError zamiast po prostu wypisywac.",
+      "solution": "void assertConsistentState(Connection c) throws SQLException {\n  if (!detectOrphanedOrderItems(c).isEmpty()) throw new AssertionError(\"niespojne dane!\");\n}"
+    },
+    {
+      "prompt": "Zacznij od DZIALAJACEGO zlego scenariusza (Zadanie 7). Refaktoryzuj go KROK PO KROKU: najpierw napraw TYLKO BadOrderItemDao (przyjmuje Connection), uruchom i sprawdz stan (czesciowa poprawa), potem napraw TEZ BadOrderDao - uruchom ponownie i pokaz, ze TERAZ dane sa w pelni spojne. Skomentuj, co sie zmienilo miedzy kazdym krokiem.",
+      "hint": "Naprawa POLOWICZNA (tylko jeden z dwoch DAO) wciaz moze nie rozwiazac problemu calkowicie, zaleznie od tego, KTORY DAO zostal naprawiony jako pierwszy.",
+      "solution": "// krok 1: napraw BadOrderItemDao -> teraz OBA DAO przyjmuja Connection, ale main wciaz je laczy z osobnymi polaczeniami\n// krok 2: przekaz WSPOLNE Connection do obu -> pelna spojnosc"
+    },
+    {
+      "prompt": "Na bazie \"jdbc:h2:mem:lesson18ex21;DB_CLOSE_DELAY=-1\", uruchom DWA WATKI rownolegle: jeden wykonuje 5 \"dobrych\" operacji biznesowych (wspolne polaczenie na operacje), drugi wykonuje 5 \"zlych\" (kazdy DAO wlasne polaczenie). Po zakonczeniu obu (join z limitem czasu) porownaj liczbe \"osieroconych\" order_items - powinna wynikac WYLACZNIE z watka zlego.",
+      "hint": "Kazdy watek dziala niezaleznie na WLASNYCH polaczeniach - watek \"dobry\" nigdy nie produkuje niespojnosci, watek \"zly\" produkuje je za kazdym razem, gdy symulowany blad wystapi.",
+      "solution": "Thread dobry = new Thread(() -> { for (int i=0;i<5;i++) runGoodScenario(); });\nThread zly = new Thread(() -> { for (int i=0;i<5;i++) runBadScenario(); });\ndobry.start(); zly.start(); dobry.join(5000); zly.join(5000);"
+    },
+    {
+      "prompt": "Opakuj DriverManager.getConnection w statyczna metode pomocnicza trackedGetConnection(url) zliczajaca WYWOLANIA i wykonaj pelny \"zly\" scenariusz biznesowy skladajacy sie z 3 operacji (order+item+product, kazdy z osobnym polaczeniem). Wypisz koncowa liczbe otwartych polaczen i skomentuj, dlaczego w prawdziwej aplikacji (z limitowanym connection poolem) taki wzorzec moglby wyczerpac cala pule.",
+      "hint": "Kazde dodatkowe, niepotrzebne polaczenie zuzywa slot w limitowanej puli (np. HikariCP maximumPoolSize) - wiele takich \"wyciekow\" moze doprowadzic do wyczerpania puli i SQLTransientConnectionException.",
+      "solution": "static int connectionCount = 0;\nstatic Connection trackedGetConnection(String url) throws SQLException {\n  connectionCount++;\n  return DriverManager.getConnection(url);\n}\n// zly scenariusz z 3 DAO -> connectionCount == 3, w puli ograniczonej to moglaby wyczerpac limit"
+    },
+    {
+      "prompt": "Zaprojektuj (i zaimplementuj) OrderService, ktory JEST JEDYNYM miejscem w calym kodzie otwierajacym Connection - WSZYSTKIE DAO przyjmuja je jako parametr metody, NIGDY jako pole obiektu ani przez wlasny DriverManager.getConnection. Udokumentuj to w komentarzu jako \"zasade architektoniczna\" i zweryfikuj dzialaniem na scenariuszu z 3 krokami.",
+      "hint": "ZASADA: TYLKO Service otwiera Connection (w bloku try-with-resources), WSZYSTKIE DAO sa \"bezstanowe\" wobec polaczen - zawsze przyjmuja je jako parametr metody.",
+      "solution": "// zasada architektoniczna: Connection otwierane WYLACZNIE w warstwie Service,\n// DAO NIGDY nie wola DriverManager.getConnection ani nie trzymaja Connection jako pola\nclass OrderService {\n  void placeOrder(...) { try (Connection c = DriverManager.getConnection(url)) { dao1.insert(c,...); dao2.insert(c,...); dao3.insert(c,...); } }\n}"
+    },
+    {
+      "prompt": "Zmierz (System.nanoTime()) czas wykonania 20 operacji biznesowych (kazda: 2 inserty) DWOMA sposobami: (a) zla wersja - kazdy insert osobne polaczenie (40 polaczen), (b) dobra wersja - 1 polaczenie na operacje (20 polaczen). Wypisz oba czasy i skomentuj, dlaczego wersja (a) jest wolniejsza (koszt nawiazywania polaczenia TCP przy kazdym insercie).",
+      "hint": "Kazde dodatkowe DriverManager.getConnection() to koszt nawiazania nowego polaczenia - wersja (a) placi ten koszt DWA razy czesciej niz wersja (b).",
+      "solution": "long badTime = measure(() -> { for (int i=0;i<20;i++) runBadTwoConnections(); });\nlong goodTime = measure(() -> { for (int i=0;i<20;i++) runGoodOneConnection(); });\n// badTime > goodTime, bo wiecej otwartych polaczen = wiecej narzutu"
+    },
+    {
+      "prompt": "Odtworz zly scenariusz tak, by order_items mial \"osierocony\" wiersz (bez odpowiadajacego orders). Napisz metode repairOrphanedOrderItems(connection) usuwajaca WSZYSTKIE osierocone wiersze z order_items (DELETE ... WHERE order_id NOT IN (SELECT id FROM orders)) i uzyj jej jako \"naprawy po fakcie\" - sprawdz stan przed i po naprawie.",
+      "hint": "DELETE FROM order_items WHERE order_id NOT IN (SELECT id FROM orders) usuwa dokladnie te wiersze, ktore wykryla metoda detectOrphanedOrderItems.",
+      "solution": "void repairOrphanedOrderItems(Connection c) throws SQLException {\n  try (Statement s = c.createStatement()) {\n    s.execute(\"DELETE FROM order_items WHERE order_id NOT IN (SELECT id FROM orders)\");\n  }\n}"
+    },
+    {
+      "prompt": "Napisz mini test-runner (jak w Lesson26_TestingDao, ale uproszczony - assertTrue/assertEquals + try/catch AssertionError) sprawdzajacy DWA przypadki: \"zla wersja PRODUKUJE niespojnosc\" (assertTrue ze detectOrphanedOrderItems znajduje > 0) i \"dobra wersja NIE PRODUKUJE niespojnosci\" (assertTrue ze detectOrphanedOrderItems zwraca 0). Wypisz PASSED/FAILED dla obu.",
+      "hint": "Prosty helper assertTrue(warunek, nazwaTestu) wypisujacy PASSED/FAILED w zaleznosci od wyniku, opakowany w try/catch(AssertionError).",
+      "solution": "static void assertTrue(boolean condition, String testName) {\n  System.out.println(testName + \": \" + (condition ? \"PASSED\" : \"FAILED\"));\n}\nassertTrue(!detectOrphanedOrderItems(goodConn).isEmpty() == false, \"dobra wersja bez niespojnosci\");"
+    },
+    {
+      "prompt": "Zbuduj lancuch Controller -> Service -> DAO (3 warstwy metod), w ktorym KAZDA warstwa loguje System.identityHashCode(connection) otrzymanego jako parametr. Wywolaj cala operacje i sprawdz w logu, ze WSZYSTKIE trzy warstwy zaraportowaly IDENTYCZNY hash - dowod przeplywu tego samego obiektu przez cala aplikacje.",
+      "hint": "Ten sam wzorzec co Zadanie 17, ale rozszerzony o dodatkowa warstwe \"Controller\" na samej gorze lancucha wywolan.",
+      "solution": "void controllerHandle(Connection c, ...) { log(c); service(c, ...); }\nvoid service(Connection c, ...) { log(c); dao.insert(c, ...); }\n// wszystkie 3 identityHashCode identyczne"
+    },
+    {
+      "prompt": "Wykonaj 10 NIEZALEZNYCH operacji biznesowych (kazda z WLASNYM, poprawnie zarzadzanym polaczeniem/transakcja - wzorowanym na dobrej wersji), z czego 3 celowo nieudane (rollback). Sprawdz, ze KAZDA nieudana operacja cofnela WYLACZNIE swoje wlasne zmiany, nie wplywajac na 7 udanych - policz koncowa liczbe wierszy w orders (powinna wynosic 7).",
+      "hint": "Kazda z 10 operacji ma WLASNE, niezalezne Connection - rollback jednej NIE wplywa na pozostale 9, bo kazda dziala na innym polaczeniu.",
+      "solution": "int sukcesy = 0;\nfor (int i = 0; i < 10; i++) {\n  boolean ok = runGoodScenarioMaybeFail(i % 4 == 3); // co 4-ta nieudana\n  if (ok) sukcesy++;\n}\n// SELECT COUNT(*) FROM orders -> 7"
+    },
+    {
+      "prompt": "Napisz klase \"CodeReviewExample\" z DWOMA metodami: reviewedBadCode() zawierajaca (jako kod, faktycznie wykonywany) wzorzec z osobnymi polaczeniami oraz DOKLADNY komentarz code-review wytykajacy problem (jak przy prawdziwym PR), i reviewedGoodCode() z poprawiona wersja + komentarzem \"APPROVED\". Wykonaj obie i porownaj wynik stanu bazy.",
+      "hint": "Komentarz code-review powinien konkretnie wskazywac LINIE kodu i WYJASNIC, dlaczego osobne polaczenia sa problemem w kontekscie transakcji.",
+      "solution": "// CODE REVIEW: \"Ten DAO otwiera wlasne Connection zamiast przyjmowac je jako parametr -\n// rollback w Service NIE cofnie tej zmiany. Prosze przekazac Connection jako argument.\"\nvoid reviewedGoodCode() { /* poprawiona wersja */ } // APPROVED"
+    },
+    {
+      "prompt": "Zbuduj kompletny \"pakiet regresyjny\" (mini test-runner) z co najmniej 5 testami weryfikujacymi: (1) zla wersja produkuje niespojnosc, (2) dobra wersja nie produkuje niespojnosci, (3) rollback na wspolnym polaczeniu cofa wszystkie kroki, (4) autocommit domyslny zatwierdza natychmiast, (5) naprawa osieroconych wierszy dziala poprawnie. Wypisz koncowy raport PASSED/FAILED dla wszystkich testow.",
+      "hint": "Polacz wszystkie wczesniejsze techniki (assertTrue helper, detectOrphanedOrderItems, repairOrphanedOrderItems) w jeden spojny zestaw 5 niezaleznych testow.",
+      "solution": "int passed = 0, total = 5;\n// test1: zla wersja -> orphaned.size() > 0\n// test2: dobra wersja -> orphaned.size() == 0\n// test3-5: analogicznie\nSystem.out.println(passed + \"/\" + total + \" testow PASSED\");"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co jest najczestszym bledem poczatkujacych przy pracy z transakcjami obejmujacymi wiele DAO?",
+      "options": {
+        "A": "Uzywanie zbyt dlugich nazw metod",
+        "B": "Kazdy DAO otwiera WLASNE polaczenie zamiast dzielic wspolne Connection przekazane jako parametr",
+        "C": "Brak importu java.sql.Connection",
+        "D": "Uzywanie Statement zamiast PreparedStatement"
+      },
+      "correct": "B",
+      "explanation": "Klasyczny blad to DAO samodzielnie otwierajace wlasne Connection - dziala w izolacji, ale psuje transakcyjnosc przy laczeniu wielu DAO w jednej operacji biznesowej."
+    },
+    {
+      "question": "Na ktorym Connection dziala rollback()?",
+      "options": {
+        "A": "Na WSZYSTKICH otwartych polaczeniach naraz",
+        "B": "TYLKO na tym Connection, na ktorym zostal wywolany - nie widzi zmian z innych polaczen",
+        "C": "Na polaczeniu domyslnym systemu",
+        "D": "Rollback dziala globalnie na calej bazie danych"
+      },
+      "correct": "B",
+      "explanation": "Rollback jest scisle powiazany z KONKRETNYM Connection - nie ma wplywu na zmiany zatwierdzone przez inne, niezalezne polaczenia."
+    },
+    {
+      "question": "Co sie stanie z insertem wykonanym na polaczeniu z DOMYSLNYM autocommit=true?",
+      "options": {
+        "A": "Nigdy nie zostanie zapisany",
+        "B": "Zostanie ZATWIERDZONY NATYCHMIAST po executeUpdate, niezaleznie od tego, co dzieje sie na innych polaczeniach",
+        "C": "Bedzie czekac na jawny commit()",
+        "D": "Zostanie automatycznie cofniety po 5 sekundach"
+      },
+      "correct": "B",
+      "explanation": "Autocommit=true (wartosc domyslna) zatwierdza kazda operacje natychmiast - nie czeka na zaden zewnetrzny commit."
+    },
+    {
+      "question": "Dlaczego blad \"kazdy DAO wlasne polaczenie\" jest szczegolnie niebezpieczny?",
+      "options": {
+        "A": "Bo powoduje natychmiastowy blad kompilacji",
+        "B": "Bo NIE rzuca zadnego wyjatku - program dziala \"normalnie\", a niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy",
+        "C": "Bo dziala tylko na Windows",
+        "D": "Bo H2 go automatycznie wykrywa i blokuje"
+      },
+      "correct": "B",
+      "explanation": "To cichy blad - kod kompiluje sie i wykonuje bez wyjatkow, a problem (niespojne dane) ujawnia sie dopiero pozniej, przy analizie stanu bazy."
+    },
+    {
+      "question": "Co to jest \"osierocony wiersz\" (orphaned row) w kontekscie tej lekcji?",
+      "options": {
+        "A": "Wiersz bez zadnych kolumn",
+        "B": "Wiersz w tabeli potomnej (np. order_items), ktorego klucz obcy wskazuje na NIEISTNIEJACY wiersz w tabeli rodzica (orders)",
+        "C": "Wiersz usuniety przez administratora",
+        "D": "Wiersz z wartoscia NULL we wszystkich kolumnach"
+      },
+      "correct": "B",
+      "explanation": "Osierocony wiersz powstaje, gdy insert do tabeli potomnej zostal zatwierdzony, a insert do tabeli rodzica zostal cofniety (rollback na innym polaczeniu)."
+    },
+    {
+      "question": "Jak wykryc osierocone wiersze w order_items po zlym scenariuszu?",
+      "options": {
+        "A": "SELECT * FROM order_items - wszystkie wiersze sa zawsze poprawne",
+        "B": "LEFT JOIN order_items z orders, wyszukujac wiersze, dla ktorych orders.id jest NULL",
+        "C": "Nie da sie tego wykryc programowo",
+        "D": "DROP TABLE order_items"
+      },
+      "correct": "B",
+      "explanation": "LEFT JOIN order_items -> orders z warunkiem WHERE orders.id IS NULL znajduje wiersze potomne bez odpowiadajacego rodzica."
+    },
+    {
+      "question": "Jaka jest poprawna architektura otwierania Connection wedlug tej lekcji?",
+      "options": {
+        "A": "Kazdy DAO otwiera wlasne polaczenie dla kazdej metody",
+        "B": "JEDNO polaczenie otwierane w warstwie Service, przekazywane jako parametr do WSZYSTKICH DAO bioracych udzial w operacji",
+        "C": "Polaczenie otwierane raz na caly czas dzialania aplikacji",
+        "D": "Kazda tabela ma wlasne, dedykowane polaczenie"
+      },
+      "correct": "B",
+      "explanation": "Poprawny wzorzec: Service otwiera JEDNO Connection dla calej operacji biznesowej i przekazuje je jako parametr do wszystkich DAO."
+    },
+    {
+      "question": "Co robi metoda repairOrphanedOrderItems z tej lekcji?",
+      "options": {
+        "A": "Tworzy nowa tabele order_items",
+        "B": "Usuwa WSZYSTKIE osierocone wiersze z order_items (DELETE WHERE order_id NOT IN (SELECT id FROM orders))",
+        "C": "Naprawia sterownik JDBC",
+        "D": "Automatycznie zapobiega przyszlym niespojnosciom"
+      },
+      "correct": "B",
+      "explanation": "To \"naprawa po fakcie\" - usuwa istniejace juz niespojne wiersze, ale NIE zapobiega powstawaniu nowych (do tego sluzy poprawna architektura Connection)."
+    },
+    {
+      "question": "Czy uzycie DWOCH osobnych polaczen jest zawsze bledem?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Nie - jest poprawne dla DWOCH ROZNYCH, NIEZALEZNYCH operacji biznesowych, kazda z wlasna transakcja",
+        "C": "Tylko jesli baza jest H2",
+        "D": "Nie, ale tylko w aplikacjach wielowatkowych"
+      },
+      "correct": "B",
+      "explanation": "Blad polega na dzieleniu JEDNEJ operacji biznesowej miedzy wiele polaczen - dwie ROZNE, niepowiazane operacje moga (i powinny) miec wlasne, osobne polaczenia."
+    },
+    {
+      "question": "Dlaczego wersja \"kazdy DAO wlasne polaczenie\" jest wolniejsza od wersji z jednym wspolnym Connection?",
+      "options": {
+        "A": "Bo H2 celowo ja spowalnia",
+        "B": "Bo kazde dodatkowe DriverManager.getConnection() to koszt nawiazania nowego polaczenia (TCP + uwierzytelnienie)",
+        "C": "Bo wymaga wiecej pamieci RAM",
+        "D": "Nie ma zadnej roznicy wydajnosciowej"
+      },
+      "correct": "B",
+      "explanation": "Wiecej otwieranych polaczen oznacza wiecej razy poniesiony koszt nawiazania polaczenia - dla operacji biznesowej z wieloma krokami to sie sumuje."
+    },
+    {
+      "question": "Co najlepiej opisuje: DAO otwierajace wlasne Connection?",
+      "options": {
+        "A": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "B": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+    },
+    {
+      "question": "Co najlepiej opisuje: rollback() dziala na jednym Connection?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+    },
+    {
+      "question": "Co najlepiej opisuje: autocommit=true (domyslny)?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+    },
+    {
+      "question": "Co najlepiej opisuje: osierocony wiersz (orphaned row)?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+    },
+    {
+      "question": "Co najlepiej opisuje: LEFT JOIN do wykrycia osieroconych wierszy?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+    },
+    {
+      "question": "Co najlepiej opisuje: poprawna architektura Connection?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+    },
+    {
+      "question": "Co najlepiej opisuje: cichy blad bez wyjatku?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+    },
+    {
+      "question": "Co najlepiej opisuje: repairOrphanedOrderItems?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+    },
+    {
+      "question": "Co najlepiej opisuje: dwie niezalezne operacje biznesowe?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+    },
+    {
+      "question": "Co najlepiej opisuje: koszt nawiazania polaczenia?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+    },
+    {
+      "question": "Co najlepiej opisuje: System.identityHashCode(connection)?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+    },
+    {
+      "question": "Co najlepiej opisuje: H2 rollback przy close() bez commit?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+    },
+    {
+      "question": "Co najlepiej opisuje: mieszana wlasnosc polaczen (3 DAO, 2 wspolne + 1 wlasne)?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+    },
+    {
+      "question": "Co najlepiej opisuje: test regresyjny dla bledu dzielenia polaczen?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+    },
+    {
+      "question": "Co najlepiej opisuje: zasada architektoniczna: Service jedynym miejscem otwierania Connection?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"DAO otwierajace wlasne Connection\"?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"rollback() dziala na jednym Connection\"?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"autocommit=true (domyslny)\"?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"osierocony wiersz (orphaned row)\"?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"LEFT JOIN do wykrycia osieroconych wierszy\"?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"poprawna architektura Connection\"?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"cichy blad bez wyjatku\"?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"repairOrphanedOrderItems\"?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"dwie niezalezne operacje biznesowe\"?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"koszt nawiazania polaczenia\"?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"System.identityHashCode(connection)\"?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"H2 rollback przy close() bez commit\"?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"mieszana wlasnosc polaczen (3 DAO, 2 wspolne + 1 wlasne)\"?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"test regresyjny dla bledu dzielenia polaczen\"?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"zasada architektoniczna: Service jedynym miejscem otwierania Connection\"?",
+      "options": {
+        "A": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: DAO otwierajace wlasne Connection.",
+      "options": {
+        "A": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "B": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: rollback() dziala na jednym Connection.",
+      "options": {
+        "A": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "B": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "C": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "D": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: autocommit=true (domyslny).",
+      "options": {
+        "A": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "B": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "C": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "D": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: osierocony wiersz (orphaned row).",
+      "options": {
+        "A": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "B": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "C": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "D": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: LEFT JOIN do wykrycia osieroconych wierszy.",
+      "options": {
+        "A": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "B": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "C": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "D": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: poprawna architektura Connection.",
+      "options": {
+        "A": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "B": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "C": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "D": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: cichy blad bez wyjatku.",
+      "options": {
+        "A": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "B": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "C": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "D": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: repairOrphanedOrderItems.",
+      "options": {
+        "A": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "B": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "C": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "D": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: dwie niezalezne operacje biznesowe.",
+      "options": {
+        "A": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "B": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "C": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "D": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: koszt nawiazania polaczenia.",
+      "options": {
+        "A": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "B": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "C": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "D": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: System.identityHashCode(connection).",
+      "options": {
+        "A": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "B": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "C": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "D": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: H2 rollback przy close() bez commit.",
+      "options": {
+        "A": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "B": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "C": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "D": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: mieszana wlasnosc polaczen (3 DAO, 2 wspolne + 1 wlasne).",
+      "options": {
+        "A": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "B": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "C": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "D": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: test regresyjny dla bledu dzielenia polaczen.",
+      "options": {
+        "A": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "B": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "C": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "D": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: zasada architektoniczna: Service jedynym miejscem otwierania Connection.",
+      "options": {
+        "A": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "B": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "C": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "D": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"DAO otwierajace wlasne Connection\"?",
+      "options": {
+        "A": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "B": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "C": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "D": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"rollback() dziala na jednym Connection\"?",
+      "options": {
+        "A": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "B": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "C": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "D": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"autocommit=true (domyslny)\"?",
+      "options": {
+        "A": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "B": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "C": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "D": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"osierocony wiersz (orphaned row)\"?",
+      "options": {
+        "A": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "B": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "C": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "D": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"LEFT JOIN do wykrycia osieroconych wierszy\"?",
+      "options": {
+        "A": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "B": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "C": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "D": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"poprawna architektura Connection\"?",
+      "options": {
+        "A": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "B": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "C": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "D": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"cichy blad bez wyjatku\"?",
+      "options": {
+        "A": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "B": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "C": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "D": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"repairOrphanedOrderItems\"?",
+      "options": {
+        "A": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "B": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "C": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "D": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"dwie niezalezne operacje biznesowe\"?",
+      "options": {
+        "A": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "B": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "C": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "D": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"koszt nawiazania polaczenia\"?",
+      "options": {
+        "A": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "B": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "C": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "D": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"System.identityHashCode(connection)\"?",
+      "options": {
+        "A": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "B": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "C": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "D": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"H2 rollback przy close() bez commit\"?",
+      "options": {
+        "A": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "B": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "C": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "D": "DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"mieszana wlasnosc polaczen (3 DAO, 2 wspolne + 1 wlasne)\"?",
+      "options": {
+        "A": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "B": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "C": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "D": "DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"test regresyjny dla bledu dzielenia polaczen\"?",
+      "options": {
+        "A": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "B": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "C": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "D": "DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"zasada architektoniczna: Service jedynym miejscem otwierania Connection\"?",
+      "options": {
+        "A": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "B": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"DAO otwierajace wlasne Connection\"?",
+      "options": {
+        "A": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "B": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"rollback() dziala na jednym Connection\"?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"autocommit=true (domyslny)\"?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"osierocony wiersz (orphaned row)\"?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"LEFT JOIN do wykrycia osieroconych wierszy\"?",
+      "options": {
+        "A": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"poprawna architektura Connection\"?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"cichy blad bez wyjatku\"?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"repairOrphanedOrderItems\"?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"dwie niezalezne operacje biznesowe\"?",
+      "options": {
+        "A": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"koszt nawiazania polaczenia\"?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"System.identityHashCode(connection)\"?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"H2 rollback przy close() bez commit\"?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"mieszana wlasnosc polaczen (3 DAO, 2 wspolne + 1 wlasne)\"?",
+      "options": {
+        "A": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"test regresyjny dla bledu dzielenia polaczen\"?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"zasada architektoniczna: Service jedynym miejscem otwierania Connection\"?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+    },
+    {
+      "question": "Co najlepiej opisuje: DAO otwierajace wlasne Connection?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji"
+    },
+    {
+      "question": "Co najlepiej opisuje: rollback() dziala na jednym Connection?",
+      "options": {
+        "A": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+    },
+    {
+      "question": "Co najlepiej opisuje: autocommit=true (domyslny)?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit"
+    },
+    {
+      "question": "Co najlepiej opisuje: osierocony wiersz (orphaned row)?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wiersz potomny wskazujacy kluczem obcym na nieistniejacy wiersz rodzica"
+    },
+    {
+      "question": "Co najlepiej opisuje: LEFT JOIN do wykrycia osieroconych wierszy?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: znajduje wiersze potomne bez odpowiadajacego rekordu w tabeli rodzica"
+    },
+    {
+      "question": "Co najlepiej opisuje: poprawna architektura Connection?",
+      "options": {
+        "A": "JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: JEDNO polaczenie otwierane w Service, przekazywane do wszystkich DAO danej operacji"
+    },
+    {
+      "question": "Co najlepiej opisuje: cichy blad bez wyjatku?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: niespojnosc danych ujawnia sie dopiero przy analizie stanu bazy, nie przy uruchomieniu"
+    },
+    {
+      "question": "Co najlepiej opisuje: repairOrphanedOrderItems?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: naprawa po fakcie - usuwa istniejace osierocone wiersze, nie zapobiega nowym"
+    },
+    {
+      "question": "Co najlepiej opisuje: dwie niezalezne operacje biznesowe?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazda MOZE miec wlasne, osobne polaczenie - to nie jest blad"
+    },
+    {
+      "question": "Co najlepiej opisuje: koszt nawiazania polaczenia?",
+      "options": {
+        "A": "kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazde dodatkowe DriverManager.getConnection() kosztuje czas TCP + uwierzytelnienia"
+    },
+    {
+      "question": "Co najlepiej opisuje: System.identityHashCode(connection)?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: sposob na zweryfikowanie, ze wiele warstw metod operuje na tym samym obiekcie Connection"
+    },
+    {
+      "question": "Co najlepiej opisuje: H2 rollback przy close() bez commit?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: niezatwierdzone zmiany moga zostac wycofane automatycznie przy zamknieciu polaczenia"
+    },
+    {
+      "question": "Co najlepiej opisuje: mieszana wlasnosc polaczen (3 DAO, 2 wspolne + 1 wlasne)?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: rollback na wspolnym polaczeniu NIE cofnie zmiany zrobionej przez izolowany DAO"
+    },
+    {
+      "question": "Co najlepiej opisuje: test regresyjny dla bledu dzielenia polaczen?",
+      "options": {
+        "A": "zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zestaw asercji weryfikujacych zarowno zle, jak i dobre scenariusze"
+    },
+    {
+      "question": "Co najlepiej opisuje: zasada architektoniczna: Service jedynym miejscem otwierania Connection?",
+      "options": {
+        "A": "zatwierdza kazda operacje natychmiast po executeUpdate, bez potrzeby jawnego commit",
+        "B": "DAO nigdy nie wola DriverManager.getConnection samodzielnie",
+        "C": "najczestszy blad przy transakcjach obejmujacych wiele DAO w jednej operacji",
+        "D": "nie cofa zmian zatwierdzonych na innych, niezaleznych polaczeniach"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: DAO nigdy nie wola DriverManager.getConnection samodzielnie"
+    }
+  ]
+}
