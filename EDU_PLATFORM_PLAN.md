@@ -1752,20 +1752,23 @@ regresyjny 6 wcześniejszych lekcji `_10_dao` rozłożonych po całym rozdziale 
 15, 20, 25) — wszystkie nadal zwracają poprawne dane. Sesja kontynuowana w całości bez
 przerw na potwierdzenie, zgodnie z wyraźną, wielokrotnie powtórzoną prośbą użytkownika.
 
-### 🔄 `_11_buildtools` W TRAKCIE (stan na 2026-08-28): 06/30 lekcji
+### 🔄 `_11_buildtools` W TRAKCIE (stan na 2026-08-28): 10/30 lekcji — blok Ant KOMPLETNY
 
-Rozpoczęto `_11_buildtools` (30 lekcji, sufiks scratchpada `i`). **Lekcje 01-06 UKOŃCZONE
-i zweryfikowane end-to-end**: 01_WhyBuildTools, 02_JavacJavaJarClasspath, 03_AntBasics,
-04_AntProjectStructure, 05_AntClasspath, 06_AntTesting — każda 7 sekcji teorii/30
-zadań/100 quizów, commitowane parami (01-02, 03-04, 05-06), backend restartowany +
+Rozpoczęto `_11_buildtools` (30 lekcji, sufiks scratchpada `i`). **Lekcje 01-10
+UKOŃCZONE i zweryfikowane end-to-end**: 01_WhyBuildTools, 02_JavacJavaJarClasspath,
+03_AntBasics, 04_AntProjectStructure, 05_AntClasspath, 06_AntTesting, 07_AntPackaging,
+08_AntAdvanced, 09_AntIvy, 10_AntDebugging — każda 7 sekcji teorii/30 zadań/100 quizów,
+commitowane parami (01-02, 03-04, 05-06, 07-08, 09-10), backend restartowany +
 zweryfikowany API end-to-end po każdej parze (z re-query przy znanej osobliwości
-"pierwsze zapytanie po restarcie bywa puste") + regresja na wcześniejszej lekcji.
+"pierwsze zapytanie po restarcie bywa puste") + regresja na wcześniejszej lekcji — zero
+regresji przez całą sesję. Tym samym **cały blok Ant (lekcje 01-10) jest KOMPLETNY**.
 Użytkownik wyraźnie polecił kontynuować BEZ pytania o zgodę w międzyczasie (wychodził z
-domu) — sesja kontynuowana w pełni autonomicznie.
+domu) — sesja kontynuowana w pełni autonomicznie, kontynuowana też po resecie limitu
+użycia w tej samej sesji.
 
-**Następny krok**: kontynuować od **lekcji 07 (`07_AntPackaging`)** w `_11_buildtools`,
-tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
-`_Exercises_LessonNN_Temat.java` w
+**Następny krok**: kontynuować od **lekcji 11 (`11_MavenBasics`)** w `_11_buildtools` —
+pierwsza lekcja bloku Maven (11-18). Tym samym, sprawdzonym workflow: czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_11_buildtools/LessonNN_Temat/`, napisz `genNNi.js`
 w scratchpadzie (sufiks `i`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji, treść podana niżej), zweryfikuj
@@ -1773,11 +1776,15 @@ w scratchpadzie (sufiks `i`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQui
 `src/main/resources/content/_11_buildtools/NN_Temat.json`, restart backendu + pełna
 weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszkodliwej
 osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
-zapytanie") PRZED każdym commitem, commitować co 2 lekcje. Pamiętać: lekcje 08_AntAdvanced
-i 09_AntIvy nadal embedują prawdziwego Anta (ten sam wzorzec co 03-06); lekcja 10_AntDebugging
-kończy blok Ant; lekcje 11-18 (Maven) i 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń (opisy
-proszą o realne komendy `mvn`/`gradle` w terminalu — patrz notatka w `CLAUDE.md` sekcja
-"_11_buildtools"), ale schemat JSON (7 teorii/30 ćwiczeń/100 quizów) pozostaje identyczny.
+zapytanie") PRZED każdym commitem, commitować co 2 lekcje. Pamiętać: lekcje 11-18 (Maven)
+i 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń w SAMYM KODZIE JAVA lekcji (opisy proszą o
+realne komendy `mvn`/`gradle` w terminalu, `main()` w tych lekcjach głównie generuje/opisuje
+pliki konfiguracyjne zamiast wszystko faktycznie wykonywać — patrz notatka w `CLAUDE.md`
+sekcja "_11_buildtools") — ALE to NIE zmienia schematu treści platformy: JSON (7 teorii/30
+ćwiczeń/100 quizów) pozostaje identyczny, a ćwiczenia platformowe nadal opisują zadanie
+tekstowo (kursant i tak nie wykonuje kodu bezpośrednio na platformie na tym etapie) —
+kontynuuj pisać je tak samo jak dotychczasowe, tylko treść zadań będzie czasem odnosić się
+do prawdziwych komend terminalowych zamiast czysto programistycznych API.
 
 Po ukończeniu `_11_buildtools` (30/30) kontynuować kolejno przez `_12_hibernate` (30
 lekcji), `_13_libraries` (32 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do
