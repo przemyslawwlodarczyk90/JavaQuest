@@ -1734,10 +1734,20 @@ commitowane po każdej 1 lekcji w tej sesji. Ten sam sprawdzony workflow: `genNN
 w scratchpadzie (sufiks `g`), walidacja w Node PRZED skopiowaniem do
 `src/main/resources/content/_09_jdbc/`.
 
-**Następny krok**: kontynuować **`_10_dao`** (28 lekcji: 01_DaoIntroduction …
-28_JdbcBestPractices, pełna lista w `ChapterSeedData.java` linia ~109-119 i w
-`CLAUDE.md` sekcja "_10_dao") od lekcji **`01_DaoIntroduction`**, tym samym workflow
-(nowy sufiks scratchpada, np. `h`, dla tego rozdziału): czytaj `_LessonNN_Temat.java` i
+**Stan na 2026-08-28: lekcje 01-13 w `_10_dao` UKOŃCZONE i zweryfikowane end-to-end**
+(01_DaoIntroduction … 13_EnvironmentVariables), każda 7 teorii/30 zadań/100 quizów,
+commitowane parami (05 samodzielnie — dokończenie niezacommitowanej pracy z poprzedniej
+sesji, potem 06-07, 08-09, 10-11, 12-13). `scratchpad/helpers.js` odtworzony w tej
+sesji z funkcjami `q()`/`fillQuizTo100()` (rekonstrukcja z opisu w historii tego pliku —
+działa poprawnie, zwalidowane). Backend restartowany + zweryfikowany API end-to-end po
+każdej parze (z re-query przy znanej, nieszkodliwej osobliwości "pierwsze zapytanie po
+restarcie = puste") + regresja na losowej wcześniej gotowej lekcji z innego rozdziału
+(`_08_sql`, `_09_jdbc`) — zero regresji w całej sesji.
+
+**Następny krok**: kontynuować **`_10_dao`** od lekcji **`14_ConnectionPool`** (15
+lekcji pozostało: 14_ConnectionPool … 28_JdbcBestPractices, pełna lista w
+`ChapterSeedData.java` linia ~109-119 i w `CLAUDE.md` sekcja "_10_dao"), tym samym
+workflow (sufiks scratchpada `h` dla tego rozdziału): czytaj `_LessonNN_Temat.java` i
 `_Exercises_LessonNN_Temat.java` w `src/main/java/com/example/javaquest/_10_dao/`,
 napisz `genNNh.js` w scratchpadzie (korzysta z `scratchpad/helpers.js` z
 `q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku nowej sesji, per-sesja),
@@ -1751,5 +1761,9 @@ listą rozdziałów w `ChapterSeedData.java`, BEZ zatrzymywania się na potwierd
 między lekcjami ani między rozdziałami. Pamiętać: `$env:JAVA_HOME =
 "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell
 (nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba odtworzyć na początku
-nowej sesji (scratchpad jest per-sesja).
+nowej sesji (scratchpad jest per-sesja) — treść pliku (2 funkcje: `q(question, options,
+correct, explanation)` buduje pojedyncze pytanie; `fillQuizTo100(quiz, topics15,
+groupLabel)` dopełnia tablicę quizu do 100 pytań z 15 par [termin, opis], rotując 5
+szablonów pytań i pozycję poprawnej odpowiedzi A-D) jest opisana w historii tego pliku
+(sekcja ze stanu na 2026-08-28) — łatwa do odtworzenia 1:1.
 ---
