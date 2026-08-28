@@ -1752,23 +1752,39 @@ regresyjny 6 wcześniejszych lekcji `_10_dao` rozłożonych po całym rozdziale 
 15, 20, 25) — wszystkie nadal zwracają poprawne dane. Sesja kontynuowana w całości bez
 przerw na potwierdzenie, zgodnie z wyraźną, wielokrotnie powtórzoną prośbą użytkownika.
 
-**Następny krok**: kontynuować kolejno przez **`_11_buildtools`** (30 lekcji: pełna
-lista w `ChapterSeedData.java` i w `CLAUDE.md` sekcja "_11_buildtools" — pamiętaj, że
-ten rozdział ma HYBRYDOWY styl ćwiczeń dla bloków Maven/Gradle, patrz notatka w
-`CLAUDE.md`), potem `_12_hibernate` (30 lekcji), `_13_libraries` (32 lekcje), i dalej
-przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`, zgodnie z
-pełną, ostateczną listą rozdziałów w `ChapterSeedData.java` — **to jeszcze ok. 20
-rozdziałów, kilkaset lekcji, wiele kolejnych sesji pracy**. Tym samym, sprawdzonym
-workflow (nowy sufiks scratchpada per rozdział, np. `i` dla `_11_buildtools`, `j` dla
-`_12_hibernate`, itd. — kolejna wolna litera alfabetu): czytaj `_LessonNN_Temat.java` i
-`_Exercises_LessonNN_Temat.java` w `src/main/java/com/example/javaquest/<rozdział>/`,
-napisz `genNNx.js` w scratchpadzie (korzysta z `scratchpad/helpers.js` z
-`q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku nowej sesji, per-sesja),
-zweryfikuj `node genNNx.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
-`src/main/resources/content/<rozdział>/NN_Temat.json`, restart backendu + pełna
+### 🔄 `_11_buildtools` W TRAKCIE (stan na 2026-08-28): 06/30 lekcji
+
+Rozpoczęto `_11_buildtools` (30 lekcji, sufiks scratchpada `i`). **Lekcje 01-06 UKOŃCZONE
+i zweryfikowane end-to-end**: 01_WhyBuildTools, 02_JavacJavaJarClasspath, 03_AntBasics,
+04_AntProjectStructure, 05_AntClasspath, 06_AntTesting — każda 7 sekcji teorii/30
+zadań/100 quizów, commitowane parami (01-02, 03-04, 05-06), backend restartowany +
+zweryfikowany API end-to-end po każdej parze (z re-query przy znanej osobliwości
+"pierwsze zapytanie po restarcie bywa puste") + regresja na wcześniejszej lekcji.
+Użytkownik wyraźnie polecił kontynuować BEZ pytania o zgodę w międzyczasie (wychodził z
+domu) — sesja kontynuowana w pełni autonomicznie.
+
+**Następny krok**: kontynuować od **lekcji 07 (`07_AntPackaging`)** w `_11_buildtools`,
+tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_11_buildtools/LessonNN_Temat/`, napisz `genNNi.js`
+w scratchpadzie (sufiks `i`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
+— plik trzeba odtworzyć na początku nowej sesji, treść podana niżej), zweryfikuj
+`node genNNi.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
+`src/main/resources/content/_11_buildtools/NN_Temat.json`, restart backendu + pełna
 weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszkodliwej
 osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
-zapytanie") PRZED każdym commitem, commitować co 2 lekcje. Pamiętać: `$env:JAVA_HOME =
+zapytanie") PRZED każdym commitem, commitować co 2 lekcje. Pamiętać: lekcje 08_AntAdvanced
+i 09_AntIvy nadal embedują prawdziwego Anta (ten sam wzorzec co 03-06); lekcja 10_AntDebugging
+kończy blok Ant; lekcje 11-18 (Maven) i 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń (opisy
+proszą o realne komendy `mvn`/`gradle` w terminalu — patrz notatka w `CLAUDE.md` sekcja
+"_11_buildtools"), ale schemat JSON (7 teorii/30 ćwiczeń/100 quizów) pozostaje identyczny.
+
+Po ukończeniu `_11_buildtools` (30/30) kontynuować kolejno przez `_12_hibernate` (30
+lekcji), `_13_libraries` (32 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do
+`_31_spring_cloud_microservices`, zgodnie z pełną, ostateczną listą rozdziałów w
+`ChapterSeedData.java` — **to jeszcze ok. 19 rozdziałów, kilkaset lekcji, wiele kolejnych
+sesji pracy**. Nowy sufiks scratchpada per rozdział (`j` dla `_12_hibernate`, `k` dla
+`_13_libraries`, itd. — kolejna wolna litera alfabetu). Pamiętać: `$env:JAVA_HOME =
 "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell
 (nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba odtworzyć na początku
 nowej sesji (scratchpad jest per-sesja) — treść pliku (2 funkcje: `q(question, options,
