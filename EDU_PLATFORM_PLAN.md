@@ -1734,18 +1734,20 @@ commitowane po każdej 1 lekcji w tej sesji. Ten sam sprawdzony workflow: `genNN
 w scratchpadzie (sufiks `g`), walidacja w Node PRZED skopiowaniem do
 `src/main/resources/content/_09_jdbc/`.
 
-**Stan na 2026-08-28: lekcje 01-19 w `_10_dao` UKOŃCZONE i zweryfikowane end-to-end**
-(01_DaoIntroduction … 19_UnitOfWork), każda 7 teorii/30 zadań/100 quizów,
+**Stan na 2026-08-28: lekcje 01-23 w `_10_dao` UKOŃCZONE i zweryfikowane end-to-end**
+(01_DaoIntroduction … 23_DynamicSorting), każda 7 teorii/30 zadań/100 quizów,
 commitowane parami (05 samodzielnie — dokończenie niezacommitowanej pracy z poprzedniej
-sesji, potem 06-07, 08-09, 10-11, 12-13, 14-15, 16-17, 18-19). `scratchpad/helpers.js`
-odtworzony w tej sesji z funkcjami `q()`/`fillQuizTo100()` (rekonstrukcja z opisu w
-historii tego pliku — działa poprawnie, zwalidowane). Backend restartowany + zweryfikowany
-API end-to-end po każdej parze (z re-query przy znanej, nieszkodliwej osobliwości
-"pierwsze zapytanie po restarcie = puste") + regresja na losowej wcześniej gotowej lekcji
-z innego rozdziału (`_08_sql`, `_09_jdbc`) — zero regresji w całej sesji.
+sesji, potem 06-07, 08-09, 10-11, 12-13, 14-15, 16-17, 18-19, 20-21, 22-23).
+`scratchpad/helpers.js` odtworzony w tej sesji z funkcjami `q()`/`fillQuizTo100()`
+(rekonstrukcja z opisu w historii tego pliku — działa poprawnie, zwalidowane). Backend
+restartowany + zweryfikowany API end-to-end po każdej parze (z re-query przy znanej,
+nieszkodliwej osobliwości "pierwsze zapytanie po restarcie = puste") + regresja na
+losowej wcześniej gotowej lekcji z innego rozdziału (`_08_sql`, `_09_jdbc`) — zero
+regresji w całej sesji. Sesja kontynuowana bez przerw na potwierdzenie, zgodnie z
+wyraźną prośbą użytkownika.
 
-**Następny krok**: kontynuować **`_10_dao`** od lekcji **`20_ErrorHandlingAcrossLayers`**
-(9 lekcji pozostało: 20_ErrorHandlingAcrossLayers … 28_JdbcBestPractices, pełna lista w
+**Następny krok**: kontynuować **`_10_dao`** od lekcji **`24_DynamicFiltering`**
+(5 lekcji pozostało: 24_DynamicFiltering … 28_JdbcBestPractices, pełna lista w
 `ChapterSeedData.java` linia ~109-119 i w `CLAUDE.md` sekcja "_10_dao"), tym samym
 workflow (sufiks scratchpada `h` dla tego rozdziału): czytaj `_LessonNN_Temat.java` i
 `_Exercises_LessonNN_Temat.java` w `src/main/java/com/example/javaquest/_10_dao/`,
