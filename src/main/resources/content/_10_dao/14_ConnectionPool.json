@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "CONCEPT",
+      "heading": "Problem: tworzenie Connection jest kosztowne",
+      "body": "DriverManager.getConnection(...) za kazdym razem nawiazuje NOWE polaczenie z baza danych od zera: otwiera gniazdo sieciowe (TCP), przechodzi uwierzytelnienie (login/haslo), negocjuje parametry sesji. Dla bazy w tej samej sieci lokalnej to moze byc kilka-kilkanascie milisekund, dla bazy w chmurze - nawet setki milisekund. Jesli aplikacja obsluguje setki zadan na sekunde i za KAZDYM razem tworzy nowe polaczenie od zera, ten koszt szybko staje sie waskim gardlem calej aplikacji."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Rozwiazanie: pula polaczen (connection pool)",
+      "body": "Pula polaczen tworzy z gory pewna liczbe polaczen i TRZYMA je otwarte. Kod aplikacji \"pozycza\" polaczenie z puli (getConnection()), uzywa go, a potem \"oddaje\" (close()) - connection.close() na polaczeniu z puli NIE zamyka fizycznego polaczenia z baza, tylko zwraca je do puli, gotowe do ponownego uzycia przez kogos innego."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "HikariCP - najpopularniejsza pula polaczen w Javie",
+      "body": "HikariCP (biblioteka com.zaxxer:HikariCP, juz dodana do tego projektu w pom.xml) implementuje interfejs javax.sql.DataSource - standardowy sposob pobierania Connection w Javie, niezalezny od konkretnej biblioteki puli. Kluczowe ustawienia: jdbcUrl/username/password (jak sie laczyc), maximumPoolSize (ile NAJWIECEJ fizycznych polaczen pula utrzyma naraz), connectionTimeout (jak dlugo watek CZEKA na wolne polaczenie, zanim dostanie wyjatek)."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Konfiguracja HikariConfig",
+      "body": "HikariConfig config = new HikariConfig(); config.setJdbcUrl(url); config.setUsername(\"sa\"); config.setPassword(\"\"); config.setMaximumPoolSize(5); config.setMinimumIdle(1); config.setConnectionTimeout(3000); config.setPoolName(\"Lesson14Pool\"); try (HikariDataSource dataSource = new HikariDataSource(config)) { ... }. HikariDataSource implementuje AutoCloseable - najlepiej zamykac ja w try-with-resources."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Uzycie puli: getConnection() / close() wielokrotnie",
+      "body": "try (Connection connection = dataSource.getConnection(); Statement stmt = connection.createStatement()) { stmt.execute(\"INSERT ...\"); }. Za kazdym razem \"pozyczamy\" polaczenie z puli w bloku try-with-resources - close() na koncu bloku ZWRACA je do puli (nie zamyka fizycznie), wiec kolejna pozyczka moze dostac to samo, juz otwarte polaczenie."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Kiedy pula naprawde daje przewage",
+      "body": "Dla lokalnej bazy H2 w pamieci roznica bywa niewielka albo wrecz niezauwazalna - nawiazanie polaczenia z baza \"obok\" nie kosztuje prawie nic. PRAWDZIWA przewaga puli polaczen ujawnia sie przy bazach sieciowych (inny host, inny kontener, chmura), gdzie kazde nowe polaczenie to osobny uscisk dloni TCP i uwierzytelnienie - tam pula oszczedza realne dziesiatki albo setki milisekund NA KAZDYM zapytaniu."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Podsumowanie",
+      "body": "Tworzenie Connection od zera jest kosztowne (TCP + logowanie) - przy duzym ruchu staje sie waskim gardlem aplikacji. Pula polaczen (np. HikariCP) utrzymuje gotowe, otwarte polaczenia - \"pozyczasz\" je (getConnection()) i \"oddajesz\" (close()), zamiast tworzyc i niszczyc za kazdym razem. HikariDataSource implementuje javax.sql.DataSource - standardowy, przenosny sposob pobierania Connection w Javie. Kluczowe ustawienia: jdbcUrl/username/password, maximumPoolSize, connectionTimeout. Pule NALEZY zamknac (dataSource.close()) przy zamykaniu aplikacji - najlepiej przez try-with-resources."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Skonfiguruj HikariConfig dla bazy \"jdbc:h2:mem:l14ex01;DB_CLOSE_DELAY=-1\" z maximumPoolSize=3, username=\"sa\", password=\"\". Utworz HikariDataSource i wypisz jego config.getJdbcUrl() oraz config.getMaximumPoolSize().",
+      "hint": "Skopiuj wzorzec konfiguracji HikariConfig 1:1 z teorii lekcji.",
+      "solution": "HikariConfig config = new HikariConfig();\nconfig.setJdbcUrl(\"jdbc:h2:mem:l14ex01;DB_CLOSE_DELAY=-1\");\nconfig.setMaximumPoolSize(3);\nHikariDataSource ds = new HikariDataSource(config);"
+    },
+    {
+      "prompt": "Utworz HikariDataSource jak w Zadaniu 1. Utworz tabele pool_items (id, name), wstaw jeden wiersz przez polaczenie z puli (try-with-resources), zamknij pule na koncu (try-with-resources na HikariDataSource).",
+      "hint": "try (HikariDataSource ds = new HikariDataSource(config)) { try (Connection c = ds.getConnection()) { ... } } - zagniezdzone try-with-resources.",
+      "solution": "try (HikariDataSource ds = new HikariDataSource(config)) {\n  try (Connection c = ds.getConnection(); Statement s = c.createStatement()) {\n    s.execute(\"CREATE TABLE pool_items (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100))\");\n  }\n}"
+    },
+    {
+      "prompt": "Pozycz polaczenie z puli i zamknij je (zwroc) 10 razy pod rzad, kazdym razem wykonujac prosty INSERT. Sprawdz na koncu (SELECT COUNT(*)), ze wszystkie 10 wierszy zostalo wstawionych.",
+      "hint": "Petla for z 10 iteracjami, kazda otwierajaca WLASNE try-with-resources na Connection.",
+      "solution": "for (int i = 0; i < 10; i++) {\n  try (Connection c = ds.getConnection(); Statement s = c.createStatement()) {\n    s.execute(\"INSERT INTO pool_items (name) VALUES ('item\" + i + \"')\");\n  }\n}"
+    },
+    {
+      "prompt": "Skonfiguruj HikariConfig z setPoolName(\"MojaPula\") i setMinimumIdle(2). Wypisz oba ustawienia po utworzeniu HikariDataSource (getPoolName(), getMinimumIdle()).",
+      "hint": "HikariDataSource dziedziczy po HikariConfig, wiec ma te same gettery co config.",
+      "solution": "config.setPoolName(\"MojaPula\");\nconfig.setMinimumIdle(2);\nHikariDataSource ds = new HikariDataSource(config);\nSystem.out.println(ds.getPoolName() + \" \" + ds.getMinimumIdle());"
+    },
+    {
+      "prompt": "Skonfiguruj setConnectionTimeout(2000) (2 sekundy). Wypisz config.getConnectionTimeout() i skomentuj w kodzie, co sie stanie, gdy wszystkie polaczenia w puli sa zajete dluzej niz ten limit.",
+      "hint": "connectionTimeout to maksymalny czas oczekiwania watku na wolne polaczenie - po jego przekroczeniu HikariCP rzuca SQLTransientConnectionException.",
+      "solution": "config.setConnectionTimeout(2000);\n// po przekroczeniu 2000ms oczekiwania na wolne polaczenie, getConnection() rzuci SQLTransientConnectionException"
+    },
+    {
+      "prompt": "Pozycz polaczenie z puli, zapamietaj jego identyfikator obiektu (System.identityHashCode(connection)) PRZED close(), zamknij je, potem pozycz PONOWNIE i sprawdz identityHashCode nowego polaczenia - jesli maximumPoolSize=1, powinno byc TO SAME polaczenie (identyczny hash).",
+      "hint": "Przy maximumPoolSize=1 pula ma tylko JEDNO fizyczne polaczenie, ktore jest wielokrotnie pozyczane i zwracane.",
+      "solution": "int hash1;\ntry (Connection c = ds.getConnection()) { hash1 = System.identityHashCode(c); }\nint hash2;\ntry (Connection c = ds.getConnection()) { hash2 = System.identityHashCode(c); }\nSystem.out.println(hash1 == hash2); // true przy maximumPoolSize=1"
+    },
+    {
+      "prompt": "Napisz setUpSchema(HikariDataSource) tworzaca tabele products (id, name, price) przez polaczenie pozyczone z puli (jak w lekcji). Wywolaj ja i wstaw 3 produkty, kazdy w osobnym, pozyczonym z puli polaczeniu.",
+      "hint": "Skopiuj wzorzec setUpSchema z teorii lekcji, zmieniajac tylko nazwe/kolumny tabeli.",
+      "solution": "static void setUpSchema(HikariDataSource ds) throws SQLException {\n  try (Connection c = ds.getConnection(); Statement s = c.createStatement()) {\n    s.execute(\"CREATE TABLE products (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), price DECIMAL(10,2))\");\n  }\n}"
+    },
+    {
+      "prompt": "Napisz measureConnections(int iterations, ConnectionSupplier) (jak w lekcji, funkcyjny interfejs zwracajacy Connection) i uzyj jej do zmierzenia czasu 10 pozyczen z puli, wykonujac prosty INSERT w kazdym. Wypisz wynik w milisekundach.",
+      "hint": "Skopiuj wzorzec measureConnections + ConnectionSupplier 1:1 z teorii lekcji.",
+      "solution": "interface ConnectionSupplier { Connection get() throws SQLException; }\nlong measureConnections(int n, ConnectionSupplier supplier) throws SQLException {\n  long start = System.nanoTime();\n  for (int i = 0; i < n; i++) { try (Connection c = supplier.get()) { ... } }\n  return System.nanoTime() - start;\n}"
+    },
+    {
+      "prompt": "Utworz HikariDataSource w try-with-resources, wykonaj kilka operacji, i po wyjsciu z bloku try sprawdz dataSource.isClosed() - powinno byc true. Wypisz potwierdzenie poprawnego zamkniecia puli.",
+      "hint": "Zapamietaj referencje do HikariDataSource PRZED zamknieciem bloku try-with-resources, zeby sprawdzic isClosed() PO nim.",
+      "solution": "HikariDataSource ds;\ntry (HikariDataSource temp = new HikariDataSource(config)) { ds = temp; /* operacje */ }\nSystem.out.println(\"zamknieta: \" + ds.isClosed()); // true"
+    },
+    {
+      "prompt": "Skonfiguruj DWIE pule dla tej samej bazy - jedna z maximumPoolSize=1, druga z maximumPoolSize=5. Wykonaj po 20 sekwencyjnych pozyczen polaczenia (z natychmiastowym zwrotem) na kazdej i zmierz czas - wypisz oba wyniki (dla sekwencyjnego uzycia roznica powinna byc minimalna, bo tylko jedno polaczenie naraz jest w uzyciu).",
+      "hint": "Przy SEKWENCYJNYM uzyciu (jedno polaczenie na raz) rozmiar puli nie ma znaczenia - roznica ujawnia sie dopiero przy WSPOLBIEZNYM dostepie.",
+      "solution": "HikariDataSource pool1 = ...; // maximumPoolSize=1\nHikariDataSource pool5 = ...; // maximumPoolSize=5\nlong t1 = measureConnections(20, pool1::getConnection);\nlong t5 = measureConnections(20, pool5::getConnection);"
+    },
+    {
+      "prompt": "Napisz UserDao przyjmujacy w konstruktorze HikariDataSource (nie Connection) i pozyczajace polaczenie WEWNATRZ kazdej metody (insert, findAll) - try-with-resources na dataSource.getConnection(). Przetestuj na 3 uzytkownikach.",
+      "hint": "Kazda metoda DAO otwiera i zamyka WLASNE polaczenie pozyczone z puli, nie dzieli go z innymi metodami.",
+      "solution": "class UserDao {\n  private final HikariDataSource ds;\n  void insert(String name) { try (Connection c = ds.getConnection()) { ... } }\n  List<String> findAll() { try (Connection c = ds.getConnection()) { ... } }\n}"
+    },
+    {
+      "prompt": "Skonfiguruj pule z maximumPoolSize=2 i connectionTimeout=1000. Pozycz 2 polaczenia i NIE zwracaj ich (przechowaj referencje BEZ try-with-resources). Sprobuj pozyczyc TRZECIE - zlap SQLTransientConnectionException po timeout i wypisz komunikat. Na koncu zwolnij oba pozyczone polaczenia w finally.",
+      "hint": "Gdy WSZYSTKIE polaczenia puli sa zajete, kolejna proba getConnection() czeka do connectionTimeout, potem rzuca SQLTransientConnectionException.",
+      "solution": "Connection c1 = ds.getConnection(); Connection c2 = ds.getConnection();\ntry {\n  ds.getConnection(); // rzuci po 1000ms\n} catch (SQLTransientConnectionException e) {\n  System.out.println(\"timeout: \" + e.getMessage());\n} finally { c1.close(); c2.close(); }"
+    },
+    {
+      "prompt": "Skonfiguruj pule z maximumPoolSize=5. Uruchom 10 watkow, kazdy pozyczajacy polaczenie z puli i wykonujacy 5 insertow, potem zwracajacy polaczenie. Poczekaj na zakonczenie wszystkich watkow (join z limitem czasu) i sprawdz finalny COUNT(*) (powinno byc 50).",
+      "hint": "Kazdy watek MUSI zamknac (zwrocic) swoje polaczenie w finally/try-with-resources, zanim pula bedzie mogla obsluzyc kolejny watek czekajacy na polaczenie.",
+      "solution": "List<Thread> threads = ...; // 10 watkow x 5 insertow = 50\nfor (Thread t : threads) t.join(5000);\nSystem.out.println(countRows()); // 50"
+    },
+    {
+      "prompt": "Powtorz measureConnections z lekcji dla 50 iteracji, PORoWNUJAC HikariDataSource z surowym DriverManager.getConnection(). Wypisz oba czasy w milisekundach i skomentuj w kodzie oczekiwany wynik dla bazy lokalnej (H2 in-memory) vs sieciowej.",
+      "hint": "Ten sam wzorzec porownania co w teorii lekcji, tylko z 50 iteracjami zamiast 20.",
+      "solution": "long hikariNanos = measureConnections(50, ds::getConnection);\nlong dmNanos = measureConnections(50, () -> DriverManager.getConnection(url));\n// dla H2 in-memory roznica jest mala, dla bazy sieciowej bylaby znacznie wieksza"
+    },
+    {
+      "prompt": "Odczytaj dataSource.getHikariPoolMXBean() i wypisz getActiveConnections(), getIdleConnections(), getTotalConnections() PRZED i PO pozyczeniu (bez zwracania) jednego polaczenia - zaobserwuj zmiane liczby aktywnych/bezczynnych polaczen.",
+      "hint": "HikariPoolMXBean udostepnia metryki puli w czasie rzeczywistym - liczba aktywnych rosnie, liczba bezczynnych maleje po pozyczeniu.",
+      "solution": "HikariPoolMXBean mx = ds.getHikariPoolMXBean();\nSystem.out.println(\"przed: active=\" + mx.getActiveConnections() + \" idle=\" + mx.getIdleConnections());\nConnection c = ds.getConnection();\nSystem.out.println(\"po: active=\" + mx.getActiveConnections() + \" idle=\" + mx.getIdleConnections());"
+    },
+    {
+      "prompt": "Napisz UserService przyjmujacy UserDao (skonstruowany z HikariDataSource - patrz Zadanie 11). Service NIE MA importu HikariCP - operuje wylacznie na DAO. Zademonstruj rejestracje 3 uzytkownikow przez Service.",
+      "hint": "UserService zna TYLKO UserDao - HikariCP jest calkowicie ukryty 2 warstwy nizej.",
+      "solution": "class UserService {\n  private final UserDao dao;\n  void register(String name) { dao.insert(name); } // nie zna HikariCP\n}"
+    },
+    {
+      "prompt": "Skonfiguruj pule z minimumIdle=1 i maximumPoolSize=3. Wykonaj skok obciazenia (3 rownoczesne pozyczenia w watkach), a potem zwroc wszystkie i odczekaj chwile (Thread.sleep krotko). Sprawdz przez HikariPoolMXBean, ze liczba idle connections wraca w poblize minimumIdle.",
+      "hint": "Po zwolnieniu wszystkich polaczen, pula stopniowo redukuje liczbe bezczynnych polaczen do wartosci minimumIdle (nie natychmiast, ale w ciagu chwili).",
+      "solution": "// 3 watki pozyczaja rownoczesnie, potem zwracaja\nThread.sleep(500);\nSystem.out.println(\"idle po odciazeniu: \" + ds.getHikariPoolMXBean().getIdleConnections());"
+    },
+    {
+      "prompt": "Utworz JEDNA HikariDataSource i przekaz ja do DWOCH roznych DAO (UserDao, ProductDao) - obie pozyczaja polaczenia z TEJ SAMEJ puli. Wykonaj operacje na obu i sprawdz przez HikariPoolMXBean, ze pula jest wspoldzielona (nie tworzone sa dwie osobne pule).",
+      "hint": "Jedna instancja HikariDataSource przekazana do konstruktorow obu DAO oznacza jedna, wspolna pule fizycznych polaczen.",
+      "solution": "HikariDataSource ds = new HikariDataSource(config);\nUserDao userDao = new UserDao(ds);\nProductDao productDao = new ProductDao(ds);\n// obie korzystaja z TEJ SAMEJ puli"
+    },
+    {
+      "prompt": "Zbuduj HikariConfig na podstawie wartosci \"wczytanych\" z java.util.Properties (setProperty dla jdbcUrl, maximumPoolSize jako String parsowany do int) - analogicznie do podejscia z Lesson12, ale dla konfiguracji puli. Wypisz finalna konfiguracje.",
+      "hint": "Properties zawsze przechowuje wartosci jako String, trzeba je jawnie skonwertowac przed przekazaniem do setterow HikariConfig oczekujacych int.",
+      "solution": "Properties p = new Properties();\np.setProperty(\"jdbcUrl\", \"jdbc:h2:mem:l14ex19\");\np.setProperty(\"maximumPoolSize\", \"4\");\nconfig.setJdbcUrl(p.getProperty(\"jdbcUrl\"));\nconfig.setMaximumPoolSize(Integer.parseInt(p.getProperty(\"maximumPoolSize\")));"
+    },
+    {
+      "prompt": "Pozycz 2 polaczenia z puli (bez zwracania), a nastepnie w try-catch sprobuj wywolac dataSource.close() - w komentarzu opisz zaobserwowane zachowanie (HikariCP zwykle czeka na zwrot albo przerywa aktywne polaczenia) i na koncu jawnie zwolnij oba polaczenia PRZED zamknieciem puli, dla porzadku.",
+      "hint": "HikariCP przy close() probuje zamknac WSZYSTKIE polaczenia, wlacznie z aktywnymi (pozyczonymi) - dlatego lepiej zwrocic je najpierw recznie.",
+      "solution": "Connection c1 = ds.getConnection(); Connection c2 = ds.getConnection();\nc1.close(); c2.close(); // najpierw zwroc\nds.close(); // potem bezpiecznie zamknij pule"
+    },
+    {
+      "prompt": "Zbuduj kompletny UserDao (CRUD: save, findById, findAll, update, deleteById) skonstruowany z HikariDataSource (nie Connection). Kazda metoda pozycza i zwraca polaczenie samodzielnie. Przetestuj wszystkie piec operacji na 3 uzytkownikach.",
+      "hint": "Kazda z 5 metod ma WLASNY try-with-resources na dataSource.getConnection(), niezalezny od pozostalych metod.",
+      "solution": "class UserDao {\n  User save(User u) { try (Connection c = ds.getConnection()) { ... } }\n  Optional<User> findById(long id) { ... }\n  List<User> findAll() { ... }\n  void update(User u) { ... }\n  void deleteById(long id) { ... }\n}"
+    },
+    {
+      "prompt": "Skonfiguruj pule z maximumPoolSize=10. Uruchom 50 watkow, kazdy wykonujacy 10 operacji insert przez UserDao z Zadania 21 (500 insertow lacznie). Zmierz laczny czas i sprawdz finalny count() (powinno byc 500, bez utraconych wpisow, bez wyjatkow przerywajacych watki).",
+      "hint": "Kazdy watek wykonuje insert 10x, laczy = 50 watkow x 10 = 500 - pula z 10 polaczeniami obsluzy to bezpiecznie, kolejkujac watki czekajace.",
+      "solution": "List<Thread> threads = IntStream.range(0, 50).mapToObj(i -> new Thread(() -> {\n  for (int j = 0; j < 10; j++) dao.save(new User(...));\n})).toList();\n// start + join wszystkich, potem sprawdz count() == 500"
+    },
+    {
+      "prompt": "Powtorz scenariusz z Zadania 22 dla TRZECH roznych maximumPoolSize (1, 5, 20) i porownaj laczny czas wykonania 500 insertow przy 50 wspolbieznych watkach - wypisz porownanie i skomentuj, dlaczego zbyt mala pula (1) staje sie waskim gardlem przy duzej wspolbieznosci.",
+      "hint": "Przy maximumPoolSize=1 tylko JEDEN watek naraz moze wykonywac prace bazodanowa - reszta CZEKA w kolejce, mimo ze majaby mogla dzialac rownolegle.",
+      "solution": "for (int poolSize : List.of(1, 5, 20)) {\n  long czas = runStressTest(poolSize, 50, 10);\n  System.out.println(\"poolSize=\" + poolSize + \": \" + czas + \" ns\");\n}\n// poolSize=1 bedzie zauwazalnie wolniejszy przy 50 rownoleglych watkach"
+    },
+    {
+      "prompt": "Skonfiguruj config.setLeakDetectionThreshold(500) (pol sekundy). Pozycz polaczenie i NIE zwracaj go przez ponad 500ms (Thread.sleep), potem zwroc - sprawdz w logach/konsoli, czy HikariCP zglasza ostrzezenie o \"podejrzeniu wycieku polaczenia\" (jesli logger jest skonfigurowany - w przeciwnym razie opisz w komentarzu, do czego sluzy ta opcja).",
+      "hint": "leakDetectionThreshold to czas, po ktorym HikariCP loguje ostrzezenie (WARN) o polaczeniu trzymanym podejrzanie dlugo bez zwrotu.",
+      "solution": "config.setLeakDetectionThreshold(500);\nConnection c = ds.getConnection();\nThread.sleep(600); // po tym czasie HikariCP moze zalogowac ostrzezenie o wycieku\nc.close();"
+    },
+    {
+      "prompt": "Napisz AccountRepository (HikariDataSource w konstruktorze) z metoda transferMoney(fromId, toId, amount) pozyczajaca JEDNO polaczenie z puli na CALA operacje (setAutoCommit(false), 2 UPDATE, commit/rollback, finally: setAutoCommit(true) + zwrot do puli). Przetestuj udany i nieudany przelew.",
+      "hint": "Jedno Connection pozyczone RAZ na poczatku metody obsluguje CALA transakcje (oba UPDATE + commit/rollback), zanim zostanie zwrocone do puli w finally.",
+      "solution": "void transferMoney(long fromId, long toId, BigDecimal amount) throws SQLException {\n  try (Connection c = ds.getConnection()) {\n    c.setAutoCommit(false);\n    try { updateBalance(c, fromId, amount.negate()); updateBalance(c, toId, amount); c.commit(); }\n    catch (SQLException e) { c.rollback(); }\n    finally { c.setAutoCommit(true); }\n  }\n}"
+    },
+    {
+      "prompt": "Skonfiguruj DWIE niezalezne HikariDataSource dla DWOCH roznych baz H2 in-memory (np. \"primary\" i \"reporting\"). Wykonaj insert do primary i \"replikacje\" (reczny insert tych samych danych) do reporting - zweryfikuj przez SELECT z OBU pul, ze dane sa zsynchronizowane.",
+      "hint": "Dwie osobne HikariDataSource z roznymi jdbcUrl to dwie fizycznie niezalezne bazy - \"replikacja\" to reczne powielenie insertu w obu.",
+      "solution": "HikariDataSource primary = ...; // jdbc:h2:mem:primary\nHikariDataSource reporting = ...; // jdbc:h2:mem:reporting\ninsertInto(primary, dane); insertInto(reporting, dane); // \"replikacja\" reczna"
+    },
+    {
+      "prompt": "Napisz metode isPoolHealthy(HikariDataSource) probujaca pozyczyc i natychmiast zwrocic polaczenie z krotkim timeoutem, zwracajaca false w razie wyjatku ZAMIAST go propagowac. Wywolaj ja PRZED wykonaniem operacji biznesowej i pokaz zachowanie dla zdrowej puli oraz (symulujac) dla zamkniecia puli przed sprawdzeniem.",
+      "hint": "try/catch(SQLException) wewnatrz isPoolHealthy zamienia dowolny wyjatek na wartosc boolean false, zamiast pozwolic mu propagowac dalej.",
+      "solution": "boolean isPoolHealthy(HikariDataSource ds) {\n  try (Connection c = ds.getConnection()) { return true; }\n  catch (SQLException e) { return false; }\n}"
+    },
+    {
+      "prompt": "Skonfiguruj mala pule (maximumPoolSize=1, connectionTimeout=300). Napisz saveWithFallback(UserDao dao, User user) lapiaca SQLTransientConnectionException przy przeciazeniu puli i zwracajaca \"false\" ZAMIAST przerywac caly program - zasymuluj przeciazenie (pozycz polaczenie w innym watku i przytrzymaj je) i pokaz zachowanie fallbacku.",
+      "hint": "Watek pomocniczy trzyma jedyne polaczenie z puli (maximumPoolSize=1), wiec proba zapisu w watku glownym napotka timeout.",
+      "solution": "boolean saveWithFallback(UserDao dao, User user) {\n  try { dao.save(user); return true; }\n  catch (SQLTransientConnectionException e) { return false; }\n}"
+    },
+    {
+      "prompt": "Po wykonaniu 100 operacji przez pule (mix watkow i sekwencyjnych wywolan), wypisz KOMPLETNY raport metryk z HikariPoolMXBean: totalConnections, activeConnections, idleConnections, threadsAwaitingConnection - sformatowany jako czytelny raport tekstowy.",
+      "hint": "Wszystkie 4 metryki sa dostepne przez ten sam obiekt HikariPoolMXBean zwracany przez getHikariPoolMXBean().",
+      "solution": "HikariPoolMXBean mx = ds.getHikariPoolMXBean();\nSystem.out.printf(\"total=%d active=%d idle=%d awaiting=%d%n\",\n  mx.getTotalConnections(), mx.getActiveConnections(), mx.getIdleConnections(), mx.getThreadsAwaitingConnection());"
+    },
+    {
+      "prompt": "Zloz mini-aplikacje z TRZEMA DAO (User, Product, Order) WSZYSTKIMI korzystajacymi z JEDNEJ, wspolnej HikariDataSource (maximumPoolSize=8). Uruchom scenariusz z 20 watkami symulujacymi rownoczesny ruch (mix operacji na wszystkich trzech DAO), zmierz laczny czas, zweryfikuj integralnosc danych na koncu (liczby rekordow w kazdej tabeli) i wypisz finalny raport metryk puli.",
+      "hint": "Polacz wszystkie poprzednie wzorce: jedna wspolna pula, wiele DAO, wielowatkowosc, finalna weryfikacja liczby rekordow + metryki HikariPoolMXBean.",
+      "solution": "HikariDataSource ds = ...; // maximumPoolSize=8\nUserDao u = new UserDao(ds); ProductDao p = new ProductDao(ds); OrderDao o = new OrderDao(ds);\n// 20 watkow mieszajacych operacje na u/p/o, potem weryfikacja count() dla kazdej tabeli"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Dlaczego tworzenie Connection przez DriverManager za kazdym razem jest kosztowne?",
+      "options": {
+        "A": "Bo Java kompiluje kod na nowo przy kazdym polaczeniu",
+        "B": "Bo za kazdym razem otwiera nowe gniazdo TCP i przechodzi uwierzytelnienie od zera",
+        "C": "Bo H2 nie wspiera wielu polaczen",
+        "D": "Bo DriverManager jest przestarzaly"
+      },
+      "correct": "B",
+      "explanation": "Kazde nowe Connection wymaga nawiazania polaczenia sieciowego TCP i uwierzytelnienia od zera - dla bazy sieciowej to realny koszt czasowy."
+    },
+    {
+      "question": "Co robi pula polaczen (connection pool)?",
+      "options": {
+        "A": "Usuwa niepotrzebne tabele z bazy",
+        "B": "Tworzy z gory pewna liczbe polaczen i trzyma je otwarte do wielokrotnego uzycia",
+        "C": "Automatycznie optymalizuje zapytania SQL",
+        "D": "Szyfruje dane przesylane do bazy"
+      },
+      "correct": "B",
+      "explanation": "Pula polaczen utrzymuje gotowe, otwarte polaczenia - kod aplikacji pozycza je i oddaje, zamiast tworzyc/niszczyc za kazdym razem."
+    },
+    {
+      "question": "Co robi connection.close() na polaczeniu POZYCZONYM z puli (np. HikariCP)?",
+      "options": {
+        "A": "Fizycznie zamyka polaczenie z baza danych",
+        "B": "Zwraca polaczenie do puli, gotowe do ponownego uzycia - NIE zamyka go fizycznie",
+        "C": "Usuwa wszystkie dane z tabeli",
+        "D": "Rzuca wyjatek, bo polaczenia z puli nie mozna zamknac"
+      },
+      "correct": "B",
+      "explanation": "close() na polaczeniu z puli tylko \"oddaje\" je z powrotem do puli - fizyczne polaczenie TCP pozostaje otwarte, gotowe do ponownego uzycia."
+    },
+    {
+      "question": "Jaki interfejs implementuje HikariDataSource?",
+      "options": {
+        "A": "java.sql.Connection",
+        "B": "javax.sql.DataSource - standardowy, przenosny sposob pobierania Connection w Javie",
+        "C": "java.util.Properties",
+        "D": "java.sql.Driver"
+      },
+      "correct": "B",
+      "explanation": "HikariDataSource implementuje javax.sql.DataSource, standardowy interfejs Javy niezalezny od konkretnej biblioteki puli polaczen."
+    },
+    {
+      "question": "Do czego sluzy ustawienie maximumPoolSize?",
+      "options": {
+        "A": "Okresla maksymalna liczbe tabel w bazie",
+        "B": "Okresla, ile NAJWIECEJ fizycznych polaczen pula utrzyma naraz",
+        "C": "Okresla maksymalny rozmiar pojedynczego wiersza",
+        "D": "Okresla limit czasu wykonania zapytania"
+      },
+      "correct": "B",
+      "explanation": "maximumPoolSize to gorny limit liczby fizycznych polaczen, ktore pula moze utrzymywac jednoczesnie."
+    },
+    {
+      "question": "Co sie stanie, gdy watek aplikacji probuje pozyczyc polaczenie, a WSZYSTKIE sa juz zajete dluzej niz connectionTimeout?",
+      "options": {
+        "A": "Watek dostaje null zamiast Connection",
+        "B": "Pula automatycznie tworzy dodatkowe polaczenie ponad limit",
+        "C": "getConnection() rzuca SQLTransientConnectionException po uplywie limitu czasu",
+        "D": "Aplikacja zawiesza sie na zawsze"
+      },
+      "correct": "C",
+      "explanation": "connectionTimeout to maksymalny czas oczekiwania na wolne polaczenie - po jego przekroczeniu HikariCP rzuca SQLTransientConnectionException."
+    },
+    {
+      "question": "Kiedy przewaga wydajnosciowa puli polaczen jest NAJBARDZIEJ widoczna?",
+      "options": {
+        "A": "Dla lokalnej bazy H2 w pamieci",
+        "B": "Przy bazach sieciowych (inny host/kontener/chmura), gdzie kazde nowe polaczenie to osobny uscisk dloni TCP",
+        "C": "Nigdy nie ma zadnej roznicy",
+        "D": "Tylko przy jednym watku aplikacji"
+      },
+      "correct": "B",
+      "explanation": "Dla bazy lokalnej roznica bywa niezauwazalna - prawdziwa przewaga ujawnia sie przy bazach sieciowych, gdzie polaczenie kosztuje realne dziesiatki/setki ms."
+    },
+    {
+      "question": "Jak nalezy zamknac HikariDataSource przy zamykaniu aplikacji?",
+      "options": {
+        "A": "Nie trzeba jej zamykac wcale",
+        "B": "dataSource.close() - najlepiej przez try-with-resources",
+        "C": "Restartujac caly system operacyjny",
+        "D": "Usuwajac plik JAR aplikacji"
+      },
+      "correct": "B",
+      "explanation": "Pule NALEZY zamknac (dataSource.close()) przy zamykaniu aplikacji, najlepiej przez try-with-resources, zeby wszystkie fizyczne polaczenia zostaly poprawnie zwolnione."
+    },
+    {
+      "question": "Co udostepnia HikariPoolMXBean?",
+      "options": {
+        "A": "Metryki puli w czasie rzeczywistym (activeConnections, idleConnections, totalConnections)",
+        "B": "Liste wszystkich tabel w bazie danych",
+        "C": "Historie wszystkich wykonanych zapytan SQL",
+        "D": "Konfiguracje sterownika JDBC"
+      },
+      "correct": "A",
+      "explanation": "HikariPoolMXBean pozwala odczytac biezace metryki puli - liczbe aktywnych, bezczynnych i calkowitych polaczen, przydatne do monitoringu."
+    },
+    {
+      "question": "Dlaczego DAO korzystajace z puli powinno przyjmowac w konstruktorze HikariDataSource, a nie pojedyncze Connection?",
+      "options": {
+        "A": "Bo Connection nie moze byc przekazywane jako parametr",
+        "B": "Bo kazda metoda DAO powinna pozyczac WLASNE polaczenie z puli i zwracac je po uzyciu, zamiast trzymac jedno na stale",
+        "C": "Bo HikariDataSource jest szybszy w kompilacji",
+        "D": "Nie ma zadnej roznicy praktycznej"
+      },
+      "correct": "B",
+      "explanation": "DataSource pozwala kazdej metodzie DAO samodzielnie pozyczyc i zwrocic polaczenie z puli, zamiast monopolizowac jedno Connection na caly czas zycia DAO."
+    },
+    {
+      "question": "Co najlepiej opisuje: pula polaczen (connection pool)?",
+      "options": {
+        "A": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "B": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+    },
+    {
+      "question": "Co najlepiej opisuje: HikariCP?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+    },
+    {
+      "question": "Co najlepiej opisuje: close() na polaczeniu z puli?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zwraca polaczenie do puli, NIE zamyka go fizycznie"
+    },
+    {
+      "question": "Co najlepiej opisuje: maximumPoolSize?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+    },
+    {
+      "question": "Co najlepiej opisuje: connectionTimeout?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+    },
+    {
+      "question": "Co najlepiej opisuje: minimumIdle?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+    },
+    {
+      "question": "Co najlepiej opisuje: koszt tworzenia Connection?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+    },
+    {
+      "question": "Co najlepiej opisuje: HikariPoolMXBean?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+    },
+    {
+      "question": "Co najlepiej opisuje: DAO z HikariDataSource w konstruktorze?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+    },
+    {
+      "question": "Co najlepiej opisuje: leakDetectionThreshold?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+    },
+    {
+      "question": "Co najlepiej opisuje: wspoldzielona pula miedzy DAO?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+    },
+    {
+      "question": "Co najlepiej opisuje: SQLTransientConnectionException?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcja przez jedno pozyczone polaczenie?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+    },
+    {
+      "question": "Co najlepiej opisuje: dwie niezalezne pule dla dwoch baz?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+    },
+    {
+      "question": "Co najlepiej opisuje: sekwencyjne vs wspolbiezne uzycie puli?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"pula polaczen (connection pool)\"?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"HikariCP\"?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"close() na polaczeniu z puli\"?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zwraca polaczenie do puli, NIE zamyka go fizycznie"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"maximumPoolSize\"?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"connectionTimeout\"?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"minimumIdle\"?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"koszt tworzenia Connection\"?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"HikariPoolMXBean\"?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"DAO z HikariDataSource w konstruktorze\"?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"leakDetectionThreshold\"?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"wspoldzielona pula miedzy DAO\"?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"SQLTransientConnectionException\"?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"transakcja przez jedno pozyczone polaczenie\"?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"dwie niezalezne pule dla dwoch baz\"?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+    },
+    {
+      "question": "Ktora odpowiedz trafnie charakteryzuje pojecie \"sekwencyjne vs wspolbiezne uzycie puli\"?",
+      "options": {
+        "A": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: pula polaczen (connection pool).",
+      "options": {
+        "A": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "B": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: HikariCP.",
+      "options": {
+        "A": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "B": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "C": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "D": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: close() na polaczeniu z puli.",
+      "options": {
+        "A": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "B": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "C": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "D": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: zwraca polaczenie do puli, NIE zamyka go fizycznie"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: maximumPoolSize.",
+      "options": {
+        "A": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "B": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "C": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "D": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: connectionTimeout.",
+      "options": {
+        "A": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "B": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "C": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "D": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: minimumIdle.",
+      "options": {
+        "A": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "B": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "C": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "D": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: koszt tworzenia Connection.",
+      "options": {
+        "A": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "B": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "C": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "D": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: HikariPoolMXBean.",
+      "options": {
+        "A": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "B": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "C": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "D": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: DAO z HikariDataSource w konstruktorze.",
+      "options": {
+        "A": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "B": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "C": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "D": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: leakDetectionThreshold.",
+      "options": {
+        "A": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "B": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "C": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "D": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: wspoldzielona pula miedzy DAO.",
+      "options": {
+        "A": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "B": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "C": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "D": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: SQLTransientConnectionException.",
+      "options": {
+        "A": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "B": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "C": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "D": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: transakcja przez jedno pozyczone polaczenie.",
+      "options": {
+        "A": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "B": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "C": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "D": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: dwie niezalezne pule dla dwoch baz.",
+      "options": {
+        "A": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "B": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "C": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "D": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+    },
+    {
+      "question": "Wybierz zdanie najlepiej opisujace: sekwencyjne vs wspolbiezne uzycie puli.",
+      "options": {
+        "A": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "B": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "C": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "D": "zwraca polaczenie do puli, NIE zamyka go fizycznie"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"pula polaczen (connection pool)\"?",
+      "options": {
+        "A": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "B": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "C": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "D": "zwraca polaczenie do puli, NIE zamyka go fizycznie"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"HikariCP\"?",
+      "options": {
+        "A": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "B": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "C": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "D": "zwraca polaczenie do puli, NIE zamyka go fizycznie"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"close() na polaczeniu z puli\"?",
+      "options": {
+        "A": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "B": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "C": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "D": "zwraca polaczenie do puli, NIE zamyka go fizycznie"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: zwraca polaczenie do puli, NIE zamyka go fizycznie"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"maximumPoolSize\"?",
+      "options": {
+        "A": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "B": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "C": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "D": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"connectionTimeout\"?",
+      "options": {
+        "A": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "B": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "C": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "D": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"minimumIdle\"?",
+      "options": {
+        "A": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "B": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "C": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "D": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"koszt tworzenia Connection\"?",
+      "options": {
+        "A": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "B": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "C": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "D": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"HikariPoolMXBean\"?",
+      "options": {
+        "A": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "B": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "C": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "D": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"DAO z HikariDataSource w konstruktorze\"?",
+      "options": {
+        "A": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "B": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "C": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "D": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"leakDetectionThreshold\"?",
+      "options": {
+        "A": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "B": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "C": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "D": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"wspoldzielona pula miedzy DAO\"?",
+      "options": {
+        "A": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "B": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "C": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "D": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"SQLTransientConnectionException\"?",
+      "options": {
+        "A": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "B": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "C": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "D": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"transakcja przez jedno pozyczone polaczenie\"?",
+      "options": {
+        "A": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "B": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "C": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "D": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"dwie niezalezne pule dla dwoch baz\"?",
+      "options": {
+        "A": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "B": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "C": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "D": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+    },
+    {
+      "question": "Co jest prawdziwe w kontekscie \"sekwencyjne vs wspolbiezne uzycie puli\"?",
+      "options": {
+        "A": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "B": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"pula polaczen (connection pool)\"?",
+      "options": {
+        "A": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "B": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"HikariCP\"?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"close() na polaczeniu z puli\"?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: zwraca polaczenie do puli, NIE zamyka go fizycznie"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"maximumPoolSize\"?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"connectionTimeout\"?",
+      "options": {
+        "A": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"minimumIdle\"?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"koszt tworzenia Connection\"?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"HikariPoolMXBean\"?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"DAO z HikariDataSource w konstruktorze\"?",
+      "options": {
+        "A": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"leakDetectionThreshold\"?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"wspoldzielona pula miedzy DAO\"?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"SQLTransientConnectionException\"?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"transakcja przez jedno pozyczone polaczenie\"?",
+      "options": {
+        "A": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"dwie niezalezne pule dla dwoch baz\"?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+    },
+    {
+      "question": "Ktora z ponizszych opcji poprawnie opisuje \"sekwencyjne vs wspolbiezne uzycie puli\"?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+    },
+    {
+      "question": "Co najlepiej opisuje: pula polaczen (connection pool)?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem"
+    },
+    {
+      "question": "Co najlepiej opisuje: HikariCP?",
+      "options": {
+        "A": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+    },
+    {
+      "question": "Co najlepiej opisuje: close() na polaczeniu z puli?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: zwraca polaczenie do puli, NIE zamyka go fizycznie"
+    },
+    {
+      "question": "Co najlepiej opisuje: maximumPoolSize?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: gorny limit liczby fizycznych polaczen utrzymywanych przez pule naraz"
+    },
+    {
+      "question": "Co najlepiej opisuje: connectionTimeout?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: maksymalny czas oczekiwania watku na wolne polaczenie, potem SQLTransientConnectionException"
+    },
+    {
+      "question": "Co najlepiej opisuje: minimumIdle?",
+      "options": {
+        "A": "minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: minimalna liczba bezczynnych polaczen utrzymywanych przez pule w gotowosci"
+    },
+    {
+      "question": "Co najlepiej opisuje: koszt tworzenia Connection?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: otwarcie gniazda TCP + uwierzytelnienie - kosztowne zwlaszcza dla baz sieciowych"
+    },
+    {
+      "question": "Co najlepiej opisuje: HikariPoolMXBean?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: udostepnia metryki puli w czasie rzeczywistym: aktywne/bezczynne/calkowite polaczenia"
+    },
+    {
+      "question": "Co najlepiej opisuje: DAO z HikariDataSource w konstruktorze?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: kazda metoda pozycza i zwraca WLASNE polaczenie, zamiast trzymac jedno na stale"
+    },
+    {
+      "question": "Co najlepiej opisuje: leakDetectionThreshold?",
+      "options": {
+        "A": "czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: czas, po ktorym HikariCP ostrzega o polaczeniu trzymanym podejrzanie dlugo bez zwrotu"
+    },
+    {
+      "question": "Co najlepiej opisuje: wspoldzielona pula miedzy DAO?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: jedna instancja HikariDataSource przekazana do wielu klas DAO, wspolny limit polaczen"
+    },
+    {
+      "question": "Co najlepiej opisuje: SQLTransientConnectionException?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "C",
+      "explanation": "Poprawna odpowiedz to: wyjatek rzucany przy wyczerpaniu puli i przekroczeniu connectionTimeout"
+    },
+    {
+      "question": "Co najlepiej opisuje: transakcja przez jedno pozyczone polaczenie?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+      },
+      "correct": "D",
+      "explanation": "Poprawna odpowiedz to: cala operacja (kilka UPDATE + commit/rollback) na tym samym Connection z puli"
+    },
+    {
+      "question": "Co najlepiej opisuje: dwie niezalezne pule dla dwoch baz?",
+      "options": {
+        "A": "osobne HikariDataSource dla roznych fizycznych/logicznych baz danych",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+      },
+      "correct": "A",
+      "explanation": "Poprawna odpowiedz to: osobne HikariDataSource dla roznych fizycznych/logicznych baz danych"
+    },
+    {
+      "question": "Co najlepiej opisuje: sekwencyjne vs wspolbiezne uzycie puli?",
+      "options": {
+        "A": "zwraca polaczenie do puli, NIE zamyka go fizycznie",
+        "B": "rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz",
+        "C": "utrzymuje gotowe, otwarte polaczenia do wielokrotnego uzycia zamiast tworzyc je za kazdym razem",
+        "D": "najpopularniejsza biblioteka puli polaczen w Javie, implementuje javax.sql.DataSource"
+      },
+      "correct": "B",
+      "explanation": "Poprawna odpowiedz to: rozmiar puli ma znaczenie glownie przy wspolbieznym dostepie wielu watkow naraz"
+    }
+  ]
+}
