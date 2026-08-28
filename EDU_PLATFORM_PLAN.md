@@ -1734,38 +1734,48 @@ commitowane po każdej 1 lekcji w tej sesji. Ten sam sprawdzony workflow: `genNN
 w scratchpadzie (sufiks `g`), walidacja w Node PRZED skopiowaniem do
 `src/main/resources/content/_09_jdbc/`.
 
-**Stan na 2026-08-28: lekcje 01-23 w `_10_dao` UKOŃCZONE i zweryfikowane end-to-end**
-(01_DaoIntroduction … 23_DynamicSorting), każda 7 teorii/30 zadań/100 quizów,
-commitowane parami (05 samodzielnie — dokończenie niezacommitowanej pracy z poprzedniej
-sesji, potem 06-07, 08-09, 10-11, 12-13, 14-15, 16-17, 18-19, 20-21, 22-23).
-`scratchpad/helpers.js` odtworzony w tej sesji z funkcjami `q()`/`fillQuizTo100()`
-(rekonstrukcja z opisu w historii tego pliku — działa poprawnie, zwalidowane). Backend
-restartowany + zweryfikowany API end-to-end po każdej parze (z re-query przy znanej,
-nieszkodliwej osobliwości "pierwsze zapytanie po restarcie = puste") + regresja na
-losowej wcześniej gotowej lekcji z innego rozdziału (`_08_sql`, `_09_jdbc`) — zero
-regresji w całej sesji. Sesja kontynuowana bez przerw na potwierdzenie, zgodnie z
-wyraźną prośbą użytkownika.
+### ✅ `_10_dao` KOMPLETNY (stan na 2026-08-28): 28/28 lekcji
 
-**Następny krok**: kontynuować **`_10_dao`** od lekcji **`24_DynamicFiltering`**
-(5 lekcji pozostało: 24_DynamicFiltering … 28_JdbcBestPractices, pełna lista w
-`ChapterSeedData.java` linia ~109-119 i w `CLAUDE.md` sekcja "_10_dao"), tym samym
-workflow (sufiks scratchpada `h` dla tego rozdziału): czytaj `_LessonNN_Temat.java` i
-`_Exercises_LessonNN_Temat.java` w `src/main/java/com/example/javaquest/_10_dao/`,
-napisz `genNNh.js` w scratchpadzie (korzysta z `scratchpad/helpers.js` z
+**Cały rozdział `_10_dao` jest w pełni ukończony i zweryfikowany end-to-end**
+(01_DaoIntroduction … 28_JdbcBestPractices), każda lekcja 7 sekcji teorii/30 zadań/100
+quizów, commitowane parami przez całą sesję (05 samodzielnie — dokończenie
+niezacommitowanej pracy z poprzedniej sesji, potem 06-07, 08-09, 10-11, 12-13, 14-15,
+16-17, 18-19, 20-21, 22-23, 24-25, 26-27, i na koniec 28 samodzielnie jako zamknięcie
+rozdziału). `scratchpad/helpers.js` odtworzony na początku tej sesji z funkcjami
+`q()`/`fillQuizTo100()` (rekonstrukcja z opisu w historii tego pliku — działała
+poprawnie przez całą sesję, w pełni zwalidowana). Backend restartowany + zweryfikowany
+API end-to-end po każdej parze (z re-query przy znanej, nieszkodliwej osobliwości
+"pierwsze zapytanie po restarcie = puste") + regresja na losowej wcześniej gotowej
+lekcji z innego rozdziału (`_08_sql`, `_09_jdbc`) po każdym restarcie — **zero regresji
+w całej, bardzo długiej sesji**. Finalna weryfikacja po lekcji 28 objęła też spot-check
+regresyjny 6 wcześniejszych lekcji `_10_dao` rozłożonych po całym rozdziale (01, 05, 10,
+15, 20, 25) — wszystkie nadal zwracają poprawne dane. Sesja kontynuowana w całości bez
+przerw na potwierdzenie, zgodnie z wyraźną, wielokrotnie powtórzoną prośbą użytkownika.
+
+**Następny krok**: kontynuować kolejno przez **`_11_buildtools`** (30 lekcji: pełna
+lista w `ChapterSeedData.java` i w `CLAUDE.md` sekcja "_11_buildtools" — pamiętaj, że
+ten rozdział ma HYBRYDOWY styl ćwiczeń dla bloków Maven/Gradle, patrz notatka w
+`CLAUDE.md`), potem `_12_hibernate` (30 lekcji), `_13_libraries` (32 lekcje), i dalej
+przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`, zgodnie z
+pełną, ostateczną listą rozdziałów w `ChapterSeedData.java` — **to jeszcze ok. 20
+rozdziałów, kilkaset lekcji, wiele kolejnych sesji pracy**. Tym samym, sprawdzonym
+workflow (nowy sufiks scratchpada per rozdział, np. `i` dla `_11_buildtools`, `j` dla
+`_12_hibernate`, itd. — kolejna wolna litera alfabetu): czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w `src/main/java/com/example/javaquest/<rozdział>/`,
+napisz `genNNx.js` w scratchpadzie (korzysta z `scratchpad/helpers.js` z
 `q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku nowej sesji, per-sesja),
-zweryfikuj `node genNNh.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
-`src/main/resources/content/_10_dao/NN_Temat.json`, restart backendu + pełna
+zweryfikuj `node genNNx.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
+`src/main/resources/content/<rozdział>/NN_Temat.json`, restart backendu + pełna
 weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszkodliwej
 osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
-zapytanie") PRZED każdym commitem. Po ukończeniu `_10_dao` (28/28) kontynuować kolejno
-przez `_11_buildtools` (30 lekcji), `_12_hibernate` (30 lekcji), ... zgodnie z pełną
-listą rozdziałów w `ChapterSeedData.java`, BEZ zatrzymywania się na potwierdzenia
-między lekcjami ani między rozdziałami. Pamiętać: `$env:JAVA_HOME =
+zapytanie") PRZED każdym commitem, commitować co 2 lekcje. Pamiętać: `$env:JAVA_HOME =
 "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell
 (nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba odtworzyć na początku
 nowej sesji (scratchpad jest per-sesja) — treść pliku (2 funkcje: `q(question, options,
 correct, explanation)` buduje pojedyncze pytanie; `fillQuizTo100(quiz, topics15,
 groupLabel)` dopełnia tablicę quizu do 100 pytań z 15 par [termin, opis], rotując 5
 szablonów pytań i pozycję poprawnej odpowiedzi A-D) jest opisana w historii tego pliku
-(sekcja ze stanu na 2026-08-28) — łatwa do odtworzenia 1:1.
+(sekcja ze stanu na 2026-08-28) — łatwa do odtworzenia 1:1. Kontynuować BEZ
+zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami, zgodnie z
+wyraźną prośbą użytkownika z tej sesji.
 ---
