@@ -1752,56 +1752,45 @@ regresyjny 6 wcześniejszych lekcji `_10_dao` rozłożonych po całym rozdziale 
 15, 20, 25) — wszystkie nadal zwracają poprawne dane. Sesja kontynuowana w całości bez
 przerw na potwierdzenie, zgodnie z wyraźną, wielokrotnie powtórzoną prośbą użytkownika.
 
-### 🔄 `_11_buildtools` W TRAKCIE (stan na 2026-08-28): 18/30 lekcji — bloki Ant i Maven KOMPLETNE
+### ✅ `_11_buildtools` KOMPLETNY (stan na 2026-08-29): 30/30 lekcji
 
-Rozpoczęto `_11_buildtools` (30 lekcji, sufiks scratchpada `i`). **Lekcje 01-18
-UKOŃCZONE i zweryfikowane end-to-end**: blok Ant 01-10 (KOMPLETNY) + blok Maven 11-18
-(KOMPLETNY): 11_MavenBasics, 12_MavenDependencies, 13_MavenPlugins, 14_MavenAdvanced,
-15_MavenWebAndDatabase, 16_MavenTestingAndCoverage, 17_MavenPublishing,
-18_MavenTroubleshootingAndPerformance — każda 7 sekcji teorii/30 zadań/100 quizów,
-commitowane parami przez całą sesję, backend restartowany + zweryfikowany API end-to-end
-po każdej parze (z re-query przy znanej osobliwości "pierwsze zapytanie po restarcie bywa
-puste" — czasem potrzeba więcej niż 6 prób, ale zawsze się rozwiązuje) + regresja na
-wcześniejszej lekcji — zero regresji przez całą sesję. Użytkownik wyraźnie polecił
-kontynuować BEZ pytania o zgodę w międzyczasie (wychodził z domu) — sesja kontynuowana w
-pełni autonomicznie, przetrwała reset limitu użycia w trakcie tej samej sesji bez utraty
-kontekstu.
+Rozdział w pełni ukończony — bloki Ant (01-10), Maven (11-18) i Gradle (19-25) +
+lekcje zbiorcze (26-30: porównanie/migracje/praktyka/troubleshooting/capstone) — każda z
+7 sekcjami teorii/30 zadaniami/100 quizami, zweryfikowana end-to-end (restart backendu +
+zapytania API + regresja na wcześniej gotowej lekcji z innego rozdziału) PRZED każdym
+commitem. Sesja kontynuowana w pełni autonomicznie (użytkownik wyszedł z domu, polecił
+nie pytać o zgodę między lekcjami/rozdziałami), commitowana partiami po 2-3 lekcje.
 
-**Następny krok**: kontynuować od **lekcji 19 (`19_GradleBasics`)** w `_11_buildtools` —
-pierwsza lekcja bloku Gradle (19-25). Tym samym, sprawdzonym workflow: czytaj
-`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
-`src/main/java/com/example/javaquest/_11_buildtools/LessonNN_Temat/`, napisz `genNNi.js`
-w scratchpadzie (sufiks `i`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
-— plik trzeba odtworzyć na początku nowej sesji, treść podana niżej), zweryfikuj
-`node genNNi.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
-`src/main/resources/content/_11_buildtools/NN_Temat.json`, restart backendu + pełna
+Lekcje 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń W SAMYM KODZIE JAVA lekcji (opisy
+proszą o realne komendy `gradle`/`./gradlew` w terminalu) — ALE to NIE zmieniło schematu
+treści platformy: JSON (7 teorii/30 ćwiczeń/100 quizów) pozostał identyczny, ćwiczenia
+platformowe nadal opisują zadanie tekstowo. Lekcja 30 (capstone "JavaQuest Build Lab")
+łączy Ant/Maven/Gradle w jednym, spójnym mini-projekcie — treść platformy odzwierciedla
+tę strukturę (mapowania między narzędziami, wnioski końcowe rozdziału).
+
+**Następny krok**: kontynuować `_12_hibernate` (30 lekcji) tym samym, sprawdzonym
+workflow: czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
+w scratchpadzie (nowy sufiks `j` dla tego rozdziału, korzysta z `scratchpad/helpers.js` z
+`q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku nowej sesji, treść podana
+niżej), zweryfikuj `node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem
+do `src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu + pełna
 weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszkodliwej
 osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
-zapytanie, czasem potrzeba więcej niż 6 prób") PRZED każdym commitem, commitować co 2
-lekcje. Pamiętać: lekcje 19-25 (Gradle) mają HYBRYDOWY styl ćwiczeń w SAMYM KODZIE JAVA
-lekcji (opisy proszą o realne komendy `gradle`/`./gradlew` w terminalu, `main()` w tych
-lekcjach głównie generuje/opisuje pliki konfiguracyjne zamiast wszystko faktycznie
-wykonywać — patrz notatka w `CLAUDE.md` sekcja "_11_buildtools") — ALE to NIE zmienia
-schematu treści platformy: JSON (7 teorii/30 ćwiczeń/100 quizów) pozostaje identyczny, a
-ćwiczenia platformowe nadal opisują zadanie tekstowo (kursant i tak nie wykonuje kodu
-bezpośrednio na platformie na tym etapie) — kontynuuj pisać je tak samo jak
-dotychczasowe, tylko treść zadań będzie czasem odnosić się do prawdziwych komend
-terminalowych zamiast czysto programistycznych API. Po ukończeniu Gradle (25/30),
-pozostają lekcje 26-30 (porównanie/migracje/praktyka/troubleshooting/capstone).
+zapytanie") PRZED każdym commitem, commitować co 2-3 lekcje.
 
-Po ukończeniu `_11_buildtools` (30/30) kontynuować kolejno przez `_12_hibernate` (30
-lekcji), `_13_libraries` (32 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do
-`_31_spring_cloud_microservices`, zgodnie z pełną, ostateczną listą rozdziałów w
-`ChapterSeedData.java` — **to jeszcze ok. 19 rozdziałów, kilkaset lekcji, wiele kolejnych
-sesji pracy**. Nowy sufiks scratchpada per rozdział (`j` dla `_12_hibernate`, `k` dla
-`_13_libraries`, itd. — kolejna wolna litera alfabetu). Pamiętać: `$env:JAVA_HOME =
-"C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej sesji PowerShell
-(nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba odtworzyć na początku
-nowej sesji (scratchpad jest per-sesja) — treść pliku (2 funkcje: `q(question, options,
-correct, explanation)` buduje pojedyncze pytanie; `fillQuizTo100(quiz, topics15,
-groupLabel)` dopełnia tablicę quizu do 100 pytań z 15 par [termin, opis], rotując 5
-szablonów pytań i pozycję poprawnej odpowiedzi A-D) jest opisana w historii tego pliku
-(sekcja ze stanu na 2026-08-28) — łatwa do odtworzenia 1:1. Kontynuować BEZ
-zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami, zgodnie z
-wyraźną prośbą użytkownika z tej sesji.
+Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
+lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
+zgodnie z pełną, ostateczną listą rozdziałów w `ChapterSeedData.java` — **to jeszcze ok.
+18 rozdziałów, kilkaset lekcji, wiele kolejnych sesji pracy**. Nowy sufiks scratchpada per
+rozdział (`k` dla `_13_libraries`, itd. — kolejna wolna litera alfabetu). Pamiętać:
+`$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej
+sesji PowerShell (nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba
+odtworzyć na początku nowej sesji (scratchpad jest per-sesja) — treść pliku (2 funkcje:
+`q(question, options, correct, explanation)` buduje pojedyncze pytanie;
+`fillQuizTo100(quiz, topics15, groupLabel)` dopełnia tablicę quizu do 100 pytań z 15 par
+[termin, opis], rotując 5 szablonów pytań i pozycję poprawnej odpowiedzi A-D) jest
+opisana w historii tego pliku (sekcja ze stanu na 2026-08-28/29) — łatwa do odtworzenia
+1:1. Kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ani między
+rozdziałami, zgodnie z wyraźną prośbą użytkownika z tej sesji.
 ---
