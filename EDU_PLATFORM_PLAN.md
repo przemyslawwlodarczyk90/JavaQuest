@@ -1791,17 +1791,33 @@ port 8082 z poprzedniej, nieudanej próby — rozwiązanie: `Get-NetTCPConnectio
 `Get-Process java` PRZED każdym startem backendu, jeśli poprzednia sesja zakończyła się
 nietypowo.
 
-**Następny krok**: kontynuować od **lekcji 11 (`11_OneToOneAssociation`)** w
-`_12_hibernate` — pierwsza lekcja bloku relacji (11-14: OneToOne/OneToMany-ManyToOne/
-ManyToMany/CascadeTypes), tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
+**Stan na 2026-08-29 (ciąg dalszy 2): `_12_hibernate` lekcje 11-18/30 UKOŃCZONE**
+(OneToOne, OneToMany/ManyToOne, ManyToMany, CascadeTypes, FetchTypesAndNPlusOne,
+EntityLifecycle, DirtyCheckingAndFlush, HqlBasics) — każda zweryfikowana end-to-end,
+zero regresji. **WAŻNA OBSERWACJA operacyjna**: liczba plików JSON z treścią platformy
+urosła do 265+ (ponad 36 000 wierszy do wstawienia przez `LessonContentLoader` w JEDNEJ
+transakcji przy KAŻDYM starcie backendu, bo baza jest `jdbc:h2:mem` — świeża przy każdym
+restarcie) — czas od "Started JavaQuestApplication" w logu do faktycznej WIDOCZNOŚCI
+nowej treści przez API **rośnie wraz z iloscia tresci i w tej sesji wynosił nawet ~4-5
+minut** (wczesniej w tym samym dniu ~90s-2 min). Zapytania API zaraz po starcie mogą
+zwracać `0`/puste dla WSZYSTKICH lekcji (nie tylko najnowszych) — to NIE błąd, tylko
+wciąż trwający insert w jednej wielkiej transakcji (`@Transactional` na całej metodzie
+`LessonContentLoader.run()`, commit dopiero na końcu). **Zasada na przyszłość: po
+starcie backendu sprawdzaj `Get-Process java | Select CPU` — jeśli CPU nadal aktywnie
+rośnie, proces wciąż pracuje, czekaj dłużej zamiast zakładać błąd; nie ma sensu
+przyspieszać przez wielokrotne krótkie sprawdzanie, lepiej zaplanować jeden dłuższy
+odstęp (3-5 min od "Started").**
+
+**Następny krok**: kontynuować od **lekcji 19 (`19_HqlAdvanced`)** w `_12_hibernate` —
+tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
 w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji, treść opisana niżej), zweryfikuj
 `node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
 `src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu + pełna
-weryfikacja (API + regresja, zapytania POJEDYNCZO) PRZED każdym commitem, commitować co
-2 lekcje.
+weryfikacja (API + regresja, zapytania POJEDYNCZO, z DLUZSZYM oczekiwaniem opisanym
+wyżej) PRZED każdym commitem, commitować co 2 lekcje.
 
 Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
