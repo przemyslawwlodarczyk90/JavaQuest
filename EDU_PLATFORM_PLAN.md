@@ -1808,7 +1808,27 @@ rośnie, proces wciąż pracuje, czekaj dłużej zamiast zakładać błąd; nie 
 przyspieszać przez wielokrotne krótkie sprawdzanie, lepiej zaplanować jeden dłuższy
 odstęp (3-5 min od "Started").**
 
-**Następny krok**: kontynuować od **lekcji 19 (`19_HqlAdvanced`)** w `_12_hibernate` —
+**Stan na 2026-08-29 (ciąg dalszy 3): `_12_hibernate` lekcje 19-22/30 UKOŃCZONE**
+(19_HqlAdvanced, 20_CriteriaApi — dokończone w poprzedniej sesji, potwierdzone przy
+starcie tej sesji już zacommitowane; 21_NativeSqlQueries, 22_NamedQueries — napisane w
+tej sesji). Każda 7 sekcji teorii/30 zadań/100 quizów, wygenerowana tym samym,
+sprawdzonym workflow (`scratchpad/helpers.js` + `gen21j.js`/`gen22j.js`, sufiks `j` dla
+`_12_hibernate`). Zweryfikowane end-to-end po restarcie backendu na porcie 8082: tym
+razem backend wystartował SZYBKO (~18s, "Started JavaQuestApplication") mimo 281 plików
+zasobów — wcześniejsza notatka o 4-5 minutach dotyczyła najwyraźniej innego, gorszego
+stanu maszyny/dysku, nie jest regułą uniwersalną; NADAL warto liczyć się z możliwością
+dłuższego czasu ładowania przy kolejnych, jeszcze większych partiach treści. Znana,
+nieszkodliwa osobliwość "pierwsze 1-3 zapytania po restarcie dają fałszywe 0/false"
+potwierdzona ponownie (pierwsze zapytania o `.../theory` dały 0 mimo `hasContent:true` w
+`/lessons` — kolejne, pojedyncze zapytania dały poprawne 7/30/100). Regresja
+zweryfikowana na `_08_sql/01_DatabaseIntroduction/quiz` → 100 (UWAGA: slug tej lekcji to
+`01_DatabaseIntroduction`, NIE `01_SqlIntroduction` — sprawdź faktyczną listę przez
+`GET .../lessons` zamiast zgadywać nazwę sluga z pamięci). Przy okazji naprawiono
+drobną literówkę wniesioną przypadkowo do tego pliku na początku sesji (prefiks "cla"
+przed nagłówkiem H1 — ten sam rodzaj przypadkowego wklejenia co opisany w CLAUDE.md dla
+`_11_buildtools/Lesson11_MavenBasics`).
+
+**Następny krok**: kontynuować od **lekcji 23 (`23_FirstLevelCache`)** w `_12_hibernate` —
 tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
@@ -1816,8 +1836,8 @@ w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQui
 — plik trzeba odtworzyć na początku nowej sesji, treść opisana niżej), zweryfikuj
 `node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
 `src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu + pełna
-weryfikacja (API + regresja, zapytania POJEDYNCZO, z DLUZSZYM oczekiwaniem opisanym
-wyżej) PRZED każdym commitem, commitować co 2 lekcje.
+weryfikacja (API + regresja, zapytania POJEDYNCZO) PRZED każdym commitem, commitować
+co 2 lekcje.
 
 Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
