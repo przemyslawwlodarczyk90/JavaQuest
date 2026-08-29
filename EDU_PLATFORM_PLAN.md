@@ -1913,8 +1913,12 @@ regresji.
 (03_LombokBasics, 04_LombokConstructorsAndBuilder) — każda 7/30/100. Zweryfikowane
 end-to-end, regresja na `_12_hibernate/01_OrmIntroduction/quiz` → 100 — zero regresji.
 
-**Następny krok**: kontynuować od **lekcji 5 (`05_LombokAdvancedAndPitfalls`)** w
-`_13_libraries` — tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
+**Stan na 2026-08-29 (`_13_libraries` ciąg dalszy): lekcje 5-6/32 UKOŃCZONE**
+(05_LombokAdvancedAndPitfalls, 06_CommonsLang3) — każda 7/30/100. Zweryfikowane
+end-to-end, regresja na `_12_hibernate/01_OrmIntroduction/quiz` → 100 — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 7 (`07_CommonsIO`)** w `_13_libraries` —
+tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
 `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_13_libraries/LessonNN_Temat/`, napisz `genNNk.js`
 w scratchpadzie (sufiks `k`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
