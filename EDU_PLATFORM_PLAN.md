@@ -1933,9 +1933,19 @@ zero regresji.
 KOMPLETNY. Zweryfikowane end-to-end, regresja na `_12_hibernate/01_OrmIntroduction/quiz`
 → 100 — zero regresji.
 
-**Następny krok**: kontynuować od **lekcji 13 (`13_OkHttpAsyncAndInterceptors`)** w
-`_13_libraries` — tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
-`_Exercises_LessonNN_Temat.java` w
+**Stan na 2026-08-29 (`_13_libraries` ciąg dalszy): lekcje 13-14/32 UKOŃCZONE**
+(13_OkHttpAsyncAndInterceptors, 14_OkHttpStreamingAndTesting) — każda 7/30/100. Blok
+OkHttp (12-14: podstawy, async+interceptory, streaming/upload/timeouty/MockWebServer)
+KOMPLETNY. Zweryfikowane end-to-end (backend uruchomiony wzorcem
+System.Diagnostics.Process; osobliwość "pierwsze zapytania po restarcie = 0" tym razem
+utrzymała się przez ~3 rundy oczekiwania łącznie ~7.5 min, z 303 plikami zasobów w
+`target/classes` — potwierdzone rosnącym CPU procesu java, NIE restartowano backendu bez
+potrzeby, tylko czekano dłużej), regresja na `_12_hibernate/01_OrmIntroduction/quiz` →
+100 — zero regresji. `GET .../lessons` potwierdził 14/14 `hasContent: true`.
+
+**Następny krok**: kontynuować od **lekcji 15 (`15_WhySlf4jNotSystemOut`)** w
+`_13_libraries` — rozpoczyna blok SLF4J/Logback (15-17) — tym samym, sprawdzonym
+workflow: czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_13_libraries/LessonNN_Temat/`, napisz `genNNk.js`
 w scratchpadzie (sufiks `k`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji), zweryfikuj `node genNNk.js`
@@ -1945,8 +1955,8 @@ System.Diagnostics.Process opisanym wyżej) + pełna weryfikacja (API + regresja
 zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwość "pierwsze kilka zapytań po
 restarcie moga dac falszywe 0/false — czasem trwa to dluzej niz 3-4 proby, sprawdzaj
 CPU procesu java i po prostu czekaj, NIE restartuj bez potrzeby") PRZED każdym
-commitem, commitować co 2 lekcje. Po lekcji 14 blok OkHttp będzie kompletny — kolejny
-blok to SLF4J/Logback (15-17).
+commitem, commitować co 2 lekcje. Po lekcji 17 blok SLF4J/Logback będzie kompletny —
+kolejny blok to Guice DI (18-20).
 
 Pełna lista 32 lekcji `_13_libraries` (z `ChapterSeedData.java`): 01_WhyLibraries,
 02_ChoosingAndAddingDependencies, 03_LombokBasics, 04_LombokConstructorsAndBuilder,
