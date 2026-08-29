@@ -1928,9 +1928,14 @@ Guava (9-11).
 Zweryfikowane end-to-end, regresja na `_12_hibernate/01_OrmIntroduction/quiz` → 100 —
 zero regresji.
 
-**Następny krok**: kontynuować od **lekcji 11 (`11_GuavaPreconditionsAndCache`)** w
-`_13_libraries` (ostatnia lekcja bloku Guava) — tym samym, sprawdzonym workflow: czytaj
-`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+**Stan na 2026-08-29 (`_13_libraries` ciąg dalszy): lekcje 11-12/32 UKOŃCZONE**
+(11_GuavaPreconditionsAndCache, 12_OkHttpBasics) — każda 7/30/100. Blok Guava (9-11)
+KOMPLETNY. Zweryfikowane end-to-end, regresja na `_12_hibernate/01_OrmIntroduction/quiz`
+→ 100 — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 13 (`13_OkHttpAsyncAndInterceptors`)** w
+`_13_libraries` — tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_13_libraries/LessonNN_Temat/`, napisz `genNNk.js`
 w scratchpadzie (sufiks `k`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji), zweryfikuj `node genNNk.js`
@@ -1940,8 +1945,8 @@ System.Diagnostics.Process opisanym wyżej) + pełna weryfikacja (API + regresja
 zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwość "pierwsze kilka zapytań po
 restarcie moga dac falszywe 0/false — czasem trwa to dluzej niz 3-4 proby, sprawdzaj
 CPU procesu java i po prostu czekaj, NIE restartuj bez potrzeby") PRZED każdym
-commitem, commitować co 2 lekcje. Po lekcji 11 blok Guava będzie kompletny — kolejny
-blok to OkHttp (12-14).
+commitem, commitować co 2 lekcje. Po lekcji 14 blok OkHttp będzie kompletny — kolejny
+blok to SLF4J/Logback (15-17).
 
 Pełna lista 32 lekcji `_13_libraries` (z `ChapterSeedData.java`): 01_WhyLibraries,
 02_ChoosingAndAddingDependencies, 03_LombokBasics, 04_LombokConstructorsAndBuilder,
