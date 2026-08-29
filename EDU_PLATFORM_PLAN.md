@@ -1943,9 +1943,26 @@ utrzymała się przez ~3 rundy oczekiwania łącznie ~7.5 min, z 303 plikami zas
 potrzeby, tylko czekano dłużej), regresja na `_12_hibernate/01_OrmIntroduction/quiz` →
 100 — zero regresji. `GET .../lessons` potwierdził 14/14 `hasContent: true`.
 
-**Następny krok**: kontynuować od **lekcji 15 (`15_WhySlf4jNotSystemOut`)** w
-`_13_libraries` — rozpoczyna blok SLF4J/Logback (15-17) — tym samym, sprawdzonym
-workflow: czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+**Stan na 2026-08-29 (`_13_libraries` ciąg dalszy): lekcje 15-16/32 UKOŃCZONE**
+(15_WhySlf4jNotSystemOut, 16_LogbackConfiguration) — każda 7/30/100. Zweryfikowane
+end-to-end (backend uruchomiony wzorcem System.Diagnostics.Process; tym razem
+osobliwość "pierwsze zapytania po restarcie = 0" NIE wystąpiła nawet przy pierwszym
+poleceniu po ~3 min oczekiwania — wszystkie liczby (16/16 hasContent, 100/100/100 quiz,
+7/7 theory, 30/30 exercises) były poprawne od razu), regresja na
+`_12_hibernate/01_OrmIntroduction/quiz` → 100 — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 17 (`17_MdcAndLoggingBestPractices`)** w
+`_13_libraries` — OSTATNIA lekcja bloku SLF4J/Logback (15-17), `gen17k.js` JUŻ
+NAPISANY i zwalidowany w scratchpadzie (`node gen17k.js` → theory:7 exercises:30
+quiz:100), trzeba go tylko skopiować do
+`src/main/resources/content/_13_libraries/17_MdcAndLoggingBestPractices.json`,
+zrestartować backend i zweryfikować end-to-end + regresję PRZED commitem. Po
+skopiowaniu i weryfikacji lekcji 17 (razem z pozostawioną bez commitu lekcją 17,
+commitować JĄ SAMĄ lub poczekać na lekcję 18 wg zwykłego rytmu co-2-lekcje — do
+decyzji w danej sesji) blok SLF4J/Logback będzie kompletny — kolejny blok to Guice DI
+(18-20), zaczynając od **`18_WhyDependencyInjection`**. Ten sam, sprawdzony workflow
+dla WSZYSTKICH kolejnych lekcji: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_13_libraries/LessonNN_Temat/`, napisz `genNNk.js`
 w scratchpadzie (sufiks `k`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji), zweryfikuj `node genNNk.js`
@@ -1955,8 +1972,7 @@ System.Diagnostics.Process opisanym wyżej) + pełna weryfikacja (API + regresja
 zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwość "pierwsze kilka zapytań po
 restarcie moga dac falszywe 0/false — czasem trwa to dluzej niz 3-4 proby, sprawdzaj
 CPU procesu java i po prostu czekaj, NIE restartuj bez potrzeby") PRZED każdym
-commitem, commitować co 2 lekcje. Po lekcji 17 blok SLF4J/Logback będzie kompletny —
-kolejny blok to Guice DI (18-20).
+commitem, commitować co 2 lekcje.
 
 Pełna lista 32 lekcji `_13_libraries` (z `ChapterSeedData.java`): 01_WhyLibraries,
 02_ChoosingAndAddingDependencies, 03_LombokBasics, 04_LombokConstructorsAndBuilder,
