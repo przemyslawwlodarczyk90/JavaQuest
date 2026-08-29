@@ -1869,7 +1869,19 @@ sesji i przyszłych sesjach — zastąp nim `Start-Process` we wszystkich kolejn
 weryfikacji.** Do zatrzymania backendu nadal wystarcza `Get-Process java | Stop-Process
 -Force` (java jest procesem potomnym pod cmd.exe, ale zabicie samego java wystarcza).
 
-**Następny krok**: kontynuować od **lekcji 25 (`25_OptimisticLocking`)** w `_12_hibernate` —
+**Stan na 2026-08-29 (ciąg dalszy 5): `_12_hibernate` lekcje 25-26/30 UKOŃCZONE**
+(25_OptimisticLocking, 26_PessimisticLocking) — każda 7/30/100, wygenerowana tym samym
+workflow (`gen25j.js`/`gen26j.js`). Zweryfikowane end-to-end po restarcie backendu
+NOWYM, stabilnym wzorcem (System.Diagnostics.Process) — tym razem osobliwość "pierwsze
+zapytania po restarcie = 0/false" utrzymała się przez 3 kolejne próby (nie tylko 1-2 jak
+zwykle), zanim 4. próba dała poprawne `26/30 hasContent`; potwierdzone przez `curl -v`,
+że serwer ZAWSZE odpowiadał 200 z pełnymi danymi (`/api/chapters` dawało kompletną liste
+31 rozdziałów już przy 1. zapytaniu) — opóźnienie dotyczy WYŁĄCZNIE endpointu
+`.../lessons`, prawdopodobnie letnie stronienie Hibernate/JPA lub cache zapytań
+rozgrzewający się przy pierwszych wywołaniach po starcie. Regresja na
+`_10_dao/01_DaoIntroduction/quiz` → 100 — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 27 (`27_InheritanceMapping`)** w `_12_hibernate` —
 tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
@@ -1879,9 +1891,11 @@ w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQui
 `src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu (NOWYM
 wzorcem System.Diagnostics.Process opisanym wyżej, NIE Start-Process) + pełna
 weryfikacja (API + regresja, zapytania POJEDYNCZO, z uwzględnieniem osobliwości
-"pierwsze 1-3 zapytania po restarcie moga dac falszywe 0/false dla WSZYSTKICH lekcji,
-nie tylko nowych — powtórz `GET .../lessons` po chwili, az `hasContent` bedzie poprawne
-dla juz gotowych lekcji") PRZED każdym commitem, commitować co 2 lekcje.
+"pierwsze KILKA (nawet 3-4) zapytań po restarcie moga dac falszywe 0/false dla
+WSZYSTKICH lekcji, nie tylko nowych — powtórz `GET .../lessons` kilkukrotnie, az
+`hasContent` bedzie poprawne dla juz gotowych lekcji, `curl -v` potwierdza ze serwer
+zawsze zwraca 200 z pelna odpowiedzia") PRZED każdym commitem, commitować co 2 lekcje.
+Po lekcji 28 zostaną 29-30 (ostatnia para, kończąca rozdział `_12_hibernate` 30/30).
 
 Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
