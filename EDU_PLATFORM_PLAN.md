@@ -1828,16 +1828,60 @@ drobną literówkę wniesioną przypadkowo do tego pliku na początku sesji (pre
 przed nagłówkiem H1 — ten sam rodzaj przypadkowego wklejenia co opisany w CLAUDE.md dla
 `_11_buildtools/Lesson11_MavenBasics`).
 
-**Następny krok**: kontynuować od **lekcji 23 (`23_FirstLevelCache`)** w `_12_hibernate` —
+**Stan na 2026-08-29 (ciąg dalszy 4): `_12_hibernate` lekcje 23-24/30 UKOŃCZONE**
+(23_FirstLevelCache, 24_SecondLevelCacheAndQueryCache) — każda 7/30/100, wygenerowana
+tym samym workflow (`gen23j.js`/`gen24j.js`, sufiks `j`). Zweryfikowane end-to-end po
+restarcie backendu, regresja na `_09_jdbc/01_JdbcIntroduction/quiz` → 100 — zero regresji.
+
+**WAŻNY, NOWY PROBLEM OPERACYJNY odkryty i rozwiązany w tej sesji: uruchamianie backendu
+przez `Start-Process -FilePath mvnw.cmd -ArgumentList spring-boot:run -PassThru` w
+PowerShell tool bywa NIESTABILNE — proces java startuje poprawnie (widać "Started
+JavaQuestApplication" w logu), ale chwilę później GINIE bez śladu błędu (log kończy się
+samym znakiem `^C` w stderr, jakby proces dostał Ctrl+C/SIGINT z zewnątrz — najpewniej
+jakaś forma job control/cleanup między kolejnymi wywołaniami narzędzia PowerShell).**
+Odtworzone 2x pod rząd w tej sesji. **Sprawdzone, DZIAŁAJĄCE rozwiązanie** — uruchamiaj
+backend przez `System.Diagnostics.Process` bezpośrednio (NIE `Start-Process`), z cmd.exe
+jako pośrednikiem do przekierowania strumieni do plików:
+```powershell
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = "cmd.exe"
+$psi.Arguments = '/c ".\mvnw.cmd" spring-boot:run > backend_out.log 2> backend_err.log'
+$psi.WorkingDirectory = "C:\Users\kapit\Desktop\kursy\javaQuest"
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$psi.EnvironmentVariables["JAVA_HOME"] = "C:\Users\kapit\.jdks\openjdk-25.0.2"
+$proc = [System.Diagnostics.Process]::Start($psi)
+$proc.Id
+```
+Dwie pułapki PO DRODZE do tego wzorca, obie zweryfikowane empirycznie: (1) **prefiks
+`.\` przed `mvnw.cmd` jest WYMAGANY** — bare `mvnw.cmd` (bez `.\`) daje "'mvnw.cmd' is not
+recognized", mimo że plik istnieje w ustawionym `WorkingDirectory` (asymetria względem
+zwykłego interaktywnego cmd, gdzie bare nazwa też by zadziałała — prawdopodobnie
+specyfika tego, jak `cmd /c` rozwiązuje nazwy programów przy starcie z `ProcessStartInfo`);
+(2) **`$env:JAVA_HOME` ustawione w POPRZEDNIM wywołaniu narzędzia PowerShell NIE
+PRZETRWA do kolejnego wywołania** (harness resetuje stan powłoki między wywołaniami tego
+narzędzia — zgodnie z jego własną dokumentacją "Shell state does not persist") — trzeba
+ustawić JAVA_HOME PONOWNIE w TYM SAMYM wywołaniu co start procesu, najlepiej wprost przez
+`$psi.EnvironmentVariables["JAVA_HOME"]` zamiast polegać na dziedziczeniu z `$env:`.
+**Ten wzorzec (System.Diagnostics.Process + cmd.exe + jawny JAVA_HOME w
+EnvironmentVariables) jest teraz REKOMENDOWANYM sposobem startowania backendu w tej
+sesji i przyszłych sesjach — zastąp nim `Start-Process` we wszystkich kolejnych krokach
+weryfikacji.** Do zatrzymania backendu nadal wystarcza `Get-Process java | Stop-Process
+-Force` (java jest procesem potomnym pod cmd.exe, ale zabicie samego java wystarcza).
+
+**Następny krok**: kontynuować od **lekcji 25 (`25_OptimisticLocking`)** w `_12_hibernate` —
 tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
 w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
-— plik trzeba odtworzyć na początku nowej sesji, treść opisana niżej), zweryfikuj
+— plik trzeba odtworzyć na początku nowej sesji), zweryfikuj
 `node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
-`src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu + pełna
-weryfikacja (API + regresja, zapytania POJEDYNCZO) PRZED każdym commitem, commitować
-co 2 lekcje.
+`src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu (NOWYM
+wzorcem System.Diagnostics.Process opisanym wyżej, NIE Start-Process) + pełna
+weryfikacja (API + regresja, zapytania POJEDYNCZO, z uwzględnieniem osobliwości
+"pierwsze 1-3 zapytania po restarcie moga dac falszywe 0/false dla WSZYSTKICH lekcji,
+nie tylko nowych — powtórz `GET .../lessons` po chwili, az `hasContent` bedzie poprawne
+dla juz gotowych lekcji") PRZED każdym commitem, commitować co 2 lekcje.
 
 Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
