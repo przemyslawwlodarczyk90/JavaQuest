@@ -1881,21 +1881,31 @@ zwykle), zanim 4. próba dała poprawne `26/30 hasContent`; potwierdzone przez `
 rozgrzewający się przy pierwszych wywołaniach po starcie. Regresja na
 `_10_dao/01_DaoIntroduction/quiz` → 100 — zero regresji.
 
-**Następny krok**: kontynuować od **lekcji 27 (`27_InheritanceMapping`)** w `_12_hibernate` —
+**Stan na 2026-08-29 (ciąg dalszy 6): `_12_hibernate` lekcje 27-28/30 UKOŃCZONE**
+(27_InheritanceMapping, 28_BeanValidationIntegration) — każda 7/30/100, wygenerowana
+tym samym workflow. Zweryfikowane end-to-end — TYM RAZEM osobliwość "pierwsze zapytania
+po restarcie = 0" utrzymała się przez 3 pełne próby PLUS dodatkowe ~90s oczekiwania
+(CPU procesu java rosło z 18s do 42s+ w tym czasie) — DŁUŻEJ niż zwykle (zwykle 1-4
+próby wystarczają), ale WCIĄŻ w granicach opisanego wcześniej zjawiska (do kilku minut
+przy większej ilości treści, patrz notatka z 2026-08-29 o 265+ plikach). Zasada
+pozostaje: NIE restartuj backendu z tego powodu, po prostu poczekaj dłużej i powtórz
+zapytanie. Regresja na `_11_buildtools/01_WhyBuildTools/quiz` → 100 — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 29 (`29_HibernateEnvers`)** w `_12_hibernate` —
 tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
 i `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
 w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
 — plik trzeba odtworzyć na początku nowej sesji), zweryfikuj
 `node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
-`src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu (NOWYM
-wzorcem System.Diagnostics.Process opisanym wyżej, NIE Start-Process) + pełna
-weryfikacja (API + regresja, zapytania POJEDYNCZO, z uwzględnieniem osobliwości
-"pierwsze KILKA (nawet 3-4) zapytań po restarcie moga dac falszywe 0/false dla
-WSZYSTKICH lekcji, nie tylko nowych — powtórz `GET .../lessons` kilkukrotnie, az
-`hasContent` bedzie poprawne dla juz gotowych lekcji, `curl -v` potwierdza ze serwer
-zawsze zwraca 200 z pelna odpowiedzia") PRZED każdym commitem, commitować co 2 lekcje.
-Po lekcji 28 zostaną 29-30 (ostatnia para, kończąca rozdział `_12_hibernate` 30/30).
+`src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu (wzorcem
+System.Diagnostics.Process opisanym wyżej) + pełna weryfikacja (API + regresja,
+zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwość "pierwsze kilka zapytań po
+restarcie moga dac falszywe 0/false — czasem trwa to dluzej niz 3-4 proby, sprawdzaj
+CPU procesu java i po prostu czekaj, NIE restartuj bez potrzeby") PRZED każdym
+commitem, commitować co 2 lekcje. **Lekcja 30 (`30_BestPracticesAndCapstone`) jest
+OSTATNIA w rozdziale — po jej ukończeniu `_12_hibernate` będzie w pełni KOMPLETNY
+(30/30) na platformie edukacyjnej.**
 
 Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
