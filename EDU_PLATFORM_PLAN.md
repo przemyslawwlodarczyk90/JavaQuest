@@ -1891,27 +1891,47 @@ przy większej ilości treści, patrz notatka z 2026-08-29 o 265+ plikach). Zasa
 pozostaje: NIE restartuj backendu z tego powodu, po prostu poczekaj dłużej i powtórz
 zapytanie. Regresja na `_11_buildtools/01_WhyBuildTools/quiz` → 100 — zero regresji.
 
-**Następny krok**: kontynuować od **lekcji 29 (`29_HibernateEnvers`)** w `_12_hibernate` —
-tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
-i `_Exercises_LessonNN_Temat.java` w
-`src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
-w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
-— plik trzeba odtworzyć na początku nowej sesji), zweryfikuj
-`node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
-`src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu (wzorcem
+### ✅ `_12_hibernate` KOMPLETNY na platformie edukacyjnej (stan na 2026-08-29): 30/30 lekcji
+
+**Cały rozdział `_12_hibernate` ma teraz pełną treść (teoria+30 zadań+100 quizów) na
+platformie** — lekcje 29-30 (29_HibernateEnvers, 30_BestPracticesAndCapstone) dopisane
+w tej sesji, kończąc rozdział zaczęty wcześniej. Zweryfikowane end-to-end po restarcie
+backendu (osobliwość "pierwsze zapytania po restarcie = 0" utrzymała się przez 3 próby +
+dodatkowe ~2×2min oczekiwania — CPU procesu java rosło cały czas, potwierdzając że to
+wciąż trwający insert, nie błąd) — regresja na `_10_dao/01_DaoIntroduction/quiz` → 100,
+zero regresji. `GET .../lessons` potwierdził `30/30 hasContent: true`.
+
+**Następny krok**: kontynuować od **rozdziału `_13_libraries`** (32 lekcje), zaczynając
+od **lekcji 1 (`01_WhyLibraries`)** — tym samym, sprawdzonym workflow: czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_13_libraries/LessonNN_Temat/`, napisz `genNNk.js`
+w scratchpadzie (NOWY sufiks `k` dla tego rozdziału, korzysta z `scratchpad/helpers.js`
+z `q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku nowej sesji, treść opisana
+niżej), zweryfikuj `node genNNk.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem
+do `src/main/resources/content/_13_libraries/NN_Temat.json`, restart backendu (wzorcem
 System.Diagnostics.Process opisanym wyżej) + pełna weryfikacja (API + regresja,
 zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwość "pierwsze kilka zapytań po
 restarcie moga dac falszywe 0/false — czasem trwa to dluzej niz 3-4 proby, sprawdzaj
 CPU procesu java i po prostu czekaj, NIE restartuj bez potrzeby") PRZED każdym
-commitem, commitować co 2 lekcje. **Lekcja 30 (`30_BestPracticesAndCapstone`) jest
-OSTATNIA w rozdziale — po jej ukończeniu `_12_hibernate` będzie w pełni KOMPLETNY
-(30/30) na platformie edukacyjnej.**
+commitem, commitować co 2 lekcje.
 
-Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
-lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
+Pełna lista 32 lekcji `_13_libraries` (z `ChapterSeedData.java`): 01_WhyLibraries,
+02_ChoosingAndAddingDependencies, 03_LombokBasics, 04_LombokConstructorsAndBuilder,
+05_LombokAdvancedAndPitfalls, 06_CommonsLang3, 07_CommonsIO, 08_CommonsCollections4,
+09_GuavaImmutableCollections, 10_GuavaMultimapMultisetBiMap, 11_GuavaPreconditionsAndCache,
+12_OkHttpBasics, 13_OkHttpAsyncAndInterceptors, 14_OkHttpStreamingAndTesting,
+15_WhySlf4jNotSystemOut, 16_LogbackConfiguration, 17_MdcAndLoggingBestPractices,
+18_WhyDependencyInjection, 19_GuiceBasics, 20_GuiceAdvancedModulesAndScopes,
+21_MapStructBasics, 22_MapStructAdvancedMappings, 23_ApachePoiWritingExcel,
+24_ApachePoiReadingAndStyling, 25_JsoupParsingHtml, 26_JsoupAdvancedScraping,
+27_CaffeineBasics, 28_CaffeineLoadingAndAsyncCache, 29_PicocliBasics,
+30_PicocliSubcommandsAndValidation, 31_SnakeYamlBasics, 32_YamlToObjectMapping.
+
+Po ukończeniu `_13_libraries` (32/32) kontynuować kolejno przez `_14_advancedjava`,
+i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
 zgodnie z pełną, ostateczną listą rozdziałów w `ChapterSeedData.java` — **to jeszcze ok.
-18 rozdziałów, kilkaset lekcji, wiele kolejnych sesji pracy**. Nowy sufiks scratchpada per
-rozdział (`k` dla `_13_libraries`, itd. — kolejna wolna litera alfabetu). Pamiętać:
+17 rozdziałów, kilkaset lekcji, wiele kolejnych sesji pracy**. Nowy sufiks scratchpada per
+rozdział (`l` dla `_14_advancedjava`, itd. — kolejna wolna litera alfabetu). Pamiętać:
 `$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"` przed `mvnw.cmd` w KAŻDEJ nowej
 sesji PowerShell (nie jest ustawione globalnie), i `scratchpad/helpers.js` trzeba
 odtworzyć na początku nowej sesji (scratchpad jest per-sesja) — treść pliku (2 funkcje:
@@ -1919,6 +1939,9 @@ odtworzyć na początku nowej sesji (scratchpad jest per-sesja) — treść plik
 `fillQuizTo100(quiz, topics15, groupLabel)` dopełnia tablicę quizu do 100 pytań z 15 par
 [termin, opis], rotując 5 szablonów pytań i pozycję poprawnej odpowiedzi A-D) jest
 opisana w historii tego pliku (sekcja ze stanu na 2026-08-28/29) — łatwa do odtworzenia
-1:1. Kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ani między
-rozdziałami, zgodnie z wyraźną prośbą użytkownika z tej sesji.
+1:1. **Nowy, sprawdzony wzorzec startowania backendu (System.Diagnostics.Process +
+cmd.exe zamiast Start-Process, opisany wyżej w sekcji stanu na 2026-08-29) MUSI być
+używany dalej** — Start-Process okazał się niestabilny w tej sesji (proces ginął bez
+śladu błędu). Kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ani
+między rozdziałami, zgodnie z wyraźną prośbą użytkownika z tej sesji.
 ---
