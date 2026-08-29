@@ -1901,14 +1901,22 @@ dodatkowe ~2×2min oczekiwania — CPU procesu java rosło cały czas, potwierdz
 wciąż trwający insert, nie błąd) — regresja na `_10_dao/01_DaoIntroduction/quiz` → 100,
 zero regresji. `GET .../lessons` potwierdził `30/30 hasContent: true`.
 
-**Następny krok**: kontynuować od **rozdziału `_13_libraries`** (32 lekcje), zaczynając
-od **lekcji 1 (`01_WhyLibraries`)** — tym samym, sprawdzonym workflow: czytaj
-`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+**Stan na 2026-08-29 (`_13_libraries` rozpoczęty): lekcje 1-2/32 UKOŃCZONE**
+(01_WhyLibraries, 02_ChoosingAndAddingDependencies) — każda 7/30/100, wygenerowana
+workflow z NOWYM sufiksem scratchpad `k`. Zweryfikowane end-to-end (backend uruchomiony
+nowym, stabilnym wzorcem System.Diagnostics.Process; osobliwość "pierwsze zapytania po
+restarcie = 0" utrzymała się przez 3 próby + ~2min dodatkowego oczekiwania — normalne
+dla tej skali treści). Regresja na `_12_hibernate/01_OrmIntroduction/quiz` → 100 — zero
+regresji.
+
+**Następny krok**: kontynuować od **lekcji 3 (`03_LombokBasics`)** w `_13_libraries` —
+tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_13_libraries/LessonNN_Temat/`, napisz `genNNk.js`
-w scratchpadzie (NOWY sufiks `k` dla tego rozdziału, korzysta z `scratchpad/helpers.js`
-z `q()`/`fillQuizTo100()` — plik trzeba odtworzyć na początku nowej sesji, treść opisana
-niżej), zweryfikuj `node genNNk.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem
-do `src/main/resources/content/_13_libraries/NN_Temat.json`, restart backendu (wzorcem
+w scratchpadzie (sufiks `k`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
+— plik trzeba odtworzyć na początku nowej sesji), zweryfikuj `node genNNk.js`
+(theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
+`src/main/resources/content/_13_libraries/NN_Temat.json`, restart backendu (wzorcem
 System.Diagnostics.Process opisanym wyżej) + pełna weryfikacja (API + regresja,
 zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwość "pierwsze kilka zapytań po
 restarcie moga dac falszywe 0/false — czasem trwa to dluzej niz 3-4 proby, sprawdzaj
