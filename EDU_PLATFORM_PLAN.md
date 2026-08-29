@@ -1779,6 +1779,30 @@ weryfikacja (API + regresja, zapytania POJEDYNCZO — pamiętaj o znanej, nieszk
 osobliwości "pierwsze 1-3 zapytania po restarcie mogą dać fałszywe 0/false, powtórz
 zapytanie") PRZED każdym commitem, commitować co 2-3 lekcje.
 
+**Stan na 2026-08-29 (ciąg dalszy): `_12_hibernate` lekcje 01-10/30 UKOŃCZONE** (blok
+wprowadzający: ORM/architektura/konfiguracja/pierwsza encja/klucze/CRUD/Session vs
+EntityManager/transakcje/Embeddable/enumy+konwertery) — każda 7 sekcji teorii/30
+zadań/100 quizów, zweryfikowana end-to-end (restart backendu + zapytania API + regresja)
+PRZED każdym commitem. Sesja kontynuowana w pełni autonomicznie na wyraźne polecenie
+użytkownika ("nie pytaj się czy kontynuować tylko rób"). Napotkany i rozwiązany drobny
+incydent: raz backend nie wystartował z powodu osieroconego procesu `java` trzymającego
+port 8082 z poprzedniej, nieudanej próby — rozwiązanie: `Get-NetTCPConnection -LocalPort
+8082` żeby znaleźć PID, `Stop-Process -Id <pid> -Force`, potem restart. Warto sprawdzać
+`Get-Process java` PRZED każdym startem backendu, jeśli poprzednia sesja zakończyła się
+nietypowo.
+
+**Następny krok**: kontynuować od **lekcji 11 (`11_OneToOneAssociation`)** w
+`_12_hibernate` — pierwsza lekcja bloku relacji (11-14: OneToOne/OneToMany-ManyToOne/
+ManyToMany/CascadeTypes), tym samym, sprawdzonym workflow: czytaj `_LessonNN_Temat.java`
+i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_12_hibernate/LessonNN_Temat/`, napisz `genNNj.js`
+w scratchpadzie (sufiks `j`, korzysta z `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
+— plik trzeba odtworzyć na początku nowej sesji, treść opisana niżej), zweryfikuj
+`node genNNj.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
+`src/main/resources/content/_12_hibernate/NN_Temat.json`, restart backendu + pełna
+weryfikacja (API + regresja, zapytania POJEDYNCZO) PRZED każdym commitem, commitować co
+2 lekcje.
+
 Po ukończeniu `_12_hibernate` (30/30) kontynuować kolejno przez `_13_libraries` (32
 lekcje), i dalej przez WSZYSTKIE pozostałe rozdziały aż do `_31_spring_cloud_microservices`,
 zgodnie z pełną, ostateczną listą rozdziałów w `ChapterSeedData.java` — **to jeszcze ok.
