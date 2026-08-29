@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "ANALOGY",
+      "heading": "enqueue() jako zamówienie z dostawą, nie czekanie w kolejce",
+      "body": "execute() to jak stanie w kolejce w urzędzie - blokujesz się (i swój wątek) aż do otrzymania wyniku. enqueue(Callback) to jak złożenie zamówienia z dostawą do domu - zostawiasz numer telefonu (Callback) i wracasz do swoich spraw (main() leci dalej), a kurier (wątek puli OkHttp) zadzwoni (onResponse/onFailure) dopiero gdy paczka dotrze."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "enqueue(Callback) — wywołanie asynchroniczne",
+      "body": "call.enqueue(new Callback() {...}) wysyła żądanie NA WĄTKU PULI OkHttp (nie blokuje wątku wywołującego). Callback ma dwie metody: onResponse(Call call, Response response) - wywoływana po otrzymaniu JAKIEJKOLWIEK odpowiedzi HTTP (nawet 404/500 - to WCIĄŻ 'sukces' w sensie sieciowym), oraz onFailure(Call call, IOException e) - wywoływana TYLKO przy problemie SIECIOWYM (brak połączenia, timeout, DNS)."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "CountDownLatch — pomost między asynchronicznością a main()",
+      "body": "CountDownLatch latch = new CountDownLatch(1);\ncall.enqueue(new Callback() {\n  public void onResponse(Call call, Response response) throws IOException {\n    System.out.println(response.body().string());\n    latch.countDown();\n  }\n  public void onFailure(Call call, IOException e) {\n    System.out.println(\"Blad: \" + e);\n    latch.countDown();\n  }\n});\nlatch.await(); // main() CZEKA tutaj, az countDown() zostanie wywolane\n\nBez await() program moglby zakonczyc sie (lub kontynuowac) ZANIM callback w ogole sie wykona - watek puli OkHttp dziala NIEZALEZNIE."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Interceptor — punkt przechwycenia żądania i odpowiedzi",
+      "body": "Interceptor to interfejs z jedną metodą intercept(Chain chain), pozwalającą OBEJRZEĆ i ZMODYFIKOWAĆ żądanie PRZED wysłaniem oraz odpowiedź PO otrzymaniu - a nawet ZABLOKOWAĆ całe żądanie (nie wywołując chain.proceed()) i zwrócić własną, sztuczną odpowiedź. To fundament logowania, autoryzacji, retry, cache i rate limitingu w OkHttp."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "chain.request() i chain.proceed() — łańcuch przetwarzania",
+      "body": "Interceptor authInterceptor = chain -> {\n    Request original = chain.request();\n    Request zAutoryzacja = original.newBuilder()\n        .header(\"Authorization\", \"Bearer demo-token-123\")\n        .build();\n    return chain.proceed(zAutoryzacja); // PRZEKAZUJE dalej (do nastepnego interceptora lub sieci)\n};\n\nWażne: Request jest niemutowalny, więc modyfikacja ZAWSZE przechodzi przez newBuilder(). chain.proceed(request) wysyła (zmodyfikowane) żądanie DALEJ w łańcuchu i zwraca Response - ten Response też można zmodyfikować (response.newBuilder()...) przed zwróceniem z intercept()."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Rejestracja wielu interceptorów — kolejność jako łańcuch opakowań",
+      "body": "OkHttpClient client = new OkHttpClient.Builder()\n    .addInterceptor(loggingInterceptor)\n    .addInterceptor(authInterceptor)\n    .build();\n\nPierwszy dodany interceptor OPAKOWUJE drugi - loggingInterceptor widzi żądanie PRZED authInterceptor (i odpowiedź PO nim, jako OSTATNI). Kolejność rejestracji ma znaczenie: jeśli logger ma logować OSTATECZNE żądanie (z tokenem), musi być dodany PO authInterceptor."
+    },
+    {
+      "type": "DIAGRAM",
+      "heading": "addInterceptor() vs addNetworkInterceptor()",
+      "body": "addInterceptor() (interceptor APLIKACJI): wywolywany DOKLADNIE RAZ na Call, widzi ORYGINALNE zadanie i FINALNA odpowiedz (po ew. cache/redirect), NIE wymaga polaczenia sieciowego (moze zwrocic wlasna odpowiedz bez sieci - np. z cache).\n\naddNetworkInterceptor() (interceptor SIECI): dziala BLISKO faktycznego polaczenia TCP, moze byc wywolany WIELOKROTNIE na jeden Call (np. przy przekierowaniach/retry), ma dostep do chain.connection() (info o fizycznym polaczeniu).\n\nZasada: logowanie/autoryzacja/retry na poziomie logiki -> addInterceptor(). Inspekcja surowego ruchu sieciowego (np. skompresowane naglowki) -> addNetworkInterceptor()."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Uruchom lokalny com.sun.net.httpserver.HttpServer na porcie 0 z kontekstem \"/dane\" zwracającym tekst \"async-ok\". Wykonaj GET przez client.newCall(request).enqueue(Callback) i użyj CountDownLatch(1), aby main() poczekał na wynik przed zakończeniem. Wypisz odebrane ciało w onResponse.",
+      "hint": "enqueue + CountDownLatch(1), countDown w obu galeziach callbacku.",
+      "solution": "CountDownLatch latch = new CountDownLatch(1); client.newCall(request).enqueue(new Callback() { public void onResponse(Call call, Response response) throws IOException { System.out.println(response.body().string()); latch.countDown(); } public void onFailure(Call call, IOException e) { latch.countDown(); } }); latch.await();"
+    },
+    {
+      "prompt": "Zbuduj Request wskazujący na \"http://localhost:1/brak\" (port bez nasłuchującego serwera) i wykonaj enqueue(). W onFailure wypisz nazwę klasy złapanego wyjątku. Użyj CountDownLatch, żeby main() poczekał na wynik (z rozsądnym timeoutem, np. connectTimeout(2, TimeUnit.SECONDS) na kliencie).",
+      "hint": "Port 1 bez serwera, connectTimeout krotki, onFailure loguje e.getClass().",
+      "solution": "OkHttpClient client = new OkHttpClient.Builder().connectTimeout(2, TimeUnit.SECONDS).build(); Request r = new Request.Builder().url(\"http://localhost:1/brak\").build(); CountDownLatch latch = new CountDownLatch(1); client.newCall(r).enqueue(new Callback() { public void onResponse(Call c, Response resp){ latch.countDown(); } public void onFailure(Call c, IOException e){ System.out.println(e.getClass().getSimpleName()); latch.countDown(); } }); latch.await();"
+    },
+    {
+      "prompt": "Kontekst \"/brak-zasobu\" niech zwraca kod 404. Wykonaj żądanie asynchronicznie i zademonstruj (przez CountDownLatch), że onResponse JEST wywoływane (a NIE onFailure) - wypisz response.code() wewnątrz onResponse.",
+      "hint": "404 to nadal onResponse, nie onFailure.",
+      "solution": "server.createContext(\"/brak-zasobu\", ex -> { ex.sendResponseHeaders(404,0); ex.close(); }); CountDownLatch latch = new CountDownLatch(1); client.newCall(request).enqueue(new Callback(){ public void onResponse(Call c, Response r){ System.out.println(r.code()); latch.countDown(); } public void onFailure(Call c, IOException e){ latch.countDown(); } }); latch.await();"
+    },
+    {
+      "prompt": "Napisz prosty Interceptor wypisujący przez System.out metodę i URL każdego żądania PRZED chain.proceed(request) oraz kod odpowiedzi PO. Zarejestruj go przez OkHttpClient.Builder().addInterceptor(...) i wykonaj nim jedno żądanie GET do dowolnego kontekstu.",
+      "hint": "Interceptor jako lambda, log przed i po chain.proceed.",
+      "solution": "Interceptor logger = chain -> { Request req = chain.request(); System.out.println(req.method()+\" \"+req.url()); Response resp = chain.proceed(req); System.out.println(\"kod: \"+resp.code()); return resp; }; OkHttpClient client = new OkHttpClient.Builder().addInterceptor(logger).build();"
+    },
+    {
+      "prompt": "Napisz Interceptor dodający nagłówek \"Authorization: Bearer test-token\" do KAŻDEGO żądania (przez chain.request().newBuilder().header(...).build()). Kontekst serwera \"/sprawdz\" niech odczyta ten nagłówek i odeśle go jako ciało odpowiedzi. Zweryfikuj, że nagłówek dotarł, mimo że NIE ustawiałeś go ręcznie przy budowie Request.",
+      "hint": "newBuilder().header() w interceptorze, echo naglowka po stronie serwera.",
+      "solution": "Interceptor auth = chain -> chain.proceed(chain.request().newBuilder().header(\"Authorization\",\"Bearer test-token\").build()); server.createContext(\"/sprawdz\", ex -> { String v = ex.getRequestHeaders().getFirst(\"Authorization\"); byte[] b = v.getBytes(); ex.sendResponseHeaders(200,b.length); ex.getResponseBody().write(b); }); OkHttpClient client = new OkHttpClient.Builder().addInterceptor(auth).build();"
+    },
+    {
+      "prompt": "W interceptorze zmierz czas między chain.request() a otrzymaniem Response z chain.proceed(request) (System.nanoTime()). Wypisz czas w milisekundach. Kontekst serwera niech celowo śpi 100ms przed odpowiedzią, żeby zmierzony czas był zauważalny.",
+      "hint": "System.nanoTime() przed i po chain.proceed, serwer Thread.sleep(100).",
+      "solution": "server.createContext(\"/wolne\", ex -> { try{Thread.sleep(100);}catch(Exception e){} ex.sendResponseHeaders(200,0); ex.close(); }); Interceptor timer = chain -> { long t0 = System.nanoTime(); Response r = chain.proceed(chain.request()); long ms = (System.nanoTime()-t0)/1_000_000; System.out.println(ms+\"ms\"); return r; };"
+    },
+    {
+      "prompt": "Zarejestruj DWA interceptory (przez dwa wywołania addInterceptor) - każdy niech wypisuje swój numer (\"Interceptor 1 - start\" / \"Interceptor 2 - start\" itd. przed i po chain.proceed). Wykonaj jedno żądanie i zaobserwuj w konsoli KOLEJNOŚĆ wywołań (interceptory tworzą łańcuch - pierwszy dodany opakowuje drugi).",
+      "hint": "Dwa addInterceptor, kazdy loguje start/koniec wokol proceed.",
+      "solution": "Interceptor i1 = chain -> { System.out.println(\"Interceptor 1 - start\"); Response r = chain.proceed(chain.request()); System.out.println(\"Interceptor 1 - koniec\"); return r; }; Interceptor i2 = chain -> { System.out.println(\"Interceptor 2 - start\"); Response r = chain.proceed(chain.request()); System.out.println(\"Interceptor 2 - koniec\"); return r; }; new OkHttpClient.Builder().addInterceptor(i1).addInterceptor(i2).build();"
+    },
+    {
+      "prompt": "Wykonaj TRZY niezależne żądania asynchroniczne (enqueue) do trzech różnych kontekstów lokalnego serwera, używając JEDNEGO CountDownLatch(3) (każdy callback wywołuje countDown()). Poczekaj na wszystkie trzy (await()) i wypisz zebrane wyniki.",
+      "hint": "CountDownLatch(3), trzy niezalezne enqueue.",
+      "solution": "CountDownLatch latch = new CountDownLatch(3); List<String> wyniki = Collections.synchronizedList(new ArrayList<>()); for (String path : List.of(\"/a\",\"/b\",\"/c\")) { client.newCall(new Request.Builder().url(baseUrl+path).build()).enqueue(new Callback(){ public void onResponse(Call c, Response r) throws IOException { wyniki.add(r.body().string()); latch.countDown(); } public void onFailure(Call c, IOException e){ latch.countDown(); } }); } latch.await(); System.out.println(wyniki);"
+    },
+    {
+      "prompt": "Wykonaj żądanie asynchroniczne, zapisując wynik (ciało odpowiedzi) w AtomicReference<String> wewnątrz onResponse. Po await() na CountDownLatch wypisz zawartość AtomicReference w main().",
+      "hint": "AtomicReference<String> ustawiany w onResponse, odczyt po await.",
+      "solution": "AtomicReference<String> wynik = new AtomicReference<>(); CountDownLatch latch = new CountDownLatch(1); client.newCall(request).enqueue(new Callback(){ public void onResponse(Call c, Response r) throws IOException { wynik.set(r.body().string()); latch.countDown(); } public void onFailure(Call c, IOException e){ latch.countDown(); } }); latch.await(); System.out.println(wynik.get());"
+    },
+    {
+      "prompt": "Zarejestruj interceptor dodający nagłówek \"X-Klient: javaQuest-demo\" do KAŻDEGO żądania. Wykonaj DWA różne żądania (do dwóch różnych kontekstów) tym samym klientem i zweryfikuj (przez echo po stronie serwera), że nagłówek pojawił się w OBU przypadkach.",
+      "hint": "Interceptor dodajacy staly naglowek, dwa rozne zadania tym samym klientem.",
+      "solution": "Interceptor klientInterceptor = chain -> chain.proceed(chain.request().newBuilder().header(\"X-Klient\",\"javaQuest-demo\").build()); OkHttpClient client = new OkHttpClient.Builder().addInterceptor(klientInterceptor).build(); // wykonaj GET do /a i /b, serwer odsyla naglowek X-Klient jako echo"
+    },
+    {
+      "prompt": "Kontekst \"/wolne\" niech śpi 200ms. Wykonaj DWA żądania do niego - jedno przez execute() (synchronicznie, mierząc czas blokady main()), drugie przez enqueue() (asynchronicznie, z wypisaniem komunikatu \"main() kontynuuje\" ZARAZ po enqueue(), przed otrzymaniem wyniku). Porównaj w komentarzu różnicę w zachowaniu.",
+      "hint": "execute() blokuje, enqueue() zwraca sterowanie natychmiast.",
+      "solution": "server.createContext(\"/wolne\", ex -> { try{Thread.sleep(200);}catch(Exception e){} ex.sendResponseHeaders(200,0); ex.close(); }); client.newCall(request).execute().close(); // blokuje ~200ms client.newCall(request).enqueue(new Callback(){ public void onResponse(Call c, Response r){} public void onFailure(Call c, IOException e){} }); System.out.println(\"main() kontynuuje\"); // wypisuje sie NATYCHMIAST, przed zakonczeniem zadania"
+    },
+    {
+      "prompt": "Napisz interceptor, który SPRAWDZA URL żądania (chain.request().url()) - jeśli ścieżka zawiera \"/zablokowane\", NIE wywołuje chain.proceed(), tylko od razu buduje i zwraca własny obiekt Response z kodem 403 (przez new Response.Builder()...). Wykonaj żądanie do \"/zablokowane\" i zweryfikuj kod 403 BEZ faktycznego wysłania żądania do serwera (licznik żądań po stronie serwera = 0).",
+      "hint": "Interceptor sprawdza url().encodedPath(), zwraca wlasny Response bez proceed.",
+      "solution": "Interceptor blocker = chain -> { if (chain.request().url().encodedPath().contains(\"/zablokowane\")) { return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(403).message(\"Forbidden\").body(ResponseBody.create(\"\", MediaType.parse(\"text/plain\"))).build(); } return chain.proceed(chain.request()); };"
+    },
+    {
+      "prompt": "Kontekst serwera niech zwraca 500 dla pierwszych 2 wywołań, a 200 dla trzeciego. Napisz interceptor, który W PĘTLI (maks. 5 prób) wywołuje chain.proceed(request), a jeśli kod odpowiedzi to 500, zamyka odpowiedź i próbuje ponownie. Zweryfikuj, że finalna odpowiedź ma kod 200.",
+      "hint": "Petla do 5 prob w interceptorze, zamykanie odpowiedzi 500 przed retry.",
+      "solution": "Interceptor retry = chain -> { Response resp = null; for (int i=0;i<5;i++) { if (resp!=null) resp.close(); resp = chain.proceed(chain.request()); if (resp.code()!=500) break; } return resp; };"
+    },
+    {
+      "prompt": "Napisz interceptor trzymający AtomicInteger jako licznik przechwyconych żądań (inkrementowany przy każdym wywołaniu intercept()). Wykonaj 5 różnych żądań (mix execute/enqueue) tym samym klientem i wypisz finalną wartość licznika (powinna wynosić 5).",
+      "hint": "AtomicInteger inkrementowany w kazdym wywolaniu intercept.",
+      "solution": "AtomicInteger licznik = new AtomicInteger(); Interceptor counter = chain -> { licznik.incrementAndGet(); return chain.proceed(chain.request()); }; OkHttpClient client = new OkHttpClient.Builder().addInterceptor(counter).build(); // wykonaj 5 zadan (execute/enqueue), potem System.out.println(licznik.get());"
+    },
+    {
+      "prompt": "Zarejestruj konteksty \"/a\" i \"/b\" zwracające różne teksty. Uruchom OBA żądania asynchronicznie (enqueue) RÓWNOCZEŚNIE (bez czekania na pierwsze przed wysłaniem drugiego), zbierz oba wyniki do Map<String,String> przy pomocy CountDownLatch(2) i wypisz posortowaną mapę po zakończeniu obu.",
+      "hint": "CountDownLatch(2), dwa enqueue BEZ czekania miedzy nimi, wspolna mapa.",
+      "solution": "Map<String,String> wyniki = new ConcurrentHashMap<>(); CountDownLatch latch = new CountDownLatch(2); client.newCall(reqA).enqueue(new Callback(){ public void onResponse(Call c, Response r) throws IOException { wyniki.put(\"a\", r.body().string()); latch.countDown(); } public void onFailure(Call c, IOException e){ latch.countDown(); } }); client.newCall(reqB).enqueue(/* analogicznie dla b */ null); latch.await(); new TreeMap<>(wyniki).forEach((k,v)->System.out.println(k+\"=\"+v));"
+    },
+    {
+      "prompt": "Napisz interceptor, który PO otrzymaniu odpowiedzi z chain.proceed() buduje NOWY obiekt Response (przez response.newBuilder().header(\"X-Przetworzone\", \"tak\").build()) dodający własny nagłówek do odpowiedzi. Wykonaj żądanie i wypisz response.header(\"X-Przetworzone\") po stronie klienta.",
+      "hint": "response.newBuilder().header() po chain.proceed.",
+      "solution": "Interceptor addHeader = chain -> { Response resp = chain.proceed(chain.request()); return resp.newBuilder().header(\"X-Przetworzone\",\"tak\").build(); }; // po zadaniu: System.out.println(response.header(\"X-Przetworzone\"));"
+    },
+    {
+      "prompt": "Kontekst \"/wolne\" niech śpi 2 sekundy. Wykonaj żądanie asynchroniczne (enqueue), a NATYCHMIAST po jego wysłaniu wywołaj call.cancel() na zwróconym obiekcie Call. Zweryfikuj w onFailure, że otrzymano wyjątek związany z anulowaniem (np. sprawdź call.isCanceled()).",
+      "hint": "call.cancel() zaraz po enqueue, onFailure sprawdza call.isCanceled().",
+      "solution": "Call call = client.newCall(request); CountDownLatch latch = new CountDownLatch(1); call.enqueue(new Callback(){ public void onResponse(Call c, Response r){ latch.countDown(); } public void onFailure(Call c, IOException e){ System.out.println(\"anulowane: \"+c.isCanceled()); latch.countDown(); } }); call.cancel(); latch.await();"
+    },
+    {
+      "prompt": "Zarejestruj TRZY interceptory: pierwszy dodaje nagłówek \"X-Krok: 1\", drugi loguje URL, trzeci mierzy czas. Wykonaj jedno żądanie i zademonstruj (kontekst serwera odsyła otrzymane nagłówki jako ciało), że nagłówek dodany w pierwszym interceptorze dotarł do serwera.",
+      "hint": "Trzy addInterceptor w kolejnosci, serwer odsyla otrzymane naglowki.",
+      "solution": "Interceptor krok1 = chain -> chain.proceed(chain.request().newBuilder().header(\"X-Krok\",\"1\").build()); Interceptor logUrl = chain -> { System.out.println(chain.request().url()); return chain.proceed(chain.request()); }; Interceptor timer = chain -> { long t=System.nanoTime(); Response r=chain.proceed(chain.request()); System.out.println((System.nanoTime()-t)/1_000_000+\"ms\"); return r; }; new OkHttpClient.Builder().addInterceptor(krok1).addInterceptor(logUrl).addInterceptor(timer).build();"
+    },
+    {
+      "prompt": "Zbuduj klienta z .callTimeout(300, TimeUnit.MILLISECONDS). Kontekst \"/bardzo-wolne\" niech śpi 1 sekundę. Wykonaj żądanie asynchroniczne i w onFailure zweryfikuj, że otrzymano wyjątek związany z przekroczeniem czasu (np. InterruptedIOException).",
+      "hint": "callTimeout krotszy niz sleep serwera, onFailure lapie InterruptedIOException.",
+      "solution": "OkHttpClient client = new OkHttpClient.Builder().callTimeout(300, TimeUnit.MILLISECONDS).build(); server.createContext(\"/bardzo-wolne\", ex -> { try{Thread.sleep(1000);}catch(Exception e){} ex.sendResponseHeaders(200,0); ex.close(); }); client.newCall(request).enqueue(new Callback(){ public void onResponse(Call c, Response r){} public void onFailure(Call c, IOException e){ System.out.println(e.getClass().getSimpleName()); } });"
+    },
+    {
+      "prompt": "Zarejestruj JEDEN interceptor przez addInterceptor() i JEDEN przez addNetworkInterceptor() - każdy niech wypisuje inny komunikat. Wykonaj jedno żądanie i w komentarzu opisz zaobserwowaną kolejność/kontekst wywołań obu interceptorów.",
+      "hint": "Jeden addInterceptor, jeden addNetworkInterceptor, obserwacja w komentarzu.",
+      "solution": "OkHttpClient client = new OkHttpClient.Builder().addInterceptor(chain -> { System.out.println(\"APLIKACJA\"); return chain.proceed(chain.request()); }).addNetworkInterceptor(chain -> { System.out.println(\"SIEC\"); return chain.proceed(chain.request()); }).build(); // interceptor aplikacji widziany raz na Call, interceptor sieci blisko faktycznego polaczenia TCP"
+    },
+    {
+      "prompt": "Zarejestruj 5 kontekstów zwracających różne stałe wartości liczbowe jako tekst. Wykonaj 5 żądań asynchronicznych RÓWNOCZEŚNIE, zsumuj odebrane wartości (parsowane z ciała odpowiedzi) w AtomicInteger, korzystając z CountDownLatch(5). Wypisz sumę końcową po await().",
+      "hint": "5 kontekstow, 5 enqueue rownoczesnie, AtomicInteger sumujacy po sparsowaniu.",
+      "solution": "AtomicInteger suma = new AtomicInteger(); CountDownLatch latch = new CountDownLatch(5); for (String path : List.of(\"/w1\",\"/w2\",\"/w3\",\"/w4\",\"/w5\")) { client.newCall(new Request.Builder().url(baseUrl+path).build()).enqueue(new Callback(){ public void onResponse(Call c, Response r) throws IOException { suma.addAndGet(Integer.parseInt(r.body().string().trim())); latch.countDown(); } public void onFailure(Call c, IOException e){ latch.countDown(); } }); } latch.await(); System.out.println(suma.get());"
+    },
+    {
+      "prompt": "Napisz interceptor działający jako prosty \"rate limiter\" - jeśli licznik żądań (AtomicInteger) przekroczy 3 w danym uruchomieniu, interceptor zwraca własny Response z kodem 429 BEZ wywołania chain.proceed(). Wykonaj 5 żądań pod rząd i zweryfikuj, że pierwsze 3 mają kod 200, a kolejne 2 - kod 429.",
+      "hint": "AtomicInteger w interceptorze, po przekroczeniu 3 zwraca 429 bez proceed.",
+      "solution": "AtomicInteger licznik = new AtomicInteger(); Interceptor rateLimiter = chain -> { if (licznik.incrementAndGet() > 3) { return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(429).message(\"Too Many Requests\").body(ResponseBody.create(\"\", null)).build(); } return chain.proceed(chain.request()); };"
+    },
+    {
+      "prompt": "Kontekst serwera niech zawsze zwraca 500. Napisz interceptor zliczający KOLEJNE błędy (500) - po 3 błędach z rzędu, kolejne wywołania interceptora NATYCHMIAST zwracają Response 503 z ciałem \"circuit open\" BEZ wysyłania żądania do serwera (jak uproszczony \"circuit breaker\"). Zademonstruj to zachowanie na 5 kolejnych wywołaniach.",
+      "hint": "AtomicInteger kolejnych bledow, po 3 zwraca 503 bez wysylania zadania.",
+      "solution": "AtomicInteger kolejneBledy = new AtomicInteger(); Interceptor circuitBreaker = chain -> { if (kolejneBledy.get() >= 3) { return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(503).message(\"Circuit Open\").body(ResponseBody.create(\"circuit open\", MediaType.parse(\"text/plain\"))).build(); } Response r = chain.proceed(chain.request()); if (r.code()==500) kolejneBledy.incrementAndGet(); else kolejneBledy.set(0); return r; };"
+    },
+    {
+      "prompt": "Kontekst \"/id\" zwraca identyfikator tekstowy (np. \"42\"). Kontekst \"/szczegoly/{id}\" (zbuduj URL dynamicznie) zwraca dane powiązane z danym id. Wykonaj PIERWSZE żądanie asynchronicznie, a w jego onResponse - na podstawie otrzymanego id - wykonaj DRUGIE żądanie asynchroniczne (zagnieżdżone enqueue). Użyj CountDownLatch(1) zwalnianego dopiero po zakończeniu DRUGIEGO żądania.",
+      "hint": "Zagniezdzone enqueue - drugie zadanie budowane w onResponse pierwszego.",
+      "solution": "CountDownLatch latch = new CountDownLatch(1); client.newCall(new Request.Builder().url(baseUrl+\"/id\").build()).enqueue(new Callback(){ public void onResponse(Call c, Response r) throws IOException { String id = r.body().string(); client.newCall(new Request.Builder().url(baseUrl+\"/szczegoly/\"+id).build()).enqueue(new Callback(){ public void onResponse(Call c2, Response r2) throws IOException { System.out.println(r2.body().string()); latch.countDown(); } public void onFailure(Call c2, IOException e){ latch.countDown(); } }); } public void onFailure(Call c, IOException e){ latch.countDown(); } }); latch.await();"
+    },
+    {
+      "prompt": "Napisz interceptor generujący unikalne \"correlation ID\" (np. UUID.randomUUID()) dla KAŻDEGO żądania, dodawany jako nagłówek \"X-Correlation-Id\", oraz logujący go razem z metodą i URL-em. Kontekst serwera niech odeśle otrzymany nagłówek z powrotem jako ciało odpowiedzi. Wykonaj 3 żądania i zweryfikuj, że każde ma INNY correlation ID.",
+      "hint": "UUID.randomUUID() w interceptorze jako naglowek X-Correlation-Id.",
+      "solution": "Interceptor correlation = chain -> { String id = UUID.randomUUID().toString(); Request req = chain.request().newBuilder().header(\"X-Correlation-Id\", id).build(); System.out.println(req.method()+\" \"+req.url()+\" id=\"+id); return chain.proceed(req); }; // wykonaj 3 zadania, kazde dostanie inne id"
+    },
+    {
+      "prompt": "Zarejestruj konteksty \"/szybkie\" (natychmiastowa odpowiedź) i \"/wolne2\" (śpi 500ms). Wykonaj OBA żądania asynchronicznie i zaimplementuj logikę \"kto pierwszy, ten wygrywa\" - zapisz w AtomicReference<String> NAZWĘ endpointu, którego callback wykonał się jako pierwszy (użyj CountDownLatch(1) zwalnianego TYLKO przez pierwszy zakończony callback).",
+      "hint": "CountDownLatch(1), pierwszy callback ktory zdazy ustawia AtomicReference.",
+      "solution": "AtomicReference<String> zwyciezca = new AtomicReference<>(); CountDownLatch latch = new CountDownLatch(1); client.newCall(reqSzybkie).enqueue(new Callback(){ public void onResponse(Call c, Response r){ if (zwyciezca.compareAndSet(null,\"szybkie\")) latch.countDown(); } public void onFailure(Call c, IOException e){} }); client.newCall(reqWolne2).enqueue(new Callback(){ public void onResponse(Call c, Response r){ if (zwyciezca.compareAndSet(null,\"wolne2\")) latch.countDown(); } public void onFailure(Call c, IOException e){} }); latch.await(); System.out.println(zwyciezca.get());"
+    },
+    {
+      "prompt": "Kontekst serwera niech obsługuje zarówno GET jak i POST na tej samej ścieżce, zwracając informację o metodzie w ciele odpowiedzi. Napisz interceptor, który przechwytuje żądania GET do konkretnej ścieżki i PRZEBUDOWUJE je na POST (z pustym body) przed chain.proceed(). Zweryfikuj po stronie klienta, że serwer faktycznie zobaczył POST.",
+      "hint": "Interceptor sprawdza method()==GET i sciezke, przebudowuje na POST.",
+      "solution": "Interceptor toPost = chain -> { Request original = chain.request(); if (original.method().equals(\"GET\") && original.url().encodedPath().equals(\"/zmien\")) { Request post = original.newBuilder().post(RequestBody.create(new byte[0], null)).build(); return chain.proceed(post); } return chain.proceed(original); };"
+    },
+    {
+      "prompt": "Zarejestruj 4 konteksty, z których 1 zawsze zwraca błąd (500) a pozostałe 3 sukces. Wykonaj wszystkie 4 żądania asynchronicznie, zbieraj OSOBNO listę sukcesów i listę błędów (dwie thread-safe kolekcje, np. z java.util.concurrent), używając CountDownLatch(4). Po zakończeniu wypisz podsumowanie: liczba sukcesów i liczba błędów.",
+      "hint": "4 konteksty, CountDownLatch(4), dwie thread-safe listy sukces/blad.",
+      "solution": "List<String> sukcesy = new CopyOnWriteArrayList<>(); List<String> bledy = new CopyOnWriteArrayList<>(); CountDownLatch latch = new CountDownLatch(4); for (String path : List.of(\"/ok1\",\"/ok2\",\"/ok3\",\"/blad\")) { client.newCall(new Request.Builder().url(baseUrl+path).build()).enqueue(new Callback(){ public void onResponse(Call c, Response r){ if (r.isSuccessful()) sukcesy.add(path); else bledy.add(path); latch.countDown(); } public void onFailure(Call c, IOException e){ bledy.add(path); latch.countDown(); } }); } latch.await(); System.out.println(\"sukcesy: \"+sukcesy.size()+\", bledy: \"+bledy.size());"
+    },
+    {
+      "prompt": "Zbuduj interceptor prowadzący pełny \"dziennik audytowy\" (lista rekordów AuditEntry(String method, String url, int statusCode, long durationMs) w thread-safe liście) dla KAŻDEGO żądania wykonanego danym klientem. Wykonaj 5 różnych żądań (mix execute/enqueue) i na koniec wypisz PEŁNY dziennik audytowy.",
+      "hint": "record AuditEntry, thread-safe lista, interceptor dopisuje wpis po kazdym zadaniu.",
+      "solution": "record AuditEntry(String method, String url, int statusCode, long durationMs) {} List<AuditEntry> dziennik = new CopyOnWriteArrayList<>(); Interceptor audit = chain -> { long t0=System.nanoTime(); Request req=chain.request(); Response r=chain.proceed(req); long ms=(System.nanoTime()-t0)/1_000_000; dziennik.add(new AuditEntry(req.method(), req.url().toString(), r.code(), ms)); return r; }; // po 5 zadaniach: dziennik.forEach(System.out::println);"
+    },
+    {
+      "prompt": "Zbuduj JEDEN OkHttpClient łączący WSZYSTKIE mechanizmy z tej lekcji: interceptor autoryzacji (dodaje token), interceptor logujący (metoda/URL/czas/kod), interceptor z retry przy błędach 500 (maks. 3 próby). Wykonaj nim serię 3 różnych żądań asynchronicznych (enqueue + CountDownLatch) do różnych kontekstów lokalnego serwera (w tym jeden zwracający błędy dla pierwszych prób) i wypisz pełne podsumowanie wyników na końcu.",
+      "hint": "Trzy interceptory razem: auth, logger, retry - w tej kolejnosci rejestracji.",
+      "solution": "Interceptor auth = chain -> chain.proceed(chain.request().newBuilder().header(\"Authorization\",\"Bearer demo-token\").build()); Interceptor logger = chain -> { long t=System.nanoTime(); Response r=chain.proceed(chain.request()); System.out.println(chain.request().method()+\" \"+chain.request().url()+\" -> \"+r.code()+\" (\"+(System.nanoTime()-t)/1_000_000+\"ms)\"); return r; }; Interceptor retry = chain -> { Response r=null; for(int i=0;i<3;i++){ if(r!=null) r.close(); r=chain.proceed(chain.request()); if(r.code()!=500) break; } return r; }; OkHttpClient client = new OkHttpClient.Builder().addInterceptor(auth).addInterceptor(logger).addInterceptor(retry).build(); // wykonaj 3 zadania enqueue z CountDownLatch(3), wypisz podsumowanie"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaka jest kluczowa różnica między execute() a enqueue() w OkHttp?",
+      "options": {
+        "A": "execute() jest szybsze, enqueue() wolniejsze",
+        "B": "execute() jest SYNCHRONICZNE i BLOKUJE wątek wywołujący do otrzymania wyniku, enqueue() jest ASYNCHRONICZNE - wysyła żądanie na wątku puli OkHttp i wraca natychmiast, wynik dociera przez Callback",
+        "C": "execute() dziala tylko dla GET, enqueue() tylko dla POST",
+        "D": "Nie ma zadnej roznicy, to synonimy"
+      },
+      "correct": "B",
+      "explanation": "execute() blokuje wątek wywołujący aż do zakończenia żądania (styl synchroniczny). enqueue(Callback) wysyła żądanie na osobnym wątku z puli OkHttp i natychmiast zwraca sterowanie do wywołującego kodu - wynik (sukces lub błąd) dociera pózniej asynchronicznie przez metody Callback."
+    },
+    {
+      "question": "Kiedy wywoływana jest metoda onFailure(Call, IOException) w Callback?",
+      "options": {
+        "A": "Za kazdym razem, gdy serwer zwroci kod bledu (np. 404 lub 500)",
+        "B": "TYLKO przy problemie SIECIOWYM (brak polaczenia, timeout, przerwane polaczenie) - NIGDY dla poprawnie otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "Zawsze po onResponse, jako dodatkowe potwierdzenie",
+        "D": "Tylko gdy uzywamy execute(), nigdy przy enqueue()"
+      },
+      "correct": "B",
+      "explanation": "onFailure jest wywolywane WYLACZNIE przy bledach na poziomie SIECI (np. ConnectException, SocketTimeoutException) - kody bledu HTTP (404, 500) to WCIAZ poprawnie otrzymana odpowiedz, wiec trafiaja do onResponse, nie onFailure."
+    },
+    {
+      "question": "Po co używa się CountDownLatch razem z enqueue() w prostych demo/programach main()?",
+      "options": {
+        "A": "Latch przyspiesza wykonanie zadania sieciowego",
+        "B": "Bo main() (lub inny watek) musi POCZEKAC na wynik callbacku wywolywanego asynchronicznie na innym watku - bez tego program moglby zakonczyc sie zanim callback w ogole sie wykona",
+        "C": "Latch jest wymagany przez sam interfejs Callback",
+        "D": "Latch zastepuje potrzebe uzycia OkHttpClient"
+      },
+      "correct": "B",
+      "explanation": "enqueue() zwraca sterowanie NATYCHMIAST, a callback wykonuje sie na INNYM watku (z puli OkHttp) w nieznanym momencie pozniej. CountDownLatch.await() pozwala watkowi glownemu (np. main()) POCZEKAC, az countDown() zostanie wywolane wewnatrz callbacku, synchronizujac oba watki."
+    },
+    {
+      "question": "Co robi metoda intercept(Chain chain) w interfejsie Interceptor?",
+      "options": {
+        "A": "Automatycznie loguje wszystkie zadania bez zadnej konfiguracji",
+        "B": "Pozwala OBEJRZEC i ZMODYFIKOWAC zadanie PRZED wyslaniem oraz odpowiedz PO otrzymaniu, a nawet calkowicie zablokowac wyslanie i zwrocic wlasna, sztuczna odpowiedz",
+        "C": "Automatycznie szyfruje polaczenie TLS",
+        "D": "Sluzy WYLACZNIE do zmiany adresu URL"
+      },
+      "correct": "B",
+      "explanation": "intercept(Chain) to serce mechanizmu Interceptor - otrzymuje Chain, z ktorego mozna odczytac oryginalne zadanie (chain.request()), zmodyfikowac je i przekazac dalej (chain.proceed(...)), zmodyfikowac otrzymana odpowiedz, lub calkowicie pominac wyslanie i zwrocic wlasny obiekt Response."
+    },
+    {
+      "question": "Dlaczego modyfikacja żądania w interceptorze wymaga chain.request().newBuilder()...build()?",
+      "options": {
+        "A": "Bo newBuilder() jest szybszy niz bezposrednia zmiana pol",
+        "B": "Bo Request jest NIEMUTOWALNY - nie da sie zmienic istniejacego obiektu, trzeba zbudowac NOWY na jego podstawie",
+        "C": "Bo chain.request() zwraca kopie tylko do odczytu bez mozliwosci przeksztalcenia",
+        "D": "To wymog wylacznie stylistyczny, mozna tez modyfikowac Request bezposrednio"
+      },
+      "correct": "B",
+      "explanation": "Request (jak w wiekszosci OkHttp) jest NIEMUTOWALNY - jedynym sposobem uzyskania 'zmodyfikowanej' wersji jest request.newBuilder() (tworzacy Builder na bazie istniejacych wartosci), dodanie zmian i build() nowego obiektu, ktory nastepnie przekazuje sie do chain.proceed(...)."
+    },
+    {
+      "question": "Jeśli zarejestrujemy addInterceptor(A) a potem addInterceptor(B), który z nich widzi żądanie jako pierwszy?",
+      "options": {
+        "A": "B, bo interceptory sa wywolywane w odwrotnej kolejnosci rejestracji",
+        "B": "A - pierwszy zarejestrowany interceptor OPAKOWUJE kolejne, wiec widzi zadanie PRZED B (i odpowiedz PO B, jako ostatni)",
+        "C": "Oba na raz, rownolegle",
+        "D": "Kolejnosc jest losowa przy kazdym wywolaniu"
+      },
+      "correct": "B",
+      "explanation": "Interceptory tworza LANCUCH opakowan - pierwszy dodany (A) opakowuje wszystkie kolejne, wiec widzi zadanie jako PIERWSZY (zanim trafi do B), a odpowiedz jako OSTATNI (po tym, jak B juz ja zwrocilo)."
+    },
+    {
+      "question": "Czym różni się addInterceptor() od addNetworkInterceptor()?",
+      "options": {
+        "A": "Sa identyczne, to alternatywne nazwy tej samej metody",
+        "B": "addInterceptor() (aplikacji) dziala DOKLADNIE RAZ na Call i widzi oryginalne zadanie/finalna odpowiedz; addNetworkInterceptor() (sieci) dziala blisko fizycznego polaczenia i MOZE byc wywolany wielokrotnie (np. przy przekierowaniach/retry)",
+        "C": "addNetworkInterceptor() dziala tylko dla HTTPS, addInterceptor() tylko dla HTTP",
+        "D": "addInterceptor() wymaga polaczenia z internetem, addNetworkInterceptor() dziala offline"
+      },
+      "correct": "B",
+      "explanation": "Interceptor aplikacji (addInterceptor) jest wywolywany raz na caly Call i operuje na logicznym poziomie zadania/odpowiedzi. Interceptor sieci (addNetworkInterceptor) dziala blizej faktycznego polaczenia TCP, moze zobaczyc wielokrotne proby (retry/redirect) i ma dostep do chain.connection()."
+    },
+    {
+      "question": "Jak interceptor może CAŁKOWICIE zablokować wysłanie żądania do serwera i zwrócić własną odpowiedź?",
+      "options": {
+        "A": "Wywolujac chain.proceed(null)",
+        "B": "NIE wywolujac chain.proceed() wcale, tylko budujac i zwracajac wlasny obiekt Response bezposrednio (np. new Response.Builder()...code(403)...build())",
+        "C": "Rzucajac wyjatek RuntimeException z komunikatem bledu",
+        "D": "To niemozliwe - kazdy interceptor musi wywolac chain.proceed()"
+      },
+      "correct": "B",
+      "explanation": "Interceptor NIE MUSI wywolywac chain.proceed() - moze od razu zbudowac i zwrocic wlasny, syntetyczny obiekt Response (np. z kodem 403/429/503), co calkowicie omija wyslanie zadania do serwera. To fundament wzorcow takich jak cache, rate limiting czy circuit breaker."
+    },
+    {
+      "question": "Co się stanie, jeśli wywołamy call.cancel() zaraz po call.enqueue(callback)?",
+      "options": {
+        "A": "Nic - cancel() dziala tylko dla execute()",
+        "B": "Zadanie zostanie przerwane, a onFailure zostanie wywolane z wyjatkiem zwiazanym z anulowaniem (mozna to potwierdzic przez call.isCanceled())",
+        "C": "onResponse zostanie wywolane z pustym cialem",
+        "D": "Program natychmiast rzuci wyjatek NullPointerException"
+      },
+      "correct": "B",
+      "explanation": "cancel() probuje przerwac trwajace (lub jeszcze niewyslane) zadanie. Jesli anulowanie zdazy przed zakonczeniem, callback dostanie onFailure z wyjatkiem zwiazanym z przerwaniem polaczenia, a call.isCanceled() zwroci true."
+    },
+    {
+      "question": "Dlaczego w demo tej lekcji klient łączący się z zajętym, ale nienasłuchującym portem (np. 1) powinien mieć ustawiony krótki connectTimeout?",
+      "options": {
+        "A": "Bo bez tego program sie nie skompiluje",
+        "B": "Bo domyslny timeout polaczenia moze byc dlugi, a demo chce zademonstrowac onFailure szybko, nie czekajac zbyt dlugo na natywny timeout systemu operacyjnego",
+        "C": "connectTimeout jest wymagany przez kazdy Request niezaleznie od celu",
+        "D": "Bez connectTimeout OkHttp w ogole nie wykona zadania"
+      },
+      "correct": "B",
+      "explanation": "Ustawienie krotkiego connectTimeout (np. 2 sekundy) pozwala demo zakonczyc sie szybko i przewidywalnie, zamiast czekac na domyslny (czesto dluzszy) czas, po ktorym system operacyjny/OkHttp same zglosza brak mozliwosci polaczenia."
+    },
+    {
+      "question": "Czym charakteryzuje się \"enqueue(Callback)\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego",
+        "B": "enqueue(Callback) nie ma zastosowania w Hibernate",
+        "C": "enqueue(Callback) jest przestarzałym mechanizmem bez zamiennika",
+        "D": "enqueue(Callback) działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "enqueue(Callback): asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego"
+    },
+    {
+      "question": "Które stwierdzenie o \"onResponse(Call, Response)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "onResponse(Call, Response) nie istnieje w Hibernate/JPA",
+        "B": "wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "onResponse(Call, Response) jest synonimem transakcji",
+        "D": "onResponse(Call, Response) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "onResponse(Call, Response): wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu"
+    },
+    {
+      "question": "Wybierz poprawny opis \"onFailure(Call, IOException)\":",
+      "options": {
+        "A": "onFailure(Call, IOException) służy wyłącznie do logowania",
+        "B": "onFailure(Call, IOException) jest zależny od bazy danych i nie działa na H2",
+        "C": "wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP",
+        "D": "onFailure(Call, IOException) wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "onFailure(Call, IOException): wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"CountDownLatch\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "CountDownLatch jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "CountDownLatch działa tylko przy adnotacji @Deprecated",
+        "C": "CountDownLatch nie ma wpływu na wydajność ani poprawność",
+        "D": "mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+      },
+      "correct": "D",
+      "explanation": "CountDownLatch: mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+    },
+    {
+      "question": "\"Interceptor\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz",
+        "B": "Interceptor jest obsługiwany wyłącznie przez XML mapping",
+        "C": "Interceptor usunięto w Hibernate 6",
+        "D": "Interceptor działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "Interceptor: interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz"
+    },
+    {
+      "question": "Czym charakteryzuje się \"chain.request()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie",
+        "B": "chain.request() nie ma zastosowania w Hibernate",
+        "C": "chain.request() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "chain.request() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "chain.request(): zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie"
+    },
+    {
+      "question": "Które stwierdzenie o \"chain.proceed(request)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "chain.proceed(request) nie istnieje w Hibernate/JPA",
+        "B": "przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response",
+        "C": "chain.proceed(request) jest synonimem transakcji",
+        "D": "chain.proceed(request) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "chain.proceed(request): przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response"
+    },
+    {
+      "question": "Wybierz poprawny opis \"addInterceptor()\":",
+      "options": {
+        "A": "addInterceptor() służy wyłącznie do logowania",
+        "B": "addInterceptor() jest zależny od bazy danych i nie działa na H2",
+        "C": "interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz",
+        "D": "addInterceptor() wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "addInterceptor(): interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"addNetworkInterceptor()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "addNetworkInterceptor() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "addNetworkInterceptor() działa tylko przy adnotacji @Deprecated",
+        "C": "addNetworkInterceptor() nie ma wpływu na wydajność ani poprawność",
+        "D": "interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+      },
+      "correct": "D",
+      "explanation": "addNetworkInterceptor(): interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+    },
+    {
+      "question": "\"kolejnosc rejestracji interceptorow\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni",
+        "B": "kolejnosc rejestracji interceptorow jest obsługiwany wyłącznie przez XML mapping",
+        "C": "kolejnosc rejestracji interceptorow usunięto w Hibernate 6",
+        "D": "kolejnosc rejestracji interceptorow działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "kolejnosc rejestracji interceptorow: pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni"
+    },
+    {
+      "question": "Czym charakteryzuje się \"request.newBuilder()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt",
+        "B": "request.newBuilder() nie ma zastosowania w Hibernate",
+        "C": "request.newBuilder() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "request.newBuilder() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "request.newBuilder(): jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt"
+    },
+    {
+      "question": "Które stwierdzenie o \"response.newBuilder()\" jest PRAWDZIWE?",
+      "options": {
+        "A": "response.newBuilder() nie istnieje w Hibernate/JPA",
+        "B": "pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora",
+        "C": "response.newBuilder() jest synonimem transakcji",
+        "D": "response.newBuilder() zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "response.newBuilder(): pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora"
+    },
+    {
+      "question": "Wybierz poprawny opis \"blokowanie zadania w interceptorze\":",
+      "options": {
+        "A": "blokowanie zadania w interceptorze służy wyłącznie do logowania",
+        "B": "blokowanie zadania w interceptorze jest zależny od bazy danych i nie działa na H2",
+        "C": "zwrocenie wlasnego Response bez wywolania chain.proceed()",
+        "D": "blokowanie zadania w interceptorze wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "blokowanie zadania w interceptorze: zwrocenie wlasnego Response bez wywolania chain.proceed()"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"call.cancel()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "call.cancel() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "call.cancel() działa tylko przy adnotacji @Deprecated",
+        "C": "call.cancel() nie ma wpływu na wydajność ani poprawność",
+        "D": "przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+      },
+      "correct": "D",
+      "explanation": "call.cancel(): przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+    },
+    {
+      "question": "\"AtomicReference/AtomicInteger w callbackach\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "thread-safe sposob przekazania wyniku z watku callbacku do main()",
+        "B": "AtomicReference/AtomicInteger w callbackach jest obsługiwany wyłącznie przez XML mapping",
+        "C": "AtomicReference/AtomicInteger w callbackach usunięto w Hibernate 6",
+        "D": "AtomicReference/AtomicInteger w callbackach działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "AtomicReference/AtomicInteger w callbackach: thread-safe sposob przekazania wyniku z watku callbacku do main()"
+    },
+    {
+      "question": "Czym charakteryzuje się \"enqueue(Callback)\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego",
+        "B": "enqueue(Callback) nie ma zastosowania w Hibernate",
+        "C": "enqueue(Callback) jest przestarzałym mechanizmem bez zamiennika",
+        "D": "enqueue(Callback) działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "enqueue(Callback): asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego"
+    },
+    {
+      "question": "Które stwierdzenie o \"onResponse(Call, Response)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "onResponse(Call, Response) nie istnieje w Hibernate/JPA",
+        "B": "wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "onResponse(Call, Response) jest synonimem transakcji",
+        "D": "onResponse(Call, Response) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "onResponse(Call, Response): wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu"
+    },
+    {
+      "question": "Wybierz poprawny opis \"onFailure(Call, IOException)\":",
+      "options": {
+        "A": "onFailure(Call, IOException) służy wyłącznie do logowania",
+        "B": "onFailure(Call, IOException) jest zależny od bazy danych i nie działa na H2",
+        "C": "wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP",
+        "D": "onFailure(Call, IOException) wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "onFailure(Call, IOException): wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"CountDownLatch\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "CountDownLatch jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "CountDownLatch działa tylko przy adnotacji @Deprecated",
+        "C": "CountDownLatch nie ma wpływu na wydajność ani poprawność",
+        "D": "mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+      },
+      "correct": "D",
+      "explanation": "CountDownLatch: mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+    },
+    {
+      "question": "\"Interceptor\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz",
+        "B": "Interceptor jest obsługiwany wyłącznie przez XML mapping",
+        "C": "Interceptor usunięto w Hibernate 6",
+        "D": "Interceptor działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "Interceptor: interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz"
+    },
+    {
+      "question": "Czym charakteryzuje się \"chain.request()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie",
+        "B": "chain.request() nie ma zastosowania w Hibernate",
+        "C": "chain.request() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "chain.request() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "chain.request(): zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie"
+    },
+    {
+      "question": "Które stwierdzenie o \"chain.proceed(request)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "chain.proceed(request) nie istnieje w Hibernate/JPA",
+        "B": "przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response",
+        "C": "chain.proceed(request) jest synonimem transakcji",
+        "D": "chain.proceed(request) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "chain.proceed(request): przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response"
+    },
+    {
+      "question": "Wybierz poprawny opis \"addInterceptor()\":",
+      "options": {
+        "A": "addInterceptor() służy wyłącznie do logowania",
+        "B": "addInterceptor() jest zależny od bazy danych i nie działa na H2",
+        "C": "interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz",
+        "D": "addInterceptor() wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "addInterceptor(): interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"addNetworkInterceptor()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "addNetworkInterceptor() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "addNetworkInterceptor() działa tylko przy adnotacji @Deprecated",
+        "C": "addNetworkInterceptor() nie ma wpływu na wydajność ani poprawność",
+        "D": "interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+      },
+      "correct": "D",
+      "explanation": "addNetworkInterceptor(): interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+    },
+    {
+      "question": "\"kolejnosc rejestracji interceptorow\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni",
+        "B": "kolejnosc rejestracji interceptorow jest obsługiwany wyłącznie przez XML mapping",
+        "C": "kolejnosc rejestracji interceptorow usunięto w Hibernate 6",
+        "D": "kolejnosc rejestracji interceptorow działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "kolejnosc rejestracji interceptorow: pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni"
+    },
+    {
+      "question": "Czym charakteryzuje się \"request.newBuilder()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt",
+        "B": "request.newBuilder() nie ma zastosowania w Hibernate",
+        "C": "request.newBuilder() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "request.newBuilder() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "request.newBuilder(): jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt"
+    },
+    {
+      "question": "Które stwierdzenie o \"response.newBuilder()\" jest PRAWDZIWE?",
+      "options": {
+        "A": "response.newBuilder() nie istnieje w Hibernate/JPA",
+        "B": "pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora",
+        "C": "response.newBuilder() jest synonimem transakcji",
+        "D": "response.newBuilder() zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "response.newBuilder(): pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora"
+    },
+    {
+      "question": "Wybierz poprawny opis \"blokowanie zadania w interceptorze\":",
+      "options": {
+        "A": "blokowanie zadania w interceptorze służy wyłącznie do logowania",
+        "B": "blokowanie zadania w interceptorze jest zależny od bazy danych i nie działa na H2",
+        "C": "zwrocenie wlasnego Response bez wywolania chain.proceed()",
+        "D": "blokowanie zadania w interceptorze wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "blokowanie zadania w interceptorze: zwrocenie wlasnego Response bez wywolania chain.proceed()"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"call.cancel()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "call.cancel() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "call.cancel() działa tylko przy adnotacji @Deprecated",
+        "C": "call.cancel() nie ma wpływu na wydajność ani poprawność",
+        "D": "przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+      },
+      "correct": "D",
+      "explanation": "call.cancel(): przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+    },
+    {
+      "question": "\"AtomicReference/AtomicInteger w callbackach\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "thread-safe sposob przekazania wyniku z watku callbacku do main()",
+        "B": "AtomicReference/AtomicInteger w callbackach jest obsługiwany wyłącznie przez XML mapping",
+        "C": "AtomicReference/AtomicInteger w callbackach usunięto w Hibernate 6",
+        "D": "AtomicReference/AtomicInteger w callbackach działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "AtomicReference/AtomicInteger w callbackach: thread-safe sposob przekazania wyniku z watku callbacku do main()"
+    },
+    {
+      "question": "Czym charakteryzuje się \"enqueue(Callback)\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego",
+        "B": "enqueue(Callback) nie ma zastosowania w Hibernate",
+        "C": "enqueue(Callback) jest przestarzałym mechanizmem bez zamiennika",
+        "D": "enqueue(Callback) działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "enqueue(Callback): asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego"
+    },
+    {
+      "question": "Które stwierdzenie o \"onResponse(Call, Response)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "onResponse(Call, Response) nie istnieje w Hibernate/JPA",
+        "B": "wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "onResponse(Call, Response) jest synonimem transakcji",
+        "D": "onResponse(Call, Response) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "onResponse(Call, Response): wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu"
+    },
+    {
+      "question": "Wybierz poprawny opis \"onFailure(Call, IOException)\":",
+      "options": {
+        "A": "onFailure(Call, IOException) służy wyłącznie do logowania",
+        "B": "onFailure(Call, IOException) jest zależny od bazy danych i nie działa na H2",
+        "C": "wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP",
+        "D": "onFailure(Call, IOException) wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "onFailure(Call, IOException): wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"CountDownLatch\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "CountDownLatch jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "CountDownLatch działa tylko przy adnotacji @Deprecated",
+        "C": "CountDownLatch nie ma wpływu na wydajność ani poprawność",
+        "D": "mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+      },
+      "correct": "D",
+      "explanation": "CountDownLatch: mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+    },
+    {
+      "question": "\"Interceptor\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz",
+        "B": "Interceptor jest obsługiwany wyłącznie przez XML mapping",
+        "C": "Interceptor usunięto w Hibernate 6",
+        "D": "Interceptor działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "Interceptor: interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz"
+    },
+    {
+      "question": "Czym charakteryzuje się \"chain.request()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie",
+        "B": "chain.request() nie ma zastosowania w Hibernate",
+        "C": "chain.request() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "chain.request() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "chain.request(): zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie"
+    },
+    {
+      "question": "Które stwierdzenie o \"chain.proceed(request)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "chain.proceed(request) nie istnieje w Hibernate/JPA",
+        "B": "przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response",
+        "C": "chain.proceed(request) jest synonimem transakcji",
+        "D": "chain.proceed(request) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "chain.proceed(request): przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response"
+    },
+    {
+      "question": "Wybierz poprawny opis \"addInterceptor()\":",
+      "options": {
+        "A": "addInterceptor() służy wyłącznie do logowania",
+        "B": "addInterceptor() jest zależny od bazy danych i nie działa na H2",
+        "C": "interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz",
+        "D": "addInterceptor() wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "addInterceptor(): interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"addNetworkInterceptor()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "addNetworkInterceptor() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "addNetworkInterceptor() działa tylko przy adnotacji @Deprecated",
+        "C": "addNetworkInterceptor() nie ma wpływu na wydajność ani poprawność",
+        "D": "interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+      },
+      "correct": "D",
+      "explanation": "addNetworkInterceptor(): interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+    },
+    {
+      "question": "\"kolejnosc rejestracji interceptorow\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni",
+        "B": "kolejnosc rejestracji interceptorow jest obsługiwany wyłącznie przez XML mapping",
+        "C": "kolejnosc rejestracji interceptorow usunięto w Hibernate 6",
+        "D": "kolejnosc rejestracji interceptorow działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "kolejnosc rejestracji interceptorow: pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni"
+    },
+    {
+      "question": "Czym charakteryzuje się \"request.newBuilder()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt",
+        "B": "request.newBuilder() nie ma zastosowania w Hibernate",
+        "C": "request.newBuilder() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "request.newBuilder() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "request.newBuilder(): jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt"
+    },
+    {
+      "question": "Które stwierdzenie o \"response.newBuilder()\" jest PRAWDZIWE?",
+      "options": {
+        "A": "response.newBuilder() nie istnieje w Hibernate/JPA",
+        "B": "pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora",
+        "C": "response.newBuilder() jest synonimem transakcji",
+        "D": "response.newBuilder() zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "response.newBuilder(): pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora"
+    },
+    {
+      "question": "Wybierz poprawny opis \"blokowanie zadania w interceptorze\":",
+      "options": {
+        "A": "blokowanie zadania w interceptorze służy wyłącznie do logowania",
+        "B": "blokowanie zadania w interceptorze jest zależny od bazy danych i nie działa na H2",
+        "C": "zwrocenie wlasnego Response bez wywolania chain.proceed()",
+        "D": "blokowanie zadania w interceptorze wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "blokowanie zadania w interceptorze: zwrocenie wlasnego Response bez wywolania chain.proceed()"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"call.cancel()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "call.cancel() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "call.cancel() działa tylko przy adnotacji @Deprecated",
+        "C": "call.cancel() nie ma wpływu na wydajność ani poprawność",
+        "D": "przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+      },
+      "correct": "D",
+      "explanation": "call.cancel(): przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+    },
+    {
+      "question": "\"AtomicReference/AtomicInteger w callbackach\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "thread-safe sposob przekazania wyniku z watku callbacku do main()",
+        "B": "AtomicReference/AtomicInteger w callbackach jest obsługiwany wyłącznie przez XML mapping",
+        "C": "AtomicReference/AtomicInteger w callbackach usunięto w Hibernate 6",
+        "D": "AtomicReference/AtomicInteger w callbackach działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "AtomicReference/AtomicInteger w callbackach: thread-safe sposob przekazania wyniku z watku callbacku do main()"
+    },
+    {
+      "question": "Czym charakteryzuje się \"enqueue(Callback)\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego",
+        "B": "enqueue(Callback) nie ma zastosowania w Hibernate",
+        "C": "enqueue(Callback) jest przestarzałym mechanizmem bez zamiennika",
+        "D": "enqueue(Callback) działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "enqueue(Callback): asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego"
+    },
+    {
+      "question": "Które stwierdzenie o \"onResponse(Call, Response)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "onResponse(Call, Response) nie istnieje w Hibernate/JPA",
+        "B": "wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "onResponse(Call, Response) jest synonimem transakcji",
+        "D": "onResponse(Call, Response) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "onResponse(Call, Response): wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu"
+    },
+    {
+      "question": "Wybierz poprawny opis \"onFailure(Call, IOException)\":",
+      "options": {
+        "A": "onFailure(Call, IOException) służy wyłącznie do logowania",
+        "B": "onFailure(Call, IOException) jest zależny od bazy danych i nie działa na H2",
+        "C": "wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP",
+        "D": "onFailure(Call, IOException) wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "onFailure(Call, IOException): wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"CountDownLatch\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "CountDownLatch jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "CountDownLatch działa tylko przy adnotacji @Deprecated",
+        "C": "CountDownLatch nie ma wpływu na wydajność ani poprawność",
+        "D": "mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+      },
+      "correct": "D",
+      "explanation": "CountDownLatch: mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+    },
+    {
+      "question": "\"Interceptor\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz",
+        "B": "Interceptor jest obsługiwany wyłącznie przez XML mapping",
+        "C": "Interceptor usunięto w Hibernate 6",
+        "D": "Interceptor działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "Interceptor: interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz"
+    },
+    {
+      "question": "Czym charakteryzuje się \"chain.request()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie",
+        "B": "chain.request() nie ma zastosowania w Hibernate",
+        "C": "chain.request() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "chain.request() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "chain.request(): zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie"
+    },
+    {
+      "question": "Które stwierdzenie o \"chain.proceed(request)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "chain.proceed(request) nie istnieje w Hibernate/JPA",
+        "B": "przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response",
+        "C": "chain.proceed(request) jest synonimem transakcji",
+        "D": "chain.proceed(request) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "chain.proceed(request): przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response"
+    },
+    {
+      "question": "Wybierz poprawny opis \"addInterceptor()\":",
+      "options": {
+        "A": "addInterceptor() służy wyłącznie do logowania",
+        "B": "addInterceptor() jest zależny od bazy danych i nie działa na H2",
+        "C": "interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz",
+        "D": "addInterceptor() wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "addInterceptor(): interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"addNetworkInterceptor()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "addNetworkInterceptor() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "addNetworkInterceptor() działa tylko przy adnotacji @Deprecated",
+        "C": "addNetworkInterceptor() nie ma wpływu na wydajność ani poprawność",
+        "D": "interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+      },
+      "correct": "D",
+      "explanation": "addNetworkInterceptor(): interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+    },
+    {
+      "question": "\"kolejnosc rejestracji interceptorow\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni",
+        "B": "kolejnosc rejestracji interceptorow jest obsługiwany wyłącznie przez XML mapping",
+        "C": "kolejnosc rejestracji interceptorow usunięto w Hibernate 6",
+        "D": "kolejnosc rejestracji interceptorow działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "kolejnosc rejestracji interceptorow: pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni"
+    },
+    {
+      "question": "Czym charakteryzuje się \"request.newBuilder()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt",
+        "B": "request.newBuilder() nie ma zastosowania w Hibernate",
+        "C": "request.newBuilder() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "request.newBuilder() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "request.newBuilder(): jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt"
+    },
+    {
+      "question": "Które stwierdzenie o \"response.newBuilder()\" jest PRAWDZIWE?",
+      "options": {
+        "A": "response.newBuilder() nie istnieje w Hibernate/JPA",
+        "B": "pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora",
+        "C": "response.newBuilder() jest synonimem transakcji",
+        "D": "response.newBuilder() zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "response.newBuilder(): pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora"
+    },
+    {
+      "question": "Wybierz poprawny opis \"blokowanie zadania w interceptorze\":",
+      "options": {
+        "A": "blokowanie zadania w interceptorze służy wyłącznie do logowania",
+        "B": "blokowanie zadania w interceptorze jest zależny od bazy danych i nie działa na H2",
+        "C": "zwrocenie wlasnego Response bez wywolania chain.proceed()",
+        "D": "blokowanie zadania w interceptorze wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "blokowanie zadania w interceptorze: zwrocenie wlasnego Response bez wywolania chain.proceed()"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"call.cancel()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "call.cancel() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "call.cancel() działa tylko przy adnotacji @Deprecated",
+        "C": "call.cancel() nie ma wpływu na wydajność ani poprawność",
+        "D": "przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+      },
+      "correct": "D",
+      "explanation": "call.cancel(): przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+    },
+    {
+      "question": "\"AtomicReference/AtomicInteger w callbackach\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "thread-safe sposob przekazania wyniku z watku callbacku do main()",
+        "B": "AtomicReference/AtomicInteger w callbackach jest obsługiwany wyłącznie przez XML mapping",
+        "C": "AtomicReference/AtomicInteger w callbackach usunięto w Hibernate 6",
+        "D": "AtomicReference/AtomicInteger w callbackach działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "AtomicReference/AtomicInteger w callbackach: thread-safe sposob przekazania wyniku z watku callbacku do main()"
+    },
+    {
+      "question": "Czym charakteryzuje się \"enqueue(Callback)\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego",
+        "B": "enqueue(Callback) nie ma zastosowania w Hibernate",
+        "C": "enqueue(Callback) jest przestarzałym mechanizmem bez zamiennika",
+        "D": "enqueue(Callback) działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "enqueue(Callback): asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego"
+    },
+    {
+      "question": "Które stwierdzenie o \"onResponse(Call, Response)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "onResponse(Call, Response) nie istnieje w Hibernate/JPA",
+        "B": "wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "onResponse(Call, Response) jest synonimem transakcji",
+        "D": "onResponse(Call, Response) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "onResponse(Call, Response): wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu"
+    },
+    {
+      "question": "Wybierz poprawny opis \"onFailure(Call, IOException)\":",
+      "options": {
+        "A": "onFailure(Call, IOException) służy wyłącznie do logowania",
+        "B": "onFailure(Call, IOException) jest zależny od bazy danych i nie działa na H2",
+        "C": "wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP",
+        "D": "onFailure(Call, IOException) wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "onFailure(Call, IOException): wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"CountDownLatch\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "CountDownLatch jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "CountDownLatch działa tylko przy adnotacji @Deprecated",
+        "C": "CountDownLatch nie ma wpływu na wydajność ani poprawność",
+        "D": "mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+      },
+      "correct": "D",
+      "explanation": "CountDownLatch: mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+    },
+    {
+      "question": "\"Interceptor\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz",
+        "B": "Interceptor jest obsługiwany wyłącznie przez XML mapping",
+        "C": "Interceptor usunięto w Hibernate 6",
+        "D": "Interceptor działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "Interceptor: interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz"
+    },
+    {
+      "question": "Czym charakteryzuje się \"chain.request()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie",
+        "B": "chain.request() nie ma zastosowania w Hibernate",
+        "C": "chain.request() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "chain.request() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "chain.request(): zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie"
+    },
+    {
+      "question": "Które stwierdzenie o \"chain.proceed(request)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "chain.proceed(request) nie istnieje w Hibernate/JPA",
+        "B": "przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response",
+        "C": "chain.proceed(request) jest synonimem transakcji",
+        "D": "chain.proceed(request) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "chain.proceed(request): przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response"
+    },
+    {
+      "question": "Wybierz poprawny opis \"addInterceptor()\":",
+      "options": {
+        "A": "addInterceptor() służy wyłącznie do logowania",
+        "B": "addInterceptor() jest zależny od bazy danych i nie działa na H2",
+        "C": "interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz",
+        "D": "addInterceptor() wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "addInterceptor(): interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"addNetworkInterceptor()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "addNetworkInterceptor() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "addNetworkInterceptor() działa tylko przy adnotacji @Deprecated",
+        "C": "addNetworkInterceptor() nie ma wpływu na wydajność ani poprawność",
+        "D": "interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+      },
+      "correct": "D",
+      "explanation": "addNetworkInterceptor(): interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+    },
+    {
+      "question": "\"kolejnosc rejestracji interceptorow\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni",
+        "B": "kolejnosc rejestracji interceptorow jest obsługiwany wyłącznie przez XML mapping",
+        "C": "kolejnosc rejestracji interceptorow usunięto w Hibernate 6",
+        "D": "kolejnosc rejestracji interceptorow działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "kolejnosc rejestracji interceptorow: pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni"
+    },
+    {
+      "question": "Czym charakteryzuje się \"request.newBuilder()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt",
+        "B": "request.newBuilder() nie ma zastosowania w Hibernate",
+        "C": "request.newBuilder() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "request.newBuilder() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "request.newBuilder(): jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt"
+    },
+    {
+      "question": "Które stwierdzenie o \"response.newBuilder()\" jest PRAWDZIWE?",
+      "options": {
+        "A": "response.newBuilder() nie istnieje w Hibernate/JPA",
+        "B": "pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora",
+        "C": "response.newBuilder() jest synonimem transakcji",
+        "D": "response.newBuilder() zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "response.newBuilder(): pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora"
+    },
+    {
+      "question": "Wybierz poprawny opis \"blokowanie zadania w interceptorze\":",
+      "options": {
+        "A": "blokowanie zadania w interceptorze służy wyłącznie do logowania",
+        "B": "blokowanie zadania w interceptorze jest zależny od bazy danych i nie działa na H2",
+        "C": "zwrocenie wlasnego Response bez wywolania chain.proceed()",
+        "D": "blokowanie zadania w interceptorze wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "blokowanie zadania w interceptorze: zwrocenie wlasnego Response bez wywolania chain.proceed()"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"call.cancel()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "call.cancel() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "call.cancel() działa tylko przy adnotacji @Deprecated",
+        "C": "call.cancel() nie ma wpływu na wydajność ani poprawność",
+        "D": "przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+      },
+      "correct": "D",
+      "explanation": "call.cancel(): przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+    },
+    {
+      "question": "\"AtomicReference/AtomicInteger w callbackach\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "thread-safe sposob przekazania wyniku z watku callbacku do main()",
+        "B": "AtomicReference/AtomicInteger w callbackach jest obsługiwany wyłącznie przez XML mapping",
+        "C": "AtomicReference/AtomicInteger w callbackach usunięto w Hibernate 6",
+        "D": "AtomicReference/AtomicInteger w callbackach działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "AtomicReference/AtomicInteger w callbackach: thread-safe sposob przekazania wyniku z watku callbacku do main()"
+    },
+    {
+      "question": "Czym charakteryzuje się \"enqueue(Callback)\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego",
+        "B": "enqueue(Callback) nie ma zastosowania w Hibernate",
+        "C": "enqueue(Callback) jest przestarzałym mechanizmem bez zamiennika",
+        "D": "enqueue(Callback) działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "enqueue(Callback): asynchroniczne wykonanie zadania, nie blokuje watku wywolujacego"
+    },
+    {
+      "question": "Które stwierdzenie o \"onResponse(Call, Response)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "onResponse(Call, Response) nie istnieje w Hibernate/JPA",
+        "B": "wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu",
+        "C": "onResponse(Call, Response) jest synonimem transakcji",
+        "D": "onResponse(Call, Response) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "onResponse(Call, Response): wywolywane po KAZDEJ otrzymanej odpowiedzi HTTP, nawet z kodem bledu"
+    },
+    {
+      "question": "Wybierz poprawny opis \"onFailure(Call, IOException)\":",
+      "options": {
+        "A": "onFailure(Call, IOException) służy wyłącznie do logowania",
+        "B": "onFailure(Call, IOException) jest zależny od bazy danych i nie działa na H2",
+        "C": "wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP",
+        "D": "onFailure(Call, IOException) wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "onFailure(Call, IOException): wywolywane TYLKO przy problemie sieciowym, nigdy przy kodzie bledu HTTP"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"CountDownLatch\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "CountDownLatch jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "CountDownLatch działa tylko przy adnotacji @Deprecated",
+        "C": "CountDownLatch nie ma wpływu na wydajność ani poprawność",
+        "D": "mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+      },
+      "correct": "D",
+      "explanation": "CountDownLatch: mechanizm synchronizacji pozwalajacy watkowi czekac na zakonczenie pracy innych watkow"
+    },
+    {
+      "question": "\"Interceptor\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz",
+        "B": "Interceptor jest obsługiwany wyłącznie przez XML mapping",
+        "C": "Interceptor usunięto w Hibernate 6",
+        "D": "Interceptor działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "Interceptor: interfejs pozwalajacy przechwycic, zmodyfikowac lub zablokowac zadanie/odpowiedz"
+    },
+    {
+      "question": "Czym charakteryzuje się \"chain.request()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie",
+        "B": "chain.request() nie ma zastosowania w Hibernate",
+        "C": "chain.request() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "chain.request() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "chain.request(): zwraca aktualne (mozliwe ze juz zmodyfikowane przez wczesniejszy interceptor) zadanie"
+    },
+    {
+      "question": "Które stwierdzenie o \"chain.proceed(request)\" jest PRAWDZIWE?",
+      "options": {
+        "A": "chain.proceed(request) nie istnieje w Hibernate/JPA",
+        "B": "przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response",
+        "C": "chain.proceed(request) jest synonimem transakcji",
+        "D": "chain.proceed(request) zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "chain.proceed(request): przekazuje zadanie dalej w lancuchu interceptorow, zwraca Response"
+    },
+    {
+      "question": "Wybierz poprawny opis \"addInterceptor()\":",
+      "options": {
+        "A": "addInterceptor() służy wyłącznie do logowania",
+        "B": "addInterceptor() jest zależny od bazy danych i nie działa na H2",
+        "C": "interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz",
+        "D": "addInterceptor() wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "addInterceptor(): interceptor aplikacji - raz na Call, widzi oryginalne zadanie i finalna odpowiedz"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"addNetworkInterceptor()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "addNetworkInterceptor() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "addNetworkInterceptor() działa tylko przy adnotacji @Deprecated",
+        "C": "addNetworkInterceptor() nie ma wpływu na wydajność ani poprawność",
+        "D": "interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+      },
+      "correct": "D",
+      "explanation": "addNetworkInterceptor(): interceptor sieci - blisko fizycznego polaczenia, moze wystapic wielokrotnie"
+    },
+    {
+      "question": "\"kolejnosc rejestracji interceptorow\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni",
+        "B": "kolejnosc rejestracji interceptorow jest obsługiwany wyłącznie przez XML mapping",
+        "C": "kolejnosc rejestracji interceptorow usunięto w Hibernate 6",
+        "D": "kolejnosc rejestracji interceptorow działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "kolejnosc rejestracji interceptorow: pierwszy dodany opakowuje kolejne - widzi zadanie pierwszy, odpowiedz ostatni"
+    },
+    {
+      "question": "Czym charakteryzuje się \"request.newBuilder()\" w kontekście OkHttp - async i interceptory?",
+      "options": {
+        "A": "jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt",
+        "B": "request.newBuilder() nie ma zastosowania w Hibernate",
+        "C": "request.newBuilder() jest przestarzałym mechanizmem bez zamiennika",
+        "D": "request.newBuilder() działa tylko w czystym JDBC"
+      },
+      "correct": "A",
+      "explanation": "request.newBuilder(): jedyny sposob 'zmodyfikowania' niemutowalnego Request - buduje nowy obiekt"
+    },
+    {
+      "question": "Które stwierdzenie o \"response.newBuilder()\" jest PRAWDZIWE?",
+      "options": {
+        "A": "response.newBuilder() nie istnieje w Hibernate/JPA",
+        "B": "pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora",
+        "C": "response.newBuilder() jest synonimem transakcji",
+        "D": "response.newBuilder() zawsze wymaga native SQL"
+      },
+      "correct": "B",
+      "explanation": "response.newBuilder(): pozwala dodac/zmienic naglowki odpowiedzi przed zwroceniem z interceptora"
+    },
+    {
+      "question": "Wybierz poprawny opis \"blokowanie zadania w interceptorze\":",
+      "options": {
+        "A": "blokowanie zadania w interceptorze służy wyłącznie do logowania",
+        "B": "blokowanie zadania w interceptorze jest zależny od bazy danych i nie działa na H2",
+        "C": "zwrocenie wlasnego Response bez wywolania chain.proceed()",
+        "D": "blokowanie zadania w interceptorze wymaga ręcznego zarządzania połączeniem JDBC"
+      },
+      "correct": "C",
+      "explanation": "blokowanie zadania w interceptorze: zwrocenie wlasnego Response bez wywolania chain.proceed()"
+    },
+    {
+      "question": "Co NAJLEPIEJ opisuje \"call.cancel()\" w ramach OkHttp - async i interceptory?",
+      "options": {
+        "A": "call.cancel() jest reliktem starszych wersji Hibernate bez zastosowania dziś",
+        "B": "call.cancel() działa tylko przy adnotacji @Deprecated",
+        "C": "call.cancel() nie ma wpływu na wydajność ani poprawność",
+        "D": "przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+      },
+      "correct": "D",
+      "explanation": "call.cancel(): przerywa trwajace lub oczekujace zadanie, wywoluje onFailure"
+    },
+    {
+      "question": "\"AtomicReference/AtomicInteger w callbackach\" — które zdanie jest poprawne?",
+      "options": {
+        "A": "thread-safe sposob przekazania wyniku z watku callbacku do main()",
+        "B": "AtomicReference/AtomicInteger w callbackach jest obsługiwany wyłącznie przez XML mapping",
+        "C": "AtomicReference/AtomicInteger w callbackach usunięto w Hibernate 6",
+        "D": "AtomicReference/AtomicInteger w callbackach działa tylko z encjami @Embeddable"
+      },
+      "correct": "A",
+      "explanation": "AtomicReference/AtomicInteger w callbackach: thread-safe sposob przekazania wyniku z watku callbacku do main()"
+    }
+  ]
+}
