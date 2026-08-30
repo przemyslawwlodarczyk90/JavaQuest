@@ -2018,9 +2018,20 @@ rozdziałami). Przy starcie tej sesji naprawiono też przypadkowo wniesioną lit
 (prefiks "cla" przed nazwą klasy w `_31_spring_cloud_microservices/Lesson05_SpringCloudConfigClient`,
 niezacommitowana zmiana z poprzedniej sesji) — cofnięta przez `git checkout`.
 
-### `_14_advancedjava` rozpoczęty na platformie (stan na 2026-08-30): lekcje 1-2/30 UKOŃCZONE
+### `_14_advancedjava` rozpoczęty na platformie (stan na 2026-08-30): lekcje 1-8/30 UKOŃCZONE
 
-**Następny krok**: kontynuować od **lekcji 3 (`03_BoundedTypes`)** w `_14_advancedjava`. Ten sam,
+Dokończono w tej sesji lekcje 3-8 (03_BoundedTypes, 04_WildcardsExtendsSuper, 05_VarianceAndPecs,
+06_TypeErasure, 07_GenericsBestPracticesAndPitfalls, 08_FunctionalInterfaces) — **cały blok
+Generyków (lekcje 1-7) jest teraz KOMPLETNY na platformie**, plus pierwsza lekcja bloku
+programowania funkcyjnego (Lekcja 8). Każda 7 sekcji teorii/30 zadań/100 quizów, ten sam
+sprawdzony workflow (`genNNl.js` w scratchpadzie, sufiks `l`). Zweryfikowane end-to-end po
+każdym restarcie backendu + regresja na wcześniej gotowej lekcji tego samego rozdziału po
+każdym restarcie — zero regresji przez całą sesję. Commitowano po każdej 1 lekcji (nie parami)
+w tej sesji, bo restart backendu i weryfikacja są już rutynowe i szybkie (~10-20s start +
+kilka-kilkanaście sekund na ewentualne powtórzenie zapytania przy znanej osobliwości "pierwsze
+zapytania po restarcie = 0/false").
+
+**Następny krok**: kontynuować od **lekcji 9 (`09_LambdaExpressions`)** w `_14_advancedjava`. Ten sam,
 sprawdzony workflow dla WSZYSTKICH kolejnych lekcji: czytaj `_LessonNN_Temat.java` i
 `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_14_advancedjava/LessonNN_Temat/`, napisz `genNNl.js`
