@@ -2206,4 +2206,12 @@ i `_13_libraries/01_WhyLibraries` — zero regresji.
 
 **Następny krok**: kontynuować od **lekcji 5 (`05_ClasspathVsModulepath`)** w `_15_jvm_internals`,
 tym samym workflow (sufiks `m`), commitowac co 2-4 lekcje, bez pytania o zgode.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 5/20 UKOŃCZONA** — **blok "Classloading i bajtkod"
+(1-5) w `_15_jvm_internals` jest teraz KOMPLETNY.** Zweryfikowane end-to-end (5/20 hasContent),
+regresja na `03_ClassLoadingMechanics` i `_12_hibernate/01_OrmIntroduction` — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 6 (`06_HeapStackMetaspace`)** w `_15_jvm_internals` —
+rozpoczecie bloku "Obszary pamieci JVM" (6-7). Ten sam workflow (sufiks `m`), commitowac co 2-4
+lekcje, bez pytania o zgode miedzy lekcjami/rozdzialami.
 ---
