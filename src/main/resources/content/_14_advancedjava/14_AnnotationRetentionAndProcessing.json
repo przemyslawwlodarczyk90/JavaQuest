@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "ANALOGY",
+      "heading": "RetentionPolicy jako termin przydatnosci etykiety",
+      "body": "Wyobraz sobie trzy rodzaje etykiet na paczce w magazynie. Jedna to naklejka montazowa — zdejmowana zaraz po zlozeniu produktu (SOURCE, znika po kompilacji). Druga to etykieta wewnetrzna magazynu — zostaje na produkcie, ale klient jej nigdy nie zobaczy, bo nikt jej nie skanuje przy odbiorze (CLASS, jest w .class, ale JVM jej nie laduje). Trzecia to kod kreskowy na opakowaniu — skanowany przez KASE przy kazdej sprzedazy (RUNTIME, odczytywany przez refleksje). Adnotacja to zawsze ta sama 'naklejka' w kodzie zrodlowym, ale to WLASNIE @Retention decyduje, jak dlugo przetrwa i kto bedzie mogl ja odczytac."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Trzy poziomy RetentionPolicy — dokladnie",
+      "body": "Droga kodu: `zrodlo .java --[javac]--> bajtkod .class --[JVM classloading]--> obiekty w pamieci`. `RetentionPolicy.SOURCE` — adnotacja widoczna TYLKO na etapie kompilacji (dla kompilatora i annotation processorow), kompilator ODRZUCA ja przy generowaniu .class — w bajtkodzie nie ma po niej sladu (np. `@Override`, `@SuppressWarnings`). `RetentionPolicy.CLASS` — DOMYSLNA (gdy `@Retention` pominieto) — adnotacja TRAFIA do pliku .class (widoczna np. przez `javap -v`), ale JVM jej NIE laduje do pamieci — dla zwyklej refleksji jest NIEWIDOCZNA. `RetentionPolicy.RUNTIME` — adnotacja trafia do .class ORAZ jest ladowana przez JVM — dostepna w runtime przez `getAnnotation(...)`. Na TEJ wartosci opieraja sie WSZYSTKIE frameworki 'odkrywajace' kod w czasie dzialania: JUnit (`@Test`), Hibernate (`@Entity`), Spring (`@Autowired`)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Praktyczna zasada wyboru retencji",
+      "body": "Piszesz adnotacje dla kompilatora/IDE (sprawdzenie regul, generowanie kodu w czasie kompilacji, jak MapStruct)? -> `RetentionPolicy.SOURCE` (lub `CLASS`, jesli narzedzie operuje bezposrednio na bajtkodzie). Piszesz adnotacje, ktora Twoj program/framework ma ODCZYTAC W TRAKCIE DZIALANIA (konfiguracja, walidacja, DI, ORM, testy)? -> `RetentionPolicy.RUNTIME` — jedyna opcja, zeby `getAnnotation()` cokolwiek zwrocil. `CLASS` uzywana jest RZADKO wprost — to glownie punkt posredni dla zaawansowanych narzedzi operujacych bezposrednio na plikach .class (bytecode weaving)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Annotation processing — mechanizm javax.annotation.processing",
+      "body": "Prawdziwe przetwarzanie adnotacji w czasie kompilacji to mechanizm `javax.annotation.processing`, na ktorym opieraja sie Lombok, MapStruct (`_13_libraries`) czy Dagger. Podczas KAZDEJ kompilacji `javac` uruchamia zarejestrowane 'procesory adnotacji' (`AbstractProcessor`), ktore moga: PRZESKANOWAC drzewo skladniowe w poszukiwaniu adnotacji, wygenerowac NOWE pliki zrodlowe (tak dziala MapStruct — generuje `XxxMapperImpl.java`), zglosic blad/ostrzezenie/notatke kompilacji przez `Messager`. Procesor NIE MOZE modyfikowac istniejacych, juz skompilowanych drzew skladniowych — annotation processing jest WIELOPRZEBIEGOWE ('runda po rundzie'), az zaden procesor nie wygeneruje nic nowego."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "AbstractProcessor — kluczowe elementy API",
+      "body": "`@SupportedAnnotationTypes(\"NazwaAdnotacji\")` — deklaruje, jakie adnotacje procesor obsluguje (mozna uzyc `\"*\"` dla wszystkich). `getSupportedSourceVersion()` — zwykle `SourceVersion.latestSupported()`. `process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv)` — glowna metoda: `roundEnv.getElementsAnnotatedWith(annotationType)` zwraca WSZYSTKIE elementy oznaczone danym typem adnotacji w biezacej rundzie; zwraca `true`, jesli procesor 'obslugil' te adnotacje (zaden inny procesor nie musi ich juz przetwarzac). `Messager.printMessage(Diagnostic.Kind.NOTE/WARNING/ERROR, komunikat, element)` — zglaszanie komunikatow; `ERROR` SPRAWIA, ze kompilacja konczy sie niepowodzeniem (`task.call()` zwraca `false`). Rejestracja procesora PROGRAMOWO odbywa sie przez `CompilationTask.setProcessors(List.of(procesor))` — bez potrzeby pliku `META-INF/services` (ktory jest potrzebny tylko do AUTOMATYCZNEGO odkrycia procesora na classpath innego projektu)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Dlaczego to wazne — realne zastosowania mechanizmu",
+      "body": "Dokladnie ten sam mechanizm (`AbstractProcessor` + `RoundEnvironment` + `Messager`) stoi za: Lombokiem (procesor widzi `@Getter`/`@Setter`/`@Data` i przez sztuczki poza oficjalnym API DOPISUJE metody do ISTNIEJACEJ klasy), MapStructem (procesor widzi `@Mapper` i GENERUJE NOWY plik przez `Filer`), Dagger/Hilt (procesor widzi `@Inject` i generuje cale drzewo klas fabryk). Wlasny, minimalny procesor uczy SAMEGO MECHANIZMU haczenia sie w proces kompilacji — bez pelnego generowania kodu (`Filer`), tylko z `Messager` do wypisywania komunikatow."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Trzy poziomy retencji i wlasny AbstractProcessor",
+      "body": "```java\nimport javax.annotation.processing.*;\nimport javax.lang.model.SourceVersion;\nimport javax.lang.model.element.Element;\nimport javax.lang.model.element.TypeElement;\nimport javax.tools.*;\nimport java.lang.annotation.*;\nimport java.nio.file.*;\nimport java.util.*;\n\npublic class RetentionDemo {\n    @Retention(RetentionPolicy.SOURCE)\n    @interface SourceOnly {}\n    @Retention(RetentionPolicy.CLASS)\n    @interface ClassOnly {}\n    @Retention(RetentionPolicy.RUNTIME)\n    @interface RuntimeVisible {}\n\n    static class Target {\n        @SourceOnly @ClassOnly @RuntimeVisible\n        void method() {}\n    }\n\n    @SupportedAnnotationTypes(\"Loggable\")\n    static class LoggableProcessor extends AbstractProcessor {\n        @Override\n        public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n        @Override\n        public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n            for (TypeElement type : annotations) {\n                for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                    processingEnv.getMessager().printMessage(\n                        Diagnostic.Kind.NOTE, \"@Loggable na: \" + el.getSimpleName());\n                }\n            }\n            return true;\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n        java.lang.reflect.Method m = Target.class.getDeclaredMethod(\"method\");\n        System.out.println(m.getAnnotation(SourceOnly.class)); // null - znika przed .class\n        System.out.println(m.getAnnotation(ClassOnly.class));  // null - JVM nie laduje\n        System.out.println(m.getAnnotation(RuntimeVisible.class)); // @RuntimeVisible() - jedyna widoczna\n\n        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();\n        // ... kompilacja z task.setProcessors(List.of(new LoggableProcessor())) ...\n    }\n}\n```"
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zdefiniuj @Marker1 z @Retention(RUNTIME) i @Target(METHOD). Oznacz metode i sprawdz przez getAnnotation(Marker1.class), ze zwraca nie-null obiekt.",
+      "hint": "RUNTIME jest jedyna wartoscia widoczna dla refleksji.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.METHOD)\n@interface Marker1 {}\n\nclass Demo1 {\n    @Marker1\n    void m() {}\n}\n\nMethod method = Demo1.class.getDeclaredMethod(\"m\");\nSystem.out.println(method.getAnnotation(Marker1.class) != null); // true"
+    },
+    {
+      "prompt": "Zdefiniuj @Marker2 z @Retention(SOURCE) i @Target(METHOD). Sprawdz przez refleksje, ze getAnnotation(Marker2.class) zwraca null. Wyjasnij dlaczego.",
+      "hint": "SOURCE znika juz przy kompilacji.",
+      "solution": "@Retention(RetentionPolicy.SOURCE)\n@Target(ElementType.METHOD)\n@interface Marker2 {}\n\nclass Demo2 {\n    @Marker2\n    void m() {}\n}\n\nMethod method = Demo2.class.getDeclaredMethod(\"m\");\nSystem.out.println(method.getAnnotation(Marker2.class)); // null\n// SOURCE oznacza, ze adnotacja jest usuwana JUZ na etapie kompilacji - nie trafia do pliku .class."
+    },
+    {
+      "prompt": "Zdefiniuj @Marker3 BEZ zadnego @Retention (tylko @Target(METHOD)). Sprawdz, ze getAnnotation(Marker3.class) zwraca null. Zapisz w komentarzu domyslna wartosc RetentionPolicy.",
+      "hint": "domyslna wartosc to CLASS.",
+      "solution": "@Target(ElementType.METHOD)\n@interface Marker3 {}\n\nclass Demo3 {\n    @Marker3\n    void m() {}\n}\n\nMethod method = Demo3.class.getDeclaredMethod(\"m\");\nSystem.out.println(method.getAnnotation(Marker3.class)); // null\n// Domyslna wartosc RetentionPolicy, gdy @Retention zostanie pominiete, to CLASS - trafia do .class, ale JVM jej nie laduje."
+    },
+    {
+      "prompt": "Uzyj trzech adnotacji z Zadan 1-3 razem na jednej metodzie. Wypisz wynik getAnnotation() dla wszystkich trzech obok siebie jako tabelke.",
+      "hint": "petla lub reczne wypisanie 3 linii.",
+      "solution": "class Demo4 {\n    @Marker1 @Marker2 @Marker3\n    void m() {}\n}\n\nMethod method = Demo4.class.getDeclaredMethod(\"m\");\nSystem.out.println(\"Marker1 (RUNTIME): \" + method.getAnnotation(Marker1.class));\nSystem.out.println(\"Marker2 (SOURCE):  \" + method.getAnnotation(Marker2.class));\nSystem.out.println(\"Marker3 (CLASS):   \" + method.getAnnotation(Marker3.class));"
+    },
+    {
+      "prompt": "Zdefiniuj @Sensitive (marker, @Retention(RUNTIME), @Target(FIELD)). Oznacz pole String password w LoginRequest. Sprawdz przez field.isAnnotationPresent(Sensitive.class).",
+      "hint": "isAnnotationPresent zwraca boolean bez potrzeby null-checka.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@interface Sensitive {}\n\nclass LoginRequest {\n    @Sensitive\n    String password;\n}\n\nField field = LoginRequest.class.getDeclaredField(\"password\");\nSystem.out.println(field.isAnnotationPresent(Sensitive.class)); // true"
+    },
+    {
+      "prompt": "Pobierz JavaCompiler przez ToolProvider.getSystemJavaCompiler() i sprawdz, czy jest rozny od null - wypisz odpowiedni komunikat.",
+      "hint": "null oznacza uruchomienie na samym JRE, nie JDK.",
+      "solution": "JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();\nif (compiler != null) {\n    System.out.println(\"Kompilator dostepny\");\n} else {\n    System.out.println(\"Brak kompilatora - to nie jest JDK\");\n}"
+    },
+    {
+      "prompt": "Zapisz do pliku tymczasowego .java prosta klase Hello z main wypisujaca jeden tekst, skompiluj przez compiler.run(...) do katalogu tymczasowego, wypisz kod wyjscia (0 = sukces).",
+      "hint": "compiler.run(null,null,null, sciezkaDoPliku).",
+      "solution": "Path workDir = Files.createTempDirectory(\"ex07\");\nPath sourceFile = workDir.resolve(\"Hello.java\");\nFiles.writeString(sourceFile, \"public class Hello { public static void main(String[] a) { System.out.println(\\\"Czesc\\\"); } }\");\n\nJavaCompiler compiler = ToolProvider.getSystemJavaCompiler();\nint exitCode = compiler.run(null, null, null, sourceFile.toString());\nSystem.out.println(\"Kod wyjscia: \" + exitCode); // 0"
+    },
+    {
+      "prompt": "Napisz minimalny AbstractProcessor @SupportedAnnotationTypes(\"*\") i @SupportedSourceVersion(RELEASE_21), ktorego process() wypisuje liczbe napotkanych typow adnotacji w kazdej rundzie. Skompiluj prosty plik bez adnotacji.",
+      "hint": "annotations.size() w kazdym wywolaniu process().",
+      "solution": "@SupportedAnnotationTypes(\"*\")\n@SupportedSourceVersion(SourceVersion.RELEASE_21)\nstatic class CountingProcessor extends AbstractProcessor {\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        System.out.println(\"Runda: \" + annotations.size() + \" typow adnotacji\");\n        return false;\n    }\n}\n// uzyj z task.setProcessors(List.of(new CountingProcessor())) na pliku bez zadnych adnotacji - process() wywola sie z annotations.size()==0"
+    },
+    {
+      "prompt": "Rozbuduj procesor z Zadania 8 tak, by dla kazdego znalezionego elementu wypisywal jedna notatke (NOTE) i jedno ostrzezenie (WARNING) o roznej tresci. Skompiluj plik z jedna oznaczona metoda, zbierz diagnostyki i wypisz oba komunikaty z Kind.",
+      "hint": "messager.printMessage wywolane dwa razy z rozna Kind.",
+      "solution": "@SupportedAnnotationTypes(\"Audited\")\nstatic class NoteAndWarnProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        Messager messager = processingEnv.getMessager();\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                messager.printMessage(Diagnostic.Kind.NOTE, \"Znaleziono: \" + el.getSimpleName());\n                messager.printMessage(Diagnostic.Kind.WARNING, \"Sprawdz logike: \" + el.getSimpleName());\n            }\n        }\n        return true;\n    }\n}\n// po kompilacji: for (Diagnostic<?> d : diagnostics.getDiagnostics()) System.out.println(d.getKind() + \": \" + d.getMessage(null));"
+    },
+    {
+      "prompt": "Wykonaj kompilacje w locie (jak w Zadaniu 7) do katalogu tymczasowego, napisz metode rekurencyjnie usuwajaca ten katalog. Sprawdz Files.exists przed i po sprzataniu.",
+      "hint": "Files.walk + sortowanie odwrotne + deleteIfExists.",
+      "solution": "Path workDir = Files.createTempDirectory(\"ex10\");\nFiles.writeString(workDir.resolve(\"A.java\"), \"public class A {}\");\nSystem.out.println(\"Przed: \" + Files.exists(workDir)); // true\n\ntry (var paths = Files.walk(workDir)) {\n    paths.sorted(Comparator.reverseOrder()).forEach(p -> {\n        try { Files.deleteIfExists(p); } catch (Exception e) { }\n    });\n}\nSystem.out.println(\"Po: \" + Files.exists(workDir)); // false"
+    },
+    {
+      "prompt": "Zaprojektuj wlasny scenariusz z trzema adnotacjami o roznej retencji: @DesignNote (SOURCE), @InternalMarker (CLASS), @Traceable (RUNTIME) - wszystkie @Target(TYPE). Oznacz nimi jedna klase i wypisz, ktora jest odczytywalna.",
+      "hint": "identyczna struktura jak trojka z lekcji, tylko na klasie zamiast metody.",
+      "solution": "@Retention(RetentionPolicy.SOURCE)\n@Target(ElementType.TYPE)\n@interface DesignNote {}\n@Retention(RetentionPolicy.CLASS)\n@Target(ElementType.TYPE)\n@interface InternalMarker {}\n@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.TYPE)\n@interface Traceable {}\n\n@DesignNote @InternalMarker @Traceable\nclass Service {}\n\nSystem.out.println(Service.class.getAnnotation(DesignNote.class)); // null\nSystem.out.println(Service.class.getAnnotation(InternalMarker.class)); // null\nSystem.out.println(Service.class.getAnnotation(Traceable.class)); // @Traceable() - jedyna odczytywalna"
+    },
+    {
+      "prompt": "Napisz procesor obslugujacy adnotacje 'Audited' (zdefiniowana w generowanym zrodle), zliczajacy wszystkie oznaczone nia metody i wypisujacy notatke podsumowujaca 'Znaleziono N metod'. Przetestuj na zrodle z 3 oznaczonymi metodami.",
+      "hint": "roundEnv.getElementsAnnotatedWith(type).size() daje liczbe.",
+      "solution": "@SupportedAnnotationTypes(\"Audited\")\nstatic class CountingAuditedProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            int count = roundEnv.getElementsAnnotatedWith(type).size();\n            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, \"Znaleziono \" + count + \" metod oznaczonych @Audited\");\n        }\n        return true;\n    }\n}\n// zrodlo z 3 metodami oznaczonymi @Audited da notatke 'Znaleziono 3 metod oznaczonych @Audited'"
+    },
+    {
+      "prompt": "Zaprojektuj @Tracked z @Target({METHOD, FIELD}). W generowanym zrodle oznacz jedna metode i jedno pole. Napisz procesor sprawdzajacy element.getKind() (METHOD vs FIELD) i wypisujacy rozne komunikaty.",
+      "hint": "ElementKind to enum z wartosciami METHOD, FIELD itd.",
+      "solution": "@SupportedAnnotationTypes(\"Tracked\")\nstatic class KindAwareProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                if (el.getKind() == ElementKind.METHOD) {\n                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, \"Sledzona metoda: \" + el.getSimpleName());\n                } else if (el.getKind() == ElementKind.FIELD) {\n                    processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, \"Sledzone pole: \" + el.getSimpleName());\n                }\n            }\n        }\n        return true;\n    }\n}"
+    },
+    {
+      "prompt": "Napisz procesor dla @RequiresJustification (String value()), ktory sprawdza czy value() nie jest puste - jesli puste, zglasza ERROR (nie NOTE). Przetestuj poprawna wartosc i pusta.",
+      "hint": "ERROR sprawia, ze task.call() zwroci false.",
+      "solution": "@SupportedAnnotationTypes(\"RequiresJustification\")\nstatic class JustificationProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                for (AnnotationMirror am : el.getAnnotationMirrors()) {\n                    for (var entry : am.getElementValues().entrySet()) {\n                        String value = entry.getValue().getValue().toString();\n                        if (value.isBlank()) {\n                            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, \"Brak uzasadnienia\", el);\n                        }\n                    }\n                }\n            }\n        }\n        return true;\n    }\n}\n// z pusta wartoscia @RequiresJustification(\"\") kompilacja (task.call()) zwroci false"
+    },
+    {
+      "prompt": "W komentarzu wypisz trzy przyklady adnotacji znanych z wczesniejszych rozdzialow (@Entity z _12_hibernate, @Mapper z _13_libraries, @Test z JUnit) i zapisz, jaka retencje kazda MUSI miec.",
+      "hint": "framework dzialajacy w runtime wymaga RUNTIME, generujacy kod tylko w kompilacji - SOURCE.",
+      "solution": "// @Entity (Hibernate, _12_hibernate) - MUSI miec RUNTIME retention, bo Hibernate odczytuje ja przez refleksje\n// przy tworzeniu SessionFactory/mapowania obiektowo-relacyjnego W CZASIE DZIALANIA aplikacji.\n// @Mapper (MapStruct, _13_libraries) - MOZE miec SOURCE (a nawet CLASS) retention, bo MapStruct generuje\n// gotowa klase XxxMapperImpl.java W CZASIE KOMPILACJI i nie potrzebuje adnotacji w runtime.\n// @Test (JUnit) - MUSI miec RUNTIME retention, bo JUnit skanuje klasy testowe przez refleksje\n// PRZED uruchomieniem testow, w czasie dzialania test runnera."
+    },
+    {
+      "prompt": "Zdefiniuj (w generowanym zrodle) @Since z elementem String value(). Napisz procesor, ktory dla kazdego elementu pobiera wartosc przez AnnotationMirror/AnnotationValue i wypisuje ja w komunikacie. Przetestuj dla dwoch roznych wartosci.",
+      "hint": "am.getElementValues() zwraca Map<ExecutableElement,AnnotationValue>.",
+      "solution": "@SupportedAnnotationTypes(\"Since\")\nstatic class SinceProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                for (AnnotationMirror am : el.getAnnotationMirrors()) {\n                    for (var entry : am.getElementValues().entrySet()) {\n                        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,\n                            el.getSimpleName() + \" @Since = \" + entry.getValue().getValue());\n                    }\n                }\n            }\n        }\n        return true;\n    }\n}"
+    },
+    {
+      "prompt": "Zdefiniuj dwie adnotacje @Fast i @Slow (markery, @Target(METHOD)). Napisz JEDEN procesor obslugujacy obie (@SupportedAnnotationTypes({\"Fast\",\"Slow\"})), rozrozniajacy typ przez annotationType.getSimpleName().",
+      "hint": "petla po annotations rozpoznaje typ po nazwie.",
+      "solution": "@SupportedAnnotationTypes({\"Fast\", \"Slow\"})\nstatic class FastSlowProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            String name = type.getSimpleName().toString();\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,\n                    \"[\" + name + \"] \" + el.getSimpleName());\n            }\n        }\n        return true;\n    }\n}"
+    },
+    {
+      "prompt": "Wykonaj kompilacje generujaca jednoczesnie zwykle ostrzezenia (uzycie przestarzalej metody) ORAZ notatki procesora. Zbierz wszystko w DiagnosticCollector, przefiltruj i wypisz osobno NOTE i osobno WARNING.",
+      "hint": "stream().filter(d -> d.getKind() == Diagnostic.Kind.NOTE).",
+      "solution": "List<Diagnostic<? extends JavaFileObject>> all = diagnostics.getDiagnostics();\nList<Diagnostic<? extends JavaFileObject>> notes = all.stream()\n    .filter(d -> d.getKind() == Diagnostic.Kind.NOTE).toList();\nList<Diagnostic<? extends JavaFileObject>> warnings = all.stream()\n    .filter(d -> d.getKind() == Diagnostic.Kind.WARNING).toList();\nSystem.out.println(\"NOTE: \" + notes);\nSystem.out.println(\"WARNING: \" + warnings);"
+    },
+    {
+      "prompt": "Wyjasnij w komentarzu, dlaczego @Loggable z lekcji MUSIALA byc zdefiniowana WEWNATRZ tego samego generowanego pliku zrodlowego co klasa, ktora oznaczalismy.",
+      "hint": "CompilationTask kompiluje TYLKO podane compilationUnits.",
+      "solution": "// CompilationTask kompiluje TYLKO pliki przekazane jako compilationUnits - jesli @Loggable bylaby zdefiniowana\n// w OSOBNYM, wczesniej skompilowanym pliku .class na classpath, kompilator wciaz musialby ZNAC jej definicje\n// (typ), ale nie musialby jej PONOWNIE kompilowac razem z PaymentService - to by dzialalo (classpath),\n// ALE dla PROSTOTY demo (jeden samodzielny plik, zero dodatkowego classpath) definicja adnotacji W TYM SAMYM\n// generowanym zrodle jest najlatwiejsza do zademonstrowania bez konfigurowania dodatkowych zaleznosci."
+    },
+    {
+      "prompt": "Napisz dwa warianty tego samego procesora - jeden zwracajacy true, drugi false z process(). Skompiluj ten sam plik osobno z kazdym wariantem. Opisz w komentarzu roznice w znaczeniu wartosci zwracanej.",
+      "hint": "true='obsluzylem te adnotacje', false='niech inne procesory tez sprobuja'.",
+      "solution": "static class TrueVariant extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> a, RoundEnvironment r) { return true; }\n}\nstatic class FalseVariant extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> a, RoundEnvironment r) { return false; }\n}\n// true oznacza \"obsluzylem te adnotacje calkowicie\" - zaden INNY procesor zarejestrowany w tej samej kompilacji\n// nie dostanie juz szansy przetworzyc TYCH SAMYCH typow adnotacji w tej rundzie.\n// false oznacza \"nie roszcze sobie wylacznosci\" - inne procesory MOGA rowniez przetworzyc te same adnotacje."
+    },
+    {
+      "prompt": "Rozbuduj procesor tak, zeby dla kazdej klasy oznaczonej @GenerateToString (marker, @Target(TYPE)) WYGENEROWAL NOWY plik zrodlowy przez Filer.createSourceFile(...). Sprawdz, ze nowy plik .class powstal.",
+      "hint": "processingEnv.getFiler().createSourceFile(nazwa).openWriter().",
+      "solution": "@SupportedAnnotationTypes(\"GenerateToString\")\nstatic class GeneratingProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                try {\n                    String name = el.getSimpleName() + \"Describer\";\n                    JavaFileObject file = processingEnv.getFiler().createSourceFile(name);\n                    try (var writer = file.openWriter()) {\n                        writer.write(\"public class \" + name + \" { public static String describe() { return \\\"opis\\\"; } }\");\n                    }\n                } catch (Exception e) { }\n            }\n        }\n        return true;\n    }\n}\n// po kompilacji sprawdz Files.exists(outDir.resolve(\"XxxDescriber.class\"))"
+    },
+    {
+      "prompt": "Zbuduj procesor, ktory w PIERWSZEJ rundzie generuje nowy plik zrodlowy zawierajacy adnotacje, ktora procesor RowNIEZ obsluguje (samo-referencyjny lancuch). Zaobserwuj przez licznik, ze annotation processing jest wielorundowe.",
+      "hint": "static int roundCount licznik w procesorze, inkrementowany w kazdym process().",
+      "solution": "@SupportedAnnotationTypes(\"Chain\")\nstatic class MultiRoundProcessor extends AbstractProcessor {\n    static int roundCount = 0;\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        roundCount++;\n        if (roundCount == 1 && !annotations.isEmpty()) {\n            try {\n                JavaFileObject file = processingEnv.getFiler().createSourceFile(\"Generated1\");\n                try (var w = file.openWriter()) {\n                    w.write(\"@Chain class Generated1 {}\");\n                }\n            } catch (Exception e) { }\n        }\n        return true;\n    }\n}\n// po kompilacji: System.out.println(\"Liczba rund: \" + MultiRoundProcessor.roundCount); - bedzie > 1"
+    },
+    {
+      "prompt": "Wyjasnij w komentarzu, dlaczego Lombok NIE MOZE dzialac wylacznie przez Filer.createSourceFile(...) tak jak MapStruct - Lombok MODYFIKUJE istniejaca klase, a nie generuje nowy plik.",
+      "hint": "Filer tworzy TYLKO nowe pliki, nie modyfikuje istniejacych.",
+      "solution": "// Filer.createSourceFile(...) tworzy WYLACZNIE NOWE pliki zrodlowe - nie pozwala zmodyfikowac ISTNIEJACEGO\n// juz drzewa skladniowego kompilowanej klasy. Lombok dopisuje gettery/settery/konstruktory BEZPOSREDNIO DO\n// klasy, ktora juz istnieje w zrodle (np. adnotujesz @Data na Person, a Person.class w bajtkodzie MA juz\n// gettery) - to wymaga siegniecia po NIEPUBLICZNE, zalezne od konkretnej implementacji kompilatora API\n// (dla javac: com.sun.source.tree.*, wewnetrzne drzewo AST) i FIZYCZNEGO dopisania wezlow do tego drzewa\n// PRZED faza generowania bajtkodu - to jest tzw. \"hack\" poza oficjalnym, udokumentowanym kontraktem JSR 269,\n// dlatego Lombok bywa krytykowany za krucha zaleznosc od wewnetrznych szczegolow konkretnych kompilatorow."
+    },
+    {
+      "prompt": "Napisz procesor dla @EventHandler (@Target(METHOD)), ktory sprawdza przez ExecutableElement, czy oznaczona metoda ma DOKLADNIE JEDEN parametr - jesli nie, zglasza ERROR. Przetestuj z 1 i 0 parametrami.",
+      "hint": "((ExecutableElement) element).getParameters().size().",
+      "solution": "@SupportedAnnotationTypes(\"EventHandler\")\nstatic class SignatureCheckProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                ExecutableElement method = (ExecutableElement) el;\n                if (method.getParameters().size() != 1) {\n                    processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,\n                        \"@EventHandler wymaga dokladnie 1 parametru\", el);\n                }\n            }\n        }\n        return true;\n    }\n}"
+    },
+    {
+      "prompt": "Skompiluj klase z metoda oznaczona adnotacja RUNTIME (jak w Zadaniu 1) do katalogu .class, zapakuj do .jar, wczytaj przez URLClassLoader i potwierdz przez refleksje, ze adnotacja jest wciaz odczytywalna.",
+      "hint": "URLClassLoader wskazuje na plik .jar, loadClass laduje klase.",
+      "solution": "// (uproszczony szkielet - pelna wersja lacyz JavaCompiler + JarOutputStream jak w _11_buildtools/Lesson02)\nPath outDir = Files.createTempDirectory(\"ex25-out\");\n// ... kompilacja klasy z @Marker1 do outDir ...\nPath jarFile = Files.createTempFile(\"ex25\", \".jar\");\n// ... zapakowanie plikow .class z outDir do jarFile przez JarOutputStream ...\n\ntry (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{jarFile.toUri().toURL()})) {\n    Class<?> loaded = loader.loadClass(\"Demo1\");\n    Method m = loaded.getDeclaredMethod(\"m\");\n    System.out.println(m.getAnnotation(Marker1.class) != null); // true - adnotacja przetrwala caly cykl"
+    },
+    {
+      "prompt": "Zaprojektuj dwa rozwiazania mapowania Employee->EmployeeDto: jedno oparte na odczycie adnotacji RUNTIME przez refleksje w kazdym wywolaniu, drugie opisz w komentarzu (SOURCE + annotation processing jak MapStruct). Zaimplementuj wariant z refleksja i zmierz czas 100000 wywolan.",
+      "hint": "System.nanoTime() przed i po petli 100000 iteracji.",
+      "solution": "// Wariant z refleksja (wolniejszy w runtime - kazde wywolanie odczytuje adnotacje/pola przez Reflection API):\nclass Employee { String name; }\nclass EmployeeDto { String name; }\n\nstatic EmployeeDto mapReflective(Employee e) throws Exception {\n    EmployeeDto dto = new EmployeeDto();\n    Field src = Employee.class.getDeclaredField(\"name\");\n    Field dst = EmployeeDto.class.getDeclaredField(\"name\");\n    src.setAccessible(true); dst.setAccessible(true);\n    dst.set(dto, src.get(e));\n    return dto;\n}\n\nlong start = System.nanoTime();\nEmployee e = new Employee(); e.name = \"Ala\";\nfor (int i = 0; i < 100_000; i++) mapReflective(e);\nlong elapsed = System.nanoTime() - start;\nSystem.out.println(\"Czas: \" + (elapsed / 1_000_000) + \" ms\");\n// Wariant kompilacyjny (MapStruct) generuje ZWYKLY kod Javy (dto.setName(e.getName())) BEZ zadnej refleksji\n// w runtime - kazde wywolanie to zwykle, bezposrednie przypisanie, wielokrotnie szybsze niz refleksja."
+    },
+    {
+      "prompt": "Skompiluj DWA osobne pliki zrodlowe NARAZ (jedna kompilacja, dwie JavaFileObject), kazdy z klasa oznaczajaca inne elementy ta sama adnotacja @Reportable (marker). Sprawdz, ze procesor zglasza komunikaty dla elementow z OBU plikow.",
+      "hint": "fileManager.getJavaFileObjectsFromFiles(List.of(plik1, plik2)).",
+      "solution": "Path src1 = workDir.resolve(\"A.java\");\nPath src2 = workDir.resolve(\"B.java\");\nFiles.writeString(src1, \"@interface Reportable {} class A { @Reportable void foo() {} }\");\nFiles.writeString(src2, \"class B { @Reportable void bar() {} }\");\n\nIterable<? extends JavaFileObject> units = fileManager.getJavaFileObjectsFromFiles(List.of(src1.toFile(), src2.toFile()));\n// task = compiler.getTask(..., units) z procesorem @SupportedAnnotationTypes(\"Reportable\")\n// procesor zglosi notatki dla foo() z A.java ORAZ bar() z B.java w tej samej kompilacji"
+    },
+    {
+      "prompt": "Napisz procesor @SupportedOptions(\"debugMode\"), odczytujacy processingEnv.getOptions().get(\"debugMode\") - wypisujacy dodatkowy komunikat TYLKO jesli opcja ustawiona. Przekaz opcje przez '-AdebugMode=true' w liscie options kompilacji.",
+      "hint": "getOptions() zwraca Map<String,String> z opcji -A.",
+      "solution": "@SupportedAnnotationTypes(\"*\")\n@SupportedOptions(\"debugMode\")\nstatic class OptionAwareProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        String debug = processingEnv.getOptions().get(\"debugMode\");\n        if (\"true\".equals(debug)) {\n            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, \"Tryb debugowania wlaczony\");\n        }\n        return false;\n    }\n}\n// List<String> options = List.of(\"-d\", outDir.toString(), \"-AdebugMode=true\");"
+    },
+    {
+      "prompt": "Zaprojektuj procesor dla @Range(min,max) z Lekcji 13 (zdefiniowanej w generowanym zrodle), sprawdzajacy wartosci min/max przez AnnotationMirror - jesli min > max, zglasza ERROR. Przetestuj (0,100) i (100,0).",
+      "hint": "odczytaj obie wartosci z getElementValues() i porownaj.",
+      "solution": "@SupportedAnnotationTypes(\"Range\")\nstatic class RangeValidationProcessor extends AbstractProcessor {\n    @Override\n    public SourceVersion getSupportedSourceVersion() { return SourceVersion.latestSupported(); }\n    @Override\n    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {\n        for (TypeElement type : annotations) {\n            for (Element el : roundEnv.getElementsAnnotatedWith(type)) {\n                for (AnnotationMirror am : el.getAnnotationMirrors()) {\n                    Integer min = null, max = null;\n                    for (var entry : am.getElementValues().entrySet()) {\n                        String key = entry.getKey().getSimpleName().toString();\n                        int val = (int) entry.getValue().getValue();\n                        if (key.equals(\"min\")) min = val;\n                        if (key.equals(\"max\")) max = val;\n                    }\n                    if (min != null && max != null && min > max) {\n                        processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, \"min > max w @Range\", el);\n                    }\n                }\n            }\n        }\n        return true;\n    }\n}"
+    },
+    {
+      "prompt": "Kapszton: polacz caly klaster Lekcji 12-14 — (a) @RestEndpoint(path,method) z RUNTIME retention odczytywana przez zwykla refleksje w main() budujaca tabele routingu, (b) @ValidatedController (SOURCE) sprawdzana przez wlasny annotation processor weryfikujacy w czasie kompilacji, ze KAZDA metoda @RestEndpoint w klasie z @ValidatedController zwraca String.",
+      "hint": "dwa niezalezne mechanizmy: refleksja runtime + annotation processing w kompilacji.",
+      "solution": "// Czesc A - RUNTIME, zwykla refleksja (jak w cwiczeniach Lekcji 13):\n@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.METHOD)\n@interface RestEndpoint {\n    String path();\n    String method() default \"GET\";\n}\n\nclass ApiController {\n    @RestEndpoint(path = \"/users\")\n    String listUsers() { return \"[]\"; }\n}\n\nMap<String, String> routes = new LinkedHashMap<>();\nfor (Method m : ApiController.class.getDeclaredMethods()) {\n    RestEndpoint re = m.getAnnotation(RestEndpoint.class);\n    if (re != null) routes.put(re.method() + \" \" + re.path(), m.getName());\n}\nSystem.out.println(routes);\n\n// Czesc B - SOURCE + annotation processing (w generowanym zrodle, w osobnej kompilacji):\n// @ValidatedController class BadController { @RestEndpoint(path=\"/x\") void badMethod() {} }\n// procesor sprawdza kazda metode @RestEndpoint w klasie @ValidatedController: czy getReturnType() to String\n// jesli nie - Diagnostic.Kind.ERROR \"Metoda @RestEndpoint w @ValidatedController musi zwracac String\"\n// Podsumowanie: definicja (@interface) -> retencja (SOURCE dla B, RUNTIME dla A) -> ewentualne przetwarzanie\n// w kompilacji (annotation processor dla B) -> ewentualny odczyt w runtime (refleksja dla A)."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Ile wartosci ma enum RetentionPolicy?",
+      "options": {
+        "A": "2",
+        "B": "3",
+        "C": "4",
+        "D": "5"
+      },
+      "correct": "B",
+      "explanation": "RetentionPolicy ma trzy wartosci: SOURCE, CLASS, RUNTIME."
+    },
+    {
+      "question": "Ktora wartosc RetentionPolicy jest DOMYSLNA, gdy @Retention zostanie pominieta?",
+      "options": {
+        "A": "SOURCE",
+        "B": "CLASS",
+        "C": "RUNTIME",
+        "D": "Brak wartosci domyslnej"
+      },
+      "correct": "B",
+      "explanation": "Jesli @Retention zostanie pominieta, domyslna wartoscia jest CLASS."
+    },
+    {
+      "question": "Dlaczego getAnnotation() zwraca null dla adnotacji z RetentionPolicy.SOURCE?",
+      "options": {
+        "A": "Bo adnotacja jest usuwana juz na etapie kompilacji, nie trafia do pliku .class",
+        "B": "Bo trzeba jawnie wywolac setAccessible(true)",
+        "C": "Bo SOURCE dziala tylko na polach, nie metodach",
+        "D": "To blad w implementacji JVM"
+      },
+      "correct": "A",
+      "explanation": "RetentionPolicy.SOURCE oznacza, ze kompilator ODRZUCA adnotacje przy generowaniu .class - w bajtkodzie nie ma po niej sladu."
+    },
+    {
+      "question": "Na jakiej wartosci RetentionPolicy opieraja sie frameworki jak JUnit (@Test) czy Hibernate (@Entity)?",
+      "options": {
+        "A": "SOURCE",
+        "B": "CLASS",
+        "C": "RUNTIME",
+        "D": "BINARY"
+      },
+      "correct": "C",
+      "explanation": "Frameworki odczytujace adnotacje przez refleksje w czasie dzialania programu WYMAGAJA RetentionPolicy.RUNTIME."
+    },
+    {
+      "question": "Jaki pakiet Javy dostarcza mechanizm annotation processing?",
+      "options": {
+        "A": "java.lang.reflect",
+        "B": "javax.annotation.processing",
+        "C": "java.lang.annotation",
+        "D": "javax.lang.model.type"
+      },
+      "correct": "B",
+      "explanation": "javax.annotation.processing zawiera AbstractProcessor, RoundEnvironment, Messager i inne klasy mechanizmu przetwarzania adnotacji."
+    },
+    {
+      "question": "Co robi metoda roundEnv.getElementsAnnotatedWith(annotationType)?",
+      "options": {
+        "A": "Kompiluje kod na nowo",
+        "B": "Zwraca WSZYSTKIE elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "C": "Usuwa adnotacje z drzewa skladniowego",
+        "D": "Generuje nowy plik zrodlowy"
+      },
+      "correct": "B",
+      "explanation": "roundEnv.getElementsAnnotatedWith(...) zwraca kolekcje elementow (metod, pol, klas) oznaczonych danym typem adnotacji w aktualnej rundzie przetwarzania."
+    },
+    {
+      "question": "Co sie stanie, gdy procesor zglosi Diagnostic.Kind.ERROR przez Messager?",
+      "options": {
+        "A": "Nic, to tylko informacja dla dewelopera",
+        "B": "Kompilacja konczy sie niepowodzeniem - task.call() zwraca false",
+        "C": "Adnotacja zostaje automatycznie usunieta",
+        "D": "JVM rzuci wyjatek w runtime"
+      },
+      "correct": "B",
+      "explanation": "Zgloszenie Diagnostic.Kind.ERROR przez procesor SPRAWIA, ze kompilacja zakonczy sie niepowodzeniem."
+    },
+    {
+      "question": "Co oznacza zwrocenie true z metody process() procesora?",
+      "options": {
+        "A": "Procesor zglosil blad krytyczny",
+        "B": "Procesor 'obslugil' te adnotacje - zaden inny procesor nie musi ich juz przetwarzac",
+        "C": "Kompilacja zostanie przerwana",
+        "D": "Trzeba uruchomic kolejna runde recznie"
+      },
+      "correct": "B",
+      "explanation": "Zwrocenie true oznacza, ze procesor przejal odpowiedzialnosc za te typy adnotacji w danej rundzie - inne procesory nie musza ich ponownie przetwarzac."
+    },
+    {
+      "question": "Dlaczego annotation processing jest 'wielorundowe'?",
+      "options": {
+        "A": "Bo kompilator zawsze uruchamia kazdy procesor dokladnie 3 razy",
+        "B": "Bo procesor moze wygenerowac NOWE pliki zrodlowe, ktore trzeba przetworzyc w kolejnej rundzie",
+        "C": "Bo to wymog specyfikacji JVM",
+        "D": "Nie jest wielorundowe - to blad w opisie"
+      },
+      "correct": "B",
+      "explanation": "Jesli procesor generuje nowy plik zrodlowy (np. przez Filer), kompilator musi go rowniez skompilowac i ponownie uruchomic procesory - stad kolejne 'rundy', az nic nowego nie powstaje."
+    },
+    {
+      "question": "Jak zarejestrowac wlasny procesor PROGRAMOWO (bez pliku META-INF/services)?",
+      "options": {
+        "A": "Przez adnotacje @Processor na klasie glownej",
+        "B": "Przez CompilationTask.setProcessors(List.of(procesor))",
+        "C": "Nie da sie tego zrobic programowo",
+        "D": "Przez zmienna srodowiskowa JAVA_PROCESSORS"
+      },
+      "correct": "B",
+      "explanation": "CompilationTask.setProcessors(...) pozwala podac gotowa instancje procesora bezposrednio, bez potrzeby automatycznego odkrycia przez META-INF/services."
+    },
+    {
+      "question": "Czym jest / co oznacza \"RetentionPolicy.SOURCE\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "D": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+      },
+      "correct": "A",
+      "explanation": "\"RetentionPolicy.SOURCE\" to: poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RetentionPolicy.CLASS\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "D": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+      },
+      "correct": "B",
+      "explanation": "\"RetentionPolicy.CLASS\" to: domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RetentionPolicy.RUNTIME\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "B": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "C": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "D": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+      },
+      "correct": "C",
+      "explanation": "\"RetentionPolicy.RUNTIME\" to: poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"annotation processing\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+      },
+      "correct": "D",
+      "explanation": "\"annotation processing\" to: mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"AbstractProcessor\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+      },
+      "correct": "A",
+      "explanation": "\"AbstractProcessor\" to: bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+    },
+    {
+      "question": "Czym jest / co oznacza \"@SupportedAnnotationTypes\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "D": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+      },
+      "correct": "B",
+      "explanation": "\"@SupportedAnnotationTypes\" to: adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RoundEnvironment\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "B": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+      },
+      "correct": "C",
+      "explanation": "\"RoundEnvironment\" to: obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+    },
+    {
+      "question": "Czym jest / co oznacza \"getElementsAnnotatedWith\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+      },
+      "correct": "D",
+      "explanation": "\"getElementsAnnotatedWith\" to: metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Messager\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+      },
+      "correct": "A",
+      "explanation": "\"Messager\" to: obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Diagnostic.Kind.ERROR\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "D": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+      },
+      "correct": "B",
+      "explanation": "\"Diagnostic.Kind.ERROR\" to: rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Filer\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "B": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+      },
+      "correct": "C",
+      "explanation": "\"Filer\" to: obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"wielorundowe przetwarzanie\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+      },
+      "correct": "D",
+      "explanation": "\"wielorundowe przetwarzanie\" to: cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+    },
+    {
+      "question": "Czym jest / co oznacza \"CompilationTask.setProcessors\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+      },
+      "correct": "A",
+      "explanation": "\"CompilationTask.setProcessors\" to: metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+    },
+    {
+      "question": "Czym jest / co oznacza \"AnnotationMirror\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "D": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+      },
+      "correct": "B",
+      "explanation": "\"AnnotationMirror\" to: reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Lombok vs MapStruct (mechanizm)\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+      },
+      "correct": "C",
+      "explanation": "\"Lombok vs MapStruct (mechanizm)\" to: MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class\"?",
+      "options": {
+        "A": "RetentionPolicy.CLASS",
+        "B": "RetentionPolicy.RUNTIME",
+        "C": "annotation processing",
+        "D": "RetentionPolicy.SOURCE"
+      },
+      "correct": "D",
+      "explanation": "Opis \"poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class\" odpowiada terminowi \"RetentionPolicy.SOURCE\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime\"?",
+      "options": {
+        "A": "RetentionPolicy.CLASS",
+        "B": "RetentionPolicy.RUNTIME",
+        "C": "annotation processing",
+        "D": "AbstractProcessor"
+      },
+      "correct": "A",
+      "explanation": "Opis \"domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime\" odpowiada terminowi \"RetentionPolicy.CLASS\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje\"?",
+      "options": {
+        "A": "annotation processing",
+        "B": "RetentionPolicy.RUNTIME",
+        "C": "AbstractProcessor",
+        "D": "@SupportedAnnotationTypes"
+      },
+      "correct": "B",
+      "explanation": "Opis \"poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje\" odpowiada terminowi \"RetentionPolicy.RUNTIME\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji\"?",
+      "options": {
+        "A": "AbstractProcessor",
+        "B": "@SupportedAnnotationTypes",
+        "C": "annotation processing",
+        "D": "RoundEnvironment"
+      },
+      "correct": "C",
+      "explanation": "Opis \"mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji\" odpowiada terminowi \"annotation processing\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia\"?",
+      "options": {
+        "A": "@SupportedAnnotationTypes",
+        "B": "RoundEnvironment",
+        "C": "getElementsAnnotatedWith",
+        "D": "AbstractProcessor"
+      },
+      "correct": "D",
+      "explanation": "Opis \"bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia\" odpowiada terminowi \"AbstractProcessor\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje\"?",
+      "options": {
+        "A": "@SupportedAnnotationTypes",
+        "B": "RoundEnvironment",
+        "C": "getElementsAnnotatedWith",
+        "D": "Messager"
+      },
+      "correct": "A",
+      "explanation": "Opis \"adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje\" odpowiada terminowi \"@SupportedAnnotationTypes\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow\"?",
+      "options": {
+        "A": "getElementsAnnotatedWith",
+        "B": "RoundEnvironment",
+        "C": "Messager",
+        "D": "Diagnostic.Kind.ERROR"
+      },
+      "correct": "B",
+      "explanation": "Opis \"obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow\" odpowiada terminowi \"RoundEnvironment\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie\"?",
+      "options": {
+        "A": "Messager",
+        "B": "Diagnostic.Kind.ERROR",
+        "C": "getElementsAnnotatedWith",
+        "D": "Filer"
+      },
+      "correct": "C",
+      "explanation": "Opis \"metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie\" odpowiada terminowi \"getElementsAnnotatedWith\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji\"?",
+      "options": {
+        "A": "Diagnostic.Kind.ERROR",
+        "B": "Filer",
+        "C": "wielorundowe przetwarzanie",
+        "D": "Messager"
+      },
+      "correct": "D",
+      "explanation": "Opis \"obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji\" odpowiada terminowi \"Messager\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji\"?",
+      "options": {
+        "A": "Diagnostic.Kind.ERROR",
+        "B": "Filer",
+        "C": "wielorundowe przetwarzanie",
+        "D": "CompilationTask.setProcessors"
+      },
+      "correct": "A",
+      "explanation": "Opis \"rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji\" odpowiada terminowi \"Diagnostic.Kind.ERROR\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji\"?",
+      "options": {
+        "A": "wielorundowe przetwarzanie",
+        "B": "Filer",
+        "C": "CompilationTask.setProcessors",
+        "D": "AnnotationMirror"
+      },
+      "correct": "B",
+      "explanation": "Opis \"obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji\" odpowiada terminowi \"Filer\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki\"?",
+      "options": {
+        "A": "CompilationTask.setProcessors",
+        "B": "AnnotationMirror",
+        "C": "wielorundowe przetwarzanie",
+        "D": "Lombok vs MapStruct (mechanizm)"
+      },
+      "correct": "C",
+      "explanation": "Opis \"cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki\" odpowiada terminowi \"wielorundowe przetwarzanie\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services\"?",
+      "options": {
+        "A": "AnnotationMirror",
+        "B": "Lombok vs MapStruct (mechanizm)",
+        "C": "RetentionPolicy.SOURCE",
+        "D": "CompilationTask.setProcessors"
+      },
+      "correct": "D",
+      "explanation": "Opis \"metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services\" odpowiada terminowi \"CompilationTask.setProcessors\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow\"?",
+      "options": {
+        "A": "AnnotationMirror",
+        "B": "Lombok vs MapStruct (mechanizm)",
+        "C": "RetentionPolicy.SOURCE",
+        "D": "RetentionPolicy.CLASS"
+      },
+      "correct": "A",
+      "explanation": "Opis \"reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow\" odpowiada terminowi \"AnnotationMirror\"."
+    },
+    {
+      "question": "Ktory termin z retencji adnotacji i annotation processing odpowiada opisowi: \"MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora\"?",
+      "options": {
+        "A": "RetentionPolicy.SOURCE",
+        "B": "Lombok vs MapStruct (mechanizm)",
+        "C": "RetentionPolicy.CLASS",
+        "D": "RetentionPolicy.RUNTIME"
+      },
+      "correct": "B",
+      "explanation": "Opis \"MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora\" odpowiada terminowi \"Lombok vs MapStruct (mechanizm)\"."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"RetentionPolicy.SOURCE\" to NIE jest...",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "synonim terminu \"RetentionPolicy.CLASS\"",
+        "C": "cos innego niz: poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "D": "to samo co \"RetentionPolicy.RUNTIME\""
+      },
+      "correct": "C",
+      "explanation": "\"RetentionPolicy.SOURCE\" oznacza: poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"RetentionPolicy.CLASS\" to NIE jest...",
+      "options": {
+        "A": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "B": "synonim terminu \"RetentionPolicy.RUNTIME\"",
+        "C": "to samo co \"annotation processing\"",
+        "D": "cos innego niz: domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+      },
+      "correct": "D",
+      "explanation": "\"RetentionPolicy.CLASS\" oznacza: domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"RetentionPolicy.RUNTIME\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "B": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "C": "synonim terminu \"annotation processing\"",
+        "D": "to samo co \"AbstractProcessor\""
+      },
+      "correct": "A",
+      "explanation": "\"RetentionPolicy.RUNTIME\" oznacza: poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"annotation processing\" to NIE jest...",
+      "options": {
+        "A": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "B": "cos innego niz: mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "C": "synonim terminu \"AbstractProcessor\"",
+        "D": "to samo co \"@SupportedAnnotationTypes\""
+      },
+      "correct": "B",
+      "explanation": "\"annotation processing\" oznacza: mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"AbstractProcessor\" to NIE jest...",
+      "options": {
+        "A": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "B": "synonim terminu \"@SupportedAnnotationTypes\"",
+        "C": "cos innego niz: bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "D": "to samo co \"RoundEnvironment\""
+      },
+      "correct": "C",
+      "explanation": "\"AbstractProcessor\" oznacza: bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"@SupportedAnnotationTypes\" to NIE jest...",
+      "options": {
+        "A": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "B": "synonim terminu \"RoundEnvironment\"",
+        "C": "to samo co \"getElementsAnnotatedWith\"",
+        "D": "cos innego niz: adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+      },
+      "correct": "D",
+      "explanation": "\"@SupportedAnnotationTypes\" oznacza: adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"RoundEnvironment\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "B": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "C": "synonim terminu \"getElementsAnnotatedWith\"",
+        "D": "to samo co \"Messager\""
+      },
+      "correct": "A",
+      "explanation": "\"RoundEnvironment\" oznacza: obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"getElementsAnnotatedWith\" to NIE jest...",
+      "options": {
+        "A": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "B": "cos innego niz: metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "C": "synonim terminu \"Messager\"",
+        "D": "to samo co \"Diagnostic.Kind.ERROR\""
+      },
+      "correct": "B",
+      "explanation": "\"getElementsAnnotatedWith\" oznacza: metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Messager\" to NIE jest...",
+      "options": {
+        "A": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "B": "synonim terminu \"Diagnostic.Kind.ERROR\"",
+        "C": "cos innego niz: obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "D": "to samo co \"Filer\""
+      },
+      "correct": "C",
+      "explanation": "\"Messager\" oznacza: obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Diagnostic.Kind.ERROR\" to NIE jest...",
+      "options": {
+        "A": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "B": "synonim terminu \"Filer\"",
+        "C": "to samo co \"wielorundowe przetwarzanie\"",
+        "D": "cos innego niz: rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+      },
+      "correct": "D",
+      "explanation": "\"Diagnostic.Kind.ERROR\" oznacza: rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Filer\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "B": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "C": "synonim terminu \"wielorundowe przetwarzanie\"",
+        "D": "to samo co \"CompilationTask.setProcessors\""
+      },
+      "correct": "A",
+      "explanation": "\"Filer\" oznacza: obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"wielorundowe przetwarzanie\" to NIE jest...",
+      "options": {
+        "A": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "B": "cos innego niz: cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "C": "synonim terminu \"CompilationTask.setProcessors\"",
+        "D": "to samo co \"AnnotationMirror\""
+      },
+      "correct": "B",
+      "explanation": "\"wielorundowe przetwarzanie\" oznacza: cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"CompilationTask.setProcessors\" to NIE jest...",
+      "options": {
+        "A": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "B": "synonim terminu \"AnnotationMirror\"",
+        "C": "cos innego niz: metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "D": "to samo co \"Lombok vs MapStruct (mechanizm)\""
+      },
+      "correct": "C",
+      "explanation": "\"CompilationTask.setProcessors\" oznacza: metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"AnnotationMirror\" to NIE jest...",
+      "options": {
+        "A": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "B": "synonim terminu \"Lombok vs MapStruct (mechanizm)\"",
+        "C": "to samo co \"RetentionPolicy.SOURCE\"",
+        "D": "cos innego niz: reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+      },
+      "correct": "D",
+      "explanation": "\"AnnotationMirror\" oznacza: reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Lombok vs MapStruct (mechanizm)\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "B": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "C": "synonim terminu \"RetentionPolicy.SOURCE\"",
+        "D": "to samo co \"RetentionPolicy.CLASS\""
+      },
+      "correct": "A",
+      "explanation": "\"Lombok vs MapStruct (mechanizm)\" oznacza: MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"RetentionPolicy.SOURCE\"?",
+      "options": {
+        "A": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "B": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "C": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "D": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"RetentionPolicy.SOURCE\": poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"RetentionPolicy.CLASS\"?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "B": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "C": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "D": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"RetentionPolicy.CLASS\": domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"RetentionPolicy.RUNTIME\"?",
+      "options": {
+        "A": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "B": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "C": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "D": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"RetentionPolicy.RUNTIME\": poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"annotation processing\"?",
+      "options": {
+        "A": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "B": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "C": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "D": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"annotation processing\": mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"AbstractProcessor\"?",
+      "options": {
+        "A": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "B": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"AbstractProcessor\": bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"@SupportedAnnotationTypes\"?",
+      "options": {
+        "A": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "B": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "C": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "D": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"@SupportedAnnotationTypes\": adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"RoundEnvironment\"?",
+      "options": {
+        "A": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "B": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "C": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "D": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"RoundEnvironment\": obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"getElementsAnnotatedWith\"?",
+      "options": {
+        "A": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "B": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "C": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "D": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"getElementsAnnotatedWith\": metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"Messager\"?",
+      "options": {
+        "A": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "B": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"Messager\": obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"Diagnostic.Kind.ERROR\"?",
+      "options": {
+        "A": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "B": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "C": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "D": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"Diagnostic.Kind.ERROR\": rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"Filer\"?",
+      "options": {
+        "A": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "B": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "C": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "D": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"Filer\": obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"wielorundowe przetwarzanie\"?",
+      "options": {
+        "A": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "B": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "C": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "D": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"wielorundowe przetwarzanie\": cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"CompilationTask.setProcessors\"?",
+      "options": {
+        "A": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "B": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"CompilationTask.setProcessors\": metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"AnnotationMirror\"?",
+      "options": {
+        "A": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "B": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "C": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "D": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"AnnotationMirror\": reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+    },
+    {
+      "question": "W praktycznym zastosowaniu retencji adnotacji i annotation processing, do czego sluzy \"Lombok vs MapStruct (mechanizm)\"?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "D": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"Lombok vs MapStruct (mechanizm)\": MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"RetentionPolicy.SOURCE\"?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "D": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"RetentionPolicy.SOURCE\": poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"RetentionPolicy.CLASS\"?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "D": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"RetentionPolicy.CLASS\": domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"RetentionPolicy.RUNTIME\"?",
+      "options": {
+        "A": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "B": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "C": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "D": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"RetentionPolicy.RUNTIME\": poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"annotation processing\"?",
+      "options": {
+        "A": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"annotation processing\": mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"AbstractProcessor\"?",
+      "options": {
+        "A": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"AbstractProcessor\": bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"@SupportedAnnotationTypes\"?",
+      "options": {
+        "A": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "D": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"@SupportedAnnotationTypes\": adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"RoundEnvironment\"?",
+      "options": {
+        "A": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "B": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "C": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "D": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"RoundEnvironment\": obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"getElementsAnnotatedWith\"?",
+      "options": {
+        "A": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"getElementsAnnotatedWith\": metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Messager\"?",
+      "options": {
+        "A": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"Messager\": obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Diagnostic.Kind.ERROR\"?",
+      "options": {
+        "A": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "D": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"Diagnostic.Kind.ERROR\": rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Filer\"?",
+      "options": {
+        "A": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "B": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "C": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "D": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"Filer\": obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"wielorundowe przetwarzanie\"?",
+      "options": {
+        "A": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"wielorundowe przetwarzanie\": cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"CompilationTask.setProcessors\"?",
+      "options": {
+        "A": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"CompilationTask.setProcessors\": metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"AnnotationMirror\"?",
+      "options": {
+        "A": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "D": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"AnnotationMirror\": reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Lombok vs MapStruct (mechanizm)\"?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "C": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "D": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"Lombok vs MapStruct (mechanizm)\": MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RetentionPolicy.SOURCE\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "B": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "C": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "D": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+      },
+      "correct": "D",
+      "explanation": "\"RetentionPolicy.SOURCE\" to: poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RetentionPolicy.CLASS\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "B": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "C": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "D": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+      },
+      "correct": "A",
+      "explanation": "\"RetentionPolicy.CLASS\" to: domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RetentionPolicy.RUNTIME\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "B": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje",
+        "C": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "D": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+      },
+      "correct": "B",
+      "explanation": "\"RetentionPolicy.RUNTIME\" to: poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"annotation processing\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia",
+        "B": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "C": "mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji",
+        "D": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+      },
+      "correct": "C",
+      "explanation": "\"annotation processing\" to: mechanizm javax.annotation.processing pozwalajacy analizowac i generowac kod na podstawie adnotacji w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"AbstractProcessor\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "B": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "C": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "D": "bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+      },
+      "correct": "D",
+      "explanation": "\"AbstractProcessor\" to: bazowa klasa do implementacji wlasnego procesora adnotacji, z metoda process() jako glownym punktem wejscia"
+    },
+    {
+      "question": "Czym jest / co oznacza \"@SupportedAnnotationTypes\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje",
+        "B": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "C": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "D": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+      },
+      "correct": "A",
+      "explanation": "\"@SupportedAnnotationTypes\" to: adnotacja deklarujaca, jakie typy adnotacji dany procesor obsluguje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"RoundEnvironment\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "B": "obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow",
+        "C": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "D": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+      },
+      "correct": "B",
+      "explanation": "\"RoundEnvironment\" to: obiekt reprezentujacy biezaca runde przetwarzania adnotacji, dostarczajacy dostep do oznaczonych elementow"
+    },
+    {
+      "question": "Czym jest / co oznacza \"getElementsAnnotatedWith\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji",
+        "B": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "C": "metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie",
+        "D": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+      },
+      "correct": "C",
+      "explanation": "\"getElementsAnnotatedWith\" to: metoda RoundEnvironment zwracajaca wszystkie elementy oznaczone danym typem adnotacji w biezacej rundzie"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Messager\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "B": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "C": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "D": "obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+      },
+      "correct": "D",
+      "explanation": "\"Messager\" to: obiekt sluzacy do zglaszania komunikatow (NOTE/WARNING/ERROR) podczas przetwarzania adnotacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Diagnostic.Kind.ERROR\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji",
+        "B": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "C": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "D": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+      },
+      "correct": "A",
+      "explanation": "\"Diagnostic.Kind.ERROR\" to: rodzaj komunikatu zglaszanego przez Messager, ktory powoduje niepowodzenie calej kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Filer\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "B": "obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji",
+        "C": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "D": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+      },
+      "correct": "B",
+      "explanation": "\"Filer\" to: obiekt pozwalajacy procesorowi generowac NOWE pliki zrodlowe w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"wielorundowe przetwarzanie\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services",
+        "B": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "C": "cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki",
+        "D": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+      },
+      "correct": "C",
+      "explanation": "\"wielorundowe przetwarzanie\" to: cecha annotation processing polegajaca na wielokrotnym uruchamianiu procesorow, dopoki generowane sa nowe pliki"
+    },
+    {
+      "question": "Czym jest / co oznacza \"CompilationTask.setProcessors\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "B": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "C": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "D": "metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+      },
+      "correct": "D",
+      "explanation": "\"CompilationTask.setProcessors\" to: metoda pozwalajaca zarejestrowac procesor programowo, bez pliku META-INF/services"
+    },
+    {
+      "question": "Czym jest / co oznacza \"AnnotationMirror\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow",
+        "B": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "C": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "D": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime"
+      },
+      "correct": "A",
+      "explanation": "\"AnnotationMirror\" to: reprezentacja uzycia konkretnej adnotacji dostepna w API annotation processing, pozwalajaca odczytac jej wartosci elementow"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Lombok vs MapStruct (mechanizm)\" w kontekscie retencji adnotacji i annotation processing?",
+      "options": {
+        "A": "poziom retencji, przy ktorym adnotacja znika juz na etapie kompilacji, niedostepna nawet w pliku .class",
+        "B": "MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora",
+        "C": "domyslny poziom retencji - adnotacja trafia do .class, ale JVM jej nie laduje do pamieci w runtime",
+        "D": "poziom retencji, przy ktorym adnotacja jest dostepna w czasie dzialania programu przez refleksje"
+      },
+      "correct": "B",
+      "explanation": "\"Lombok vs MapStruct (mechanizm)\" to: MapStruct generuje NOWE pliki przez Filer (oficjalne API), Lombok modyfikuje ISTNIEJACA klase przez nieoficjalne, wewnetrzne API kompilatora"
+    }
+  ]
+}
