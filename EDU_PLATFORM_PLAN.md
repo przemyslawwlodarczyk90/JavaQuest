@@ -2323,4 +2323,15 @@ poprawne; rozdział ma 18/20 lekcji z treścią.
 
 **Następny krok**: `19_ProfilingBasics`, potem capstone `20_JvmTuningAndBestPracticesCapstone`
 i automatyczne przejście do `_16_clean_code`.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 19/20 UKOŃCZONA** (`19_ProfilingBasics`).
+Lekcja prowadzi od hipotezy diagnostycznej przez sampling/instrumentację, CPU kontra wall-clock,
+off-CPU, flame graph/folded stacks, allocation profiling i contention do wyboru JFR,
+async-profiler lub narzędzia instrumentacyjnego. Zawiera też metodologię baseline/warm-up/forków,
+pomiar narzutu i walidację optymalizacji metryką biznesową. Zakres wymagał 10 sekcji teorii;
+ćwiczenia z klasy IDE: 30, quiz: 100 unikalnych pytań. API i regresja 100 poprawne; rozdział
+ma 19/20 lekcji z treścią.
+
+**Następny krok**: capstone `20_JvmTuningAndBestPracticesCapstone`, finalna regresja całego
+rozdziału i automatyczne przejście do `_16_clean_code`.
 ---
