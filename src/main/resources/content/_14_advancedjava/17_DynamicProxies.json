@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "ANALOGY",
+      "heading": "Dynamiczne proxy jako recepcjonista przekierowujacy telefony",
+      "body": "Wyobraz sobie recepcjonista w firmie, ktory odbiera KAZDY telefon, zanim trafi do wlasciwego pracownika. Moze zapisac czas rozmowy, sprawdzic, czy dzwoniacy ma prawo dotrzec do danej osoby, a nawet odmowic polaczenia dla niektorych numerow — ale dla dzwoniacego caly czas wyglada to tak, jakby laczyl sie bezposrednio z pracownikiem. Dynamiczne proxy dziala identycznie: JVM generuje 'recepcjonista' (nowa klase implementujaca interfejs), ktory przechwytuje KAZDE wywolanie metody i decyduje, co z nim zrobic — zanim (lub zamiast) przekaze je do prawdziwej implementacji."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Czym jest dynamiczne proxy — kluczowe ograniczenie",
+      "body": "`java.lang.reflect.Proxy` pozwala WYGENEROWAC W CZASIE DZIALANIA (runtime) CALA NOWA KLASE implementujaca dowolny INTERFEJS (lub kilka naraz) — bez pisania ani jednej linijki tej klasy w kodzie zrodlowym i bez kompilacji. Wygenerowany obiekt 'podszywa sie' pod dany interfejs, ale KAZDE wywolanie jego metody jest przekierowywane do jednego, wspolnego obiektu — `InvocationHandler`. WAZNE OGRANICZENIE: `Proxy.newProxyInstance` generuje implementacje TYLKO dla INTERFEJSOW, nigdy dla klas konkretnych — do proxowania klas sluza inne narzedzia (CGLIB/ByteBuddy, uzywane przez Spring AOP dla beanow bez interfejsu)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "InvocationHandler — 'mozg' proxy",
+      "body": "`InvocationHandler` to interfejs z JEDNA metoda: `Object invoke(Object proxy, Method method, Object[] args) throws Throwable`. Kazde wywolanie metody NA obiekcie proxy konczy sie wywolaniem WLASNIE TEJ metody `invoke` — `method` to refleksyjny opis wywolanej metody interfejsu, `args` to argumenty, `proxy` to sam obiekt proxy (rzadko potrzebny). To dokladnie te same typy `Method`/`Object[]` co przy `Method.invoke(...)` z Lesson15 — proxy jest w istocie zbudowane NA refleksji. Wewnatrz `invoke` mozna zdecydowac: zalogowac wywolanie, zmierzyc czas, zdelegowac do prawdziwej implementacji przez `method.invoke(target, args)`, a nawet W OGOLE jej NIE wywolac."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Proxy.newProxyInstance — generowanie proxy",
+      "body": "Trzy argumenty: 1) `ClassLoader` — z ktorego 'swiata klas' ma pochodzic wygenerowana klasa (najczesciej: classloader interfejsu). 2) `Class<?>[]` — tablica interfejsow, ktore proxy MA implementowac (moze byc wiecej niz jeden!). 3) `InvocationHandler` — obiekt, do ktorego trafi KAZDE wywolanie. Zwrocony obiekt mozna bezpiecznie RZUTOWAC na typ interfejsu — dla kodu wywolujacego wyglada IDENTYCZNIE jak prawdziwa implementacja. Wygenerowana klasa ma nazwe zaczynajaca sie od `$Proxy` — mozna to potwierdzic przez `Proxy.isProxyClass(obj.getClass())`."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Typowe zastosowania: logowanie, cache, blokowanie, lazy-loading",
+      "body": "InvocationHandler moze: LOGOWAC/MIERZYC CZAS kazdego wywolania (przed/po delegacji), CACHOWAC wyniki (klucz = argumenty), CALKOWICIE ZABLOKOWAC dostep do wybranej metody (rzucajac wyjatek zamiast delegowac). To DOKLADNIE mechanizm stojacy za LAZY-LOADING w Hibernate (`_12_hibernate/Lesson15`) — relacja `FetchType.LAZY` podstawia proxy zamiast prawdziwej encji; pierwsze wywolanie DOWOLNEJ metody uruchamia zapytanie SQL, potem deleguje do prawdziwego obiektu (dlatego problem N+1 objawial sie osobnym zapytaniem SQL przy kazdym `author.getBooks()` w petli — kazde wywolanie na LAZY proxy jest przechwycone)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Spring AOP — ten sam wzorzec na wieksza skale",
+      "body": "Spring AOP (`@Transactional`, `@Cacheable`) dziala na TEJ SAMEJ zasadzie: Spring TWORZY proxy wokol beana (jesli bean implementuje interfejs — `java.lang.reflect.Proxy` jak tutaj; jesli nie — CGLIB, generujacy podklase). Adnotacja `@Transactional` nad metoda to sygnal, by 'MethodInterceptor' (odpowiednik `InvocationHandler` u Springa) otworzyl transakcje PRZED wywolaniem prawdziwej metody i zatwierdzil/wycofal ja PO — dokladnie ten sam schemat 'przed/po', ktory pisze sie samodzielnie w `LoggingTimingInvocationHandler`. Nawet metody odziedziczone po `Object` (`toString()`, `hashCode()`, `equals()`) przechodza przez `invoke(...)`, bo proxy implementuje CALY kontrakt interfejsu i Object jednoczesnie."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Logujacy i blokujacy proxy",
+      "body": "```java\nimport java.lang.reflect.*;\n\npublic class DynamicProxyDemo {\n    interface PaymentService {\n        void charge(String currency, double amount);\n        void refund(String currency, double amount);\n    }\n\n    static class RealPaymentService implements PaymentService {\n        public void charge(String currency, double amount) {\n            System.out.println(\"Obciazono \" + amount + \" \" + currency);\n        }\n        public void refund(String currency, double amount) {\n            System.out.println(\"Zwrocono \" + amount + \" \" + currency);\n        }\n    }\n\n    static class LoggingHandler implements InvocationHandler {\n        private final Object target;\n        LoggingHandler(Object target) { this.target = target; }\n        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n            System.out.println(\"PRZED: \" + method.getName());\n            Object result = method.invoke(target, args);\n            System.out.println(\"PO: \" + method.getName());\n            return result;\n        }\n    }\n\n    public static void main(String[] args) {\n        PaymentService real = new RealPaymentService();\n        PaymentService proxy = (PaymentService) Proxy.newProxyInstance(\n            PaymentService.class.getClassLoader(),\n            new Class<?>[] { PaymentService.class },\n            new LoggingHandler(real));\n\n        System.out.println(proxy.getClass().getName()); // $Proxy0 (lub podobna)\n        System.out.println(Proxy.isProxyClass(proxy.getClass())); // true\n        proxy.charge(\"PLN\", 100.0); // PRZED -> Obciazono... -> PO\n    }\n}\n```"
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Utworz interfejs Greeter z String greet(String name) oraz implementacje EnglishGreeter zwracajaca \"Hello, \" + name. Wywolaj BEZ proxy.",
+      "hint": "zwykla implementacja interfejsu, zero refleksji.",
+      "solution": "interface Greeter {\n    String greet(String name);\n}\nclass EnglishGreeter implements Greeter {\n    public String greet(String name) { return \"Hello, \" + name; }\n}\n\nGreeter g = new EnglishGreeter();\nSystem.out.println(g.greet(\"Ala\"));"
+    },
+    {
+      "prompt": "Napisz InvocationHandler, ktory w invoke(...) DELEGUJE kazde wywolanie do przekazanego w konstruktorze obiektu docelowego przez method.invoke(target, args).",
+      "hint": "najprostszy mozliwy handler - czysta delegacja.",
+      "solution": "class DelegatingHandler implements InvocationHandler {\n    private final Object target;\n    DelegatingHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        return method.invoke(target, args);\n    }\n}"
+    },
+    {
+      "prompt": "Uzyj Proxy.newProxyInstance(...) z handlerem z Zadania 2 i interfejsem Greeter, by stworzyc proxy. Wywolaj greet(\"Ala\") i wypisz wynik.",
+      "hint": "3 argumenty: classLoader, tablica interfejsow, handler.",
+      "solution": "Greeter real = new EnglishGreeter();\nGreeter proxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(),\n    new Class<?>[]{Greeter.class},\n    new DelegatingHandler(real));\n\nSystem.out.println(proxy.greet(\"Ala\")); // Hello, Ala"
+    },
+    {
+      "prompt": "Dla obiektu proxy z Zadania 3 wypisz getClass().getName() oraz Proxy.isProxyClass(obj.getClass()) - potwierdz, ze to NIE jest EnglishGreeter.",
+      "hint": "wygenerowana klasa zaczyna sie od $Proxy.",
+      "solution": "System.out.println(proxy.getClass().getName()); // np. com.sun.proxy.$Proxy0\nSystem.out.println(Proxy.isProxyClass(proxy.getClass())); // true"
+    },
+    {
+      "prompt": "Napisz InvocationHandler, ktory PRZED delegacja wypisuje 'Wywolanie: ' + method.getName() + ' z argumentami: ' + Arrays.toString(args), a POTEM deleguje. Przetestuj na Greeter.",
+      "hint": "wypisz PRZED wywolaniem method.invoke.",
+      "solution": "class LoggingBeforeHandler implements InvocationHandler {\n    private final Object target;\n    LoggingBeforeHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        System.out.println(\"Wywolanie: \" + method.getName() + \" z argumentami: \" + java.util.Arrays.toString(args));\n        return method.invoke(target, args);\n    }\n}"
+    },
+    {
+      "prompt": "Rozszerz handler z Zadania 5, by PO delegacji wypisywal rowniez ZWROCONY wynik ('Wynik: ' + result), zanim go zwroci.",
+      "hint": "przechwyc wynik method.invoke do zmiennej PRZED zwroceniem.",
+      "solution": "class LoggingFullHandler implements InvocationHandler {\n    private final Object target;\n    LoggingFullHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        System.out.println(\"Wywolanie: \" + method.getName());\n        Object result = method.invoke(target, args);\n        System.out.println(\"Wynik: \" + result);\n        return result;\n    }\n}"
+    },
+    {
+      "prompt": "Napisz InvocationHandler mierzacy czas wykonania (System.nanoTime() przed/po), wypisujacy go w ms. Dodaj do EnglishGreeter sztuczne opoznienie (Thread.sleep) wewnatrz greet.",
+      "hint": "elapsedNanos / 1_000_000 daje milisekundy.",
+      "solution": "class TimingHandler implements InvocationHandler {\n    private final Object target;\n    TimingHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        long start = System.nanoTime();\n        Object result = method.invoke(target, args);\n        long ms = (System.nanoTime() - start) / 1_000_000;\n        System.out.println(\"Czas: \" + ms + \" ms\");\n        return result;\n    }\n}\n\nclass SlowGreeter implements Greeter {\n    public String greet(String name) throws InterruptedException {\n        Thread.sleep(100);\n        return \"Hello, \" + name;\n    }\n}"
+    },
+    {
+      "prompt": "Dodaj do Greeter druga metode String farewell(String name), zaimplementuj w EnglishGreeter. Wywolaj OBIE metody przez TO SAMO proxy (handler z Zadania 6) i sprawdz method.getName().",
+      "hint": "jeden handler obsluguje wszystkie metody interfejsu.",
+      "solution": "interface Greeter {\n    String greet(String name);\n    String farewell(String name);\n}\nclass EnglishGreeter implements Greeter {\n    public String greet(String name) { return \"Hello, \" + name; }\n    public String farewell(String name) { return \"Goodbye, \" + name; }\n}\n\nGreeter proxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, new LoggingFullHandler(new EnglishGreeter()));\nproxy.greet(\"Ala\");\nproxy.farewell(\"Ala\");"
+    },
+    {
+      "prompt": "Napisz InvocationHandler, ktory dla metody farewell rzuca UnsupportedOperationException (bez delegacji), a dla greet dziala normalnie. Zlap wyjatek w main() i wypisz jego komunikat.",
+      "hint": "if (method.getName().equals(\"farewell\")) throw ... else delegate.",
+      "solution": "class BlockingHandler implements InvocationHandler {\n    private final Object target;\n    BlockingHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        if (method.getName().equals(\"farewell\")) {\n            throw new UnsupportedOperationException(\"farewell zablokowany\");\n        }\n        return method.invoke(target, args);\n    }\n}\n\nGreeter proxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, new BlockingHandler(new EnglishGreeter()));\ntry {\n    proxy.farewell(\"Ala\");\n} catch (UnsupportedOperationException e) {\n    System.out.println(e.getMessage());\n}"
+    },
+    {
+      "prompt": "Wywolaj greet('Kasia') NA WPROST na EnglishGreeter oraz PRZEZ proxy (handler z Zadania 2) i porownaj (equals) zwrocone Stringi - wypisz PASS/FAIL.",
+      "hint": "proxy powinno byc calkowicie przezroczyste dla wyniku.",
+      "solution": "String direct = new EnglishGreeter().greet(\"Kasia\");\nGreeter proxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, new DelegatingHandler(new EnglishGreeter()));\nString viaProxy = proxy.greet(\"Kasia\");\nSystem.out.println(direct.equals(viaProxy) ? \"PASS\" : \"FAIL\");"
+    },
+    {
+      "prompt": "Napisz InvocationHandler z Map<String,Integer> callCounts, inkrementujacy licznik pod kluczem method.getName() dla kazdego wywolania. Po kilku wywolaniach wypisz mape.",
+      "hint": "callCounts.merge(method.getName(), 1, Integer::sum).",
+      "solution": "class CountingHandler implements InvocationHandler {\n    private final Object target;\n    private final Map<String, Integer> callCounts = new HashMap<>();\n    CountingHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        callCounts.merge(method.getName(), 1, Integer::sum);\n        return method.invoke(target, args);\n    }\n    Map<String, Integer> getCallCounts() { return callCounts; }\n}\n\nCountingHandler h = new CountingHandler(new EnglishGreeter());\nGreeter proxy = (Greeter) Proxy.newProxyInstance(Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, h);\nproxy.greet(\"a\"); proxy.greet(\"b\"); proxy.farewell(\"c\");\nSystem.out.println(h.getCallCounts());"
+    },
+    {
+      "prompt": "Napisz interfejs Calculator z long slowSquare(int n) (Thread.sleep(500) symulujace koszt). Napisz InvocationHandler cachujacy wyniki w Map<Object,Object> (klucz=argument). Zmierz i porownaj czasy 1. i 2. wywolania.",
+      "hint": "cache na args[0] jako kluczu.",
+      "solution": "interface Calculator {\n    long slowSquare(int n) throws InterruptedException;\n}\nclass RealCalculator implements Calculator {\n    public long slowSquare(int n) throws InterruptedException {\n        Thread.sleep(500);\n        return (long) n * n;\n    }\n}\n\nclass CachingHandler implements InvocationHandler {\n    private final Object target;\n    private final Map<Object, Object> cache = new HashMap<>();\n    CachingHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        Object key = args[0];\n        if (cache.containsKey(key)) return cache.get(key);\n        Object result = method.invoke(target, args);\n        cache.put(key, result);\n        return result;\n    }\n}\n\nCalculator proxy = (Calculator) Proxy.newProxyInstance(\n    Calculator.class.getClassLoader(), new Class<?>[]{Calculator.class}, new CachingHandler(new RealCalculator()));\nlong t1 = System.nanoTime();\nproxy.slowSquare(5);\nlong first = System.nanoTime() - t1;\nlong t2 = System.nanoTime();\nproxy.slowSquare(5);\nlong second = System.nanoTime() - t2;\nSystem.out.println(\"Pierwsze: \" + first + \"ns, drugie (z cache): \" + second + \"ns\");"
+    },
+    {
+      "prompt": "Napisz interfejs FlakyService z String call() oraz implementacje rzucajaca wyjatek przy pierwszych 2 wywolaniach, a za 3 razem zwracajaca wynik. Napisz InvocationHandler ponawiajacy wywolanie (max 3 proby) przy wyjatku.",
+      "hint": "petla try/catch z licznikiem prob wewnatrz invoke.",
+      "solution": "interface FlakyService {\n    String call();\n}\nclass FlakyServiceImpl implements FlakyService {\n    int attempts = 0;\n    public String call() {\n        attempts++;\n        if (attempts < 3) throw new RuntimeException(\"blad\");\n        return \"sukces\";\n    }\n}\n\nclass RetryHandler implements InvocationHandler {\n    private final Object target;\n    RetryHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        for (int i = 0; i < 3; i++) {\n            try {\n                return method.invoke(target, args);\n            } catch (InvocationTargetException e) {\n                if (i == 2) throw e.getCause();\n            }\n        }\n        return null;\n    }\n}\n\nFlakyService proxy = (FlakyService) Proxy.newProxyInstance(\n    FlakyService.class.getClassLoader(), new Class<?>[]{FlakyService.class}, new RetryHandler(new FlakyServiceImpl()));\nSystem.out.println(proxy.call()); // sukces"
+    },
+    {
+      "prompt": "Utworz interfejsy Readable (String read()) i Writable (void write(String)). Napisz JEDNA klase implementujaca OBA. Utworz proxy implementujace OBA interfejsy naraz, rzutujac raz na Readable, raz na Writable.",
+      "hint": "new Class<?>[]{Readable.class, Writable.class}.",
+      "solution": "interface Readable { String read(); }\ninterface Writable { void write(String s); }\nclass Buffer implements Readable, Writable {\n    String content = \"\";\n    public String read() { return content; }\n    public void write(String s) { content = s; }\n}\n\nObject proxy = Proxy.newProxyInstance(\n    Buffer.class.getClassLoader(),\n    new Class<?>[]{Readable.class, Writable.class},\n    new DelegatingHandler(new Buffer()));\n\n((Writable) proxy).write(\"tekst\");\nSystem.out.println(((Readable) proxy).read());"
+    },
+    {
+      "prompt": "Wywolaj na proxy (Zadanie 3) toString(), hashCode(), equals(inny) - wyjasnij w komentarzu, dlaczego rowniez te metody (z Object) przechodza przez invoke(), mimo ze nie sa w Greeter.",
+      "hint": "proxy implementuje pelny kontrakt Object rowniez.",
+      "solution": "System.out.println(proxy.toString());\nSystem.out.println(proxy.hashCode());\nSystem.out.println(proxy.equals(proxy));\n// KAZDY obiekt Javy (wliczajac proxy) dziedziczy toString/hashCode/equals po Object - klasa wygenerowana przez\n// Proxy.newProxyInstance TEZ implementuje ten kontrakt, a JVM kieruje wywolania TYCH metod do TEGO SAMEGO\n// InvocationHandler.invoke(...), co wywolania metod interfejsu - handler dostaje wtedy Method reprezentujacy\n// toString/hashCode/equals z klasy Object, nie z interfejsu Greeter."
+    },
+    {
+      "prompt": "Napisz interfejs Author z List<String> getBooks(). Napisz RealAuthor symulujaca 'zapytanie do bazy'. Napisz LazyLoadingHandler tworzacy RealAuthor DOPIERO przy PIERWSZYM wywolaniu, licznik potwierdza jedno utworzenie mimo wielu wywolan.",
+      "hint": "pole target=null w handlerze, twórz przy pierwszym uzyciu w invoke.",
+      "solution": "interface Author {\n    java.util.List<String> getBooks();\n}\nclass RealAuthor implements Author {\n    static int createdCount = 0;\n    RealAuthor() {\n        createdCount++;\n        System.out.println(\"Ladowanie z bazy...\");\n    }\n    public java.util.List<String> getBooks() { return java.util.List.of(\"Ksiazka A\", \"Ksiazka B\"); }\n}\n\nclass LazyLoadingHandler implements InvocationHandler {\n    private RealAuthor real;\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        if (real == null) real = new RealAuthor();\n        return method.invoke(real, args);\n    }\n}\n\nAuthor proxy = (Author) Proxy.newProxyInstance(\n    Author.class.getClassLoader(), new Class<?>[]{Author.class}, new LazyLoadingHandler());\nproxy.getBooks();\nproxy.getBooks();\nSystem.out.println(\"Utworzono RealAuthor razy: \" + RealAuthor.createdCount); // 1"
+    },
+    {
+      "prompt": "Napisz interfejs AccountOperations z void transfer(double amount) (rzuca RuntimeException dla kwoty > 1000). Napisz InvocationHandler symulujacy '@Transactional': BEGIN TRANSACTION, delegacja w try/catch, ROLLBACK przy wyjatku, COMMIT przy sukcesie.",
+      "hint": "wypisz BEGIN przed, COMMIT po sukcesie, ROLLBACK w catch.",
+      "solution": "interface AccountOperations {\n    void transfer(double amount);\n}\nclass RealAccountOperations implements AccountOperations {\n    public void transfer(double amount) {\n        if (amount > 1000) throw new RuntimeException(\"kwota za duza\");\n        System.out.println(\"Przelano: \" + amount);\n    }\n}\n\nclass TransactionalHandler implements InvocationHandler {\n    private final Object target;\n    TransactionalHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        System.out.println(\"BEGIN TRANSACTION\");\n        try {\n            Object result = method.invoke(target, args);\n            System.out.println(\"COMMIT\");\n            return result;\n        } catch (InvocationTargetException e) {\n            System.out.println(\"ROLLBACK\");\n            throw e.getCause();\n        }\n    }\n}"
+    },
+    {
+      "prompt": "Napisz InvocationHandler, ktory dla metod, ktorych nazwa zaczyna sie od 'get', deleguje normalnie, a dla wszystkich innych (np. 'set') loguje ostrzezenie i zwraca null BEZ delegacji. Przetestuj na interfejsie z getX()/setX().",
+      "hint": "method.getName().startsWith(\"get\") jako warunek.",
+      "solution": "interface Config {\n    String getValue();\n    void setValue(String v);\n}\nclass RealConfig implements Config {\n    String value = \"domyslna\";\n    public String getValue() { return value; }\n    public void setValue(String v) { value = v; }\n}\n\nclass ReadOnlyGuardHandler implements InvocationHandler {\n    private final Object target;\n    ReadOnlyGuardHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        if (method.getName().startsWith(\"get\")) {\n            return method.invoke(target, args);\n        }\n        System.out.println(\"Operacja zapisu zablokowana w trybie tylko-do-odczytu\");\n        return null;\n    }\n}\n\nConfig proxy = (Config) Proxy.newProxyInstance(\n    Config.class.getClassLoader(), new Class<?>[]{Config.class}, new ReadOnlyGuardHandler(new RealConfig()));\nSystem.out.println(proxy.getValue()); // domyslna\nproxy.setValue(\"nowa\"); // zablokowane, wypisuje ostrzezenie"
+    },
+    {
+      "prompt": "Zbuduj DWA proxy jeden na drugim: najpierw opakuj EnglishGreeter handlerem logujacym (Zadanie 6), a NASTEPNIE opakuj WYNIKOWE proxy DRUGIM proxy z handlerem mierzacym czas (Zadanie 7). Wywolaj metode na zewnetrznym proxy.",
+      "hint": "target drugiego handlera to PIERWSZE proxy, nie oryginalny obiekt.",
+      "solution": "Greeter real = new EnglishGreeter();\nGreeter innerProxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, new LoggingFullHandler(real));\nGreeter outerProxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, new TimingHandler(innerProxy));\n\nouterProxy.greet(\"Ala\"); // aktywuje OBA handlery - najpierw timing, wewnatrz niego logging"
+    },
+    {
+      "prompt": "Napisz InvocationHandler, ktory PRZED delegacja WALIDUJE argumenty (np. dla parametru double amount rzuca IllegalArgumentException, jesli amount < 0). Zademonstruj na PaymentService-podobnym interfejsie z poprawna i niepoprawna kwota.",
+      "hint": "sprawdz args[0] jesli jest typu Double przed method.invoke.",
+      "solution": "class ValidatingHandler implements InvocationHandler {\n    private final Object target;\n    ValidatingHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        if (args != null && args.length > 1 && args[1] instanceof Double amount && amount < 0) {\n            throw new IllegalArgumentException(\"kwota nie moze byc ujemna\");\n        }\n        return method.invoke(target, args);\n    }\n}\n\nPaymentService proxy = (PaymentService) Proxy.newProxyInstance(\n    PaymentService.class.getClassLoader(), new Class<?>[]{PaymentService.class}, new ValidatingHandler(new RealPaymentService()));\nproxy.charge(\"PLN\", 100.0); // OK\ntry {\n    proxy.charge(\"PLN\", -50.0);\n} catch (IllegalArgumentException e) {\n    System.out.println(e.getMessage());\n}"
+    },
+    {
+      "prompt": "Napisz static <T> T withLogging(T target, Class<T> interfaceType), zwracajaca proxy z handlerem logujacym PRZED/PO. Uzyj jej dla DWOCH roznych interfejsow (np. Greeter i Calculator).",
+      "hint": "Proxy.newProxyInstance z jawnym rzutowaniem na T.",
+      "solution": "@SuppressWarnings(\"unchecked\")\nstatic <T> T withLogging(T target, Class<T> interfaceType) {\n    return (T) Proxy.newProxyInstance(\n        interfaceType.getClassLoader(),\n        new Class<?>[]{interfaceType},\n        new LoggingFullHandler(target));\n}\n\nGreeter loggedGreeter = withLogging(new EnglishGreeter(), Greeter.class);\nloggedGreeter.greet(\"Ala\");\nCalculator loggedCalc = withLogging(new RealCalculator(), Calculator.class);\nloggedCalc.slowSquare(3);"
+    },
+    {
+      "prompt": "Napisz InvocationHandler zbierajacy PER-METODA statystyki (liczba wywolan, laczny czas, sredni czas). Po min. 20 wywolaniach na min. 2 metodach wypisz raport tabelaryczny.",
+      "hint": "Map<String, long[]> {count, totalNanos}.",
+      "solution": "class MetricsHandler implements InvocationHandler {\n    private final Object target;\n    private final Map<String, long[]> stats = new HashMap<>();\n    MetricsHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        long start = System.nanoTime();\n        Object result = method.invoke(target, args);\n        long elapsed = System.nanoTime() - start;\n        stats.computeIfAbsent(method.getName(), k -> new long[2]);\n        long[] entry = stats.get(method.getName());\n        entry[0]++; entry[1] += elapsed;\n        return result;\n    }\n    void printReport() {\n        for (var e : stats.entrySet()) {\n            long count = e.getValue()[0];\n            long avgMicros = (e.getValue()[1] / count) / 1000;\n            System.out.println(e.getKey() + \" | \" + count + \" | \" + avgMicros + \" us\");\n        }\n    }\n}"
+    },
+    {
+      "prompt": "Przepisz CircuitBreaker (z _13_libraries) tak, by logika 'otwartego obwodu' (po 3 niepowodzeniach blokuj kolejne wywolania) byla InvocationHandlerem opakowujacym DOWOLNY interfejs. Zademonstruj otwarcie obwodu.",
+      "hint": "licznik kolejnych porazek w handlerze, po 3 - rzucaj wyjatek bez delegacji.",
+      "solution": "class CircuitBreakerHandler implements InvocationHandler {\n    private final Object target;\n    private int consecutiveFailures = 0;\n    private static final int THRESHOLD = 3;\n    CircuitBreakerHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        if (consecutiveFailures >= THRESHOLD) {\n            throw new IllegalStateException(\"Obwod otwarty - wywolania zablokowane\");\n        }\n        try {\n            Object result = method.invoke(target, args);\n            consecutiveFailures = 0;\n            return result;\n        } catch (InvocationTargetException e) {\n            consecutiveFailures++;\n            throw e.getCause();\n        }\n    }\n}"
+    },
+    {
+      "prompt": "Napisz AuditingHandler, ktory dla kazdego wywolania zapisuje wpis AuditEntry (metoda, argumenty, timestamp, 'aktualny uzytkownik' z konstruktora). Po serii wywolan wypisz pelna historie chronologicznie.",
+      "hint": "List<AuditEntry> jako pole handlera.",
+      "solution": "record AuditEntry(String method, Object[] args, long timestamp, String user) {}\n\nclass AuditingHandler implements InvocationHandler {\n    private final Object target;\n    private final String user;\n    private final List<AuditEntry> log = new ArrayList<>();\n    AuditingHandler(Object target, String user) { this.target = target; this.user = user; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        log.add(new AuditEntry(method.getName(), args, System.currentTimeMillis(), user));\n        return method.invoke(target, args);\n    }\n    List<AuditEntry> getLog() { return log; }\n}"
+    },
+    {
+      "prompt": "Napisz interfejs MutableRepository<T> z add(T), remove(T), List<T> findAll(). Napisz InvocationHandler tworzacy proxy 'tylko do odczytu': add/remove rzucaja UnsupportedOperationException, findAll deleguje normalnie.",
+      "hint": "sprawdz method.getName() w invoke.",
+      "solution": "interface MutableRepository<T> {\n    void add(T item);\n    void remove(T item);\n    java.util.List<T> findAll();\n}\n\nclass ReadOnlyHandler implements InvocationHandler {\n    private final Object target;\n    ReadOnlyHandler(Object target) { this.target = target; }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        if (method.getName().equals(\"add\") || method.getName().equals(\"remove\")) {\n            throw new UnsupportedOperationException(\"tylko do odczytu\");\n        }\n        return method.invoke(target, args);\n    }\n}"
+    },
+    {
+      "prompt": "Napisz interfejs WeatherService z String getForecast(String city). Napisz InvocationHandler symulujacy 'zdalne wywolanie' BEZ prawdziwej implementacji lokalnej (target moze byc null) - handler sam buduje wynik na podstawie argumentow.",
+      "hint": "proxy NIE musi opakowywac istniejacego obiektu.",
+      "solution": "interface WeatherService {\n    String getForecast(String city);\n}\n\nclass RemoteSimulationHandler implements InvocationHandler {\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        String city = (String) args[0];\n        return \"Prognoza dla \" + city + \": slonecznie\";\n    }\n}\n\nWeatherService proxy = (WeatherService) Proxy.newProxyInstance(\n    WeatherService.class.getClassLoader(), new Class<?>[]{WeatherService.class}, new RemoteSimulationHandler());\nSystem.out.println(proxy.getForecast(\"Warszawa\"));"
+    },
+    {
+      "prompt": "Napisz InvocationHandler przyjmujacy LISTE 'przed-hookow' (List<Consumer<Method>>) wywolywanych PO KOLEI przed delegacja. Zademonstruj dodanie 3 hookow do jednego proxy w kolejnosci dodania.",
+      "hint": "petla for-each po hookach PRZED method.invoke.",
+      "solution": "class CompositeHandler implements InvocationHandler {\n    private final Object target;\n    private final java.util.List<java.util.function.Consumer<Method>> beforeHooks = new java.util.ArrayList<>();\n    CompositeHandler(Object target) { this.target = target; }\n    void addHook(java.util.function.Consumer<Method> hook) { beforeHooks.add(hook); }\n    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {\n        for (var hook : beforeHooks) hook.accept(method);\n        return method.invoke(target, args);\n    }\n}\n\nCompositeHandler h = new CompositeHandler(new EnglishGreeter());\nh.addHook(m -> System.out.println(\"Log: \" + m.getName()));\nh.addHook(m -> System.out.println(\"Walidacja: \" + m.getName()));\nh.addHook(m -> System.out.println(\"Licznik: \" + m.getName()));\nGreeter proxy = (Greeter) Proxy.newProxyInstance(Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, h);\nproxy.greet(\"Ala\");"
+    },
+    {
+      "prompt": "W komentarzu opisz, co by sie stalo, gdybys probowal stworzyc proxy dla klasy RealPaymentService BEZ interfejsu PaymentService. Wyjasnij, jakiego narzedzia uzylby prawdziwy framework.",
+      "hint": "Proxy.newProxyInstance wymaga tablicy interfejsow, nigdy klasy konkretnej.",
+      "solution": "// Proxy.newProxyInstance(classLoader, interfaces, handler) PRZYJMUJE TYLKO tablice INTERFEJSOW jako drugi\n// argument - proba przekazania klasy konkretnej (np. RealPaymentService.class) zamiast interfejsu\n// zakonczylaby sie bledem w runtime (IllegalArgumentException: RealPaymentService is not an interface),\n// bo mechanizm ten generuje NOWA klase IMPLEMENTUJACA dany interfejs, nie ROZSZERZAJACA istniejaca klase.\n// Zeby proxowac KLASY konkretne (bez interfejsu), prawdziwy framework (jak Spring AOP) uzylby narzedzia\n// generujacego BAJTKOD w locie, np. CGLIB lub ByteBuddy - one tworza PODKLASE danej klasy w czasie\n// dzialania, nadpisujac wszystkie jej metody, co jest technicznie zupelnie innym mechanizmem niz\n// java.lang.reflect.Proxy, mimo ze koncepcyjnie sluzy do tego samego celu."
+    },
+    {
+      "prompt": "Zmierz czas 200000 wywolan metody interfejsu (a) bezposrednio, (b) przez proxy z pustym delegujacym handlerem. Wypisz narzut proxy w procentach.",
+      "hint": "((proxyTime - directTime) / directTime) * 100.",
+      "solution": "Greeter real = new EnglishGreeter();\nGreeter proxy = (Greeter) Proxy.newProxyInstance(\n    Greeter.class.getClassLoader(), new Class<?>[]{Greeter.class}, new DelegatingHandler(real));\n\nlong t1 = System.nanoTime();\nfor (int i = 0; i < 200_000; i++) real.greet(\"x\");\nlong directTime = System.nanoTime() - t1;\n\nlong t2 = System.nanoTime();\nfor (int i = 0; i < 200_000; i++) proxy.greet(\"x\");\nlong proxyTime = System.nanoTime() - t2;\n\ndouble overheadPercent = ((double) (proxyTime - directTime) / directTime) * 100;\nSystem.out.println(\"Narzut proxy: \" + overheadPercent + \"%\");\n// Potwierdza Ryzyko 1 z Lesson16 - proxy jest zbudowane na refleksji (method.invoke wewnatrz handlera),\n// wiec dziedziczy jej narzut wydajnosciowy w porownaniu do wywolania bezposredniego."
+    },
+    {
+      "prompt": "Kapszton: zdefiniuj @Logged (RUNTIME, METHOD). Napisz interfejs biznesowy (min 3 metody, CZESC oznaczona @Logged w implementacji) i jego implementacje. Napisz static <T> T createAopProxy(T target, Class<T> interfaceType), logujace PRZED/PO TYLKO dla metod @Logged.",
+      "hint": "sprawdz adnotacje na METODZIE IMPLEMENTACJI przez target.getClass().getMethod(...), nie na interfejsie.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.METHOD)\n@interface Logged {}\n\ninterface OrderService {\n    void placeOrder(String item);\n    void cancelOrder(String item);\n    String getStatus();\n}\n\nclass RealOrderService implements OrderService {\n    @Logged\n    public void placeOrder(String item) { System.out.println(\"Zamowienie: \" + item); }\n    public void cancelOrder(String item) { System.out.println(\"Anulowano: \" + item); }\n    @Logged\n    public String getStatus() { return \"OK\"; }\n}\n\n@SuppressWarnings(\"unchecked\")\nstatic <T> T createAopProxy(T target, Class<T> interfaceType) {\n    return (T) Proxy.newProxyInstance(interfaceType.getClassLoader(), new Class<?>[]{interfaceType},\n        (proxy, method, args) -> {\n            Method implMethod = target.getClass().getMethod(method.getName(), method.getParameterTypes());\n            boolean logged = implMethod.isAnnotationPresent(Logged.class);\n            if (logged) System.out.println(\"PRZED: \" + method.getName());\n            Object result = method.invoke(target, args);\n            if (logged) System.out.println(\"PO: \" + method.getName());\n            return result;\n        });\n}\n\nOrderService proxy = createAopProxy(new RealOrderService(), OrderService.class);\nproxy.placeOrder(\"Laptop\"); // logowane\nproxy.cancelOrder(\"Laptop\"); // NIE logowane\nproxy.getStatus(); // logowane"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Do czego sluzy java.lang.reflect.Proxy?",
+      "options": {
+        "A": "Do kompilowania kodu w locie",
+        "B": "Do generowania w czasie dzialania nowej klasy implementujacej wskazane interfejsy",
+        "C": "Do zarzadzania pamiecia JVM",
+        "D": "Do serializacji obiektow"
+      },
+      "correct": "B",
+      "explanation": "Proxy generuje w runtime nowa klase implementujaca wskazane interfejsy, bez pisania kodu zrodlowego i bez kompilacji."
+    },
+    {
+      "question": "Jakie jest KLUCZOWE ograniczenie java.lang.reflect.Proxy?",
+      "options": {
+        "A": "Dziala tylko z klasami finalnymi",
+        "B": "Moze generowac implementacje TYLKO dla interfejsow, nigdy dla klas konkretnych",
+        "C": "Wymaga JDK 21 lub nowszego",
+        "D": "Nie moze obslugiwac wiecej niz jednej metody"
+      },
+      "correct": "B",
+      "explanation": "Proxy.newProxyInstance generuje implementacje wylacznie dla interfejsow - do proxowania klas konkretnych sluza inne narzedzia jak CGLIB/ByteBuddy."
+    },
+    {
+      "question": "Ile metod ma interfejs InvocationHandler?",
+      "options": {
+        "A": "0 (marker)",
+        "B": "Dokladnie 1 - invoke(proxy, method, args)",
+        "C": "3 - before/after/onError",
+        "D": "Tyle, ile metod ma proxowany interfejs"
+      },
+      "correct": "B",
+      "explanation": "InvocationHandler to interfejs funkcyjny z jedna metoda invoke(Object proxy, Method method, Object[] args), przez ktora przechodzi KAZDE wywolanie."
+    },
+    {
+      "question": "Ile argumentow przyjmuje Proxy.newProxyInstance(...)?",
+      "options": {
+        "A": "1 - sam InvocationHandler",
+        "B": "2 - interfejs i handler",
+        "C": "3 - ClassLoader, tablica interfejsow, InvocationHandler",
+        "D": "4 - dodatkowo nazwa klasy"
+      },
+      "correct": "C",
+      "explanation": "Trzy argumenty: ClassLoader, Class<?>[] interfejsow do zaimplementowania, oraz InvocationHandler obslugujacy wszystkie wywolania."
+    },
+    {
+      "question": "Jak nazywaja sie klasy generowane przez Proxy.newProxyInstance?",
+      "options": {
+        "A": "Zaczynaja sie od nazwy interfejsu",
+        "B": "Zaczynaja sie od '$Proxy'",
+        "C": "Maja zawsze nazwe 'GeneratedProxy'",
+        "D": "Nie maja zadnej nazwy"
+      },
+      "correct": "B",
+      "explanation": "Wygenerowana klasa proxy ma nazwe zaczynajaca sie od '$Proxy' - mozna to potwierdzic przez Proxy.isProxyClass(...)."
+    },
+    {
+      "question": "Jaki mechanizm stoi za LAZY-LOADING proxy w Hibernate (relacja FetchType.LAZY)?",
+      "options": {
+        "A": "Zwykle wywolanie konstruktora",
+        "B": "Ten sam wzorzec InvocationHandler/proxy - pierwsze wywolanie metody wyzwala zapytanie SQL, potem deleguje dalej",
+        "C": "Automatyczne cache'owanie w bazie danych",
+        "D": "Serializacja obiektu do pliku"
+      },
+      "correct": "B",
+      "explanation": "Hibernate podstawia proxy zamiast prawdziwej encji - pierwsze wywolanie DOWOLNEJ metody uruchamia zapytanie SQL i deleguje do zaladowanego obiektu."
+    },
+    {
+      "question": "Jak Spring AOP implementuje mechanizmy takie jak @Transactional?",
+      "options": {
+        "A": "Przez modyfikacje bajtkodu na stale",
+        "B": "Przez proxy (java.lang.reflect.Proxy dla interfejsow, CGLIB dla klas) z logika 'przed/po' wokol metody",
+        "C": "Przez wlasny kompilator Javy",
+        "D": "@Transactional nie uzywa zadnego mechanizmu proxy"
+      },
+      "correct": "B",
+      "explanation": "Spring tworzy proxy wokol beana - dla interfejsow uzywa java.lang.reflect.Proxy, dla klas bez interfejsu CGLIB - logika 'przed/po' otwiera/zamyka transakcje wokol wywolania metody."
+    },
+    {
+      "question": "Dlaczego metody toString()/hashCode()/equals() rowniez przechodza przez InvocationHandler.invoke() na obiekcie proxy?",
+      "options": {
+        "A": "Nie przechodza - sa obslugiwane specjalnie",
+        "B": "Bo proxy implementuje pelny kontrakt Object, wiec KAZDE wywolanie metody (wliczajac odziedziczone) trafia do tego samego handlera",
+        "C": "Tylko jesli jawnie je zaimplementujemy w handlerze",
+        "D": "Sa ignorowane przez JVM"
+      },
+      "correct": "B",
+      "explanation": "Kazdy obiekt (wliczajac proxy) dziedziczy metody Object - JVM kieruje wywolania TYCH metod do TEGO SAMEGO InvocationHandler, tak samo jak metody z interfejsu."
+    },
+    {
+      "question": "Na czym 'zbudowane' jest wewnetrznie proxy - jakiego mechanizmu uzywa wewnatrz InvocationHandler do wywolania prawdziwej implementacji?",
+      "options": {
+        "A": "Zwyklego wywolania metody",
+        "B": "Method.invoke(target, args) - dokladnie tej samej klasycznej refleksji z Lesson15",
+        "C": "Nowego watku",
+        "D": "Serializacji i deserializacji"
+      },
+      "correct": "B",
+      "explanation": "InvocationHandler typowo deleguje do prawdziwego obiektu przez method.invoke(target, args) - te sama metode refleksji poznana w Lesson15."
+    },
+    {
+      "question": "Jakiego narzedzia uzylby framework do proxowania KLASY KONKRETNEJ bez interfejsu (np. Spring AOP dla beana bez interfejsu)?",
+      "options": {
+        "A": "java.lang.reflect.Proxy z pusta tablica interfejsow",
+        "B": "CGLIB lub ByteBuddy - narzedzia generujace bajtkod podklasy w locie",
+        "C": "Zwykle dziedziczenie w kodzie zrodlowym",
+        "D": "To niemozliwe w Javie"
+      },
+      "correct": "B",
+      "explanation": "CGLIB/ByteBuddy generuja PODKLASE danej klasy konkretnej w czasie dzialania, nadpisujac jej metody - to inny mechanizm niz java.lang.reflect.Proxy, ktory dziala tylko z interfejsami."
+    },
+    {
+      "question": "Czym jest / co oznacza \"java.lang.reflect.Proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "D": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+      },
+      "correct": "A",
+      "explanation": "\"java.lang.reflect.Proxy\" to: klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"InvocationHandler\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "D": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+      },
+      "correct": "B",
+      "explanation": "\"InvocationHandler\" to: interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Proxy.newProxyInstance\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "B": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "C": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "D": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+      },
+      "correct": "C",
+      "explanation": "\"Proxy.newProxyInstance\" to: metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+    },
+    {
+      "question": "Czym jest / co oznacza \"ograniczenie tylko-interfejsy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+      },
+      "correct": "D",
+      "explanation": "\"ograniczenie tylko-interfejsy\" to: Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Proxy.isProxyClass\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+      },
+      "correct": "A",
+      "explanation": "\"Proxy.isProxyClass\" to: metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"nazwa klasy $Proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "D": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+      },
+      "correct": "B",
+      "explanation": "\"nazwa klasy $Proxy\" to: konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+    },
+    {
+      "question": "Czym jest / co oznacza \"logowanie przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "B": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+      },
+      "correct": "C",
+      "explanation": "\"logowanie przez proxy\" to: typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+    },
+    {
+      "question": "Czym jest / co oznacza \"cachowanie przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+      },
+      "correct": "D",
+      "explanation": "\"cachowanie przez proxy\" to: wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+    },
+    {
+      "question": "Czym jest / co oznacza \"blokowanie metody przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+      },
+      "correct": "A",
+      "explanation": "\"blokowanie metody przez proxy\" to: mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"lazy-loading proxy w Hibernate\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "D": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+      },
+      "correct": "B",
+      "explanation": "\"lazy-loading proxy w Hibernate\" to: zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Spring AOP\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "B": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+      },
+      "correct": "C",
+      "explanation": "\"Spring AOP\" to: mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+    },
+    {
+      "question": "Czym jest / co oznacza \"CGLIB / ByteBuddy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+      },
+      "correct": "D",
+      "explanation": "\"CGLIB / ByteBuddy\" to: biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+    },
+    {
+      "question": "Czym jest / co oznacza \"dziedziczenie metod Object przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+      },
+      "correct": "A",
+      "explanation": "\"dziedziczenie metod Object przez proxy\" to: fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+    },
+    {
+      "question": "Czym jest / co oznacza \"proxowanie wielu interfejsow naraz\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "D": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+      },
+      "correct": "B",
+      "explanation": "\"proxowanie wielu interfejsow naraz\" to: mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"narzut wydajnosciowy proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+      },
+      "correct": "C",
+      "explanation": "\"narzut wydajnosciowy proxy\" to: koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy\"?",
+      "options": {
+        "A": "InvocationHandler",
+        "B": "Proxy.newProxyInstance",
+        "C": "ograniczenie tylko-interfejsy",
+        "D": "java.lang.reflect.Proxy"
+      },
+      "correct": "D",
+      "explanation": "Opis \"klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy\" odpowiada terminowi \"java.lang.reflect.Proxy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy\"?",
+      "options": {
+        "A": "InvocationHandler",
+        "B": "Proxy.newProxyInstance",
+        "C": "ograniczenie tylko-interfejsy",
+        "D": "Proxy.isProxyClass"
+      },
+      "correct": "A",
+      "explanation": "Opis \"interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy\" odpowiada terminowi \"InvocationHandler\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler\"?",
+      "options": {
+        "A": "ograniczenie tylko-interfejsy",
+        "B": "Proxy.newProxyInstance",
+        "C": "Proxy.isProxyClass",
+        "D": "nazwa klasy $Proxy"
+      },
+      "correct": "B",
+      "explanation": "Opis \"metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler\" odpowiada terminowi \"Proxy.newProxyInstance\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych\"?",
+      "options": {
+        "A": "Proxy.isProxyClass",
+        "B": "nazwa klasy $Proxy",
+        "C": "ograniczenie tylko-interfejsy",
+        "D": "logowanie przez proxy"
+      },
+      "correct": "C",
+      "explanation": "Opis \"Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych\" odpowiada terminowi \"ograniczenie tylko-interfejsy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy\"?",
+      "options": {
+        "A": "nazwa klasy $Proxy",
+        "B": "logowanie przez proxy",
+        "C": "cachowanie przez proxy",
+        "D": "Proxy.isProxyClass"
+      },
+      "correct": "D",
+      "explanation": "Opis \"metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy\" odpowiada terminowi \"Proxy.isProxyClass\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance\"?",
+      "options": {
+        "A": "nazwa klasy $Proxy",
+        "B": "logowanie przez proxy",
+        "C": "cachowanie przez proxy",
+        "D": "blokowanie metody przez proxy"
+      },
+      "correct": "A",
+      "explanation": "Opis \"konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance\" odpowiada terminowi \"nazwa klasy $Proxy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody\"?",
+      "options": {
+        "A": "cachowanie przez proxy",
+        "B": "logowanie przez proxy",
+        "C": "blokowanie metody przez proxy",
+        "D": "lazy-loading proxy w Hibernate"
+      },
+      "correct": "B",
+      "explanation": "Opis \"typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody\" odpowiada terminowi \"logowanie przez proxy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen\"?",
+      "options": {
+        "A": "blokowanie metody przez proxy",
+        "B": "lazy-loading proxy w Hibernate",
+        "C": "cachowanie przez proxy",
+        "D": "Spring AOP"
+      },
+      "correct": "C",
+      "explanation": "Opis \"wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen\" odpowiada terminowi \"cachowanie przez proxy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji\"?",
+      "options": {
+        "A": "lazy-loading proxy w Hibernate",
+        "B": "Spring AOP",
+        "C": "CGLIB / ByteBuddy",
+        "D": "blokowanie metody przez proxy"
+      },
+      "correct": "D",
+      "explanation": "Opis \"mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji\" odpowiada terminowi \"blokowanie metody przez proxy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych\"?",
+      "options": {
+        "A": "lazy-loading proxy w Hibernate",
+        "B": "Spring AOP",
+        "C": "CGLIB / ByteBuddy",
+        "D": "dziedziczenie metod Object przez proxy"
+      },
+      "correct": "A",
+      "explanation": "Opis \"zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych\" odpowiada terminowi \"lazy-loading proxy w Hibernate\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem\"?",
+      "options": {
+        "A": "CGLIB / ByteBuddy",
+        "B": "Spring AOP",
+        "C": "dziedziczenie metod Object przez proxy",
+        "D": "proxowanie wielu interfejsow naraz"
+      },
+      "correct": "B",
+      "explanation": "Opis \"mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem\" odpowiada terminowi \"Spring AOP\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu\"?",
+      "options": {
+        "A": "dziedziczenie metod Object przez proxy",
+        "B": "proxowanie wielu interfejsow naraz",
+        "C": "CGLIB / ByteBuddy",
+        "D": "narzut wydajnosciowy proxy"
+      },
+      "correct": "C",
+      "explanation": "Opis \"biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu\" odpowiada terminowi \"CGLIB / ByteBuddy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke\"?",
+      "options": {
+        "A": "proxowanie wielu interfejsow naraz",
+        "B": "narzut wydajnosciowy proxy",
+        "C": "java.lang.reflect.Proxy",
+        "D": "dziedziczenie metod Object przez proxy"
+      },
+      "correct": "D",
+      "explanation": "Opis \"fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke\" odpowiada terminowi \"dziedziczenie metod Object przez proxy\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy\"?",
+      "options": {
+        "A": "proxowanie wielu interfejsow naraz",
+        "B": "narzut wydajnosciowy proxy",
+        "C": "java.lang.reflect.Proxy",
+        "D": "InvocationHandler"
+      },
+      "correct": "A",
+      "explanation": "Opis \"mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy\" odpowiada terminowi \"proxowanie wielu interfejsow naraz\"."
+    },
+    {
+      "question": "Ktory termin z dynamicznych proxy (java.lang.reflect.Proxy) odpowiada opisowi: \"koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)\"?",
+      "options": {
+        "A": "java.lang.reflect.Proxy",
+        "B": "narzut wydajnosciowy proxy",
+        "C": "InvocationHandler",
+        "D": "Proxy.newProxyInstance"
+      },
+      "correct": "B",
+      "explanation": "Opis \"koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)\" odpowiada terminowi \"narzut wydajnosciowy proxy\"."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"java.lang.reflect.Proxy\" to NIE jest...",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "synonim terminu \"InvocationHandler\"",
+        "C": "cos innego niz: klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "D": "to samo co \"Proxy.newProxyInstance\""
+      },
+      "correct": "C",
+      "explanation": "\"java.lang.reflect.Proxy\" oznacza: klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"InvocationHandler\" to NIE jest...",
+      "options": {
+        "A": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "B": "synonim terminu \"Proxy.newProxyInstance\"",
+        "C": "to samo co \"ograniczenie tylko-interfejsy\"",
+        "D": "cos innego niz: interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+      },
+      "correct": "D",
+      "explanation": "\"InvocationHandler\" oznacza: interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Proxy.newProxyInstance\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "B": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "C": "synonim terminu \"ograniczenie tylko-interfejsy\"",
+        "D": "to samo co \"Proxy.isProxyClass\""
+      },
+      "correct": "A",
+      "explanation": "\"Proxy.newProxyInstance\" oznacza: metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"ograniczenie tylko-interfejsy\" to NIE jest...",
+      "options": {
+        "A": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "B": "cos innego niz: Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "C": "synonim terminu \"Proxy.isProxyClass\"",
+        "D": "to samo co \"nazwa klasy $Proxy\""
+      },
+      "correct": "B",
+      "explanation": "\"ograniczenie tylko-interfejsy\" oznacza: Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Proxy.isProxyClass\" to NIE jest...",
+      "options": {
+        "A": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "B": "synonim terminu \"nazwa klasy $Proxy\"",
+        "C": "cos innego niz: metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "D": "to samo co \"logowanie przez proxy\""
+      },
+      "correct": "C",
+      "explanation": "\"Proxy.isProxyClass\" oznacza: metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"nazwa klasy $Proxy\" to NIE jest...",
+      "options": {
+        "A": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "B": "synonim terminu \"logowanie przez proxy\"",
+        "C": "to samo co \"cachowanie przez proxy\"",
+        "D": "cos innego niz: konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+      },
+      "correct": "D",
+      "explanation": "\"nazwa klasy $Proxy\" oznacza: konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"logowanie przez proxy\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "B": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "C": "synonim terminu \"cachowanie przez proxy\"",
+        "D": "to samo co \"blokowanie metody przez proxy\""
+      },
+      "correct": "A",
+      "explanation": "\"logowanie przez proxy\" oznacza: typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"cachowanie przez proxy\" to NIE jest...",
+      "options": {
+        "A": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "B": "cos innego niz: wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "C": "synonim terminu \"blokowanie metody przez proxy\"",
+        "D": "to samo co \"lazy-loading proxy w Hibernate\""
+      },
+      "correct": "B",
+      "explanation": "\"cachowanie przez proxy\" oznacza: wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"blokowanie metody przez proxy\" to NIE jest...",
+      "options": {
+        "A": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "B": "synonim terminu \"lazy-loading proxy w Hibernate\"",
+        "C": "cos innego niz: mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "D": "to samo co \"Spring AOP\""
+      },
+      "correct": "C",
+      "explanation": "\"blokowanie metody przez proxy\" oznacza: mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"lazy-loading proxy w Hibernate\" to NIE jest...",
+      "options": {
+        "A": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "B": "synonim terminu \"Spring AOP\"",
+        "C": "to samo co \"CGLIB / ByteBuddy\"",
+        "D": "cos innego niz: zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+      },
+      "correct": "D",
+      "explanation": "\"lazy-loading proxy w Hibernate\" oznacza: zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Spring AOP\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "B": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "C": "synonim terminu \"CGLIB / ByteBuddy\"",
+        "D": "to samo co \"dziedziczenie metod Object przez proxy\""
+      },
+      "correct": "A",
+      "explanation": "\"Spring AOP\" oznacza: mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"CGLIB / ByteBuddy\" to NIE jest...",
+      "options": {
+        "A": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "B": "cos innego niz: biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "C": "synonim terminu \"dziedziczenie metod Object przez proxy\"",
+        "D": "to samo co \"proxowanie wielu interfejsow naraz\""
+      },
+      "correct": "B",
+      "explanation": "\"CGLIB / ByteBuddy\" oznacza: biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"dziedziczenie metod Object przez proxy\" to NIE jest...",
+      "options": {
+        "A": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "B": "synonim terminu \"proxowanie wielu interfejsow naraz\"",
+        "C": "cos innego niz: fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "D": "to samo co \"narzut wydajnosciowy proxy\""
+      },
+      "correct": "C",
+      "explanation": "\"dziedziczenie metod Object przez proxy\" oznacza: fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"proxowanie wielu interfejsow naraz\" to NIE jest...",
+      "options": {
+        "A": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "B": "synonim terminu \"narzut wydajnosciowy proxy\"",
+        "C": "to samo co \"java.lang.reflect.Proxy\"",
+        "D": "cos innego niz: mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+      },
+      "correct": "D",
+      "explanation": "\"proxowanie wielu interfejsow naraz\" oznacza: mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"narzut wydajnosciowy proxy\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "B": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "C": "synonim terminu \"java.lang.reflect.Proxy\"",
+        "D": "to samo co \"InvocationHandler\""
+      },
+      "correct": "A",
+      "explanation": "\"narzut wydajnosciowy proxy\" oznacza: koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera) — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"java.lang.reflect.Proxy\"?",
+      "options": {
+        "A": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "B": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "C": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "D": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"java.lang.reflect.Proxy\": klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"InvocationHandler\"?",
+      "options": {
+        "A": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "B": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "C": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "D": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"InvocationHandler\": interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"Proxy.newProxyInstance\"?",
+      "options": {
+        "A": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "B": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "C": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "D": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"Proxy.newProxyInstance\": metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"ograniczenie tylko-interfejsy\"?",
+      "options": {
+        "A": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "B": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "C": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "D": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"ograniczenie tylko-interfejsy\": Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"Proxy.isProxyClass\"?",
+      "options": {
+        "A": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "B": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"Proxy.isProxyClass\": metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"nazwa klasy $Proxy\"?",
+      "options": {
+        "A": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "B": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "C": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "D": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"nazwa klasy $Proxy\": konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"logowanie przez proxy\"?",
+      "options": {
+        "A": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "B": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "C": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "D": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"logowanie przez proxy\": typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"cachowanie przez proxy\"?",
+      "options": {
+        "A": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "B": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "C": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "D": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"cachowanie przez proxy\": wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"blokowanie metody przez proxy\"?",
+      "options": {
+        "A": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "B": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"blokowanie metody przez proxy\": mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"lazy-loading proxy w Hibernate\"?",
+      "options": {
+        "A": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "B": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "C": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "D": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"lazy-loading proxy w Hibernate\": zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"Spring AOP\"?",
+      "options": {
+        "A": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "B": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "C": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "D": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"Spring AOP\": mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"CGLIB / ByteBuddy\"?",
+      "options": {
+        "A": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "B": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "C": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "D": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"CGLIB / ByteBuddy\": biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"dziedziczenie metod Object przez proxy\"?",
+      "options": {
+        "A": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "B": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"dziedziczenie metod Object przez proxy\": fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"proxowanie wielu interfejsow naraz\"?",
+      "options": {
+        "A": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "B": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "C": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "D": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"proxowanie wielu interfejsow naraz\": mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+    },
+    {
+      "question": "W praktycznym zastosowaniu dynamicznych proxy (java.lang.reflect.Proxy), do czego sluzy \"narzut wydajnosciowy proxy\"?",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "D": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"narzut wydajnosciowy proxy\": koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"java.lang.reflect.Proxy\"?",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "D": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"java.lang.reflect.Proxy\": klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"InvocationHandler\"?",
+      "options": {
+        "A": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "D": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"InvocationHandler\": interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Proxy.newProxyInstance\"?",
+      "options": {
+        "A": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "B": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "C": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "D": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"Proxy.newProxyInstance\": metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"ograniczenie tylko-interfejsy\"?",
+      "options": {
+        "A": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"ograniczenie tylko-interfejsy\": Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Proxy.isProxyClass\"?",
+      "options": {
+        "A": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"Proxy.isProxyClass\": metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"nazwa klasy $Proxy\"?",
+      "options": {
+        "A": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "D": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"nazwa klasy $Proxy\": konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"logowanie przez proxy\"?",
+      "options": {
+        "A": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "B": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "C": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "D": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"logowanie przez proxy\": typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"cachowanie przez proxy\"?",
+      "options": {
+        "A": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"cachowanie przez proxy\": wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"blokowanie metody przez proxy\"?",
+      "options": {
+        "A": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"blokowanie metody przez proxy\": mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"lazy-loading proxy w Hibernate\"?",
+      "options": {
+        "A": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "D": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"lazy-loading proxy w Hibernate\": zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Spring AOP\"?",
+      "options": {
+        "A": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "B": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "C": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "D": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"Spring AOP\": mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"CGLIB / ByteBuddy\"?",
+      "options": {
+        "A": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"CGLIB / ByteBuddy\": biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"dziedziczenie metod Object przez proxy\"?",
+      "options": {
+        "A": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"dziedziczenie metod Object przez proxy\": fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"proxowanie wielu interfejsow naraz\"?",
+      "options": {
+        "A": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "D": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"proxowanie wielu interfejsow naraz\": mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"narzut wydajnosciowy proxy\"?",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "C": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "D": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"narzut wydajnosciowy proxy\": koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+    },
+    {
+      "question": "Czym jest / co oznacza \"java.lang.reflect.Proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "B": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "C": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "D": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+      },
+      "correct": "D",
+      "explanation": "\"java.lang.reflect.Proxy\" to: klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"InvocationHandler\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "B": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "C": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "D": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+      },
+      "correct": "A",
+      "explanation": "\"InvocationHandler\" to: interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Proxy.newProxyInstance\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "B": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler",
+        "C": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "D": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+      },
+      "correct": "B",
+      "explanation": "\"Proxy.newProxyInstance\" to: metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+    },
+    {
+      "question": "Czym jest / co oznacza \"ograniczenie tylko-interfejsy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy",
+        "B": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "C": "Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych",
+        "D": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+      },
+      "correct": "C",
+      "explanation": "\"ograniczenie tylko-interfejsy\" to: Proxy potrafi generowac implementacje wylacznie dla interfejsow, nigdy dla klas konkretnych"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Proxy.isProxyClass\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "B": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "C": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "D": "metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+      },
+      "correct": "D",
+      "explanation": "\"Proxy.isProxyClass\" to: metoda pozwalajaca sprawdzic, czy dana klasa zostala wygenerowana przez mechanizm Proxy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"nazwa klasy $Proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance",
+        "B": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "C": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "D": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+      },
+      "correct": "A",
+      "explanation": "\"nazwa klasy $Proxy\" to: konwencja nazewnictwa klas wygenerowanych przez Proxy.newProxyInstance"
+    },
+    {
+      "question": "Czym jest / co oznacza \"logowanie przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "B": "typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody",
+        "C": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "D": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+      },
+      "correct": "B",
+      "explanation": "\"logowanie przez proxy\" to: typowe zastosowanie InvocationHandler do zapisywania informacji o kazdym wywolaniu metody"
+    },
+    {
+      "question": "Czym jest / co oznacza \"cachowanie przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji",
+        "B": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "C": "wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen",
+        "D": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+      },
+      "correct": "C",
+      "explanation": "\"cachowanie przez proxy\" to: wzorzec, w ktorym InvocationHandler zapamietuje wyniki wywolan, by unikac ponownych kosztownych obliczen"
+    },
+    {
+      "question": "Czym jest / co oznacza \"blokowanie metody przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "B": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "C": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "D": "mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+      },
+      "correct": "D",
+      "explanation": "\"blokowanie metody przez proxy\" to: mechanizm, w ktorym InvocationHandler rzuca wyjatek zamiast delegowac wywolanie do prawdziwej implementacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"lazy-loading proxy w Hibernate\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych",
+        "B": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "C": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "D": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+      },
+      "correct": "A",
+      "explanation": "\"lazy-loading proxy w Hibernate\" to: zastosowanie tego samego wzorca do opoznionego ladowania relacji z bazy danych"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Spring AOP\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "B": "mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem",
+        "C": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "D": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+      },
+      "correct": "B",
+      "explanation": "\"Spring AOP\" to: mechanizm frameworka Spring realizujacy @Transactional/@Cacheable przez proxy i logike przed/po wywolaniem"
+    },
+    {
+      "question": "Czym jest / co oznacza \"CGLIB / ByteBuddy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke",
+        "B": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "C": "biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu",
+        "D": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+      },
+      "correct": "C",
+      "explanation": "\"CGLIB / ByteBuddy\" to: biblioteki generujace bajtkod podklasy, uzywane do proxowania klas konkretnych bez interfejsu"
+    },
+    {
+      "question": "Czym jest / co oznacza \"dziedziczenie metod Object przez proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "B": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "C": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "D": "fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+      },
+      "correct": "D",
+      "explanation": "\"dziedziczenie metod Object przez proxy\" to: fakt, ze toString/hashCode/equals rowniez przechodza przez InvocationHandler.invoke"
+    },
+    {
+      "question": "Czym jest / co oznacza \"proxowanie wielu interfejsow naraz\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy",
+        "B": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "C": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "D": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy"
+      },
+      "correct": "A",
+      "explanation": "\"proxowanie wielu interfejsow naraz\" to: mozliwosc przekazania kilku interfejsow do Proxy.newProxyInstance w jednej tablicy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"narzut wydajnosciowy proxy\" w kontekscie dynamicznych proxy (java.lang.reflect.Proxy)?",
+      "options": {
+        "A": "klasa generujaca w czasie dzialania nowa klase implementujaca wskazane interfejsy",
+        "B": "koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)",
+        "C": "interfejs z jedna metoda invoke(proxy, method, args), przez ktora przechodzi kazde wywolanie na proxy",
+        "D": "metoda tworzaca obiekt proxy, przyjmujaca ClassLoader, tablice interfejsow i InvocationHandler"
+      },
+      "correct": "B",
+      "explanation": "\"narzut wydajnosciowy proxy\" to: koszt zwiazany z faktem, ze proxy jest zbudowane na refleksji (Method.invoke wewnatrz handlera)"
+    }
+  ]
+}
