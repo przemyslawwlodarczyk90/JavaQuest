@@ -2352,4 +2352,16 @@ międzyrozdziałowa `_13_libraries/01_WhyLibraries` 100.
 zgodnie z listą `ChapterSeedData.java`; nowy sufiks scratchpada `n`. Nadal czytać klasy teorii
 i ćwiczeń z IDE, dobierać liczbę sekcji do realnego zakresu tematu, zachować 30 wartościowych
 ćwiczeń/rozwiązań, rozbudowany quiz oraz weryfikację API i regresji przed commitem.
+
+### `_16_clean_code` rozpoczęty na platformie (stan na 2026-08-30): lekcja 1/22 UKOŃCZONA
+
+`01_WhatIsCleanCode` przedstawia clean code jako minimalizację kosztu poprawnego zrozumienia i
+bezpiecznej zmiany, nie kosmetykę ani minimalną liczbę linii. Obejmuje koszt poznawczy, guard
+clauses, bogatszy wynik walidacji, broken windows/boy-scout rule, dług techniczny, ryzyko
+over-engineering, metryki jako sygnały oraz bezpieczną refaktoryzację małymi krokami. Zakres:
+10 sekcji teorii, 30 ćwiczeń z klasy IDE i 100 unikalnych pytań. End-to-end 10/30/100,
+regresja capstone poprzedniego rozdziału 100; `_16_clean_code` ma 1/22 `hasContent=true`.
+
+**Następny krok**: `02_Naming`, dalej wszystkie lekcje `_16_clean_code` bez zatrzymywania się
+na potwierdzenia, z liczbą sekcji wynikającą z rzeczywistego zakresu tematu.
 ---
