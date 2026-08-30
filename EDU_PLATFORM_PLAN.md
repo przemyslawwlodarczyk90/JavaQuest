@@ -2282,4 +2282,14 @@ Zweryfikowane end-to-end: 7 merytorycznie wynikających z materiału sekcji teor
 
 **Następny krok**: kontynuować od `15_MemoryLeaksInJava`, dalej 16-20 i `_16_clean_code`, bez
 zatrzymywania się na potwierdzenia. Liczbę sekcji dobierać do zakresu tematu, nie do szablonu.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 15/20 UKOŃCZONA** (`15_MemoryLeaksInJava`).
+Lekcja wyjaśnia wyciek jako retencję osiągalnego, lecz logicznie zbędnego grafu obiektów, a nie
+"niesprawność GC". Pokrywa cache bez limitu, cykl życia listenerów, ThreadLocal w pulach,
+syntetyczne `Outer.this`, różnicę allocation rate/retained heap oraz diagnostykę przez histogram,
+heap dump, dominator tree i path to GC roots. Ćwiczenia są oparte na klasie w IDE i obejmują
+zarówno demonstracje, jak i poprawki/testy regresyjne. End-to-end: teoria 7 sekcji wynikających
+z zakresu materiału, 30 ćwiczeń, 100 unikalnych pytań; regresja 100, rozdział 15/20.
+
+**Następny krok**: `16_HeapDumpBasics`, następnie 17-20 i automatycznie `_16_clean_code`.
 ---
