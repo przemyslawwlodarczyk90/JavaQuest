@@ -2225,4 +2225,24 @@ uwaga na przyszlosc: sprawdz faktyczny port w logu startowym, jesli curl "wisi")
 **Następny krok**: kontynuować od **lekcji 8 (`08_GarbageCollectionFoundations`)** w
 `_15_jvm_internals` — rozpoczecie bloku "Garbage Collector" (8-12). Ten sam workflow (sufiks `m`),
 commitowac co 2-4 lekcje, bez pytania o zgode miedzy lekcjami/rozdzialami.
+
+**Stan na 2026-08-30 (kontynuacja 3): lekcje 8-9/20 UKOŃCZONE.** Zweryfikowane end-to-end (curl
+100 quiz na obu nowych lekcjach), regresja na `07_ReferenceTypesAndStringPool` i
+`_13_libraries/01_WhyLibraries` — zero regresji.
+
+**WAZNA UWAGA operacyjna (potwierdzona ponownie w tej sesji)**: po KAZDYM restarcie backendu,
+`ApplicationRunner`-y (`ContentSeeder` @Order(1) + `LessonContentLoader` @Order(2)) potrzebuja
+**dziesiatek sekund** (zaobserwowane ~30-40s w tej sesji, cale repo ma juz kilkaset lekcji z
+trescia) PO wypisaniu "Started JavaQuestApplication" w logu, zanim baza H2 zostanie w pelni
+zasilona trescia WSZYSTKICH rozdzialow — Tomcat juz przyjmuje polaczenia w tym oknie (bo jego
+listener startuje PRZED zakonczeniem `callRunners()`), wiec curl w tym oknie zwroci **200 z
+PUSTA tablica/hasContent:false DLA WSZYSTKICH lekcji w calym repo**, nie tylko nowych - to NIE
+jest regresja, tylko seeding w toku. Rozwiazanie: po restarcie odczekaj min. 60-90s (lub sprawdz
+`backend_out.log` pod katem logu SpringDoc/kolejnego zdarzenia PO "Started" jako sygnalu, ze
+runnery skonczyly) PRZED pierwszym sprawdzeniem curl, zamiast panikowac przy pierwszym 0/false.
+
+**Następny krok**: kontynuować od **lekcji 10 (`10_G1GcDeepDive`)** w `_15_jvm_internals` —
+kontynuacja bloku "Garbage Collector" (8-12). Ten sam workflow (sufiks `m`), commitowac co 2-4
+lekcje, bez pytania o zgode miedzy lekcjami/rozdzialami. Po restarcie backendu odczekaj min.
+60-90s przed curl (patrz uwaga wyzej).
 ---
