@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "CONCEPT",
+      "heading": "Nowy rozdzial: _15_jvm_internals - JVM, pamiec i wydajnosc",
+      "body": "Do tej pory poznales Jave 'od strony API': skladnie, OOP, kolekcje, wielowatkowosc, siec, SQL/JDBC/Hibernate, biblioteki, generyki, refleksje, moduly... Ten rozdzial schodzi PONIZEJ API - do samej maszyny wirtualnej: jak dziala classloading, gdzie fizycznie 'zyja' obiekty (heap/stack/metaspace), jak dziala Garbage Collector 'pod maska', jak JIT kompiluje bajtkod do kodu maszynowego, oraz jak diagnozowac prawdziwe problemy produkcyjne (heap dump, thread dump, Java Flight Recorder). UWAGA: _01_fundamentals mial juz krotkie wstepy do JDK/JRE/JVM, heap/stack i GC - ten rozdzial NIE powtarza tamtych lekcji, idzie duzo glebiej: prawdziwe mechanizmy dzialania JVM, prawdziwe API introspekcji, prawdziwe generowanie plikow diagnostycznych."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Plan calego rozdzialu (20 lekcji)",
+      "body": "1-5 Classloading i bajtkod - ta lekcja: JDK/JRE/JVM i specyfikacja; potem: kompilacja i bajtkod (javap), mechanika ladowania klas, wlasne class loadery, classpath vs module path. 6-7 Obszary pamieci JVM - heap vs stack vs metaspace 'od srodka'. 8-12 Garbage Collector - algorytmy, konkretne kolektory (Serial/Parallel/G1/ZGC/Shenandoah), strojenie i pomiar pauz. 13-14 JIT (Just-In-Time) - interpreter vs C1/C2, inlining, escape analysis. 15 Wycieki pamieci. 16-20 Diagnostyka i tuning produkcyjny - JFR, JMX, heap/thread dump, flagi JVM, projekt podsumowujacy."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Specyfikacja vs implementacja - kluczowe rozroznienie",
+      "body": "'Java' to w istocie DWIE oddzielne specyfikacje: JLS (Java Language Specification) - opisuje SAM JEZYK (skladnia, semantyka wyrazen, reguly typowania, Java Memory Model); JVMS (Java Virtual Machine Specification) - opisuje MASZYNE WIRTUALNA (format pliku .class, zestaw instrukcji bajtkodu, zachowanie maszyny stosowej, wymagania wobec weryfikatora klas). KLUCZOWA IDEA: obie sa dokumentami TEKSTOWYMI opisujacymi WYMAGANE zachowanie - nie zawieraja ani linijki kodu. Kazdy, kto chce, moze napisac WLASNA implementacje zgodna z ta specyfikacja. Dzieki temu ten sam plik .class (skompilowany raz, gdziekolwiek) moze dzialac identycznie na roznych implementacjach JVM - to fundament hasla 'write once, run anywhere'."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Implementacje JVM - HotSpot, GraalVM, OpenJ9",
+      "body": "HotSpot - domyslna JVM dostarczana z OpenJDK/Oracle JDK, ta ktorej uzywasz uruchamiajac ten kurs. Nazwa pochodzi od kluczowej cechy: identyfikuje 'gorace' (czesto wykonywane) kod i kompiluje go JIT-em do natywnego kodu maszynowego. GraalVM - alternatywna implementacja (oparta o rdzen HotSpot, ale z wlasnym, nowoczesnym kompilatorem JIT napisanym w Javie - 'Graal'), umozliwia tez kompilacje AOT (Ahead-Of-Time) do natywnego binarium (Native Image) - blyskawiczny start, minimalne zuzycie pamieci, kosztem dluzszej kompilacji z gory. Eclipse OpenJ9 - implementacja zoptymalizowana pod szybki start i niskie zuzycie pamieci, popularna w kontenerach/chmurze. WAZNE: wszystkie trzy implementuja TA SAMA specyfikacje JVMS - ten sam plik .class uruchomi sie na kazdej z nich."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Architektura JVM na wysokim poziomie",
+      "body": "Kazda implementacja JVM (zgodna z JVMS) musi dostarczyc te same trzy glowne podsystemy: (1) CLASS LOADER SUBSYSTEM - laduje pliki .class do pamieci, weryfikuje bajtkod, przygotowuje statyczne pola, wykonuje inicjalizacje (lekcje 3-4); (2) RUNTIME DATA AREAS - pamiec podzielona na Heap (obiekty), Stack (ramki wywolan metod per-watek), Metaspace (metadane klas), PC Register, Native Method Stacks (lekcje 6-7); (3) EXECUTION ENGINE - interpreter bajtkodu, kompilator JIT (przyspiesza 'goracy' kod), Garbage Collector (lekcje 8-14). Dodatkowo JVM ma NATIVE METHOD INTERFACE (JNI) - most pozwalajacy wywolywac kod natywny (np. C/C++) z Javy i odwrotnie."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Demo: prawdziwe wlasciwosci systemowe JVM",
+      "body": "System.out.println(\"java.vm.name = \" + System.getProperty(\"java.vm.name\"));\nSystem.out.println(\"java.vm.version = \" + System.getProperty(\"java.vm.version\"));\nSystem.out.println(\"java.vm.vendor = \" + System.getProperty(\"java.vm.vendor\"));\nSystem.out.println(\"java.specification.version = \" + System.getProperty(\"java.specification.version\"));\n\nRuntime.Version version = Runtime.version();\nSystem.out.println(\"Runtime.version() = \" + version);\nSystem.out.println(\"feature (glowny numer wersji): \" + version.feature());\nSystem.out.println(\"interim/update/patch: \" + version.interim() + \"/\" + version.update() + \"/\" + version.patch());\n\nOdczytujemy z URUCHOMIONEJ WLASNIE JVM realne informacje o tym, JAKA to konkretnie implementacja i JAKA wersja specyfikacji jest przez nia realizowana."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Podsumowanie",
+      "body": "JLS opisuje JEZYK Java, JVMS opisuje SAMA MASZYNE WIRTUALNA - oba to dokumenty specyfikujace WYMAGANE zachowanie, nie kod. HotSpot, GraalVM, Eclipse OpenJ9 to ROZNE implementacje TEJ SAMEJ specyfikacji JVMS - ten sam .class dziala na kazdej z nich. Architektura JVM (kazda implementacja): Class Loader Subsystem -> Runtime Data Areas (Heap/Stack/Metaspace/...) -> Execution Engine (interpreter + JIT + GC), plus JNI jako most do kodu natywnego. System.getProperty('java.vm.name'/'java.vm.version'/'java.specification.version'/'java.vendor') oraz Runtime.version() pozwalaja odczytac te informacje na zywo, z wnetrza dzialajacego programu."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Wypisz nazwę implementacji JVM używając System.getProperty(\"java.vm.name\").",
+      "hint": "System.getProperty(\"java.vm.name\") zwraca np. \"OpenJDK 64-Bit Server VM\".",
+      "solution": "System.out.println(System.getProperty(\"java.vm.name\"));"
+    },
+    {
+      "prompt": "Wypisz wersję JVM używając System.getProperty(\"java.vm.version\").",
+      "hint": "System.getProperty(\"java.vm.version\") zwraca np. \"25.0.2+13\".",
+      "solution": "System.out.println(System.getProperty(\"java.vm.version\"));"
+    },
+    {
+      "prompt": "Wypisz producenta JVM używając System.getProperty(\"java.vm.vendor\").",
+      "hint": "System.getProperty(\"java.vm.vendor\") zwraca np. \"Oracle Corporation\" lub \"Eclipse Adoptium\".",
+      "solution": "System.out.println(System.getProperty(\"java.vm.vendor\"));"
+    },
+    {
+      "prompt": "Wypisz wersję specyfikacji Javy używając System.getProperty(\"java.specification.version\").",
+      "hint": "Ta wlasciwosc zwraca major version specyfikacji, np. \"21\".",
+      "solution": "System.out.println(System.getProperty(\"java.specification.version\"));"
+    },
+    {
+      "prompt": "Wypisz nazwę specyfikacji Javy używając System.getProperty(\"java.specification.name\").",
+      "hint": "Zwraca cos w stylu \"Java Platform API Specification\".",
+      "solution": "System.out.println(System.getProperty(\"java.specification.name\"));"
+    },
+    {
+      "prompt": "Pobierz Runtime.version() i wypisz cały obiekt (toString()).",
+      "hint": "Runtime.version() zwraca obiekt Runtime.Version reprezentujacy pelna wersje JVM.",
+      "solution": "System.out.println(Runtime.version());"
+    },
+    {
+      "prompt": "Pobierz Runtime.version().feature() i wypisz go z etykietą \"Glowny numer wersji Javy: \".",
+      "hint": "feature() zwraca glowny numer wersji, np. 21 dla Javy 21.",
+      "solution": "System.out.println(\"Glowny numer wersji Javy: \" + Runtime.version().feature());"
+    },
+    {
+      "prompt": "Sprawdź, czy wartość java.vm.name zawiera napis \"HotSpot\" (bez uwzględniania wielkości liter) i wypisz odpowiedni komunikat.",
+      "hint": "String.toLowerCase().contains(\"hotspot\") ignoruje wielkosc liter.",
+      "solution": "String vmName = System.getProperty(\"java.vm.name\");\nif (vmName.toLowerCase().contains(\"hotspot\")) {\n    System.out.println(\"To jest HotSpot: \" + vmName);\n} else {\n    System.out.println(\"To NIE jest HotSpot: \" + vmName);\n}"
+    },
+    {
+      "prompt": "Wypisz System.getProperty(\"java.vendor.version\") - może zwrócić null, jeśli producent nie ustawił tej właściwości. Obsłuż ten przypadek i wypisz \"brak\" zamiast null.",
+      "hint": "String vendorVersion = System.getProperty(...); if (vendorVersion == null) ...",
+      "solution": "String vendorVersion = System.getProperty(\"java.vendor.version\");\nSystem.out.println(vendorVersion == null ? \"brak\" : vendorVersion);"
+    },
+    {
+      "prompt": "Wypisz wszystkie właściwości systemowe, których klucz zawiera napis \"vm\" (np. java.vm.name, java.vm.version...).",
+      "hint": "System.getProperties() zwraca Properties, mozna po nich iterowac przez stringPropertyNames().",
+      "solution": "for (String key : System.getProperties().stringPropertyNames()) {\n    if (key.contains(\"vm\")) {\n        System.out.println(key + \" = \" + System.getProperty(key));\n    }\n}"
+    },
+    {
+      "prompt": "Zbuduj krótki raport tożsamości JVM zawierający: nazwę, wersję, producenta JVM oraz wersję specyfikacji, sformatowany jako kilka linii tekstu z czytelnymi etykietami.",
+      "hint": "Kilka System.out.println z etykietami, jak printJvmIdentity() z teorii.",
+      "solution": "System.out.println(\"=== TOZSAMOSC JVM ===\");\nSystem.out.println(\"Nazwa: \" + System.getProperty(\"java.vm.name\"));\nSystem.out.println(\"Wersja: \" + System.getProperty(\"java.vm.version\"));\nSystem.out.println(\"Producent: \" + System.getProperty(\"java.vm.vendor\"));\nSystem.out.println(\"Specyfikacja: \" + System.getProperty(\"java.specification.version\"));"
+    },
+    {
+      "prompt": "Pobierz java.specification.version oraz java.version. Wypisz oba i sprawdź, czy java.version zaczyna się od wartości specyfikacji (np. \"21\" zawarte w \"21.0.2\").",
+      "hint": "String.startsWith(specVersion) sprawdza, czy java.version zaczyna sie od tej samej liczby.",
+      "solution": "String specVersion = System.getProperty(\"java.specification.version\");\nString javaVersion = System.getProperty(\"java.version\");\nSystem.out.println(\"specyfikacja: \" + specVersion + \", java.version: \" + javaVersion);\nSystem.out.println(\"zgodne: \" + javaVersion.startsWith(specVersion));"
+    },
+    {
+      "prompt": "Na podstawie java.vm.name napisz prostą logikę if/else, która wypisuje \"To jest HotSpot\", \"To jest GraalVM\", \"To jest OpenJ9\" albo \"Nieznana implementacja JVM\" (sprawdzając odpowiednie fragmenty tekstu, ignorując wielkość liter).",
+      "hint": "Kolejne if/else if sprawdzajace zawartosc lowercased vmName.",
+      "solution": "String vmName = System.getProperty(\"java.vm.name\").toLowerCase();\nif (vmName.contains(\"hotspot\")) System.out.println(\"To jest HotSpot\");\nelse if (vmName.contains(\"graal\") || vmName.contains(\"substrate\")) System.out.println(\"To jest GraalVM\");\nelse if (vmName.contains(\"openj9\")) System.out.println(\"To jest OpenJ9\");\nelse System.out.println(\"Nieznana implementacja JVM\");"
+    },
+    {
+      "prompt": "Wypisz osobno: feature(), interim(), update() oraz patch() z Runtime.version(), każdy w osobnej linii z etykietą.",
+      "hint": "Runtime.Version ma 4 osobne metody liczbowe.",
+      "solution": "Runtime.Version v = Runtime.version();\nSystem.out.println(\"feature: \" + v.feature());\nSystem.out.println(\"interim: \" + v.interim());\nSystem.out.println(\"update: \" + v.update());\nSystem.out.println(\"patch: \" + v.patch());"
+    },
+    {
+      "prompt": "Sprawdź metodą Runtime.version().pre() czy aktualna JVM jest wersją pre-release (np. early access build). Wypisz Optional i jego zawartość, albo komunikat \"wersja stabilna\", jeśli pusty.",
+      "hint": "pre() zwraca Optional<String> - pusty dla stabilnych wersji, wypelniony dla EA buildow.",
+      "solution": "var pre = Runtime.version().pre();\nSystem.out.println(pre.isPresent() ? \"pre-release: \" + pre.get() : \"wersja stabilna\");"
+    },
+    {
+      "prompt": "Zbierz wszystkie właściwości systemowe, których klucz zaczyna się od \"java.vm\" LUB \"java.specification\", posortuj je alfabetycznie po kluczu i wypisz każdą w formacie \"klucz = wartosc\".",
+      "hint": "stringPropertyNames() + filter + sorted (TreeSet lub stream sorted).",
+      "solution": "System.getProperties().stringPropertyNames().stream()\n    .filter(k -> k.startsWith(\"java.vm\") || k.startsWith(\"java.specification\"))\n    .sorted()\n    .forEach(k -> System.out.println(k + \" = \" + System.getProperty(k)));"
+    },
+    {
+      "prompt": "Pobierz Runtime.version() dwukrotnie do dwóch zmiennych i porównaj je metodą compareTo() oraz equals(). Wypisz wyniki obu porównań (powinny być odpowiednio 0 i true).",
+      "hint": "Runtime.version() zwraca za kazdym razem 'rowna' wartosc (ta sama biezaca JVM).",
+      "solution": "Runtime.Version v1 = Runtime.version();\nRuntime.Version v2 = Runtime.version();\nSystem.out.println(\"compareTo: \" + v1.compareTo(v2));\nSystem.out.println(\"equals: \" + v1.equals(v2));"
+    },
+    {
+      "prompt": "Bez uruchamiania kodu: w komentarzu (min. 4 zdania) wyjaśnij własnymi słowami różnicę między JLS a JVMS oraz podaj po jednym przykładzie tego, co reguluje każda z tych specyfikacji.",
+      "hint": "JLS = jezyk (skladnia, typy, JMM). JVMS = maszyna wirtualna (format .class, bajtkod).",
+      "solution": "// JLS (Java Language Specification) opisuje SAM JEZYK Javy - skladnie, semantyke wyrazen,\n// reguly typowania oraz model pamieci Javy (Java Memory Model). Przyklad tego, co reguluje\n// JLS: dokladna kolejnosc wykonania operatorow w wyrazeniu 'a + b * c' (priorytet operatorow).\n// JVMS (Java Virtual Machine Specification) opisuje MASZYNE WIRTUALNA - format pliku .class,\n// zestaw instrukcji bajtkodu, zachowanie maszyny stosowej. Przyklad tego, co reguluje JVMS:\n// dokladny format naglowka pliku .class (magic number 0xCAFEBABE, numer wersji bajtkodu).\n// Obie sa dokumentami TEKSTOWYMI opisujacymi WYMAGANE zachowanie - kazdy moze napisac\n// wlasna, zgodna implementacje kompilatora (dla JLS) lub JVM (dla JVMS)."
+    },
+    {
+      "prompt": "Napisz metodę pomocniczą String describeJvmImplementation(String vmName), która na podstawie przekazanego napisu (np. \"OpenJDK 64-Bit Server VM\", \"Eclipse OpenJ9 VM\", \"Substrate VM\") zwraca opis implementacji. Wywołaj ją dla co najmniej 3 różnych przykładowych napisów (na sztywno w kodzie, nie muszą pochodzić z realnej JVM).",
+      "hint": "Ta sama logika if/else co Zadanie 13, ale jako osobna metoda przyjmujaca argument.",
+      "solution": "static String describeJvmImplementation(String vmName) {\n    String lower = vmName.toLowerCase();\n    if (lower.contains(\"hotspot\")) return \"HotSpot - domyslna JVM z OpenJDK/Oracle JDK\";\n    if (lower.contains(\"openj9\")) return \"Eclipse OpenJ9 - szybki start, niskie zuzycie pamieci\";\n    if (lower.contains(\"substrate\") || lower.contains(\"graal\")) return \"GraalVM - alternatywny JIT + mozliwosc AOT\";\n    return \"Nieznana implementacja: \" + vmName;\n}\n\nSystem.out.println(describeJvmImplementation(\"OpenJDK 64-Bit Server VM\"));\nSystem.out.println(describeJvmImplementation(\"Eclipse OpenJ9 VM\"));\nSystem.out.println(describeJvmImplementation(\"Substrate VM\"));"
+    },
+    {
+      "prompt": "Zbuduj (na sztywno w kodzie, jako tablicę/listę rekordów lub String[][]) porównawczą tabelkę 3 implementacji JVM (HotSpot, GraalVM, Eclipse OpenJ9) z kolumnami: nazwa, kluczowa cecha, typowe zastosowanie. Wypisz ją sformatowaną w konsoli.",
+      "hint": "record JvmInfo(String nazwa, String cecha, String zastosowanie) + tablica 3 elementow + petla z printf.",
+      "solution": "record JvmInfo(String nazwa, String cecha, String zastosowanie) {}\nJvmInfo[] jvms = {\n    new JvmInfo(\"HotSpot\", \"JIT identyfikuje gorace metody\", \"domyslna JVM produkcyjna\"),\n    new JvmInfo(\"GraalVM\", \"wlasny JIT (Graal) + AOT Native Image\", \"blyskawiczny start, mikroserwisy\"),\n    new JvmInfo(\"Eclipse OpenJ9\", \"szybki start, niskie zuzycie pamieci\", \"kontenery/chmura\")\n};\nfor (JvmInfo j : jvms) {\n    System.out.printf(\"%-16s | %-38s | %s%n\", j.nazwa(), j.cecha(), j.zastosowanie());\n}"
+    },
+    {
+      "prompt": "Napisz małe \"narzędzie diagnostyczne\": metodę, która zbiera WSZYSTKIE właściwości systemowe pasujące do wzorca (np. zaczynające się od \"java.\") do java.util.Map<String,String>, a następnie wypisuje je pogrupowane w sekcje: \"JVM\", \"Specyfikacja\", \"Vendor\", \"Inne\" (na podstawie fragmentu klucza). Wywołaj i wypisz wynik.",
+      "hint": "Zbierz wszystkie java.* wlasciwosci, potem 4 osobne filtry po fragmencie klucza (vm/specification/vendor/reszta).",
+      "solution": "Map<String, String> all = new TreeMap<>();\nfor (String key : System.getProperties().stringPropertyNames()) {\n    if (key.startsWith(\"java.\")) all.put(key, System.getProperty(key));\n}\nSystem.out.println(\"=== JVM ===\");\nall.forEach((k, v) -> { if (k.contains(\"vm\")) System.out.println(k + \" = \" + v); });\nSystem.out.println(\"=== Specyfikacja ===\");\nall.forEach((k, v) -> { if (k.contains(\"specification\")) System.out.println(k + \" = \" + v); });\nSystem.out.println(\"=== Vendor ===\");\nall.forEach((k, v) -> { if (k.contains(\"vendor\")) System.out.println(k + \" = \" + v); });"
+    },
+    {
+      "prompt": "Napisz metodę boolean meetsMinimumJavaVersion(int required), która porównuje Runtime.version().feature() z wymaganym numerem i zwraca true/false. Przetestuj ją dla wymagań 8, 11, 17, 21 i 25 oraz wypisz wynik każdego porównania.",
+      "hint": "Runtime.version().feature() >= required",
+      "solution": "static boolean meetsMinimumJavaVersion(int required) {\n    return Runtime.version().feature() >= required;\n}\nfor (int req : new int[]{8, 11, 17, 21, 25}) {\n    System.out.println(\"Wymagane \" + req + \": \" + meetsMinimumJavaVersion(req));\n}"
+    },
+    {
+      "prompt": "Pobierz java.vm.name, rozbij go na tokeny (słowa rozdzielone spacjami, użyj String.split) i wypisz każdy token w osobnej linii z numerem porządkowym.",
+      "hint": "String.split(\"\\\\s+\") dzieli po dowolnej liczbie spacji.",
+      "solution": "String[] tokens = System.getProperty(\"java.vm.name\").split(\"\\\\s+\");\nfor (int i = 0; i < tokens.length; i++) {\n    System.out.println((i + 1) + \". \" + tokens[i]);\n}"
+    },
+    {
+      "prompt": "Napisz metodę String readPropertyOrDefault(String key, String def), która używa System.getProperty(key, def) (wersja z domyślną wartością). Przetestuj ją dla istniejącego klucza (\"java.vm.name\") i dla nieistniejącego (np. \"moj.wymyslony.klucz\") z domyślną wartością \"BRAK\".",
+      "hint": "System.getProperty(key, defaultValue) to wbudowany, dwuargumentowy wariant metody.",
+      "solution": "static String readPropertyOrDefault(String key, String def) {\n    return System.getProperty(key, def);\n}\nSystem.out.println(readPropertyOrDefault(\"java.vm.name\", \"BRAK\"));\nSystem.out.println(readPropertyOrDefault(\"moj.wymyslony.klucz\", \"BRAK\"));"
+    },
+    {
+      "prompt": "Policz, ile właściwości systemowych zaczyna się kolejno od: \"java.\", \"os.\", \"user.\", \"sun.\" (jeśli występują), i wypisz te liczby jako podsumowanie (np. \"java.* -> 45 wlasciwosci\").",
+      "hint": "stringPropertyNames().stream().filter(k -> k.startsWith(prefix)).count() dla kazdego prefiksu.",
+      "solution": "String[] prefixes = {\"java.\", \"os.\", \"user.\", \"sun.\"};\nfor (String prefix : prefixes) {\n    long count = System.getProperties().stringPropertyNames().stream()\n        .filter(k -> k.startsWith(prefix)).count();\n    System.out.println(prefix + \"* -> \" + count + \" wlasciwosci\");\n}"
+    },
+    {
+      "prompt": "Napisz metodę, która symuluje \"sprawdzenie zgodności ze specyfikacją\": przyjmuje listę wymaganych właściwości systemowych (np. \"java.specification.version\", \"java.vm.name\", \"java.vendor\") i sprawdza, czy WSZYSTKIE są dostępne (niepuste) w bieżącej JVM. Wypisz raport OK/BRAK dla każdej z nich.",
+      "hint": "Dla kazdego klucza sprawdz System.getProperty(key) != null && !isBlank().",
+      "solution": "List<String> required = List.of(\"java.specification.version\", \"java.vm.name\", \"java.vendor\");\nfor (String key : required) {\n    String value = System.getProperty(key);\n    boolean ok = value != null && !value.isBlank();\n    System.out.println(key + \": \" + (ok ? \"OK (\" + value + \")\" : \"BRAK\"));\n}"
+    },
+    {
+      "prompt": "Zbuduj sformatowany raport (ramka z \"=\", jak w innych lekcjach kursu) zawierający WSZYSTKIE informacje z tej lekcji: nazwę i wersję JVM, producenta, wersję i nazwę specyfikacji, pełny Runtime.version() oraz jego cztery składowe liczbowe.",
+      "hint": "Ramka '='.repeat(N) na poczatku/koncu, potem kolejne linie z wszystkimi danymi.",
+      "solution": "System.out.println(\"=\".repeat(50));\nSystem.out.println(\"RAPORT TOZSAMOSCI JVM\");\nSystem.out.println(\"=\".repeat(50));\nSystem.out.println(\"Nazwa: \" + System.getProperty(\"java.vm.name\"));\nSystem.out.println(\"Wersja: \" + System.getProperty(\"java.vm.version\"));\nSystem.out.println(\"Producent: \" + System.getProperty(\"java.vm.vendor\"));\nSystem.out.println(\"Specyfikacja: \" + System.getProperty(\"java.specification.name\") + \" \" + System.getProperty(\"java.specification.version\"));\nRuntime.Version v = Runtime.version();\nSystem.out.println(\"Runtime.version(): \" + v);\nSystem.out.println(\"feature/interim/update/patch: \" + v.feature() + \"/\" + v.interim() + \"/\" + v.update() + \"/\" + v.patch());\nSystem.out.println(\"=\".repeat(50));"
+    },
+    {
+      "prompt": "Zasymuluj (bez realnego drugiego JVM) porównanie dwóch numerów wersji podanych jako stringi (np. \"17.0.9\" i \"21.0.2\") - rozbij je po kropce, porównaj numerycznie pierwszy segment (major) i wypisz, która wersja jest nowsza.",
+      "hint": "String.split(\"\\\\.\")[0] + Integer.parseInt(...) na obu wersjach, porownaj liczbowo.",
+      "solution": "static void compareVersions(String v1, String v2) {\n    int major1 = Integer.parseInt(v1.split(\"\\\\.\")[0]);\n    int major2 = Integer.parseInt(v2.split(\"\\\\.\")[0]);\n    if (major1 > major2) System.out.println(v1 + \" jest nowsza niz \" + v2);\n    else if (major2 > major1) System.out.println(v2 + \" jest nowsza niz \" + v1);\n    else System.out.println(v1 + \" i \" + v2 + \" maja ten sam major\");\n}\ncompareVersions(\"17.0.9\", \"21.0.2\");"
+    },
+    {
+      "prompt": "Wypisz aktualne wartości java.vm.name oraz os.name, a następnie w komentarzu (min. 3 zdania) wyjaśnij, dlaczego TEN SAM plik .class mógłby zostać uruchomiony na innej implementacji JVM lub innym systemie operacyjnym bez rekompilacji - odwołaj się do pojęcia specyfikacji JVMS poznanego w tej lekcji.",
+      "hint": "JVMS definiuje format .class NIEZALEZNIE od systemu operacyjnego czy konkretnej implementacji.",
+      "solution": "System.out.println(\"java.vm.name: \" + System.getProperty(\"java.vm.name\"));\nSystem.out.println(\"os.name: \" + System.getProperty(\"os.name\"));\n// Plik .class jest opisany PRZEZ SPECYFIKACJE JVMS - dokladny, niezalezny od platformy\n// format bajtkodu, ktory KAZDA zgodna implementacja JVM (HotSpot na Windows, OpenJ9 na Linux)\n// musi umiec zinterpretowac/uruchomic identycznie. Dzieki temu ten sam .class dziala\n// na dowolnej implementacji/systemie bez rekompilacji - to fundament hasla\n// 'write once, run anywhere', bo to WLASNIE JVM (a nie sam plik .class) adaptuje sie do\n// konkretnego systemu operacyjnego i sprzetu, a nie odwrotnie."
+    },
+    {
+      "prompt": "Napisz kompletne narzędzie audytujące bieżące środowisko JVM: 1. Wypisuje tożsamość JVM (nazwa, wersja, producent). 2. Wypisuje wersję i nazwę specyfikacji. 3. Zgaduje implementację (HotSpot/GraalVM/OpenJ9/nieznana) na podstawie java.vm.name. 4. Sprawdza, czy Runtime.version().feature() >= 21 i wypisuje ostrzeżenie, jeśli nie. 5. Wypisuje pełne podsumowanie jako czytelny, sformatowany raport.",
+      "hint": "Polacz wszystkie poprzednie techniki (identyfikacja, zgadywanie implementacji, sprawdzenie wersji minimalnej) w jednym narzedziu.",
+      "solution": "System.out.println(\"=== PELNY AUDYT JVM ===\");\nSystem.out.println(\"1. Tozsamosc: \" + System.getProperty(\"java.vm.name\") + \" \" + System.getProperty(\"java.vm.version\")\n    + \" (\" + System.getProperty(\"java.vm.vendor\") + \")\");\nSystem.out.println(\"2. Specyfikacja: \" + System.getProperty(\"java.specification.name\") + \" \" + System.getProperty(\"java.specification.version\"));\n\nString vmName = System.getProperty(\"java.vm.name\").toLowerCase();\nString impl = vmName.contains(\"hotspot\") ? \"HotSpot\"\n    : vmName.contains(\"graal\") ? \"GraalVM\"\n    : vmName.contains(\"openj9\") ? \"OpenJ9\" : \"nieznana\";\nSystem.out.println(\"3. Implementacja: \" + impl);\n\nint feature = Runtime.version().feature();\nSystem.out.println(\"4. Wersja Javy: \" + feature + (feature >= 21 ? \" (OK, >= 21)\" : \" (OSTRZEZENIE: ponizej 21)\"));\n\nSystem.out.println(\"5. Podsumowanie: audyt zakonczony.\");"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Czym rozni sie JLS od JVMS?",
+      "options": {
+        "A": "JLS opisuje sam jezyk Javy (skladnia, typy, JMM), JVMS opisuje maszyne wirtualna (format .class, bajtkod)",
+        "B": "To dwie nazwy tego samego dokumentu",
+        "C": "JLS dotyczy tylko Windows, JVMS tylko Linuksa",
+        "D": "JVMS jest nowsza wersja JLS"
+      },
+      "correct": "A",
+      "explanation": "JLS (Java Language Specification) opisuje jezyk, JVMS (Java Virtual Machine Specification) opisuje maszyne wirtualna - to dwa osobne dokumenty."
+    },
+    {
+      "question": "Czy JLS i JVMS zawieraja kod zrodlowy implementacji?",
+      "options": {
+        "A": "Nie - to dokumenty TEKSTOWE opisujace WYMAGANE zachowanie, bez ani linijki kodu",
+        "B": "Tak, sa to gotowe implementacje w Javie",
+        "C": "Tak, ale tylko czesciowo",
+        "D": "Nie da sie tego okreslic"
+      },
+      "correct": "A",
+      "explanation": "Obie specyfikacje sa dokumentami opisowymi - kazdy moze napisac wlasna, zgodna implementacje na ich podstawie."
+    },
+    {
+      "question": "Co umozliwia hasło 'write once, run anywhere'?",
+      "options": {
+        "A": "Fakt, ze ten sam plik .class dziala identycznie na kazdej implementacji JVM zgodnej z JVMS",
+        "B": "Automatyczne tlumaczenie kodu na inne jezyki",
+        "C": "Brak potrzeby kompilacji",
+        "D": "Fakt, ze Java dziala tylko na jednym systemie operacyjnym"
+      },
+      "correct": "A",
+      "explanation": "Dzieki temu, ze JVMS precyzyjnie definiuje format .class i zachowanie maszyny wirtualnej, ten sam skompilowany plik dziala na roznych implementacjach/platformach."
+    },
+    {
+      "question": "Jaka jest domyslna implementacja JVM dostarczana z OpenJDK/Oracle JDK?",
+      "options": {
+        "A": "HotSpot",
+        "B": "GraalVM",
+        "C": "Eclipse OpenJ9",
+        "D": "Substrate VM"
+      },
+      "correct": "A",
+      "explanation": "HotSpot to standardowa, domyslna implementacja JVM z OpenJDK/Oracle JDK, uzywana rowniez w tym kursie."
+    },
+    {
+      "question": "Skad pochodzi nazwa 'HotSpot'?",
+      "options": {
+        "A": "Od identyfikowania 'gorącego' (czesto wykonywanego) kodu i kompilowania go JIT-em do kodu maszynowego",
+        "B": "Od koloru logo Javy",
+        "C": "Od nazwy serwera, na ktorym powstala",
+        "D": "Nie ma zwiazku ze sposobem dzialania"
+      },
+      "correct": "A",
+      "explanation": "Nazwa odzwierciedla kluczowa ceche - JVM identyfikuje 'gorace' fragmenty kodu i optymalizuje je przez kompilacje JIT."
+    },
+    {
+      "question": "Co dodatkowo oferuje GraalVM w porownaniu do standardowego HotSpot?",
+      "options": {
+        "A": "Wlasny kompilator JIT (Graal) oraz mozliwosc kompilacji AOT do natywnego binarium (Native Image)",
+        "B": "Zupelnie inny jezyk programowania",
+        "C": "Brak wsparcia dla bajtkodu Javy",
+        "D": "Dziala tylko na systemach embedded"
+      },
+      "correct": "A",
+      "explanation": "GraalVM oferuje alternatywny, nowoczesny JIT napisany w Javie oraz mozliwosc kompilacji Ahead-Of-Time do natywnego pliku wykonywalnego."
+    },
+    {
+      "question": "Jaka jest kluczowa zaleta implementacji Eclipse OpenJ9?",
+      "options": {
+        "A": "Szybki start i niskie zuzycie pamieci, popularna w kontenerach/chmurze",
+        "B": "Najwyzsza wydajnosc dla obliczen naukowych",
+        "C": "Jedyna implementacja wspierajaca generyki",
+        "D": "Dziala wylacznie z Kotlinem"
+      },
+      "correct": "A",
+      "explanation": "OpenJ9 (dawniej J9 od IBM) jest zoptymalizowany pod szybki start i mala pamiec, co czyni go popularnym wyborem w srodowiskach kontenerowych."
+    },
+    {
+      "question": "Jakie sa trzy glowne podsystemy kazdej implementacji JVM zgodnej z JVMS?",
+      "options": {
+        "A": "Class Loader Subsystem, Runtime Data Areas, Execution Engine",
+        "B": "Kompilator, Debugger, Profiler",
+        "C": "Heap, Stack, Cache",
+        "D": "Frontend, Backend, Database"
+      },
+      "correct": "A",
+      "explanation": "Kazda zgodna implementacja JVM musi dostarczyc: podsystem ladowania klas, obszary danych w czasie dzialania (pamiec) i silnik wykonawczy."
+    },
+    {
+      "question": "Co robi Class Loader Subsystem?",
+      "options": {
+        "A": "Laduje pliki .class do pamieci, weryfikuje bajtkod, przygotowuje statyczne pola, wykonuje inicjalizacje",
+        "B": "Zarzadza polaczeniami sieciowymi",
+        "C": "Kompiluje kod zrodlowy Javy",
+        "D": "Renderuje interfejs graficzny"
+      },
+      "correct": "A",
+      "explanation": "Class Loader Subsystem odpowiada za caly proces wprowadzenia klasy do systemu JVM - od wczytania po inicjalizacje."
+    },
+    {
+      "question": "Z czego skladaja sie Runtime Data Areas?",
+      "options": {
+        "A": "Heap (obiekty), Stack (ramki wywolan per-watek), Metaspace (metadane klas), PC Register, Native Method Stacks",
+        "B": "Tylko z Heap",
+        "C": "Tylko z dysku twardego",
+        "D": "Z rejestru systemu operacyjnego"
+      },
+      "correct": "A",
+      "explanation": "Runtime Data Areas to podzial pamieci JVM na wyspecjalizowane obszary, kazdy o innym przeznaczeniu i cyklu zycia."
+    },
+    {
+      "question": "Z czego sklada sie Execution Engine?",
+      "options": {
+        "A": "Interpreter bajtkodu, kompilator JIT, Garbage Collector",
+        "B": "Tylko z kompilatora javac",
+        "C": "Tylko z Garbage Collectora",
+        "D": "Z systemu plikow"
+      },
+      "correct": "A",
+      "explanation": "Silnik wykonawczy laczy interpretacje bajtkodu, przyspieszenie przez JIT dla goracego kodu, oraz automatyczne zarzadzanie pamiecia przez GC."
+    },
+    {
+      "question": "Do czego sluzy JNI (Java Native Interface)?",
+      "options": {
+        "A": "Jest mostem pozwalajacym wywolywac kod natywny (np. C/C++) z Javy i odwrotnie",
+        "B": "Do kompresji plikow .class",
+        "C": "Do zarzadzania watkami",
+        "D": "Do generowania bajtkodu"
+      },
+      "correct": "A",
+      "explanation": "JNI umozliwia integracje Javy z kodem napisanym w innych jezykach, np. bibliotekami natywnymi C/C++."
+    },
+    {
+      "question": "Jak odczytac nazwe implementacji JVM z wnetrza dzialajacego programu Java?",
+      "options": {
+        "A": "System.getProperty(\"java.vm.name\")",
+        "B": "Runtime.getRuntime().getName()",
+        "C": "Thread.currentThread().getVmName()",
+        "D": "System.getVmType()"
+      },
+      "correct": "A",
+      "explanation": "System.getProperty(\"java.vm.name\") to standardowy sposob odczytania nazwy konkretnej implementacji JVM w runtime."
+    },
+    {
+      "question": "Co zwraca Runtime.version().feature()?",
+      "options": {
+        "A": "Glowny numer wersji Javy (np. 21 dla Javy 21)",
+        "B": "Nazwe producenta",
+        "C": "Date wydania",
+        "D": "Liczbe rdzeni procesora"
+      },
+      "correct": "A",
+      "explanation": "feature() to glowna, najbardziej znaczaca czesc numeru wersji, uzywana do identyfikacji generacji Javy (8, 11, 17, 21...)."
+    },
+    {
+      "question": "Co reguluje przykladowo JVMS (w odroznieniu od JLS)?",
+      "options": {
+        "A": "Dokladny format naglowka pliku .class (magic number, numer wersji bajtkodu)",
+        "B": "Priorytet operatorow w wyrazeniach arytmetycznych",
+        "C": "Reguly nazewnictwa zmiennych",
+        "D": "Skladnie petli for"
+      },
+      "correct": "A",
+      "explanation": "Format pliku .class to typowy przyklad tego, co reguluje JVMS - specyfikacja maszyny wirtualnej, nie jezyka."
+    },
+    {
+      "question": "Co najlepiej opisuje \"JLS (Java Language Specification)\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "D": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"JLS (Java Language Specification)\": dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+    },
+    {
+      "question": "Co najlepiej opisuje \"JVMS (Java Virtual Machine Specification)\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\": dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+    },
+    {
+      "question": "Co najlepiej opisuje \"write once run anywhere\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "B": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "C": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "D": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"write once run anywhere\": haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+    },
+    {
+      "question": "Co najlepiej opisuje \"HotSpot\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"HotSpot\": domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+    },
+    {
+      "question": "Co najlepiej opisuje \"GraalVM\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"GraalVM\": alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Eclipse OpenJ9\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Eclipse OpenJ9\": implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Class Loader Subsystem\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "B": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Class Loader Subsystem\": podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Runtime Data Areas\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Runtime Data Areas\": obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Execution Engine\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "API zwracajace pelna, strukturalna wersje biezacej JVM"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Execution Engine\": silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+    },
+    {
+      "question": "Co najlepiej opisuje \"JNI (Java Native Interface)\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "sposob odczytania nazwy implementacji JVM w runtime",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"JNI (Java Native Interface)\": most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+    },
+    {
+      "question": "Co najlepiej opisuje \"System.getProperty java.vm.name\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "B": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"System.getProperty java.vm.name\": sposob odczytania nazwy implementacji JVM w runtime"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Runtime.version()\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "API zwracajace pelna, strukturalna wersje biezacej JVM"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Runtime.version()\": API zwracajace pelna, strukturalna wersje biezacej JVM"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Runtime.Version.feature()\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Runtime.Version.feature()\": glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+    },
+    {
+      "question": "Co najlepiej opisuje \"specyfikacja vs implementacja\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "D": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"specyfikacja vs implementacja\": kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+    },
+    {
+      "question": "Co najlepiej opisuje \"architektura JVM\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"architektura JVM\": trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"JLS (Java Language Specification)\"?",
+      "options": {
+        "A": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"JLS (Java Language Specification)\": dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"JVMS (Java Virtual Machine Specification)\"?",
+      "options": {
+        "A": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\": dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"write once run anywhere\"?",
+      "options": {
+        "A": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "D": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"write once run anywhere\": haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"HotSpot\"?",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"HotSpot\": domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"GraalVM\"?",
+      "options": {
+        "A": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"GraalVM\": alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Eclipse OpenJ9\"?",
+      "options": {
+        "A": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Eclipse OpenJ9\": implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Class Loader Subsystem\"?",
+      "options": {
+        "A": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "D": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Class Loader Subsystem\": podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Runtime Data Areas\"?",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "sposob odczytania nazwy implementacji JVM w runtime"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Runtime Data Areas\": obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Execution Engine\"?",
+      "options": {
+        "A": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "B": "sposob odczytania nazwy implementacji JVM w runtime",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Execution Engine\": silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"JNI (Java Native Interface)\"?",
+      "options": {
+        "A": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "B": "sposob odczytania nazwy implementacji JVM w runtime",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"JNI (Java Native Interface)\": most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"System.getProperty java.vm.name\"?",
+      "options": {
+        "A": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "B": "sposob odczytania nazwy implementacji JVM w runtime",
+        "C": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "D": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"System.getProperty java.vm.name\": sposob odczytania nazwy implementacji JVM w runtime"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Runtime.version()\"?",
+      "options": {
+        "A": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Runtime.version()\": API zwracajace pelna, strukturalna wersje biezacej JVM"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Runtime.Version.feature()\"?",
+      "options": {
+        "A": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "B": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "C": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "D": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Runtime.Version.feature()\": glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"specyfikacja vs implementacja\"?",
+      "options": {
+        "A": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "B": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "C": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "D": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"specyfikacja vs implementacja\": kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"architektura JVM\"?",
+      "options": {
+        "A": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "B": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "C": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "D": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"architektura JVM\": trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"JLS (Java Language Specification)\".",
+      "options": {
+        "A": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "D": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"JLS (Java Language Specification)\": dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\".",
+      "options": {
+        "A": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "B": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "C": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "D": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\": dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"write once run anywhere\".",
+      "options": {
+        "A": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "B": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "C": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "D": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"write once run anywhere\": haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"HotSpot\".",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "C": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "D": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"HotSpot\": domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"GraalVM\".",
+      "options": {
+        "A": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "D": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"GraalVM\": alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Eclipse OpenJ9\".",
+      "options": {
+        "A": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "B": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "C": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "D": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Eclipse OpenJ9\": implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Class Loader Subsystem\".",
+      "options": {
+        "A": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "B": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "C": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "D": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Class Loader Subsystem\": podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Runtime Data Areas\".",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "C": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "D": "sposob odczytania nazwy implementacji JVM w runtime"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Runtime Data Areas\": obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Execution Engine\".",
+      "options": {
+        "A": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "B": "sposob odczytania nazwy implementacji JVM w runtime",
+        "C": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "D": "API zwracajace pelna, strukturalna wersje biezacej JVM"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Execution Engine\": silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"JNI (Java Native Interface)\".",
+      "options": {
+        "A": "sposob odczytania nazwy implementacji JVM w runtime",
+        "B": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "C": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "D": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"JNI (Java Native Interface)\": most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"System.getProperty java.vm.name\".",
+      "options": {
+        "A": "sposob odczytania nazwy implementacji JVM w runtime",
+        "B": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "C": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "D": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"System.getProperty java.vm.name\": sposob odczytania nazwy implementacji JVM w runtime"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Runtime.version()\".",
+      "options": {
+        "A": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "B": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "C": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "D": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Runtime.version()\": API zwracajace pelna, strukturalna wersje biezacej JVM"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Runtime.Version.feature()\".",
+      "options": {
+        "A": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "B": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "C": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "D": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Runtime.Version.feature()\": glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"specyfikacja vs implementacja\".",
+      "options": {
+        "A": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "B": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "C": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "D": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"specyfikacja vs implementacja\": kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"architektura JVM\".",
+      "options": {
+        "A": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "B": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "C": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "D": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"architektura JVM\": trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+    },
+    {
+      "question": "\"JLS (Java Language Specification)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "B": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "C": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "D": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"JLS (Java Language Specification)\": dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+    },
+    {
+      "question": "\"JVMS (Java Virtual Machine Specification)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "B": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "C": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\": dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+    },
+    {
+      "question": "\"write once run anywhere\" w tej lekcji oznacza:",
+      "options": {
+        "A": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "B": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "C": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "D": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"write once run anywhere\": haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+    },
+    {
+      "question": "\"HotSpot\" w tej lekcji oznacza:",
+      "options": {
+        "A": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "B": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "C": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "D": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"HotSpot\": domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+    },
+    {
+      "question": "\"GraalVM\" w tej lekcji oznacza:",
+      "options": {
+        "A": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "B": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"GraalVM\": alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+    },
+    {
+      "question": "\"Eclipse OpenJ9\" w tej lekcji oznacza:",
+      "options": {
+        "A": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "B": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "C": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Eclipse OpenJ9\": implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+    },
+    {
+      "question": "\"Class Loader Subsystem\" w tej lekcji oznacza:",
+      "options": {
+        "A": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "B": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "C": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "D": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Class Loader Subsystem\": podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+    },
+    {
+      "question": "\"Runtime Data Areas\" w tej lekcji oznacza:",
+      "options": {
+        "A": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "B": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "C": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "D": "sposob odczytania nazwy implementacji JVM w runtime"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Runtime Data Areas\": obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+    },
+    {
+      "question": "\"Execution Engine\" w tej lekcji oznacza:",
+      "options": {
+        "A": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "B": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "API zwracajace pelna, strukturalna wersje biezacej JVM"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Execution Engine\": silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+    },
+    {
+      "question": "\"JNI (Java Native Interface)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "sposob odczytania nazwy implementacji JVM w runtime",
+        "B": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "C": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "D": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"JNI (Java Native Interface)\": most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+    },
+    {
+      "question": "\"System.getProperty java.vm.name\" w tej lekcji oznacza:",
+      "options": {
+        "A": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "B": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "C": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "D": "sposob odczytania nazwy implementacji JVM w runtime"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"System.getProperty java.vm.name\": sposob odczytania nazwy implementacji JVM w runtime"
+    },
+    {
+      "question": "\"Runtime.version()\" w tej lekcji oznacza:",
+      "options": {
+        "A": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "B": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "C": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "D": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Runtime.version()\": API zwracajace pelna, strukturalna wersje biezacej JVM"
+    },
+    {
+      "question": "\"Runtime.Version.feature()\" w tej lekcji oznacza:",
+      "options": {
+        "A": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "B": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Runtime.Version.feature()\": glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+    },
+    {
+      "question": "\"specyfikacja vs implementacja\" w tej lekcji oznacza:",
+      "options": {
+        "A": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "B": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "C": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "D": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"specyfikacja vs implementacja\": kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+    },
+    {
+      "question": "\"architektura JVM\" w tej lekcji oznacza:",
+      "options": {
+        "A": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "D": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"architektura JVM\": trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"JLS (Java Language Specification)\"?",
+      "options": {
+        "A": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "D": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"JLS (Java Language Specification)\": dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"JVMS (Java Virtual Machine Specification)\"?",
+      "options": {
+        "A": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\": dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"write once run anywhere\"?",
+      "options": {
+        "A": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "B": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "C": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "D": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"write once run anywhere\": haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"HotSpot\"?",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"HotSpot\": domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"GraalVM\"?",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"GraalVM\": alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Eclipse OpenJ9\"?",
+      "options": {
+        "A": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Eclipse OpenJ9\": implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Class Loader Subsystem\"?",
+      "options": {
+        "A": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "B": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "C": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "D": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Class Loader Subsystem\": podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Runtime Data Areas\"?",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Runtime Data Areas\": obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Execution Engine\"?",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "API zwracajace pelna, strukturalna wersje biezacej JVM"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Execution Engine\": silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"JNI (Java Native Interface)\"?",
+      "options": {
+        "A": "sposob odczytania nazwy implementacji JVM w runtime",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"JNI (Java Native Interface)\": most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"System.getProperty java.vm.name\"?",
+      "options": {
+        "A": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "B": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "C": "sposob odczytania nazwy implementacji JVM w runtime",
+        "D": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"System.getProperty java.vm.name\": sposob odczytania nazwy implementacji JVM w runtime"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Runtime.version()\"?",
+      "options": {
+        "A": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "API zwracajace pelna, strukturalna wersje biezacej JVM"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Runtime.version()\": API zwracajace pelna, strukturalna wersje biezacej JVM"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Runtime.Version.feature()\"?",
+      "options": {
+        "A": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Runtime.Version.feature()\": glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"specyfikacja vs implementacja\"?",
+      "options": {
+        "A": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "B": "kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program",
+        "C": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "D": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"specyfikacja vs implementacja\": kluczowe rozroznienie - dokument opisowy vs konkretny, dzialajacy program"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"architektura JVM\"?",
+      "options": {
+        "A": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci",
+        "B": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "C": "trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine",
+        "D": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"architektura JVM\": trzy glowne podsystemy kazdej zgodnej implementacji: class loader, runtime data areas, execution engine"
+    },
+    {
+      "question": "Co najlepiej opisuje \"JLS (Java Language Specification)\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"JLS (Java Language Specification)\": dokument opisujacy sam jezyk Javy - skladnie, typy, model pamieci"
+    },
+    {
+      "question": "Co najlepiej opisuje \"JVMS (Java Virtual Machine Specification)\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"JVMS (Java Virtual Machine Specification)\": dokument opisujacy maszyne wirtualna - format .class, bajtkod, maszyne stosowa"
+    },
+    {
+      "question": "Co najlepiej opisuje \"write once run anywhere\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "B": "haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS",
+        "C": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "D": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"write once run anywhere\": haslo mozliwe dzieki temu, ze rozne implementacje JVM realizuja te sama specyfikacje JVMS"
+    },
+    {
+      "question": "Co najlepiej opisuje \"HotSpot\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)",
+        "B": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "C": "domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania",
+        "D": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"HotSpot\": domyslna implementacja JVM z OpenJDK/Oracle JDK, identyfikuje gorace metody do JIT-owania"
+    },
+    {
+      "question": "Co najlepiej opisuje \"GraalVM\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"GraalVM\": alternatywna implementacja JVM z wlasnym JIT-em i mozliwoscia kompilacji AOT (Native Image)"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Eclipse OpenJ9\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Eclipse OpenJ9\": implementacja JVM zoptymalizowana pod szybki start i niskie zuzycie pamieci"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Class Loader Subsystem\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "B": "podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy",
+        "C": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "D": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Class Loader Subsystem\": podsystem JVM ladujacy, weryfikujacy i inicjalizujacy klasy"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Runtime Data Areas\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora",
+        "B": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "C": "obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne",
+        "D": "sposob odczytania nazwy implementacji JVM w runtime"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Runtime Data Areas\": obszary pamieci JVM w czasie dzialania - Heap, Stack, Metaspace i inne"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Execution Engine\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "B": "sposob odczytania nazwy implementacji JVM w runtime",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Execution Engine\": silnik wykonawczy JVM zlozony z interpretera, JIT-a i Garbage Collectora"
+    },
+    {
+      "question": "Co najlepiej opisuje \"JNI (Java Native Interface)\" (JDK/JRE/JVM i specyfikacja)?",
+      "options": {
+        "A": "most pozwalajacy laczyc kod Javy z kodem natywnym C/C++",
+        "B": "sposob odczytania nazwy implementacji JVM w runtime",
+        "C": "API zwracajace pelna, strukturalna wersje biezacej JVM",
+        "D": "glowny numer wersji Javy zwracany przez obiekt Runtime.Version"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"JNI (Java Native Interface)\": most pozwalajacy laczyc kod Javy z kodem natywnym C/C++"
+    }
+  ]
+}
