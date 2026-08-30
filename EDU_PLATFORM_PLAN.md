@@ -2102,4 +2102,27 @@ skopiowaniem do `src/main/resources/content/_14_advancedjava/NN_Temat.json`, res
 java i po prostu czekaj) PRZED kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ
 zatrzymywania sie na potwierdzenia miedzy lekcjami ani rozdzialami, zgodnie z wyraznym poleceniem
 uzytkownika z tej sesji ("kontynuuj prace, wychodze z domu wiec nie pytaj sie miedzy etapami").
+
+**Stan na 2026-08-30 (kontynuacja): lekcje 19-22/30 UKOŃCZONE** (19_SealedClasses,
+20_PatternMatchingInstanceof, 21_PatternMatchingSwitchAndRecordPatterns, 22_SwitchExpressions) —
+**blok "Nowoczesny system typow" (19-22) jest teraz KOMPLETNY.** Każda 7/30/100, ten sam
+sprawdzony workflow (`genNNl.js`, sufiks `l`). Zweryfikowane end-to-end po 2 restartach backendu
+(22/30 `hasContent: true` dla `_14_advancedjava`) + regresja na `_13_libraries/01_WhyLibraries` i
+`_12_hibernate/01_OrmIntroduction` — zero regresji. **UWAGA na przyszlosc**: przy sprawdzaniu
+regresji na INNYM rozdziale, upewnij sie NAJPIERW (przez `GET .../lessons` i pole `hasContent`),
+ze wybrany rozdzial FAKTYCZNIE ma juz tresc na platformie — `_20_spring_core` i dalsze (`_15`-
+`_31`) NIE MAJA jeszcze zadnej platformowej tresci (tylko oryginalny kurs w `src/main/java` jest
+kompletny), wiec quiz zwracajacy 0 dla nich to NIE regresja, tylko oczekiwany stan "jeszcze nie
+napisane" — nie panikuj, tylko wybierz inny, potwierdzony rozdzial (`_01`-`_13`) do regresji.
+
+**Następny krok**: kontynuować od **lekcji 23 (`23_VarAndTypeInference`)** w `_14_advancedjava` —
+rozpoczecie bloku "Wnioskowanie typow i niezmiennosc" (23-25: VarAndTypeInference, Immutability,
+DefensiveCopying). Ten sam, sprawdzony workflow: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_14_advancedjava/LessonNN_Temat/`, napisz `genNNl.js` w
+scratchpadzie (kontynuuj sufiks `l`), zweryfikuj `node genNNl.js` (theory:7 exercises:30
+quiz:100) PRZED skopiowaniem do `src/main/resources/content/_14_advancedjava/NN_Temat.json`,
+restart backendu + pelna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_13`, patrz uwaga
+wyzej) PRZED kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ pytania o zgode miedzy
+lekcjami/rozdzialami.
 ---
