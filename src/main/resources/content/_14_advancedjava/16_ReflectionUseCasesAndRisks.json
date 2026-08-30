@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "ANALOGY",
+      "heading": "Refleksja jako narzedzie stolarza, nie mlotek do wszystkiego",
+      "body": "W Lesson15 poznales/as SUROWE narzedzia refleksji — Class, Field, Method, Constructor, setAccessible. To jak nauczenie sie obslugi pily i dluta. Ta lekcja pokazuje, gdzie profesjonalisci FAKTYCZNIE ich uzywaja — meble (Guice/Spring, Hibernate, Jackson, JUnit) sa zbudowane WLASNIE tymi narzedziami. Ale tak jak stolarz nie uzywa pily do wszystkiego (czasem wystarczy zwykly wkret), tak i Ty nie powinienes/nnas siegac po refleksje w zwyklym kodzie biznesowym — to narzedzie dla TWORCOW bibliotek, nie dla codziennej logiki aplikacji."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Zastosowanie 1 i 2: Dependency Injection oraz Hibernate/JPA",
+      "body": "Guice/Spring (DI): 1) `getDeclaredFields()`/`getDeclaredConstructors()` — szuka skladowych oznaczonych `@Inject`. 2) Dla kazdej zaleznosci sprawdza jej TYP (`Field.getType()`) i odpytuje rejestr wiazan o gotowa instancje. 3) `constructor.newInstance(zaleznosci...)` albo `field.setAccessible(true); field.set(obiekt, zaleznosc)` — te same wywolania z Lesson15. Hibernate/JPA: kazda encja MUSI miec bezargumentowy konstruktor (moze byc `protected`/`private`) — DOKLADNIE dlatego, ze Hibernate: 1) `getDeclaredConstructor()` znajduje go NIEZALEZNIE od widocznosci, 2) `setAccessible(true); newInstance()` tworzy 'pusty' obiekt PRZED poznaniem danych z bazy, 3) dla kazdej kolumny `field.setAccessible(true); field.set(entity, wartosc)` wypelnia PRYWATNE pola, OMIJAJAC settery (ktore moga zawierac logike biznesowa)."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Zastosowanie 3 i 4: Jackson/Gson oraz JUnit",
+      "body": "Jackson/Gson: biblioteka bierze `Klasa.class`, odczytuje `getDeclaredFields()`, dla kazdego pola szuka klucza o takiej samej (lub zmapowanej przez `@JsonProperty`) nazwie w drzewie JSON i ustawia je przez `Field.set(...)` (moze tez uzywac setterow/konstruktora). W druga strone (serializacja) — `getDeclaredFields()` + `Field.get(obiekt)` dla kazdego pola. JUnit: bierze `Class<?>` klasy testowej, wola `getDeclaredMethods()`, dla kazdej sprawdza `isAnnotationPresent(Test.class)`, tworzy NOWA instancje (bezargumentowy konstruktor) i wola `method.invoke(instancja)` — dlatego metody testowe moga byc `package-private`, a caly test uruchamia sie bez ani jednego jawnego wywolania z naszej strony."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Ryzyka refleksji: wydajnosc i hermetyzacja",
+      "body": "1) WYDAJNOSC: `Method.invoke`/`Field.get/set`/`Constructor.newInstance` sa WOLNIEJSZE niz wywolanie bezposrednie — JVM nie moze ich tak agresywnie zoptymalizowac, dochodzi narzut sprawdzania dostepu i pakowania argumentow do `Object[]` (autoboxing). W kodzie wykonywanym RAZ (start aplikacji) koszt jest nieistotny; w petli wykonywanej MILIONY razy (hot path) moze byc realnym problemem — stad `MethodHandles` w Lesson18 jako szybsza alternatywa. 2) LAMIE HERMETYZACJE: `setAccessible(true)` pozwala odczytac/zmienic KAZDE prywatne pole, ominac walidacje w konstruktorach/setterach — 'prywatne' i 'final' przestaja byc GWARANCJA, staja sie jedynie SUGESTIA dla kogos, kto nie siega po refleksje."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Ryzyka refleksji: kruchosc i JPMS",
+      "body": "3) KRUCHOSC WOBEC REFAKTORYZACJI: kod odwolujacy sie do pol/metod PO NAZWIE (String) NIE jest sprawdzany przez kompilator — zmiana nazwy pola `pesel` na `nationalId` (prosty 'rename' w IDE) NIE zaktualizuje automatycznie napisu `getDeclaredField(\"pesel\")` — blad ujawni sie DOPIERO w runtime jako `NoSuchFieldException`. 4) OGRANICZENIA JPMS: od Javy 9 modul domyslnie NIE udostepnia swoich pakietow do refleksji 'z zewnatrz' — nawet `setAccessible(true)` moze zakonczyc sie `InaccessibleObjectException`, jesli modul nie zadeklarowal `opens` dla danego pakietu. Projekt tego kursu dziala jako 'classpath' (bez `module-info.java`), wiec tego ograniczenia NIE odczuwa — pelne omowienie w Lesson27/28."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Kiedy refleksja jest uzasadniona?",
+      "body": "TAK: piszesz BIBLIOTEKE/FRAMEWORK ogolnego przeznaczenia (DI, ORM, serializacja, testy) — to DOKLADNIE ten przypadek. Musisz obslugiwac typy NIEZNANE w czasie kompilacji (np. wtyczki ladowane po nazwie z konfiguracji — Lesson26_ServiceLoaderAndSpi). Piszesz narzedzia deweloperskie/diagnostyczne (debugger, IDE). NIE: w ZWYKLYM kodzie aplikacyjnym (logika biznesowa) — tu niemal zawsze istnieje lepsza alternatywa: interfejsy, polimorfizm, wzorce projektowe. Chcesz tylko 'obejsc' prywatnosc pola w CUDZEJ klasie, bo 'tak wygodniej' — to sygnal, ze brakuje publicznego API, a nie ze potrzeba refleksji. Zasada: jesli kod MUSI dzialac z typami poznanymi dopiero w runtime — refleksja. Jesli po prostu znasz swoje typy w czasie kompilacji — NIE siegaj po nia tylko dlatego, ze jest 'sprytna'."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Mini-kontener DI i symulacja JUnit-a",
+      "body": "```java\nimport java.lang.annotation.*;\nimport java.lang.reflect.*;\n\npublic class ReflectionUseCasesDemo {\n    @Retention(RetentionPolicy.RUNTIME)\n    @Target(ElementType.FIELD)\n    @interface Inject {}\n\n    @Retention(RetentionPolicy.RUNTIME)\n    @Target(ElementType.METHOD)\n    @interface Test {}\n\n    interface Notifier { void send(String msg); }\n    static class EmailNotifier implements Notifier {\n        public void send(String msg) { System.out.println(\"E-mail: \" + msg); }\n    }\n\n    static class Service {\n        @Inject\n        private Notifier notifier;\n        void notify(String msg) { notifier.send(msg); }\n    }\n\n    static void injectDependencies(Object target) throws Exception {\n        for (Field f : target.getClass().getDeclaredFields()) {\n            if (f.isAnnotationPresent(Inject.class) && f.getType() == Notifier.class) {\n                f.setAccessible(true);\n                f.set(target, new EmailNotifier());\n            }\n        }\n    }\n\n    static class MyTests {\n        @Test\n        void testAddition() { System.out.println(\"2+2=\" + (2 + 2)); }\n    }\n\n    static void runTests(Class<?> testClass) throws Exception {\n        Object instance = testClass.getDeclaredConstructor().newInstance();\n        for (Method m : testClass.getDeclaredMethods()) {\n            if (m.isAnnotationPresent(Test.class)) {\n                m.invoke(instance);\n            }\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n        Service service = new Service();\n        injectDependencies(service);\n        service.notify(\"Witaj!\");\n\n        runTests(MyTests.class);\n    }\n}\n```"
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zdefiniuj @MyInject (RUNTIME, FIELD). Oznacz nia pole Logger logger w ReportService (interfejs Logger z void log(String), implementacja ConsoleLogger).",
+      "hint": "identyczna struktura jak @Inject z lekcji.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@interface MyInject {}\n\ninterface Logger { void log(String msg); }\nclass ConsoleLogger implements Logger {\n    public void log(String msg) { System.out.println(\"[LOG] \" + msg); }\n}\n\nclass ReportService {\n    @MyInject\n    private Logger logger;\n}"
+    },
+    {
+      "prompt": "Napisz static void inject(Object target, Object dependency), znajdujaca pole @MyInject o typie zgodnym z klasa dependency i ustawiajaca je. Przetestuj na ReportService.",
+      "hint": "field.getType() == dependency.getClass() lub isAssignableFrom.",
+      "solution": "static void inject(Object target, Object dependency) throws Exception {\n    for (Field f : target.getClass().getDeclaredFields()) {\n        if (f.isAnnotationPresent(MyInject.class) && f.getType().isInstance(dependency)) {\n            f.setAccessible(true);\n            f.set(target, dependency);\n        }\n    }\n}\n\nReportService service = new ReportService();\ninject(service, new ConsoleLogger());"
+    },
+    {
+      "prompt": "Napisz klase CustomerEntity z prywatnymi polami Long id, String email oraz PRYWATNYM konstruktorem bezargumentowym. Utworz instancje wylacznie przez getDeclaredConstructor().newInstance() z setAccessible.",
+      "hint": "identycznie jak BookEntity z teorii lekcji.",
+      "solution": "class CustomerEntity {\n    private Long id;\n    private String email;\n    private CustomerEntity() {}\n}\n\nConstructor<CustomerEntity> ctor = CustomerEntity.class.getDeclaredConstructor();\nctor.setAccessible(true);\nCustomerEntity c = ctor.newInstance();"
+    },
+    {
+      "prompt": "Napisz static void fillFields(Object entity, Map<String,Object> data), ustawiajaca pole o nazwie z mapy na entity. Wypelnij CustomerEntity danymi {id->1L, email->a@example.com}.",
+      "hint": "getDeclaredField(klucz) dla kazdego wpisu mapy.",
+      "solution": "static void fillFields(Object entity, Map<String, Object> data) throws Exception {\n    for (var entry : data.entrySet()) {\n        Field f = entity.getClass().getDeclaredField(entry.getKey());\n        f.setAccessible(true);\n        f.set(entity, entry.getValue());\n    }\n}\n\nCustomerEntity c = /* utworzone jak w Zadaniu 3 */ null;\nfillFields(c, Map.of(\"id\", 1L, \"email\", \"a@example.com\"));"
+    },
+    {
+      "prompt": "Napisz static String toSimpleJson(Object obj), zwracajaca {\"pole1\":wartosc1,\"pole2\":wartosc2}. Przetestuj na CustomerEntity.",
+      "hint": "String w cudzyslowie, liczby bez.",
+      "solution": "static String toSimpleJson(Object obj) throws Exception {\n    StringBuilder sb = new StringBuilder(\"{\");\n    Field[] fields = obj.getClass().getDeclaredFields();\n    for (int i = 0; i < fields.length; i++) {\n        fields[i].setAccessible(true);\n        Object v = fields[i].get(obj);\n        sb.append(\"\\\"\").append(fields[i].getName()).append(\"\\\":\")\n          .append(v instanceof String ? \"\\\"\" + v + \"\\\"\" : v);\n        if (i < fields.length - 1) sb.append(\",\");\n    }\n    return sb.append(\"}\").toString();\n}"
+    },
+    {
+      "prompt": "Zdefiniuj @MyTest (RUNTIME, METHOD). Napisz CalculatorTests z 3 metodami @MyTest i 1 bez. Wypisz same nazwy oznaczonych, uzywajac isAnnotationPresent.",
+      "hint": "getDeclaredMethods() + filtr po adnotacji.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.METHOD)\n@interface MyTest {}\n\nclass CalculatorTests {\n    @MyTest void testAdd() {}\n    @MyTest void testSub() {}\n    @MyTest void testMul() {}\n    void helperMethod() {}\n}\n\nfor (Method m : CalculatorTests.class.getDeclaredMethods()) {\n    if (m.isAnnotationPresent(MyTest.class)) System.out.println(m.getName());\n}"
+    },
+    {
+      "prompt": "Napisz static void runTests(Class<?> testClass), tworzaca nowa instancje i wywolujaca kazda metode @MyTest przez Method.invoke. Wypisz PASS: nazwaMetody po kazdym sukcesie.",
+      "hint": "getDeclaredConstructor().newInstance() + petla po metodach.",
+      "solution": "static void runTests(Class<?> testClass) throws Exception {\n    Object instance = testClass.getDeclaredConstructor().newInstance();\n    for (Method m : testClass.getDeclaredMethods()) {\n        if (m.isAnnotationPresent(MyTest.class)) {\n            m.invoke(instance);\n            System.out.println(\"PASS: \" + m.getName());\n        }\n    }\n}"
+    },
+    {
+      "prompt": "Dodaj do CalculatorTests metode @MyTest rzucajaca RuntimeException(\"celowy blad\"). Rozszerz runTests, by lapala InvocationTargetException, odczytywala getCause() i wypisywala FAIL: nazwaMetody - komunikat.",
+      "hint": "try/catch wewnatrz petli, nie na calej metodzie.",
+      "solution": "static void runTests(Class<?> testClass) throws Exception {\n    Object instance = testClass.getDeclaredConstructor().newInstance();\n    for (Method m : testClass.getDeclaredMethods()) {\n        if (m.isAnnotationPresent(MyTest.class)) {\n            try {\n                m.invoke(instance);\n                System.out.println(\"PASS: \" + m.getName());\n            } catch (InvocationTargetException e) {\n                System.out.println(\"FAIL: \" + m.getName() + \" - \" + e.getCause().getMessage());\n            }\n        }\n    }\n}"
+    },
+    {
+      "prompt": "Zmierz czas 100000 wywolan prostej metody bezargumentowej BEZPOSREDNIO oraz przez Method.invoke. Wypisz oba czasy w ms i skomentuj roznice.",
+      "hint": "System.nanoTime() przed/po kazdej petli, podziel przez 1_000_000 dla ms.",
+      "solution": "class Simple { int getValue() { return 42; } }\n\nSimple s = new Simple();\nMethod m = Simple.class.getDeclaredMethod(\"getValue\");\n\nlong t1 = System.nanoTime();\nfor (int i = 0; i < 100_000; i++) s.getValue();\nlong direct = (System.nanoTime() - t1) / 1_000_000;\n\nlong t2 = System.nanoTime();\nfor (int i = 0; i < 100_000; i++) m.invoke(s);\nlong reflective = (System.nanoTime() - t2) / 1_000_000;\n\nSystem.out.println(\"Bezposrednio: \" + direct + \"ms, reflekcyjnie: \" + reflective + \"ms\");\n// Wywolanie reflekcyjne jest zauwazalnie wolniejsze - JVM nie moze go tak dobrze zoptymalizowac jak zwyklego wywolania."
+    },
+    {
+      "prompt": "W komentarzu wypisz liste: Guice/Spring, Hibernate, Jackson/Gson, JUnit - i dla kazdego opisz, W KTORYM momencie siega po refleksje.",
+      "hint": "odnies sie do konkretnych klas/adnotacji z teorii lekcji.",
+      "solution": "// Guice/Spring: przy tworzeniu grafu obiektow - getDeclaredFields()/getDeclaredConstructors() szuka @Inject/@Autowired,\n// potem setAccessible+Field.set lub Constructor.newInstance wstrzykuje zaleznosci.\n// Hibernate: przy ladowaniu encji z bazy - getDeclaredConstructor()+setAccessible+newInstance tworzy pusty obiekt,\n// potem Field.set wypelnia kolumny z wyniku SQL.\n// Jackson/Gson: przy (de)serializacji JSON - getDeclaredFields()+Field.get/set mapuje klucze JSON na pola obiektu.\n// JUnit: przy uruchamianiu testow - getDeclaredMethods()+isAnnotationPresent(Test.class) znajduje metody testowe,\n// potem Method.invoke(instancja) je wykonuje."
+    },
+    {
+      "prompt": "Napisz BankAccount z prywatnym polem double balance i publiczna metoda withdraw(double), rzucajaca wyjatek dla kwoty wiekszej niz saldo. Uzyj Field.set by ustawic ujemne saldo BEZ przechodzenia przez withdraw. Opisz niebezpieczenstwo.",
+      "hint": "refleksja calkowicie omija logike biznesowa metody.",
+      "solution": "class BankAccount {\n    private double balance = 100;\n    void withdraw(double amount) {\n        if (amount > balance) throw new IllegalStateException(\"niewystarczajace srodki\");\n        balance -= amount;\n    }\n}\n\nBankAccount acc = new BankAccount();\nField field = BankAccount.class.getDeclaredField(\"balance\");\nfield.setAccessible(true);\nfield.set(acc, -500.0);\nSystem.out.println(field.get(acc)); // -500.0\n// Niebezpieczne, bo: (1) omija KAZDA walidacje biznesowa zdefiniowana w metodach klasy,\n// (2) prowadzi do niespojnego stanu, ktorego reszta systemu bankowego zaklada, ze NIGDY nie wystapi,\n// (3) w prawdziwym systemie moglo by to oznaczac utworzenie 'pieniedzy z niczego' lub oszustwo."
+    },
+    {
+      "prompt": "Napisz static Object readFieldSafely(Object obj, String fieldName), lapiaca NoSuchFieldException i zwracajaca null z ostrzezeniem zamiast wywalac program. Zademonstruj na bledna nazwa pola.",
+      "hint": "try/catch NoSuchFieldException wokol getDeclaredField.",
+      "solution": "static Object readFieldSafely(Object obj, String fieldName) {\n    try {\n        Field f = obj.getClass().getDeclaredField(fieldName);\n        f.setAccessible(true);\n        return f.get(obj);\n    } catch (Exception e) {\n        System.out.println(\"Ostrzezenie: pole '\" + fieldName + \"' nie istnieje\");\n        return null;\n    }\n}\n\nObject result = readFieldSafely(new BankAccount(), \"nieistniejacePole\");\nSystem.out.println(result); // null"
+    },
+    {
+      "prompt": "Napisz interfejs Plugin z void run(). Napisz GreetingPlugin i FarewellPlugin. Napisz static Plugin loadPlugin(String fullyQualifiedClassName), tworzaca obiekt przez Class.forName+getDeclaredConstructor+newInstance.",
+      "hint": "symulacja ladowania wtyczek po nazwie z konfiguracji.",
+      "solution": "interface Plugin { void run(); }\nclass GreetingPlugin implements Plugin {\n    public void run() { System.out.println(\"Witaj!\"); }\n}\nclass FarewellPlugin implements Plugin {\n    public void run() { System.out.println(\"Zegnaj!\"); }\n}\n\nstatic Plugin loadPlugin(String fullyQualifiedClassName) throws Exception {\n    Class<?> type = Class.forName(fullyQualifiedClassName);\n    return (Plugin) type.getDeclaredConstructor().newInstance();\n}\n\nPlugin p = loadPlugin(\"pelna.nazwa.pakietu.GreetingPlugin\");\np.run();"
+    },
+    {
+      "prompt": "Napisz static boolean hasNoArgConstructor(Class<?> type), zwracajaca true/false na podstawie proby getDeclaredConstructor() (lapiac NoSuchMethodException). Sprawdz na klasie MAJACEJ i NIE majacej takiego konstruktora.",
+      "hint": "try{getDeclaredConstructor(); return true;}catch{return false;}",
+      "solution": "static boolean hasNoArgConstructor(Class<?> type) {\n    try {\n        type.getDeclaredConstructor();\n        return true;\n    } catch (NoSuchMethodException e) {\n        return false;\n    }\n}\n\nclass WithNoArg {}\nclass WithoutNoArg { WithoutNoArg(int x) {} }\n\nSystem.out.println(hasNoArgConstructor(WithNoArg.class)); // true\nSystem.out.println(hasNoArgConstructor(WithoutNoArg.class)); // false"
+    },
+    {
+      "prompt": "Napisz PersonDto i PersonEntity (obie z String name, int age). Napisz static <T> T map(Object source, Class<T> targetType), kopiujaca pola o tej samej nazwie ze source do nowego obiektu targetType.",
+      "hint": "getDeclaredField(nazwa) na typie docelowym dla kazdego pola zrodla.",
+      "solution": "class PersonDto { String name; int age; }\nclass PersonEntity { String name; int age; }\n\nstatic <T> T map(Object source, Class<T> targetType) throws Exception {\n    T target = targetType.getDeclaredConstructor().newInstance();\n    for (Field srcField : source.getClass().getDeclaredFields()) {\n        Field dstField = targetType.getDeclaredField(srcField.getName());\n        srcField.setAccessible(true);\n        dstField.setAccessible(true);\n        dstField.set(target, srcField.get(source));\n    }\n    return target;\n}\n\nPersonDto dto = new PersonDto(); dto.name = \"Ala\"; dto.age = 30;\nPersonEntity entity = map(dto, PersonEntity.class);\nSystem.out.println(entity.name + \" \" + entity.age);"
+    },
+    {
+      "prompt": "Napisz static Object safeNewInstance(Class<?> type), probujaca getDeclaredConstructor().newInstance() i lapiaca NoSuchMethodException, rzucajaca WLASNY czytelny wyjatek.",
+      "hint": "own runtime exception z jasnym komunikatem.",
+      "solution": "static Object safeNewInstance(Class<?> type) {\n    try {\n        return type.getDeclaredConstructor().newInstance();\n    } catch (NoSuchMethodException e) {\n        throw new IllegalStateException(\"Klasa \" + type.getSimpleName()\n            + \" musi miec konstruktor bezargumentowy, by moc byc zbudowana reflekcyjnie\");\n    } catch (Exception e) {\n        throw new RuntimeException(e);\n    }\n}"
+    },
+    {
+      "prompt": "Zdefiniuj @JsonIgnore (RUNTIME, FIELD). Oznacz nia pole password w UserAccount. Rozszerz serializator z Zadania 5 tak, by pomijal pola oznaczone @JsonIgnore.",
+      "hint": "sprawdz field.isAnnotationPresent(JsonIgnore.class) przed dodaniem.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@interface JsonIgnore {}\n\nclass UserAccount {\n    String username;\n    @JsonIgnore\n    String password;\n}\n\nstatic String toSimpleJsonIgnoring(Object obj) throws Exception {\n    StringBuilder sb = new StringBuilder(\"{\");\n    List<Field> visible = new ArrayList<>();\n    for (Field f : obj.getClass().getDeclaredFields()) {\n        if (!f.isAnnotationPresent(JsonIgnore.class)) visible.add(f);\n    }\n    for (int i = 0; i < visible.size(); i++) {\n        Field f = visible.get(i);\n        f.setAccessible(true);\n        Object v = f.get(obj);\n        sb.append(\"\\\"\").append(f.getName()).append(\"\\\":\")\n          .append(v instanceof String ? \"\\\"\" + v + \"\\\"\" : v);\n        if (i < visible.size() - 1) sb.append(\",\");\n    }\n    return sb.append(\"}\").toString();\n}"
+    },
+    {
+      "prompt": "Napisz ServiceFieldInjection (pole @MyInject) i ServiceSetterInjection (publiczny setter wywolywany przez getMethod+invoke). Zbuduj obie reflekcyjnie i porownaj wymagania w komentarzu.",
+      "hint": "field injection wymaga zeby TYP pola byl znany, setter injection wymaga sygnatury setDependency.",
+      "solution": "class ServiceFieldInjection {\n    @MyInject\n    private Logger logger;\n}\nclass ServiceSetterInjection {\n    private Logger logger;\n    public void setDependency(Logger l) { this.logger = l; }\n}\n\ninject(new ServiceFieldInjection(), new ConsoleLogger());\nMethod setter = ServiceSetterInjection.class.getMethod(\"setDependency\", Logger.class);\nsetter.invoke(new ServiceSetterInjection(), new ConsoleLogger());\n// Field injection wymaga znajomosci NAZWY/TYPU pola i adnotacji do wykrycia go - omija kazda logike walidacyjna.\n// Setter injection wymaga znajomosci NAZWY I SYGNATURY metody settera - framework wywoluje ZWYKLA metode,\n// wiec MOZE respektowac walidacje wewnatrz settera (w odroznieniu od bezposredniego Field.set)."
+    },
+    {
+      "prompt": "W komentarzu wyjasnij: czym jest InaccessibleObjectException, kiedy jest rzucany, i dlaczego nasz projekt (bez module-info.java) go nie napotka.",
+      "hint": "JPMS wymaga jawnego 'opens' dla refleksji z zewnatrz modulu.",
+      "solution": "// InaccessibleObjectException to wyjatek rzucany przez setAccessible(true), gdy modul JPMS (module-info.java)\n// docelowego pakietu NIE zadeklarowal 'opens pakiet;' (lub nie jest to modul 'open module') - od Javy 9\n// modul domyslnie NIE udostepnia swoich WEWNETRZNYCH pakietow do refleksji z zewnatrz, nawet setAccessible\n// nie pomoze bez jawnej zgody modulu.\n// Nasz projekt dziala jako CLASSPATH (brak pliku module-info.java w src/main/java) - klasy na classpath\n// NIE sa czescia zadnego nazwanego modulu z ograniczeniami JPMS, wiec setAccessible(true) dziala bez\n// zadnych przeszkod, niezaleznie od tego, jak intensywnie uzywamy refleksji w tej lekcji."
+    },
+    {
+      "prompt": "Masz 5 typow ksztaltow. Napisz dwa rozwiazania liczenia pola powierzchni: (a) reflekcyjne getMethod(\"area\").invoke, (b) polimorficzne przez interfejs Shape. Uzasadnij, ktore jest wlasciwe.",
+      "hint": "znasz typy w czasie kompilacji - polimorfizm jest wlasciwym narzedziem.",
+      "solution": "// (a) reflekcyjne:\nfor (Object ksztalt : ksztalty) {\n    Method area = ksztalt.getClass().getMethod(\"area\");\n    System.out.println(area.invoke(ksztalt));\n}\n\n// (b) polimorficzne:\ninterface Shape { double area(); }\nclass Circle implements Shape { public double area() { return 3.14; } }\n// ... inne ksztalty implementuja Shape\nfor (Shape shape : shapes) {\n    System.out.println(shape.area());\n}\n// Polimorfizm (b) jest WLASCIWY - znamy typy ksztaltow W CZASIE KOMPILACJI, kompilator sprawdza istnienie\n// metody area() dla kazdego typu, kod jest szybszy i czytelniejszy. Refleksja (a) bylaby tu naduzyciem -\n// dodaje niepotrzebny narzut wydajnosciowy i traci bezpieczenstwo typow bez zadnej korzysci."
+    },
+    {
+      "prompt": "Napisz mini-kontener DI: static <T> T create(Class<T> type, Map<Class<?>,Object> registry), znajdujacy jedyny publiczny konstruktor, dla kazdego parametru szukajacy pasujacego obiektu w registry i wolajacy newInstance z dopasowanymi zaleznosciami.",
+      "hint": "getConstructors()[0].getParameterTypes() dla dopasowania typow.",
+      "solution": "@SuppressWarnings(\"unchecked\")\nstatic <T> T create(Class<T> type, Map<Class<?>, Object> registry) throws Exception {\n    Constructor<?> ctor = type.getConstructors()[0];\n    Class<?>[] paramTypes = ctor.getParameterTypes();\n    Object[] args = new Object[paramTypes.length];\n    for (int i = 0; i < paramTypes.length; i++) {\n        args[i] = registry.get(paramTypes[i]);\n    }\n    return (T) ctor.newInstance(args);\n}\n\ninterface Repository {}\ninterface Mailer {}\nclass OrderService {\n    public OrderService(Repository r, Mailer m) {}\n}\n\nMap<Class<?>, Object> registry = Map.of(Repository.class, new Repository() {}, Mailer.class, new Mailer() {});\nOrderService service = create(OrderService.class, registry);"
+    },
+    {
+      "prompt": "Rozszerz kontener z Zadania 21, by REKURENCYJNIE budowal zaleznosci NIEZNAJDUJACE sie w registry, ale bedace konkretnymi klasami z wlasnym konstruktorem. Zbuduj graf 3-poziomowy (A->B->C) jednym wywolaniem create(A.class, registry).",
+      "hint": "jesli registry.get(typ)==null, wywolaj create(typ, registry) rekurencyjnie.",
+      "solution": "@SuppressWarnings(\"unchecked\")\nstatic <T> T create(Class<T> type, Map<Class<?>, Object> registry) throws Exception {\n    if (registry.containsKey(type)) return (T) registry.get(type);\n    Constructor<?> ctor = type.getConstructors()[0];\n    Class<?>[] paramTypes = ctor.getParameterTypes();\n    Object[] args = new Object[paramTypes.length];\n    for (int i = 0; i < paramTypes.length; i++) {\n        args[i] = registry.containsKey(paramTypes[i])\n            ? registry.get(paramTypes[i])\n            : create(paramTypes[i], registry); // rekurencja\n    }\n    return (T) ctor.newInstance(args);\n}\n\nclass C {}\nclass B { public B(C c) {} }\nclass A { public A(B b) {} }\n\nA a = create(A.class, new HashMap<>());"
+    },
+    {
+      "prompt": "Napisz static <T> List<T> hydrate(Class<T> entityType, List<Map<String,Object>> rows), tworzaca dla kazdego wiersza nowy obiekt i wypelniajaca jego pola. Przetestuj z 3 wierszami danych.",
+      "hint": "petla po rows, dla kazdego wywolaj buildEntityLikeHibernate-podobna logike.",
+      "solution": "static <T> List<T> hydrate(Class<T> entityType, List<Map<String, Object>> rows) throws Exception {\n    List<T> result = new ArrayList<>();\n    for (Map<String, Object> row : rows) {\n        T entity = entityType.getDeclaredConstructor().newInstance();\n        for (var entry : row.entrySet()) {\n            Field f = entityType.getDeclaredField(entry.getKey());\n            f.setAccessible(true);\n            f.set(entity, entry.getValue());\n        }\n        result.add(entity);\n    }\n    return result;\n}\n\nList<CustomerEntity> customers = hydrate(CustomerEntity.class, List.of(\n    Map.of(\"id\", 1L, \"email\", \"a@x.com\"),\n    Map.of(\"id\", 2L, \"email\", \"b@x.com\"),\n    Map.of(\"id\", 3L, \"email\", \"c@x.com\")));"
+    },
+    {
+      "prompt": "Zdefiniuj @NotBlank (dla String) i @Positive (dla liczb). Oznacz nimi pola w RegistrationForm (name @NotBlank, age @Positive). Napisz static List<String> validate(Object obj) sprawdzajaca obie reguly.",
+      "hint": "dwie osobne adnotacje, dwa osobne sprawdzenia w petli po polach.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@interface NotBlank {}\n@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@interface Positive {}\n\nclass RegistrationForm {\n    @NotBlank\n    String name;\n    @Positive\n    int age;\n}\n\nstatic List<String> validate(Object obj) throws Exception {\n    List<String> errors = new ArrayList<>();\n    for (Field f : obj.getClass().getDeclaredFields()) {\n        f.setAccessible(true);\n        if (f.isAnnotationPresent(NotBlank.class)) {\n            String v = (String) f.get(obj);\n            if (v == null || v.isBlank()) errors.add(f.getName() + \" puste\");\n        }\n        if (f.isAnnotationPresent(Positive.class)) {\n            int v = f.getInt(obj);\n            if (v <= 0) errors.add(f.getName() + \" musi byc dodatnie\");\n        }\n    }\n    return errors;\n}"
+    },
+    {
+      "prompt": "Zmierz czas 500000 odczytow pola: (a) przez publiczny getter, (b) przez Field.get() (pobrany RAZ przed pomiarem). Wypisz oba czasy i wspolczynnik spowolnienia.",
+      "hint": "Field pobrany PRZED petla, nie wewnatrz niej.",
+      "solution": "class Holder { private int value = 42; int getValue() { return value; } }\n\nHolder h = new Holder();\nField field = Holder.class.getDeclaredField(\"value\");\nfield.setAccessible(true);\n\nlong t1 = System.nanoTime();\nfor (int i = 0; i < 500_000; i++) h.getValue();\nlong direct = System.nanoTime() - t1;\n\nlong t2 = System.nanoTime();\nfor (int i = 0; i < 500_000; i++) field.get(h);\nlong reflective = System.nanoTime() - t2;\n\nSystem.out.println(\"Bezposrednio: \" + direct + \"ns, reflekcyjnie: \" + reflective + \"ns\");\nSystem.out.println(\"Spowolnienie: \" + ((double) reflective / direct) + \"x\");\n// Potwierdza Ryzyko 1 z teorii - refleksja jest wolniejsza nawet przy prostym odczycie pola."
+    },
+    {
+      "prompt": "Zdefiniuj @OnEvent(String value()) (RUNTIME, METHOD). Napisz EventHandlers z dwiema metodami @OnEvent(\"ORDER_CREATED\") i @OnEvent(\"ORDER_CANCELLED\"). Napisz static void dispatch(Object handlersObj, String eventName), wywolujaca wlasciwa metode.",
+      "hint": "odczytaj wartosc adnotacji dla kazdej metody i porownaj z eventName.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.METHOD)\n@interface OnEvent {\n    String value();\n}\n\nclass EventHandlers {\n    @OnEvent(\"ORDER_CREATED\")\n    void onCreated() { System.out.println(\"Zamowienie utworzone\"); }\n    @OnEvent(\"ORDER_CANCELLED\")\n    void onCancelled() { System.out.println(\"Zamowienie anulowane\"); }\n}\n\nstatic void dispatch(Object handlersObj, String eventName) throws Exception {\n    for (Method m : handlersObj.getClass().getDeclaredMethods()) {\n        OnEvent oe = m.getAnnotation(OnEvent.class);\n        if (oe != null && oe.value().equals(eventName)) {\n            m.invoke(handlersObj);\n        }\n    }\n}\n\ndispatch(new EventHandlers(), \"ORDER_CREATED\");"
+    },
+    {
+      "prompt": "Rozszerz kopiowanie pol (jak Lesson15.Exercise16) o respektowanie @JsonIgnore z Zadania 17 - pola nia oznaczone pozostaja NIEZMIENIONE w kopii. Zademonstruj na UserAccount (haslo NIE kopiowane).",
+      "hint": "pomijaj pola z @JsonIgnore w petli kopiujacej.",
+      "solution": "static void copyFieldsRespectingIgnore(Object source, Object target) throws Exception {\n    for (Field f : source.getClass().getDeclaredFields()) {\n        if (f.isAnnotationPresent(JsonIgnore.class)) continue;\n        f.setAccessible(true);\n        f.set(target, f.get(source));\n    }\n}\n\nUserAccount src = new UserAccount(); src.username = \"ala\"; src.password = \"tajne\";\nUserAccount dst = new UserAccount(); dst.password = \"domyslne\";\ncopyFieldsRespectingIgnore(src, dst);\nSystem.out.println(dst.username + \" \" + dst.password); // ala domyslne - haslo NIE skopiowane"
+    },
+    {
+      "prompt": "Zdefiniuj @MySetup (RUNTIME, METHOD, odpowiednik @BeforeEach). Rozszerz runTests, by PRZED KAZDA metoda @MyTest wywolywala najpierw metode @MySetup (jesli istnieje) na TEJ SAMEJ instancji.",
+      "hint": "znajdz metode setup PRZED petla po testach, wywoluj ja przed kazdym testem.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.METHOD)\n@interface MySetup {}\n\nstatic void runTestsWithSetup(Class<?> testClass) throws Exception {\n    Object instance = testClass.getDeclaredConstructor().newInstance();\n    Method setupMethod = null;\n    for (Method m : testClass.getDeclaredMethods()) {\n        if (m.isAnnotationPresent(MySetup.class)) setupMethod = m;\n    }\n    for (Method m : testClass.getDeclaredMethods()) {\n        if (m.isAnnotationPresent(MyTest.class)) {\n            if (setupMethod != null) setupMethod.invoke(instance);\n            m.invoke(instance);\n        }\n    }\n}"
+    },
+    {
+      "prompt": "Napisz ReflectionCache z Map<Class<?>,Method[]> jako polem statycznym i metoda static Method[] methodsOf(Class<?> type), zwracajaca getDeclaredMethods() z CACHE. Zmierz czas 100000 wywolan Z cache i BEZ cache.",
+      "hint": "computeIfAbsent na mapie statycznej.",
+      "solution": "class ReflectionCache {\n    static final Map<Class<?>, Method[]> cache = new HashMap<>();\n    static Method[] methodsOf(Class<?> type) {\n        return cache.computeIfAbsent(type, Class::getDeclaredMethods);\n    }\n}\n\nlong t1 = System.nanoTime();\nfor (int i = 0; i < 100_000; i++) ReflectionCache.methodsOf(String.class);\nlong withCache = System.nanoTime() - t1;\n\nlong t2 = System.nanoTime();\nfor (int i = 0; i < 100_000; i++) String.class.getDeclaredMethods();\nlong withoutCache = System.nanoTime() - t2;\n\nSystem.out.println(\"Z cache: \" + withCache + \"ns, bez cache: \" + withoutCache + \"ns\");"
+    },
+    {
+      "prompt": "Kapszton: napisz mini-ORM. Klasa ProductEntity (id,name,price) z prywatnym konstruktorem bezargumentowym i @Column(\"nazwa_kolumny\") na kazdym polu. Napisz static <T> List<T> mapRows(Class<T> entityType, List<Map<String,Object>> rawRows), odczytujace @Column.value() dla kazdego pola i mapujace z wiersza po tej nazwie kolumny.",
+      "hint": "dla kazdego pola odczytaj @Column, uzyj JEGO wartosci jako klucza w mapie wiersza, nie nazwy pola.",
+      "solution": "@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\n@interface Column {\n    String value();\n}\n\nclass ProductEntity {\n    @Column(\"product_id\")\n    private Long id;\n    @Column(\"product_name\")\n    private String name;\n    @Column(\"product_price\")\n    private Double price;\n    private ProductEntity() {}\n    @Override\n    public String toString() { return id + \" \" + name + \" \" + price; }\n}\n\nstatic <T> List<T> mapRows(Class<T> entityType, List<Map<String, Object>> rawRows) throws Exception {\n    List<T> result = new ArrayList<>();\n    for (Map<String, Object> row : rawRows) {\n        T entity = entityType.getDeclaredConstructor().newInstance();\n        for (Field f : entityType.getDeclaredFields()) {\n            Column col = f.getAnnotation(Column.class);\n            if (col != null) {\n                f.setAccessible(true);\n                f.set(entity, row.get(col.value()));\n            }\n        }\n        result.add(entity);\n    }\n    return result;\n}\n\nList<ProductEntity> products = mapRows(ProductEntity.class, List.of(\n    Map.of(\"product_id\", 1L, \"product_name\", \"Laptop\", \"product_price\", 3000.0)));\nSystem.out.println(products);"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki jest wspolny mianownik miedzy Guice, Hibernate, Jackson i JUnit poznanym w tej lekcji?",
+      "options": {
+        "A": "Wszystkie uzywaja tego samego pliku konfiguracyjnego",
+        "B": "Wszystkie opieraja swoje 'magiczne' dzialanie na tym samym API refleksji (Class/Field/Method/Constructor)",
+        "C": "Wszystkie sa napisane w tym samym jezyku programowania",
+        "D": "Zadne z nich nie uzywa refleksji"
+      },
+      "correct": "B",
+      "explanation": "Wszystkie te frameworki/biblioteki wewnetrznie korzystaja z tych samych czterech klas refleksji poznanych w Lesson15."
+    },
+    {
+      "question": "Dlaczego encje Hibernate MUSZA miec bezargumentowy konstruktor?",
+      "options": {
+        "A": "To wymog jezyka Java dla wszystkich klas",
+        "B": "Bo Hibernate tworzy obiekt encji reflekcyjnie PRZED poznaniem jakichkolwiek danych z bazy",
+        "C": "Bo inaczej encja nie moglaby miec zadnych pol",
+        "D": "To tylko konwencja stylistyczna, bez wplywu na dzialanie"
+      },
+      "correct": "B",
+      "explanation": "Hibernate woła getDeclaredConstructor()+newInstance() na bezargumentowym konstruktorze, TWORZAC pusty obiekt, ktory dopiero POTEM wypelnia danymi z bazy przez Field.set."
+    },
+    {
+      "question": "W jaki sposob JUnit znajduje metody testowe w klasie?",
+      "options": {
+        "A": "Parsuje nazwe pliku .java",
+        "B": "Przez getDeclaredMethods() + isAnnotationPresent(Test.class)",
+        "C": "Przez analize komentarzy Javadoc",
+        "D": "Wymaga recznej rejestracji kazdej metody testowej"
+      },
+      "correct": "B",
+      "explanation": "JUnit bierze Class<?> klasy testowej, wola getDeclaredMethods() i dla kazdej sprawdza obecnosc adnotacji @Test."
+    },
+    {
+      "question": "Jakie jest GLOWNE ryzyko wydajnosciowe zwiazane z refleksja?",
+      "options": {
+        "A": "Refleksja zawsze rzuca wyjatek po 1000 wywolaniach",
+        "B": "Method.invoke/Field.get/set sa wolniejsze niz wywolania bezposrednie, JVM nie moze ich tak agresywnie zoptymalizowac",
+        "C": "Refleksja zuzywa wiecej pamieci dyskowej",
+        "D": "Refleksja dziala tylko w jednym watku"
+      },
+      "correct": "B",
+      "explanation": "Wywolania reflekcyjne maja narzut w porownaniu do bezposrednich - istotny w hot pathach wykonywanych miliony razy, nieistotny przy jednorazowym uzyciu (np. start aplikacji)."
+    },
+    {
+      "question": "Co konkretnie 'lamie' setAccessible(true) w kodzie?",
+      "options": {
+        "A": "Kompilacje calego projektu",
+        "B": "Hermetyzacje - modyfikatory dostepu przestaja byc gwarancja, staja sie jedynie sugestia",
+        "C": "Polaczenie z baza danych",
+        "D": "Nic - to bezpieczna, standardowa operacja bez konsekwencji"
+      },
+      "correct": "B",
+      "explanation": "setAccessible(true) pozwala odczytac/zmienic kazde prywatne pole i ominac walidacje w konstruktorach/setterach - 'prywatne' przestaje byc realna gwarancja."
+    },
+    {
+      "question": "Dlaczego kod uzywajacy refleksji jest KRUCHY wobec refaktoryzacji?",
+      "options": {
+        "A": "Bo refleksja dziala tylko w starszych wersjach Javy",
+        "B": "Bo odwolania do pol/metod PO NAZWIE (String) nie sa sprawdzane przez kompilator - blad ujawnia sie dopiero w runtime",
+        "C": "Bo refleksja wymaga specjalnego kompilatora",
+        "D": "Bo IDE nie wspiera refleksji"
+      },
+      "correct": "B",
+      "explanation": "Zmiana nazwy pola przez IDE (rename) NIE zaktualizuje automatycznie napisu String w getDeclaredField(...) - blad wyjdzie dopiero jako NoSuchFieldException w runtime."
+    },
+    {
+      "question": "Co to jest InaccessibleObjectException i kiedy wystepuje?",
+      "options": {
+        "A": "Wyjatek rzucany zawsze przy uzyciu Class.forName",
+        "B": "Wyjatek zwiazany z JPMS - gdy modul nie zadeklarowal 'opens' dla pakietu, nawet setAccessible(true) go rzuci",
+        "C": "Wyjatek rzucany przy bledach kompilacji",
+        "D": "Wyjatek dotyczacy tylko klas finalnych"
+      },
+      "correct": "B",
+      "explanation": "Od Javy 9 (JPMS) modul domyslnie nie udostepnia swoich pakietow do refleksji z zewnatrz - brak 'opens' powoduje InaccessibleObjectException nawet po setAccessible(true)."
+    },
+    {
+      "question": "Kiedy refleksja jest UZASADNIONYM wyborem?",
+      "options": {
+        "A": "Zawsze, gdy chcemy 'sprytnie' obejsc prywatnosc pola",
+        "B": "Gdy piszemy biblioteke/framework ogolnego przeznaczenia LUB obslugujemy typy nieznane w czasie kompilacji",
+        "C": "Tylko w kodzie testowym",
+        "D": "Nigdy - refleksja jest zawsze zla praktyka"
+      },
+      "correct": "B",
+      "explanation": "Refleksja jest uzasadniona dla tworcow bibliotek/frameworkow (DI, ORM, serializacja) i przy typach poznawanych dopiero w runtime (np. wtyczki ladowane po nazwie)."
+    },
+    {
+      "question": "Dlaczego projekt tego kursu (bez module-info.java) NIE napotyka InaccessibleObjectException mimo intensywnego uzycia setAccessible?",
+      "options": {
+        "A": "Bo uzywa starszej wersji Javy",
+        "B": "Bo dziala jako 'classpath' - klasy nie sa czescia nazwanego modulu JPMS z ograniczeniami",
+        "C": "Bo wszystkie klasy sa publiczne",
+        "D": "Bo setAccessible nigdy nie rzuca tego wyjatku"
+      },
+      "correct": "B",
+      "explanation": "Bez pliku module-info.java aplikacja dziala na classpath, poza systemem modulow JPMS - ograniczenia 'opens'/'exports' po prostu nie maja zastosowania."
+    },
+    {
+      "question": "Co jest lepszym rozwiazaniem niz refleksja, gdy znamy typy w czasie kompilacji (np. rozne ksztalty geometryczne)?",
+      "options": {
+        "A": "Zawsze refleksja jest lepsza",
+        "B": "Polimorfizm przez wspolny interfejs, sprawdzany przez kompilator",
+        "C": "Uzycie String zamiast typow",
+        "D": "Napisanie osobnej metody main dla kazdego typu"
+      },
+      "correct": "B",
+      "explanation": "Gdy typy sa znane w czasie kompilacji, polimorfizm (wspolny interfejs) daje bezpieczenstwo typow i lepsza wydajnosc niz refleksja - refleksja bylaby tu naduzyciem."
+    },
+    {
+      "question": "Czym jest / co oznacza \"Dependency Injection przez refleksje\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "D": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+      },
+      "correct": "A",
+      "explanation": "\"Dependency Injection przez refleksje\" to: mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+    },
+    {
+      "question": "Czym jest / co oznacza \"bezargumentowy konstruktor w Hibernate\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "D": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+      },
+      "correct": "B",
+      "explanation": "\"bezargumentowy konstruktor w Hibernate\" to: wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"serializacja JSON przez refleksje\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "B": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "C": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "D": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+      },
+      "correct": "C",
+      "explanation": "\"serializacja JSON przez refleksje\" to: mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+    },
+    {
+      "question": "Czym jest / co oznacza \"wykrywanie metod testowych przez JUnit\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+      },
+      "correct": "D",
+      "explanation": "\"wykrywanie metod testowych przez JUnit\" to: mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+    },
+    {
+      "question": "Czym jest / co oznacza \"narzut wydajnosciowy refleksji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+      },
+      "correct": "A",
+      "explanation": "\"narzut wydajnosciowy refleksji\" to: koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+    },
+    {
+      "question": "Czym jest / co oznacza \"lamanie hermetyzacji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "D": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+      },
+      "correct": "B",
+      "explanation": "\"lamanie hermetyzacji\" to: skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"kruchosc wobec refaktoryzacji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "B": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+      },
+      "correct": "C",
+      "explanation": "\"kruchosc wobec refaktoryzacji\" to: ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+    },
+    {
+      "question": "Czym jest / co oznacza \"NoSuchFieldException w runtime\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+      },
+      "correct": "D",
+      "explanation": "\"NoSuchFieldException w runtime\" to: blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+    },
+    {
+      "question": "Czym jest / co oznacza \"InaccessibleObjectException\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+      },
+      "correct": "A",
+      "explanation": "\"InaccessibleObjectException\" to: wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"classpath vs modulepath\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "D": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+      },
+      "correct": "B",
+      "explanation": "\"classpath vs modulepath\" to: rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"kiedy refleksja jest uzasadniona\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "B": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+      },
+      "correct": "C",
+      "explanation": "\"kiedy refleksja jest uzasadniona\" to: sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"polimorfizm jako alternatywa dla refleksji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+      },
+      "correct": "D",
+      "explanation": "\"polimorfizm jako alternatywa dla refleksji\" to: preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"mini-kontener DI\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+      },
+      "correct": "A",
+      "explanation": "\"mini-kontener DI\" to: wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"symulacja budowania encji jak Hibernate\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "D": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+      },
+      "correct": "B",
+      "explanation": "\"symulacja budowania encji jak Hibernate\" to: wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+    },
+    {
+      "question": "Czym jest / co oznacza \"MethodHandles jako alternatywa\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+      },
+      "correct": "C",
+      "explanation": "\"MethodHandles jako alternatywa\" to: szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie\"?",
+      "options": {
+        "A": "bezargumentowy konstruktor w Hibernate",
+        "B": "serializacja JSON przez refleksje",
+        "C": "wykrywanie metod testowych przez JUnit",
+        "D": "Dependency Injection przez refleksje"
+      },
+      "correct": "D",
+      "explanation": "Opis \"mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie\" odpowiada terminowi \"Dependency Injection przez refleksje\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy\"?",
+      "options": {
+        "A": "bezargumentowy konstruktor w Hibernate",
+        "B": "serializacja JSON przez refleksje",
+        "C": "wykrywanie metod testowych przez JUnit",
+        "D": "narzut wydajnosciowy refleksji"
+      },
+      "correct": "A",
+      "explanation": "Opis \"wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy\" odpowiada terminowi \"bezargumentowy konstruktor w Hibernate\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON\"?",
+      "options": {
+        "A": "wykrywanie metod testowych przez JUnit",
+        "B": "serializacja JSON przez refleksje",
+        "C": "narzut wydajnosciowy refleksji",
+        "D": "lamanie hermetyzacji"
+      },
+      "correct": "B",
+      "explanation": "Opis \"mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON\" odpowiada terminowi \"serializacja JSON przez refleksje\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)\"?",
+      "options": {
+        "A": "narzut wydajnosciowy refleksji",
+        "B": "lamanie hermetyzacji",
+        "C": "wykrywanie metod testowych przez JUnit",
+        "D": "kruchosc wobec refaktoryzacji"
+      },
+      "correct": "C",
+      "explanation": "Opis \"mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)\" odpowiada terminowi \"wykrywanie metod testowych przez JUnit\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich\"?",
+      "options": {
+        "A": "lamanie hermetyzacji",
+        "B": "kruchosc wobec refaktoryzacji",
+        "C": "NoSuchFieldException w runtime",
+        "D": "narzut wydajnosciowy refleksji"
+      },
+      "correct": "D",
+      "explanation": "Opis \"koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich\" odpowiada terminowi \"narzut wydajnosciowy refleksji\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje\"?",
+      "options": {
+        "A": "lamanie hermetyzacji",
+        "B": "kruchosc wobec refaktoryzacji",
+        "C": "NoSuchFieldException w runtime",
+        "D": "InaccessibleObjectException"
+      },
+      "correct": "A",
+      "explanation": "Opis \"skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje\" odpowiada terminowi \"lamanie hermetyzacji\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator\"?",
+      "options": {
+        "A": "NoSuchFieldException w runtime",
+        "B": "kruchosc wobec refaktoryzacji",
+        "C": "InaccessibleObjectException",
+        "D": "classpath vs modulepath"
+      },
+      "correct": "B",
+      "explanation": "Opis \"ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator\" odpowiada terminowi \"kruchosc wobec refaktoryzacji\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego\"?",
+      "options": {
+        "A": "InaccessibleObjectException",
+        "B": "classpath vs modulepath",
+        "C": "NoSuchFieldException w runtime",
+        "D": "kiedy refleksja jest uzasadniona"
+      },
+      "correct": "C",
+      "explanation": "Opis \"blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego\" odpowiada terminowi \"NoSuchFieldException w runtime\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji\"?",
+      "options": {
+        "A": "classpath vs modulepath",
+        "B": "kiedy refleksja jest uzasadniona",
+        "C": "polimorfizm jako alternatywa dla refleksji",
+        "D": "InaccessibleObjectException"
+      },
+      "correct": "D",
+      "explanation": "Opis \"wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji\" odpowiada terminowi \"InaccessibleObjectException\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji\"?",
+      "options": {
+        "A": "classpath vs modulepath",
+        "B": "kiedy refleksja jest uzasadniona",
+        "C": "polimorfizm jako alternatywa dla refleksji",
+        "D": "mini-kontener DI"
+      },
+      "correct": "A",
+      "explanation": "Opis \"rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji\" odpowiada terminowi \"classpath vs modulepath\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji\"?",
+      "options": {
+        "A": "polimorfizm jako alternatywa dla refleksji",
+        "B": "kiedy refleksja jest uzasadniona",
+        "C": "mini-kontener DI",
+        "D": "symulacja budowania encji jak Hibernate"
+      },
+      "correct": "B",
+      "explanation": "Opis \"sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji\" odpowiada terminowi \"kiedy refleksja jest uzasadniona\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji\"?",
+      "options": {
+        "A": "mini-kontener DI",
+        "B": "symulacja budowania encji jak Hibernate",
+        "C": "polimorfizm jako alternatywa dla refleksji",
+        "D": "MethodHandles jako alternatywa"
+      },
+      "correct": "C",
+      "explanation": "Opis \"preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji\" odpowiada terminowi \"polimorfizm jako alternatywa dla refleksji\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje\"?",
+      "options": {
+        "A": "symulacja budowania encji jak Hibernate",
+        "B": "MethodHandles jako alternatywa",
+        "C": "Dependency Injection przez refleksje",
+        "D": "mini-kontener DI"
+      },
+      "correct": "D",
+      "explanation": "Opis \"wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje\" odpowiada terminowi \"mini-kontener DI\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania\"?",
+      "options": {
+        "A": "symulacja budowania encji jak Hibernate",
+        "B": "MethodHandles jako alternatywa",
+        "C": "Dependency Injection przez refleksje",
+        "D": "bezargumentowy konstruktor w Hibernate"
+      },
+      "correct": "A",
+      "explanation": "Opis \"wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania\" odpowiada terminowi \"symulacja budowania encji jak Hibernate\"."
+    },
+    {
+      "question": "Ktory termin z praktycznych zastosowan i ryzyk refleksji odpowiada opisowi: \"szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)\"?",
+      "options": {
+        "A": "Dependency Injection przez refleksje",
+        "B": "MethodHandles jako alternatywa",
+        "C": "bezargumentowy konstruktor w Hibernate",
+        "D": "serializacja JSON przez refleksje"
+      },
+      "correct": "B",
+      "explanation": "Opis \"szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)\" odpowiada terminowi \"MethodHandles jako alternatywa\"."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"Dependency Injection przez refleksje\" to NIE jest...",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "synonim terminu \"bezargumentowy konstruktor w Hibernate\"",
+        "C": "cos innego niz: mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "D": "to samo co \"serializacja JSON przez refleksje\""
+      },
+      "correct": "C",
+      "explanation": "\"Dependency Injection przez refleksje\" oznacza: mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"bezargumentowy konstruktor w Hibernate\" to NIE jest...",
+      "options": {
+        "A": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "B": "synonim terminu \"serializacja JSON przez refleksje\"",
+        "C": "to samo co \"wykrywanie metod testowych przez JUnit\"",
+        "D": "cos innego niz: wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+      },
+      "correct": "D",
+      "explanation": "\"bezargumentowy konstruktor w Hibernate\" oznacza: wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"serializacja JSON przez refleksje\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "B": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "C": "synonim terminu \"wykrywanie metod testowych przez JUnit\"",
+        "D": "to samo co \"narzut wydajnosciowy refleksji\""
+      },
+      "correct": "A",
+      "explanation": "\"serializacja JSON przez refleksje\" oznacza: mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"wykrywanie metod testowych przez JUnit\" to NIE jest...",
+      "options": {
+        "A": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "B": "cos innego niz: mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "C": "synonim terminu \"narzut wydajnosciowy refleksji\"",
+        "D": "to samo co \"lamanie hermetyzacji\""
+      },
+      "correct": "B",
+      "explanation": "\"wykrywanie metod testowych przez JUnit\" oznacza: mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class) — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"narzut wydajnosciowy refleksji\" to NIE jest...",
+      "options": {
+        "A": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "B": "synonim terminu \"lamanie hermetyzacji\"",
+        "C": "cos innego niz: koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "D": "to samo co \"kruchosc wobec refaktoryzacji\""
+      },
+      "correct": "C",
+      "explanation": "\"narzut wydajnosciowy refleksji\" oznacza: koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"lamanie hermetyzacji\" to NIE jest...",
+      "options": {
+        "A": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "B": "synonim terminu \"kruchosc wobec refaktoryzacji\"",
+        "C": "to samo co \"NoSuchFieldException w runtime\"",
+        "D": "cos innego niz: skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+      },
+      "correct": "D",
+      "explanation": "\"lamanie hermetyzacji\" oznacza: skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"kruchosc wobec refaktoryzacji\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "B": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "C": "synonim terminu \"NoSuchFieldException w runtime\"",
+        "D": "to samo co \"InaccessibleObjectException\""
+      },
+      "correct": "A",
+      "explanation": "\"kruchosc wobec refaktoryzacji\" oznacza: ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"NoSuchFieldException w runtime\" to NIE jest...",
+      "options": {
+        "A": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "B": "cos innego niz: blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "C": "synonim terminu \"InaccessibleObjectException\"",
+        "D": "to samo co \"classpath vs modulepath\""
+      },
+      "correct": "B",
+      "explanation": "\"NoSuchFieldException w runtime\" oznacza: blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"InaccessibleObjectException\" to NIE jest...",
+      "options": {
+        "A": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "B": "synonim terminu \"classpath vs modulepath\"",
+        "C": "cos innego niz: wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "D": "to samo co \"kiedy refleksja jest uzasadniona\""
+      },
+      "correct": "C",
+      "explanation": "\"InaccessibleObjectException\" oznacza: wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"classpath vs modulepath\" to NIE jest...",
+      "options": {
+        "A": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "B": "synonim terminu \"kiedy refleksja jest uzasadniona\"",
+        "C": "to samo co \"polimorfizm jako alternatywa dla refleksji\"",
+        "D": "cos innego niz: rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+      },
+      "correct": "D",
+      "explanation": "\"classpath vs modulepath\" oznacza: rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"kiedy refleksja jest uzasadniona\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "B": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "C": "synonim terminu \"polimorfizm jako alternatywa dla refleksji\"",
+        "D": "to samo co \"mini-kontener DI\""
+      },
+      "correct": "A",
+      "explanation": "\"kiedy refleksja jest uzasadniona\" oznacza: sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"polimorfizm jako alternatywa dla refleksji\" to NIE jest...",
+      "options": {
+        "A": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "B": "cos innego niz: preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "C": "synonim terminu \"mini-kontener DI\"",
+        "D": "to samo co \"symulacja budowania encji jak Hibernate\""
+      },
+      "correct": "B",
+      "explanation": "\"polimorfizm jako alternatywa dla refleksji\" oznacza: preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"mini-kontener DI\" to NIE jest...",
+      "options": {
+        "A": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "B": "synonim terminu \"symulacja budowania encji jak Hibernate\"",
+        "C": "cos innego niz: wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "D": "to samo co \"MethodHandles jako alternatywa\""
+      },
+      "correct": "C",
+      "explanation": "\"mini-kontener DI\" oznacza: wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"symulacja budowania encji jak Hibernate\" to NIE jest...",
+      "options": {
+        "A": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "B": "synonim terminu \"MethodHandles jako alternatywa\"",
+        "C": "to samo co \"Dependency Injection przez refleksje\"",
+        "D": "cos innego niz: wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+      },
+      "correct": "D",
+      "explanation": "\"symulacja budowania encji jak Hibernate\" oznacza: wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "Prawda czy falsz (wybierz poprawne dokonczenie): \"MethodHandles jako alternatywa\" to NIE jest...",
+      "options": {
+        "A": "cos innego niz: szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "B": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "C": "synonim terminu \"Dependency Injection przez refleksje\"",
+        "D": "to samo co \"bezargumentowy konstruktor w Hibernate\""
+      },
+      "correct": "A",
+      "explanation": "\"MethodHandles jako alternatywa\" oznacza: szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18) — pozostale opcje mylnie utozsamiaja go z czyms innym."
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"Dependency Injection przez refleksje\"?",
+      "options": {
+        "A": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "B": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "C": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "D": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"Dependency Injection przez refleksje\": mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"bezargumentowy konstruktor w Hibernate\"?",
+      "options": {
+        "A": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "B": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "C": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "D": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"bezargumentowy konstruktor w Hibernate\": wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"serializacja JSON przez refleksje\"?",
+      "options": {
+        "A": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "B": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "C": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "D": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"serializacja JSON przez refleksje\": mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"wykrywanie metod testowych przez JUnit\"?",
+      "options": {
+        "A": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "B": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "C": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "D": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"wykrywanie metod testowych przez JUnit\": mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"narzut wydajnosciowy refleksji\"?",
+      "options": {
+        "A": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "B": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"narzut wydajnosciowy refleksji\": koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"lamanie hermetyzacji\"?",
+      "options": {
+        "A": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "B": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "C": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "D": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"lamanie hermetyzacji\": skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"kruchosc wobec refaktoryzacji\"?",
+      "options": {
+        "A": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "B": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "C": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "D": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"kruchosc wobec refaktoryzacji\": ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"NoSuchFieldException w runtime\"?",
+      "options": {
+        "A": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "B": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "C": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "D": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"NoSuchFieldException w runtime\": blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"InaccessibleObjectException\"?",
+      "options": {
+        "A": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "B": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"InaccessibleObjectException\": wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"classpath vs modulepath\"?",
+      "options": {
+        "A": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "B": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "C": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "D": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"classpath vs modulepath\": rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"kiedy refleksja jest uzasadniona\"?",
+      "options": {
+        "A": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "B": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "C": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "D": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"kiedy refleksja jest uzasadniona\": sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"polimorfizm jako alternatywa dla refleksji\"?",
+      "options": {
+        "A": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "B": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "C": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "D": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+      },
+      "correct": "A",
+      "explanation": "Praktyczne zastosowanie \"polimorfizm jako alternatywa dla refleksji\": preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"mini-kontener DI\"?",
+      "options": {
+        "A": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "B": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+      },
+      "correct": "B",
+      "explanation": "Praktyczne zastosowanie \"mini-kontener DI\": wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"symulacja budowania encji jak Hibernate\"?",
+      "options": {
+        "A": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "B": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "C": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "D": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+      },
+      "correct": "C",
+      "explanation": "Praktyczne zastosowanie \"symulacja budowania encji jak Hibernate\": wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+    },
+    {
+      "question": "W praktycznym zastosowaniu praktycznych zastosowan i ryzyk refleksji, do czego sluzy \"MethodHandles jako alternatywa\"?",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "D": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+      },
+      "correct": "D",
+      "explanation": "Praktyczne zastosowanie \"MethodHandles jako alternatywa\": szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"Dependency Injection przez refleksje\"?",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "D": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"Dependency Injection przez refleksje\": mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"bezargumentowy konstruktor w Hibernate\"?",
+      "options": {
+        "A": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "D": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"bezargumentowy konstruktor w Hibernate\": wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"serializacja JSON przez refleksje\"?",
+      "options": {
+        "A": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "B": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "C": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "D": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"serializacja JSON przez refleksje\": mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"wykrywanie metod testowych przez JUnit\"?",
+      "options": {
+        "A": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"wykrywanie metod testowych przez JUnit\": mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"narzut wydajnosciowy refleksji\"?",
+      "options": {
+        "A": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"narzut wydajnosciowy refleksji\": koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"lamanie hermetyzacji\"?",
+      "options": {
+        "A": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "D": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"lamanie hermetyzacji\": skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"kruchosc wobec refaktoryzacji\"?",
+      "options": {
+        "A": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "B": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "C": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "D": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"kruchosc wobec refaktoryzacji\": ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"NoSuchFieldException w runtime\"?",
+      "options": {
+        "A": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"NoSuchFieldException w runtime\": blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"InaccessibleObjectException\"?",
+      "options": {
+        "A": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"InaccessibleObjectException\": wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"classpath vs modulepath\"?",
+      "options": {
+        "A": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "D": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"classpath vs modulepath\": rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"kiedy refleksja jest uzasadniona\"?",
+      "options": {
+        "A": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "B": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "C": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "D": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"kiedy refleksja jest uzasadniona\": sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"polimorfizm jako alternatywa dla refleksji\"?",
+      "options": {
+        "A": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy opis \"polimorfizm jako alternatywa dla refleksji\": preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"mini-kontener DI\"?",
+      "options": {
+        "A": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy opis \"mini-kontener DI\": wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"symulacja budowania encji jak Hibernate\"?",
+      "options": {
+        "A": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "D": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy opis \"symulacja budowania encji jak Hibernate\": wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+    },
+    {
+      "question": "Ktore stwierdzenie NAJLEPIEJ opisuje \"MethodHandles jako alternatywa\"?",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "C": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "D": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy opis \"MethodHandles jako alternatywa\": szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+    },
+    {
+      "question": "Czym jest / co oznacza \"Dependency Injection przez refleksje\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "B": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "C": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "D": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+      },
+      "correct": "D",
+      "explanation": "\"Dependency Injection przez refleksje\" to: mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie"
+    },
+    {
+      "question": "Czym jest / co oznacza \"bezargumentowy konstruktor w Hibernate\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "B": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "C": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "D": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+      },
+      "correct": "A",
+      "explanation": "\"bezargumentowy konstruktor w Hibernate\" to: wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+    },
+    {
+      "question": "Czym jest / co oznacza \"serializacja JSON przez refleksje\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "B": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON",
+        "C": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "D": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+      },
+      "correct": "B",
+      "explanation": "\"serializacja JSON przez refleksje\" to: mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+    },
+    {
+      "question": "Czym jest / co oznacza \"wykrywanie metod testowych przez JUnit\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich",
+        "B": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "C": "mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)",
+        "D": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+      },
+      "correct": "C",
+      "explanation": "\"wykrywanie metod testowych przez JUnit\" to: mechanizm oparty na getDeclaredMethods()+isAnnotationPresent(Test.class)"
+    },
+    {
+      "question": "Czym jest / co oznacza \"narzut wydajnosciowy refleksji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "B": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "C": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "D": "koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+      },
+      "correct": "D",
+      "explanation": "\"narzut wydajnosciowy refleksji\" to: koszt wywolan Method.invoke/Field.get/set w porownaniu do wywolan bezposrednich"
+    },
+    {
+      "question": "Czym jest / co oznacza \"lamanie hermetyzacji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje",
+        "B": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "C": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "D": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+      },
+      "correct": "A",
+      "explanation": "\"lamanie hermetyzacji\" to: skutek uzycia setAccessible(true), ktory omija modyfikatory dostepu i walidacje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"kruchosc wobec refaktoryzacji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "B": "ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator",
+        "C": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "D": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+      },
+      "correct": "B",
+      "explanation": "\"kruchosc wobec refaktoryzacji\" to: ryzyko refleksji polegajace na braku sprawdzania nazw pol/metod przez kompilator"
+    },
+    {
+      "question": "Czym jest / co oznacza \"NoSuchFieldException w runtime\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji",
+        "B": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "C": "blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego",
+        "D": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+      },
+      "correct": "C",
+      "explanation": "\"NoSuchFieldException w runtime\" to: blad ujawniajacy sie dopiero podczas dzialania programu po zmianie nazwy pola bez aktualizacji kodu reflekcyjnego"
+    },
+    {
+      "question": "Czym jest / co oznacza \"InaccessibleObjectException\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "B": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "C": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "D": "wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+      },
+      "correct": "D",
+      "explanation": "\"InaccessibleObjectException\" to: wyjatek JPMS rzucany, gdy modul nie zadeklarowal 'opens' dla pakietu docelowego refleksji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"classpath vs modulepath\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji",
+        "B": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "C": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "D": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+      },
+      "correct": "A",
+      "explanation": "\"classpath vs modulepath\" to: rozroznienie decydujace o tym, czy ograniczenia JPMS dotycza danej aplikacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"kiedy refleksja jest uzasadniona\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "B": "sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji",
+        "C": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "D": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+      },
+      "correct": "B",
+      "explanation": "\"kiedy refleksja jest uzasadniona\" to: sytuacje typowe dla tworcow bibliotek/frameworkow lub obslugi typow nieznanych w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"polimorfizm jako alternatywa dla refleksji\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje",
+        "B": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "C": "preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji",
+        "D": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+      },
+      "correct": "C",
+      "explanation": "\"polimorfizm jako alternatywa dla refleksji\" to: preferowane rozwiazanie, gdy typy sa znane w czasie kompilacji"
+    },
+    {
+      "question": "Czym jest / co oznacza \"mini-kontener DI\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "B": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "C": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "D": "wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+      },
+      "correct": "D",
+      "explanation": "\"mini-kontener DI\" to: wlasna, uproszczona implementacja wstrzykiwania zaleznosci przez surowa refleksje"
+    },
+    {
+      "question": "Czym jest / co oznacza \"symulacja budowania encji jak Hibernate\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania",
+        "B": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "C": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "D": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy"
+      },
+      "correct": "A",
+      "explanation": "\"symulacja budowania encji jak Hibernate\" to: wzorzec: bezargumentowy konstruktor + Field.set dla kazdej kolumny wyniku zapytania"
+    },
+    {
+      "question": "Czym jest / co oznacza \"MethodHandles jako alternatywa\" w kontekscie praktycznych zastosowan i ryzyk refleksji?",
+      "options": {
+        "A": "mechanizm uzywany przez Guice/Spring do wykrywania @Inject i wstrzykiwania zaleznosci reflekcyjnie",
+        "B": "szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)",
+        "C": "wymog encji JPA, pozwalajacy Hibernate tworzyc obiekt reflekcyjnie przed poznaniem danych z bazy",
+        "D": "mechanizm uzywany przez Jackson/Gson do odczytu/zapisu pol obiektu na podstawie kluczy JSON"
+      },
+      "correct": "B",
+      "explanation": "\"MethodHandles jako alternatywa\" to: szybszy mechanizm od klasycznej refleksji, zapowiedziany jako temat kolejnej lekcji (Lesson18)"
+    }
+  ]
+}
