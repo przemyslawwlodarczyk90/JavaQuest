@@ -2334,4 +2334,22 @@ ma 19/20 lekcji z treścią.
 
 **Następny krok**: capstone `20_JvmTuningAndBestPracticesCapstone`, finalna regresja całego
 rozdziału i automatyczne przejście do `_16_clean_code`.
+
+### ✅ `_15_jvm_internals` KOMPLETNY na platformie (stan na 2026-08-30): 20/20 lekcji
+
+Capstone `20_JvmTuningAndBestPracticesCapstone` spina model pamięci procesu, wybór GC, JIT,
+benchmarking, obserwowalność, drzewo decyzji diagnostycznej, bezpieczny pakiet incydentu oraz
+iteracyjne strojenie oparte na SLO/baseline/jednej zmiennej/rollbacku. Zakres wymagał 12 sekcji
+teorii, 30 ćwiczeń z klasy IDE i 100 unikalnych pytań.
+
+Wykonano finalną kontrolę wszystkich 20 JSON-ów: każdy ma komplet ćwiczeń i quizu, poprawne
+odpowiedzi oraz parsowalną strukturę; nowsze lekcje 12-20 mają po 100 unikalnych pytań, starsze
+1-11 zachowują wcześniej zaakceptowany styl generatorów. End-to-end: capstone 12/30/100,
+lista rozdziału 20/20 `hasContent=true`, regresja pierwszej lekcji rozdziału 100 i regresja
+międzyrozdziałowa `_13_libraries/01_WhyLibraries` 100.
+
+**Następny krok**: przejść automatycznie do `_16_clean_code`, zaczynając od pierwszej lekcji
+zgodnie z listą `ChapterSeedData.java`; nowy sufiks scratchpada `n`. Nadal czytać klasy teorii
+i ćwiczeń z IDE, dobierać liczbę sekcji do realnego zakresu tematu, zachować 30 wartościowych
+ćwiczeń/rozwiązań, rozbudowany quiz oraz weryfikację API i regresji przed commitem.
 ---
