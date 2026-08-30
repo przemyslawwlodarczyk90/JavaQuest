@@ -2125,4 +2125,26 @@ quiz:100) PRZED skopiowaniem do `src/main/resources/content/_14_advancedjava/NN_
 restart backendu + pelna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_13`, patrz uwaga
 wyzej) PRZED kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ pytania o zgode miedzy
 lekcjami/rozdzialami.
+
+**Stan na 2026-08-30 (kontynuacja): lekcje 23-25/30 UKOŃCZONE** (23_VarAndTypeInference,
+24_Immutability, 25_DefensiveCopying) — **blok "Wnioskowanie typow i niezmiennosc" (23-25) jest
+teraz KOMPLETNY.** Każda 7/30/100, workflow `genNNl.js` (sufiks `l`). Zweryfikowane end-to-end po
+2 restartach backendu (25/30 `hasContent: true` dla `_14_advancedjava`) + regresja na
+`_13_libraries/01_WhyLibraries` i `_12_hibernate/01_OrmIntroduction` — zero regresji. Pozostaje
+OSTATNI blok rozdzialu: "Odkrywanie uslug i modularnosc" (26-28: ServiceLoaderAndSpi,
+ModulesJpmsBasics, ModulesAdvanced) + "Podsumowanie" (29-30: AdvancedLanguageBestPractices,
+CapstoneAdvancedJava).
+
+**Następny krok**: kontynuować od **lekcji 26 (`26_ServiceLoaderAndSpi`)** w `_14_advancedjava` —
+rozpoczecie bloku "Odkrywanie uslug i modularnosc" (26-28). Ten sam, sprawdzony workflow: czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_14_advancedjava/LessonNN_Temat/`, napisz `genNNl.js` w
+scratchpadzie (kontynuuj sufiks `l`), zweryfikuj `node genNNl.js` (theory:7 exercises:30
+quiz:100) PRZED skopiowaniem do `src/main/resources/content/_14_advancedjava/NN_Temat.json`,
+restart backendu (WZORZEC: `cmd.exe /c '".\mvnw.cmd" spring-boot:run > backend_out.log 2>
+backend_err.log'` przez `System.Diagnostics.Process`, `".\"` PRZED `mvnw.cmd` jest OBOWIAZKOWE)
++ pelna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_13`, NIGDY `_15`-`_31` bo tam jeszcze
+nie ma platformowej tresci) PRZED kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ
+pytania o zgode miedzy lekcjami/rozdzialami — po ukonczeniu `_14_advancedjava` (30/30) przejsc
+automatycznie do `_15_jvm_internals` (nowy sufiks scratchpada `m`), zgodnie z ustalonym rytmem.
 ---
