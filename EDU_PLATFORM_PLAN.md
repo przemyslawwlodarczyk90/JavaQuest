@@ -2183,4 +2183,19 @@ miedzy lekcjami ani rozdzialami — po ukonczeniu `_15_jvm_internals` (20/20) pr
 do `_16_clean_code` (22 lekcje, sufiks scratchpada `n`), i dalej przez WSZYSTKIE pozostale
 rozdzialy az do `_31_spring_cloud_microservices`, zgodnie z pelna, ostateczna lista rozdzialow w
 `ChapterSeedData.java` — to jeszcze 17 rozdzialow, wiele setek lekcji, wiele kolejnych sesji pracy.
+
+**Stan na 2026-08-30 (kontynuacja): `_15_jvm_internals` ROZPOCZĘTY — lekcje 1-2/20 UKOŃCZONE**
+(01_JdkJreJvmAndSpecification, 02_CompilationAndBytecode). Katalog `src/main/resources/content/
+_15_jvm_internals/` utworzony (wczesniej nie istnial). Kazda 7/30/100, ten sam sprawdzony
+workflow (`genNNm.js`, nowy sufiks `m`). Zweryfikowane end-to-end (2/20 `hasContent: true`) +
+regresja na `_14_advancedjava/30_CapstoneAdvancedJava` (swiezo ukonczony rozdzial) i
+`_13_libraries/01_WhyLibraries` — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 3 (`03_ClassLoadingMechanics`)** w `_15_jvm_internals`.
+Ten sam, sprawdzony workflow: czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_15_jvm_internals/LessonNN_Temat/`, napisz `genNNm.js` w
+scratchpadzie (kontynuuj sufiks `m`), zweryfikuj `node genNNm.js` (theory:7 exercises:30
+quiz:100) PRZED skopiowaniem do `src/main/resources/content/_15_jvm_internals/NN_Temat.json`,
+restart backendu + pelna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_14`) PRZED kazdym
+commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ pytania o zgode miedzy lekcjami/rozdzialami.
 ---
