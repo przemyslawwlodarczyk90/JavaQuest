@@ -2292,4 +2292,14 @@ zarówno demonstracje, jak i poprawki/testy regresyjne. End-to-end: teoria 7 sek
 z zakresu materiału, 30 ćwiczeń, 100 unikalnych pytań; regresja 100, rozdział 15/20.
 
 **Następny krok**: `16_HeapDumpBasics`, następnie 17-20 i automatycznie `_16_clean_code`.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 16/20 UKOŃCZONA** (`16_HeapDumpBasics`).
+Materiał prowadzi od bezpiecznego tworzenia HPROF przez HotSpotDiagnosticMXBean, `jcmd` i flagi
+OOME do poprawnej analizy histogramu, shallow/retained size, dominator tree oraz path to GC roots.
+Uwzględnia koszt safepoint/full GC, miejsce na dysku, wolumeny kontenerowe, ochronę sekretów i
+procedurę potwierdzania poprawki na porównywalnych snapshotach. Liczba sekcji wynika z tematu:
+8 sekcji teorii, 30 ćwiczeń z klasy IDE i 100 unikalnych pytań. End-to-end oraz regresja
+zweryfikowane; rozdział ma 16/20 lekcji z treścią.
+
+**Następny krok**: `17_ThreadDumpBasics`, następnie 18-20 i `_16_clean_code`.
 ---
