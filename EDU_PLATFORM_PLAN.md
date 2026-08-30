@@ -2271,4 +2271,15 @@ lekcje 15-20 i automatycznie przejść do `_16_clean_code`. Każdą lekcję opie
 na wartościowym materiale z klas Java w IDE; dodawać tyle sekcji teorii, ile rzeczywiście wymaga
 temat, bez sztucznego celu liczbowego. Zachować rozbudowane ćwiczenia, rozwiązania, quiz i pełną
 weryfikację API/regresji przed commitem.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 14/20 UKOŃCZONA**
+(`14_EscapeAnalysisAndInlining`). Materiał obejmuje poziomy ucieczki referencji, scalar
+replacement, eliminację alokacji, współpracę inliningu z escape analysis, ograniczenia code
+bloat oraz rzetelną diagnostykę przez PrintInlining/JMH. Ćwiczenia pochodzą z klasy lekcyjnej
+w IDE i prowadzą od analizy lokalnego obiektu po kontrolowane eksperymenty z flagami JIT.
+Zweryfikowane end-to-end: 7 merytorycznie wynikających z materiału sekcji teorii, 30 ćwiczeń,
+100 unikalnych pytań; regresja zwraca 100, rozdział ma 14/20 lekcji z treścią.
+
+**Następny krok**: kontynuować od `15_MemoryLeaksInJava`, dalej 16-20 i `_16_clean_code`, bez
+zatrzymywania się na potwierdzenia. Liczbę sekcji dobierać do zakresu tematu, nie do szablonu.
 ---
