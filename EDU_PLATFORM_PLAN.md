@@ -2214,4 +2214,15 @@ regresja na `03_ClassLoadingMechanics` i `_12_hibernate/01_OrmIntroduction` — 
 **Następny krok**: kontynuować od **lekcji 6 (`06_HeapStackMetaspace`)** w `_15_jvm_internals` —
 rozpoczecie bloku "Obszary pamieci JVM" (6-7). Ten sam workflow (sufiks `m`), commitowac co 2-4
 lekcje, bez pytania o zgode miedzy lekcjami/rozdzialami.
+
+**Stan na 2026-08-30 (kontynuacja 2): lekcje 6-7/20 UKOŃCZONE** — **blok "Obszary pamieci JVM"
+(6-7) w `_15_jvm_internals` jest teraz KOMPLETNY.** Zweryfikowane end-to-end (curl na
+`06_HeapStackMetaspace` i `07_ReferenceTypesAndStringPool` - theory/exercises/quiz obecne, 100
+pytan quizu kazda), regresja na `05_ClasspathVsModulepath` (100 quiz) i
+`_13_libraries/01_WhyLibraries` (100 quiz) — zero regresji. Backend na porcie 8082 (nie 8080 —
+uwaga na przyszlosc: sprawdz faktyczny port w logu startowym, jesli curl "wisi").
+
+**Następny krok**: kontynuować od **lekcji 8 (`08_GarbageCollectionFoundations`)** w
+`_15_jvm_internals` — rozpoczecie bloku "Garbage Collector" (8-12). Ten sam workflow (sufiks `m`),
+commitowac co 2-4 lekcje, bez pytania o zgode miedzy lekcjami/rozdzialami.
 ---
