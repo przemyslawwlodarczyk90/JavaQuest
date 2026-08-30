@@ -2245,4 +2245,15 @@ runnery skonczyly) PRZED pierwszym sprawdzeniem curl, zamiast panikowac przy pie
 kontynuacja bloku "Garbage Collector" (8-12). Ten sam workflow (sufiks `m`), commitowac co 2-4
 lekcje, bez pytania o zgode miedzy lekcjami/rozdzialami. Po restarcie backendu odczekaj min.
 60-90s przed curl (patrz uwaga wyzej).
+
+**Stan na 2026-08-30 (przejęcie kontynuacji): lekcje 10-11/20 UKOŃCZONE**
+(`10_G1GcDeepDive`, `11_LowLatencyCollectors`). Obie lekcje zachowują ustalony format 7 sekcji
+teorii/30 zadań/100 pytań quizowych. Zweryfikowane generatorem i end-to-end po pełnym załadowaniu
+seedów: API zwraca 7/30/100 dla obu nowych lekcji, regresja `_13_libraries/01_WhyLibraries/quiz`
+zwraca 100, a lista rozdziału pokazuje 11/20 lekcji z `hasContent=true`.
+
+**Następny krok**: kontynuować od **lekcji 12 (`12_GcTuningAndLogging`)** w
+`_15_jvm_internals`, domknąć blok Garbage Collector, następnie przejść bez zatrzymywania do
+lekcji 13 (`13_JitCompilerBasics`) i dalszych. Ten sam workflow (sufiks `m`), commitować co 2-4
+lekcje i weryfikować 7/30/100 oraz regresję API przed każdym commitem.
 ---

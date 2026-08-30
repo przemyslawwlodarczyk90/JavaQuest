@@ -1,0 +1,1293 @@
+{
+  "theory": [
+    {
+      "type": "CONCEPT",
+      "heading": "Problem: pauzy rosnace wraz z rozmiarem sterty",
+      "body": "Klasyczne kolektory (Parallel, a nawet domyslny G1) potrafia miec fazy STOP-THE-WORLD (STW), w ktorych wszystkie watki aplikacji sa zatrzymane. G1 stara sie trzymac pauzy w ryzach (cel -XX:MaxGCPauseMillis), ale przy bardzo duzych stertach (dziesiatki GB, setki GB) i duzym 'zywym' zbiorze obiektow (live set), niektore fazy (np. finalna faza kompakcji) i tak moga przekroczyc cel. Dla aplikacji, gdzie kazda milisekunda pauzy jest kosztowna (systemy transakcyjne, gry, systemy czasu rzeczywistego, API z twardymi SLA na p99 latency), potrzeba kolektora, ktorego pauzy NIE rosna wraz z rozmiarem sterty. Odpowiedzia HotSpota sa ZGC i Shenandoah - oba celuja w pauzy PONIZEJ 1 milisekundy, niezaleznie od tego, czy sterta ma 1 GB, czy 1 TB."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "ZGC: colored pointers i load barriers (koncepcyjnie)",
+      "body": "ZGC (Z Garbage Collector) osiaga niskie pauzy robiac prawie cala prace (znakowanie, przenoszenie/kompakcje obiektow) WSPOLBIEZNIE z watkami aplikacji - bez zatrzymywania ich. Sztuczka: 'colored pointers' (kolorowane wskazniki) - ZGC wykorzystuje kilka nieuzywanych bitow w 64-bitowym wskazniku (referencji) do zakodowania metadanych o stanie obiektu wprost w samym wskazniku. 'Load barriers' (bariery odczytu) - male fragmenty kodu wstawiane przez JIT przy KAZDYM odczycie referencji z pamieci. Bariera sprawdza kolor wskaznika - jesli obiekt zostal juz przeniesiony w trakcie wspolbieznej kompakcji, bariera 'naprawia' (self-healing) referencje w locie, zanim watek aplikacji w ogole zauwazy zmiane."
+    },
+    {
+      "type": "CODE_EXAMPLE",
+      "heading": "Realne demo: uruchomienie JVM z -XX:+UseZGC",
+      "body": "Path javaExe = Path.of(System.getProperty(\"java.home\"), \"bin\", \"java\");\n\nProcessResult result = runProcess(\"ZGC\",\n    javaExe.toString(), \"-XX:+UseZGC\", \"-Xlog:gc\", \"-cp\", classesDir.toString(), \"AllocatorDemo\");\n\nif (looksLikeUnsupportedOption(result)) {\n    System.out.println(\"Ten kolektor NIE jest dostepny w tym buildzie JDK na tej maszynie.\");\n} else {\n    System.out.println(\"Kolektor uruchomil sie poprawnie, kod wyjscia: \" + result.exitCode());\n}\n\nOdpalamy PRAWDZIWY, osobny proces JVM z flaga -XX:+UseZGC i -Xlog:gc. WAZNE: nie kazdy build JDK ma kazdy kolektor wbudowany - ZGC jest produkcyjny od Javy 15 i zwykle dostepny w wiekszosci glownych dystrybucji, ale zawsze warto sprawdzic realny wynik zamiast zakladac."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Shenandoah: Brooks pointers / forwarding pointers (koncepcyjnie)",
+      "body": "Shenandoah (rozwijany glownie przez Red Hat) ma TEN SAM CEL co ZGC (pauzy niezalezne od rozmiaru sterty), ale osiaga go inna technika: 'Brooks pointers' (forwarding pointers). Kazdy obiekt na stercie dostaje dodatkowe slowo (extra word) tuz przed swoimi danymi - to wskaznik do 'aktualnej' kopii samego siebie. Gdy Shenandoah przenosi obiekt (wspolbieznie, bez pauzy), najpierw aktualizuje ten wewnetrzny wskaznik starej kopii, by wskazywal na nowa lokalizacje. Kazdy odczyt obiektu przechodzi przez ten wskaznik - wiec nawet jesli watek aplikacji trzyma 'stara' referencje, i tak trafi do aktualnych danych. Koncepcyjnie: ZGC koduje info o przenoszeniu w samym wskazniku (bity adresu), Shenandoah trzyma je jako dodatkowe pole przy obiekcie - dwie rozne drogi do tego samego celu."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Realna dostepnosc: Shenandoah nie zawsze jest wbudowany",
+      "body": "Shenandoah czesto NIE jest wbudowany w domyslne buildy niektorych dystrybucji JDK (np. bywa wylaczony w oficjalnym Oracle JDK) - jesli tak jest na danej maszynie, JVM zglosi blad typu 'Unrecognized VM option' albo poinformuje, ze opcja jest niewspierana. To NIE jest awaria demo, tylko realna wlasciwosc konkretnego buildu JDK - kod obsluguje ten scenariusz jako oczekiwany, przyjazny fallback, wypisujac czytelny komunikat zamiast wywalac cale demo. Na maszynie deweloperskiej tego kursu (OpenJDK 25.0.2) Shenandoah faktycznie jest niedostepny w tym buildzie - lekcja realnie ćwiczy i pokazuje ten fallback."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Kiedy uzywac (i jaki jest koszt)",
+      "body": "Uzyj ZGC/Shenandoah, gdy: sterta jest bardzo duza (wiele GB do kilku TB); masz twarde wymagania na pauzy (np. p99/p999 latency w systemach transakcyjnych, gamingowych, streamingowych); wolisz przewidywalnosc pauz od maksymalnej przepustowosci. Koszt (nic nie jest za darmo): bariery (load barriers w ZGC, odczyt przez Brooks pointer w Shenandoah) wykonuja sie przy KAZDYM dostepie do referencji - dodatkowy narzut na kazda operacje; wiecej watkow GC dziala wspolbieznie z aplikacja - nizsza przepustowosc; dodatkowa pamiec (colored pointers wymagaja zarezerwowanej przestrzeni adresowej, Brooks pointer to dodatkowe slowo na kazdy obiekt). Dlatego G1 (domyslny kolektor od Javy 9) pozostaje dobrym wyborem domyslnym dla wiekszosci aplikacji - ZGC/Shenandoah to swiadomy kompromis."
+    },
+    {
+      "type": "CONCEPT",
+      "heading": "Podsumowanie",
+      "body": "ZGC i Shenandoah celuja w pauzy submilisekundowe niezaleznie od rozmiaru sterty - w odroznieniu od G1, ktory tylko 'stara sie' trzymac cel czasowy (MaxGCPauseMillis). ZGC: colored pointers (metadane w bitach wskaznika) + load barriers (samo-naprawiajace odczyty referencji). Shenandoah: Brooks pointer / forwarding pointer - dodatkowe slowo per obiekt, przez ktore przechodzi kazdy odczyt. Koszt: dodatkowy narzut na kazdy dostep do referencji i nizsza przepustowosc w zamian za przewidywalne pauzy - wybor dla bardzo duzych stert i twardych wymagan na latency. Dostepnosc obu kolektorow zalezy od buildu JDK - zawsze sprawdz realnie, zamiast zakladac, ze flaga na pewno zadziala."
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Bez terminala: w komentarzu wyjasnij (min. 3 zdania), dlaczego klasyczne kolektory stop-the-world moga miec pauzy rosnace wraz z rozmiarem sterty/zywego zbioru obiektow, i jaki jest cel ZGC oraz Shenandoah w tej kwestii.",
+      "hint": "Wieksza sterta = wiecej danych do przejrzenia/przesuniecia w fazie STW - ZGC/Shenandoah celuja w pauzy NIEZALEZNE od tego rozmiaru.",
+      "solution": "// Klasyczne kolektory stop-the-world musza w pewnym momencie ZATRZYMAC wszystkie watki\n// aplikacji, zeby bezpiecznie przeanalizowac/przesunac zywe obiekty na stercie - im\n// WIECEJ danych (wiekszy zywy zbior obiektow) trzeba przetworzyc w tej pauzie, tym DLUZSZA\n// jest ta pauza, bo praca ROSNIE proporcjonalnie do ilosci danych. Cel ZGC i Shenandoah to\n// WYELIMINOWANIE tej zaleznosci - obie technologie wykonuja niemal cala prace (w tym\n// przenoszenie obiektow) WSPOLBIEZNIE z aplikacja, wiec pauza pozostaje submilisekundowa\n// NIEZALEZNIE od tego, czy sterta ma 1GB, czy 1TB."
+    },
+    {
+      "prompt": "Bez terminala: wypisz w komentarzu nazwy DWOCH kolektorow niskich pauz omowionych w lekcji oraz flagi JVM wlaczajace kazdy z nich (dokladna skladnia -XX:+...).",
+      "hint": "-XX:+UseZGC i -XX:+UseShenandoahGC",
+      "solution": "// ZGC: -XX:+UseZGC\n// Shenandoah: -XX:+UseShenandoahGC"
+    },
+    {
+      "prompt": "Uzywajac wzorca runProcess() z teorii lekcji, uruchom prosty program alokujacy obiekty (mozesz skopiowac AllocatorDemo) z domyslnym kolektorem G1 (bez zadnej dodatkowej flagi GC) oraz flaga -Xlog:gc - wypisz kilka pierwszych linii logu GC.",
+      "hint": "Ten sam wzorzec co demonstrateCollector() z teorii, ale bez jawnej flagi -XX:+UseG1GC (domyslny).",
+      "solution": "Path javaExe = Path.of(System.getProperty(\"java.home\"), \"bin\", \"java\");\nProcessBuilder pb = new ProcessBuilder(javaExe.toString(), \"-Xlog:gc\", \"-cp\", classesDir.toString(), \"AllocatorDemo\");\npb.redirectErrorStream(true);\nProcess p = pb.start();\nString output = new String(p.getInputStream().readAllBytes());\np.waitFor(10, TimeUnit.SECONDS);\noutput.lines().limit(5).forEach(System.out::println);"
+    },
+    {
+      "prompt": "Bez terminala: opisz wlasnymi slowami (min. 3 zdania), czym sa \"colored pointers\" w ZGC i do czego sluzy \"load barrier\" przy kazdym odczycie referencji.",
+      "hint": "Colored pointers koduja metadane w bitach wskaznika; load barrier sprawdza/naprawia referencje przy kazdym odczycie.",
+      "solution": "// Colored pointers to technika, w ktorej ZGC wykorzystuje kilka NIEUZYWANYCH bitow w\n// 64-bitowym wskazniku (referencji) do zakodowania metadanych o stanie obiektu WPROST\n// w samym wskazniku - np. czy obiekt zostal juz przeniesiony/zremapowany w biezacym cyklu\n// GC. Load barrier to maly fragment kodu wstawiany przez JIT przy KAZDYM odczycie\n// referencji z pamieci - sprawdza 'kolor' wskaznika, a jesli obiekt zostal juz przeniesiony\n// w trakcie wspolbieznej kompakcji, bariera SAMA naprawia referencje w locie (self-healing),\n// zanim watek aplikacji zauwazy jakakolwiek zmiane."
+    },
+    {
+      "prompt": "Bez terminala: opisz wlasnymi slowami (min. 3 zdania), czym jest \"Brooks pointer\" (forwarding pointer) w Shenandoah i jak rozni sie od podejscia ZGC (kolorowane bity wskaznika).",
+      "hint": "Brooks pointer to dodatkowe slowo PRZY obiekcie, ZGC koduje info w bitach SAMEGO wskaznika - dwie rozne lokalizacje tej samej informacji.",
+      "solution": "// Brooks pointer to DODATKOWE SLOWO pamieci umieszczone tuz PRZED danymi kazdego obiektu\n// na stercie - dziala jako wskaznik do 'aktualnej' kopii samego siebie (normalnie wskazuje\n// sam na siebie). Gdy Shenandoah przenosi obiekt wspolbieznie, aktualizuje TEN wskaznik,\n// zeby wskazywal na nowa lokalizacje - kazdy odczyt obiektu 'przechodzi przez' ten\n// wskaznik, wiec trafia do aktualnych danych, nawet jesli watek aplikacji trzyma 'stara'\n// referencje. Roznica wzgledem ZGC: Shenandoah trzyma informacje o przeniesieniu JAKO\n// OSOBNE POLE przy obiekcie (dodatkowa pamiec na obiekt), a ZGC koduje ja WEWNATRZ SAMEGO\n// wskaznika (bity adresu) - dwie rozne 'lokalizacje' tej samej idei."
+    },
+    {
+      "prompt": "Napisz metode uruchamiajaca (przez ProcessBuilder, z limitem czasu 10 sekund tak jak w teorii) osobny proces \"java -XX:+UseZGC -version\" - wypisz kod wyjscia i pierwsza linie polaczonego wyjscia (stdout+stderr).",
+      "hint": "ProcessBuilder z argumentem \"-version\" zamiast pelnego uruchomienia klasy - szybsza proba dostepnosci flagi.",
+      "solution": "Path javaExe = Path.of(System.getProperty(\"java.home\"), \"bin\", \"java\");\nProcessBuilder pb = new ProcessBuilder(javaExe.toString(), \"-XX:+UseZGC\", \"-version\");\npb.redirectErrorStream(true);\nProcess p = pb.start();\nString output = new String(p.getInputStream().readAllBytes());\nboolean finished = p.waitFor(10, TimeUnit.SECONDS);\nif (!finished) p.destroyForcibly();\nSystem.out.println(\"Kod wyjscia: \" + (finished ? p.exitValue() : -1));\nSystem.out.println(\"Pierwsza linia: \" + output.lines().findFirst().orElse(\"(brak)\"));"
+    },
+    {
+      "prompt": "Analogicznie do Zadania 6, ale z flaga -XX:+UseShenandoahGC - wypisz kod wyjscia i pierwsza linie wyjscia. Jesli kolektor niedostepny, w komentarzu zanotuj tresc bledu JVM.",
+      "hint": "Ten sam kod co Zadanie 6, zmien tylko flage na -XX:+UseShenandoahGC.",
+      "solution": "// (kod identyczny jak w Zadaniu 6, ze zmiana flagi na -XX:+UseShenandoahGC)\n// Jesli kolektor jest niedostepny na tej maszynie (jak potwierdzono w teorii lekcji dla\n// OpenJDK 25.0.2), typowy blad to \"Unrecognized VM option 'UseShenandoahGC'\" lub podobny\n// komunikat informujacy, ze ta flaga nie istnieje w tym konkretnym buildzie JDK."
+    },
+    {
+      "prompt": "Bez terminala: wypisz w komentarzu 3 KOSZTY (tradeoffy) uzycia ZGC/Shenandoah w porownaniu do G1, omowione w lekcji.",
+      "hint": "Bariery na kazdym dostepie, nizsza przepustowosc, dodatkowa pamiec/przestrzen adresowa.",
+      "solution": "// 1. Bariery (load barrier w ZGC, odczyt przez Brooks pointer w Shenandoah) wykonuja sie\n//    przy KAZDYM dostepie do referencji - dodatkowy narzut na kazda operacje.\n// 2. Wiecej watkow GC dziala WSPOLBIEZNIE z aplikacja - zabiera cykle CPU, ktore inaczej\n//    trafilyby do watkow roboczych aplikacji (nizsza przepustowosc/throughput).\n// 3. Dodatkowa pamiec: colored pointers wymagaja odpowiednio zarezerwowanej przestrzeni\n//    adresowej, Brooks pointer to dodatkowe slowo NA KAZDY obiekt na stercie."
+    },
+    {
+      "prompt": "Bez terminala: opisz (min. 3 zdania) konkretny, realistyczny scenariusz aplikacji (np. system tradingowy, gra sieciowa), w ktorym warto wybrac ZGC/Shenandoah zamiast domyslnego G1 - i uzasadnij dlaczego.",
+      "hint": "System tradingowy z twardym SLA p99 < 1ms - nawet dobrze skonfigurowany G1 nie gwarantuje takiej przewidywalnosci.",
+      "solution": "// Scenariusz: system tradingowy o wysokiej czestotliwosci (HFT), gdzie kazda transakcja\n// musi zostac przetworzona z gwarantowanym opoznieniem p99 ponizej 1 milisekundy, bo\n// nawet niewielkie opoznienie moze oznaczac utrate korzystnej ceny na rynku. G1, mimo\n// konfigurowalnego celu -XX:MaxGCPauseMillis, WCIAZ moze okazjonalnie przekroczyc ten cel\n// (np. podczas dlugiej fazy Mixed Collection lub evacuation failure) - te 'wyjatki od\n// reguly' sa nie do zaakceptowania w systemie z twardym SLA. ZGC, ktorego pauzy sa\n// submilisekundowe NIEZALEZNIE od okolicznosci (bo niemal cala praca dzieje sie\n// wspolbieznie), jest jedynym realistycznym wyborem dla takiego zastosowania, mimo\n// akceptowanego kosztu w postaci nizszego surowego throughput."
+    },
+    {
+      "prompt": "Napisz metode boolean isUnsupportedOptionError(String jvmOutput), ktora sprawdza, czy podany tekst (symulowane wyjscie JVM) zawiera fraze \"Unrecognized VM option\" lub \"is unsupported\" (bez wzgledu na wielkosc liter) - przetestuj na 2 przykladowych tekstach.",
+      "hint": "jvmOutput.toLowerCase().contains(\"unrecognized vm option\") || jvmOutput.toLowerCase().contains(\"is unsupported\")",
+      "solution": "static boolean isUnsupportedOptionError(String jvmOutput) {\n    String lower = jvmOutput.toLowerCase();\n    return lower.contains(\"unrecognized vm option\") || lower.contains(\"is unsupported\");\n}\n\nSystem.out.println(isUnsupportedOptionError(\"Error: Unrecognized VM option 'UseShenandoahGC'\"));\nSystem.out.println(isUnsupportedOptionError(\"OpenJDK 64-Bit Server VM (build 25.0.2)\"));"
+    },
+    {
+      "prompt": "Uruchom AllocatorDemo (lub podobny) dwukrotnie: raz z domyslnym G1 i -Xlog:gc, raz z -XX:+UseZGC i -Xlog:gc (jesli dostepny) - porownaj w komentarzu liczbe linii logu i format nazw faz GC.",
+      "hint": "Ten sam wzorzec co Zadanie 3 + demonstrateCollector() z teorii dla ZGC, porownanie liczby linii.",
+      "solution": "String g1Output = runAndCapture(\"-Xlog:gc\"); // bez dodatkowej flagi kolektora = G1\nString zgcOutput = runAndCapture(\"-XX:+UseZGC\", \"-Xlog:gc\");\nSystem.out.println(\"G1: \" + g1Output.lines().count() + \" linii\");\nSystem.out.println(\"ZGC: \" + zgcOutput.lines().count() + \" linii (jesli dostepny)\");\n// Format nazw faz rozni sie znaczaco - G1 uzywa 'Pause Young'/'Mixed', ZGC uzywa wlasnych\n// nazw faz jak 'Garbage Collection' z rozbiciem na fazy Mark Start/Relocate Start itp."
+    },
+    {
+      "prompt": "Zmierz (System.nanoTime() wokol process.waitFor()) calkowity czas dzialania AllocatorDemo z G1 oraz z ZGC (jesli dostepny) - wypisz oba czasy w milisekundach i skomentuj, ze to NIE jest miarodajny benchmark (za maly, za krotki program), tylko demo mechanizmu pomiaru.",
+      "hint": "long start = System.nanoTime(); ...proces...; long ms = (System.nanoTime()-start)/1_000_000;",
+      "solution": "for (String flag : new String[]{null, \"-XX:+UseZGC\"}) {\n    long start = System.nanoTime();\n    List<String> cmd = new ArrayList<>(List.of(javaExe.toString()));\n    if (flag != null) cmd.add(flag);\n    cmd.addAll(List.of(\"-Xlog:gc\", \"-cp\", classesDir.toString(), \"AllocatorDemo\"));\n    ProcessBuilder pb = new ProcessBuilder(cmd);\n    pb.redirectErrorStream(true);\n    Process p = pb.start();\n    p.getInputStream().readAllBytes();\n    p.waitFor(10, TimeUnit.SECONDS);\n    long ms = (System.nanoTime() - start) / 1_000_000;\n    System.out.println((flag == null ? \"G1\" : flag) + \": \" + ms + \"ms\");\n}\n// UWAGA: to NIE jest miarodajny benchmark - AllocatorDemo jest za maly/za krotki, zeby\n// wykazac realna roznice wydajnosci miedzy kolektorami; to tylko demonstracja MECHANIZMU pomiaru."
+    },
+    {
+      "prompt": "Napisz metode printFriendlyFallback(String collectorName, String jvmOutput), ktora wypisuje po polsku czytelny komunikat \"Kolektor X nie jest dostepny w tym buildzie JDK\" wraz z pierwsza linia bledu z jvmOutput - przetestuj na przykladowym tekscie bledu.",
+      "hint": "String.lines().findFirst() na jvmOutput, polaczone z komunikatem po polsku.",
+      "solution": "static void printFriendlyFallback(String collectorName, String jvmOutput) {\n    String firstLine = jvmOutput.lines().filter(l -> !l.isBlank()).findFirst().orElse(\"(brak tresci bledu)\");\n    System.out.println(\"Kolektor \" + collectorName + \" nie jest dostepny w tym buildzie JDK.\");\n    System.out.println(\"Szczegoly: \" + firstLine);\n}\n\nprintFriendlyFallback(\"Shenandoah\", \"Error: Unrecognized VM option 'UseShenandoahGC'\\nDid you mean...\");"
+    },
+    {
+      "prompt": "Zmodyfikuj (skopiowana) wersje AllocatorDemo tak, by alokowala 5x wiecej danych (np. 100 rund zamiast 30) i uruchom ja z G1 oraz (jesli dostepny) ZGC - porownaj liczbe wpisow w logu GC.",
+      "hint": "Zmien petle `for (int round = 0; round < 30; round++)` na `< 100`.",
+      "solution": "String biggerSource = \"\"\"\n    public class BiggerAllocatorDemo {\n        public static void main(String[] args) {\n            for (int round = 0; round < 100; round++) {\n                byte[][] garbage = new byte[10_000][];\n                for (int i = 0; i < garbage.length; i++) { garbage[i] = new byte[1024]; }\n            }\n            System.out.println(\"gotowe\");\n        }\n    }\n    \"\"\";\n// skompiluj i uruchom analogicznie do teorii, porownaj liczbe linii logu miedzy G1 a ZGC"
+    },
+    {
+      "prompt": "Bez terminala: wyjasnij roznice miedzy faza WSPOLBIEZNA (concurrent - dzieje sie rownolegle z aplikacja) a faza STOP-THE-WORLD w kontekscie GC - podaj min. 1 przyklad kazdej z nich z tej lekcji lub wczesniejszych lekcji rozdzialu.",
+      "hint": "Concurrent = aplikacja dziala rownolegle (np. concurrent marking G1); STW = aplikacja zatrzymana (np. Pause Young).",
+      "solution": "// Faza WSPOLBIEZNA (concurrent) to taka, w ktorej GC wykonuje swoja prace ROWNOLEGLE z\n// watkami aplikacji - aplikacja NIE JEST zatrzymana, moze kontynuowac dzialanie (choc\n// czesto z pewnym narzutem, np. bariery). Przyklad z Lesson10: 'concurrent marking' w G1 -\n// identyfikacja smiecia w starych regionach dzieje sie w tle, bez pauzy. Faza\n// STOP-THE-WORLD (STW) to taka, w ktorej WSZYSTKIE watki aplikacji SA zatrzymane, zeby GC\n// mogl bezpiecznie wykonac prace wymagajaca spojnego stanu sterty. Przyklad z Lesson09:\n// 'Pause Young' w Serial/Parallel/G1 - mlode obiekty sa sprzatane podczas pelnej pauzy."
+    },
+    {
+      "prompt": "Napisz metode `static String[] buildJvmCommand(String javaExe, String gcFlag, String mainClass, String classpath)`, ktora sklada tablice argumentow do ProcessBuilder (javaExe, gcFlag, \"-Xlog:gc\", \"-cp\", classpath, mainClass) - wypisz wynik dla przykladowych danych.",
+      "hint": "return new String[]{javaExe, gcFlag, \"-Xlog:gc\", \"-cp\", classpath, mainClass};",
+      "solution": "static String[] buildJvmCommand(String javaExe, String gcFlag, String mainClass, String classpath) {\n    return new String[]{javaExe, gcFlag, \"-Xlog:gc\", \"-cp\", classpath, mainClass};\n}\n\nString[] cmd = buildJvmCommand(\"java\", \"-XX:+UseG1GC\", \"AllocatorDemo\", \"/tmp/classes\");\nSystem.out.println(String.join(\" \", cmd));"
+    },
+    {
+      "prompt": "Uruchom \"java -XX:+UseG1GC -version\", \"java -XX:+UseZGC -version\" i \"java -XX:+UseShenandoahGC -version\" - wypisz w tabeli (System.out.printf) nazwe kolektora i kod wyjscia kazdego.",
+      "hint": "3x proces \"-version\", printf(\"%-15s | %d%n\", nazwa, kodWyjscia)",
+      "solution": "System.out.printf(\"%-15s | %s%n\", \"Kolektor\", \"Kod wyjscia\");\nfor (var entry : Map.of(\"G1\", \"-XX:+UseG1GC\", \"ZGC\", \"-XX:+UseZGC\", \"Shenandoah\", \"-XX:+UseShenandoahGC\").entrySet()) {\n    ProcessBuilder pb = new ProcessBuilder(javaExe.toString(), entry.getValue(), \"-version\");\n    pb.redirectErrorStream(true);\n    Process p = pb.start();\n    p.getInputStream().readAllBytes();\n    boolean finished = p.waitFor(10, TimeUnit.SECONDS);\n    System.out.printf(\"%-15s | %d%n\", entry.getKey(), finished ? p.exitValue() : -1);\n}"
+    },
+    {
+      "prompt": "Bez terminala: wyjasnij (min. 3 zdania), dlaczego technika colored pointers wymaga odpowiednio duzej, zarezerwowanej przestrzeni adresowej (64-bitowej) i dlaczego nie dzialalaby na systemach 32-bitowych.",
+      "hint": "Kilka bitow wskaznika 'poswiecone' na metadane oznacza mniej bitow na sam adres - 32-bitowa przestrzen jest za mala, zeby to udzwignac.",
+      "solution": "// Colored pointers wykorzystuja NIEUZYWANE bity w 64-bitowym wskazniku do zakodowania\n// dodatkowych metadanych (np. czy obiekt zostal przeniesiony) - to jest MOZLIWE tylko\n// dlatego, ze 64-bitowa przestrzen adresowa jest OGROMNA (2^64 bajtow teoretycznie), a\n// realne aplikacje wykorzystuja tylko UlAMEK tej przestrzeni, wiec kilka 'wolnych' bitow\n// mozna 'poswiecic' na metadane bez utraty mozliwosci adresowania calej realnej pamieci.\n// Na systemie 32-bitowym przestrzen adresowa jest znacznie MNIEJSZA (maks. 4GB) - kazdy\n// bit adresu jest juz POTRZEBNY do zaadresowania dostepnej pamieci, wiec nie ma\n// 'zapasowych' bitow do wykorzystania na kolorowanie - dlatego ZGC dziala TYLKO na\n// architekturach 64-bitowych."
+    },
+    {
+      "prompt": "Napisz metode uruchamiajaca proces z process.waitFor(2, TimeUnit.SECONDS) na programie, ktory celowo dziala dluzej niz 2 sekundy (np. prosty program z Thread.sleep(5000)) - pokaz, ze kod wykrywa timeout i wywoluje destroyForcibly().",
+      "hint": "Skompiluj i uruchom program z Thread.sleep(5000), sprawdz waitFor(2, SECONDS) zwraca false.",
+      "solution": "String slowSource = \"public class SlowApp { public static void main(String[] a) throws Exception { Thread.sleep(5000); } }\";\n// skompiluj do klasy SlowApp, uruchom:\nProcessBuilder pb = new ProcessBuilder(javaExe.toString(), \"-cp\", classesDir.toString(), \"SlowApp\");\nProcess p = pb.start();\nboolean finished = p.waitFor(2, TimeUnit.SECONDS);\nif (!finished) {\n    p.destroyForcibly();\n    System.out.println(\"Timeout wykryty - proces zabity (destroyForcibly)\");\n} else {\n    System.out.println(\"Proces zakonczyl sie przed uplywem limitu\");\n}"
+    },
+    {
+      "prompt": "Bez terminala: zbuduj w komentarzu tabele decyzyjna (kolumny: \"Wymaganie aplikacji\" / \"Zalecany kolektor\") z min. 4 wierszami, uzywajac G1, ZGC, Shenandoah, Parallel jako opcje.",
+      "hint": "4 wiersze: typowa aplikacja webowa -> G1; batch/ETL -> Parallel; twarde SLA <1ms -> ZGC; podobnie do ZGC na Red Hat -> Shenandoah.",
+      "solution": "// Wymaganie aplikacji                              | Zalecany kolektor\n// -------------------------------------------------|-------------------\n// Typowa aplikacja webowa/biznesowa (bez ekstremow) | G1 (domyslny, dobry kompromis)\n// Nocny job ETL/batch processing, brak uzytkownikow | Parallel (max throughput)\n// System transakcyjny z SLA opoznien < 1ms           | ZGC (submilisekundowe pauzy)\n// Srodowisko Red Hat/OpenShift z podobnymi wymogami | Shenandoah (jesli dostepny w buildzie)"
+    },
+    {
+      "prompt": "Napisz klase GcCollectorProbe z metoda `boolean isAvailable(String collectorFlag)`, ktora uruchamia \"java <collectorFlag> -version\" z limitem czasu i zwraca true/false na podstawie kodu wyjscia i tresci wyjscia (analogicznie do looksLikeUnsupportedOption z teorii) - przetestuj dla -XX:+UseG1GC, -XX:+UseZGC, -XX:+UseShenandoahGC.",
+      "hint": "Klasa opakowujaca ProcessBuilder + logike looksLikeUnsupportedOption z teorii.",
+      "solution": "class GcCollectorProbe {\n    boolean isAvailable(String collectorFlag) throws IOException, InterruptedException {\n        Path javaExe = Path.of(System.getProperty(\"java.home\"), \"bin\", \"java\");\n        ProcessBuilder pb = new ProcessBuilder(javaExe.toString(), collectorFlag, \"-version\");\n        pb.redirectErrorStream(true);\n        Process p = pb.start();\n        String output = new String(p.getInputStream().readAllBytes());\n        boolean finished = p.waitFor(10, TimeUnit.SECONDS);\n        if (!finished) { p.destroyForcibly(); return false; }\n        if (p.exitValue() == 0) return true;\n        String lower = output.toLowerCase();\n        return !(lower.contains(\"unrecognized vm option\") || lower.contains(\"is unsupported\"));\n    }\n}\n\nGcCollectorProbe probe = new GcCollectorProbe();\nSystem.out.println(\"G1: \" + probe.isAvailable(\"-XX:+UseG1GC\"));\nSystem.out.println(\"ZGC: \" + probe.isAvailable(\"-XX:+UseZGC\"));\nSystem.out.println(\"Shenandoah: \" + probe.isAvailable(\"-XX:+UseShenandoahGC\"));"
+    },
+    {
+      "prompt": "Uzywajac klasy z Zadania 21, sprawdz WSZYSTKIE 4 kolektory (Serial -XX:+UseSerialGC, Parallel -XX:+UseParallelGC, G1 -XX:+UseG1GC, ZGC -XX:+UseZGC) i wypisz liste dostepnych na tej maszynie.",
+      "hint": "Petla po 4 flagach, isAvailable() dla kazdej.",
+      "solution": "GcCollectorProbe probe = new GcCollectorProbe();\nMap<String, String> collectors = Map.of(\"Serial\", \"-XX:+UseSerialGC\", \"Parallel\", \"-XX:+UseParallelGC\", \"G1\", \"-XX:+UseG1GC\", \"ZGC\", \"-XX:+UseZGC\");\nfor (var entry : collectors.entrySet()) {\n    System.out.println(entry.getKey() + \": \" + (probe.isAvailable(entry.getValue()) ? \"dostepny\" : \"NIEdostepny\"));\n}"
+    },
+    {
+      "prompt": "Napisz wiekszy program alokacyjny (np. 200 rund x 20 000 obiektow po 512 B) i zmierz calkowity czas jego wykonania z G1 oraz z ZGC (jesli dostepny) - w komentarzu skomentuj, ktory byl szybszy i czy to sie zgadza z oczekiwaniami z teorii (przepustowosc vs pauzy).",
+      "hint": "Wieksze bounded obciazenie, ten sam wzorzec pomiaru czasu co Zadanie 12.",
+      "solution": "String bigSource = \"\"\"\n    public class BigChurn {\n        public static void main(String[] args) {\n            for (int round = 0; round < 200; round++) {\n                byte[][] garbage = new byte[20_000][];\n                for (int i = 0; i < garbage.length; i++) { garbage[i] = new byte[512]; }\n            }\n            System.out.println(\"gotowe\");\n        }\n    }\n    \"\"\";\n// skompiluj, zmierz czas wykonania z G1 i (jesli dostepny) ZGC\n// Oczekiwanie z teorii: G1 (throughput-oriented wzgledem ZGC) powinien byc SZYBSZY dla\n// tego typu obciazenia przy MALEJ stercie, bo ZGC placi narzut barier przy kazdym dostepie\n// do referencji - roznica moze byc niewielka/niezauwazalna dla tak malego programu."
+    },
+    {
+      "prompt": "Z realnego logu -Xlog:gc (G1) wyciagnij (np. wyrazeniem regularnym) wystapienia czasow pauz (fragmenty w formacie \"0.123ms\" lub podobnym) i wypisz je jako liste - jesli format sie rozni w Twojej wersji JDK, opisz w komentarzu, jak wyglada naprawde.",
+      "hint": "Pattern.compile(\"(\\\\d+\\\\.\\\\d+)ms\") na calym outpucie.",
+      "solution": "Pattern p = Pattern.compile(\"(\\\\d+\\\\.\\\\d+)ms\");\nMatcher m = p.matcher(g1Output);\nList<String> pauses = new ArrayList<>();\nwhile (m.find()) pauses.add(m.group(1) + \"ms\");\nSystem.out.println(\"Znalezione czasy: \" + pauses);\n// jesli format w Twojej wersji JDK jest inny (np. bez jednostki 'ms' wprost przy liczbie),\n// zanotuj tu rzeczywisty przyklad linii logu i dostosuj wyrazenie regularne."
+    },
+    {
+      "prompt": "Bez terminala: zaprojektuj (opisz krok po kroku w komentarzu, min. 5 punktow) rzetelny eksperyment porownujacy REALNE pauzy (nie tylko throughput) miedzy G1 a ZGC dla konkretnej aplikacji - co nalezaloby zmierzyc, jak duzy powinien byc heap, jak dlugo powinien trwac test.",
+      "hint": "5 punktow: dlugo trwajaca aplikacja, realistyczny heap, pomiar p99/p999 pauz, wielokrotne powtorzenia, kontrolowane srodowisko.",
+      "solution": "// 1. Uzyj REALNEJ, dlugo dzialajacej aplikacji (nie kilkusekundowego demo) - np. serwis\n//    dzialajacy min. 30-60 minut pod stalym obciazeniem, zeby uchwycic wszystkie fazy GC.\n// 2. Ustaw heap ZBLIZONY do produkcyjnego (np. kilka-kilkanascie GB), bo pauzy G1 rosna\n//    z rozmiarem sterty - test na malym heapie nie pokaze realnej roznicy.\n// 3. Mierz PERCENTYLE pauz (p50, p99, p999), nie tylko srednia - srednia MASKUJE rzadkie,\n//    ale dlugie pauzy, ktore wlasnie interesuja aplikacje z twardym SLA.\n// 4. Uzyj -Xlog:gc+heap=info + narzedzi typu JFR (Lesson18) do precyzyjnego zbierania\n//    danych, nie tylko parsowania tekstowego logu.\n// 5. Powtorz eksperyment WIELOKROTNIE (min. 5-10 przebiegow) na TYM SAMYM, kontrolowanym\n//    srodowisku (ta sama maszyna, brak innych obciazen w tle), zeby wyeliminowac szum\n//    pomiarowy i uzyskac wiarygodne, powtarzalne wyniki dla obu kolektorow."
+    },
+    {
+      "prompt": "Sprobuj uruchomic JVM z kombinacja flag, ktora moze byc niespojna na niektorych buildach (np. -XX:+UseZGC razem z -XX:+UseStringDeduplication, ktora jest specyficzna dla G1) - przechwyc i wypisz przyjazny komunikat, jesli JVM odmowi startu.",
+      "hint": "ProcessBuilder z obiema flagami naraz, sprawdz exitValue() i output.",
+      "solution": "ProcessBuilder pb = new ProcessBuilder(javaExe.toString(), \"-XX:+UseZGC\", \"-XX:+UseStringDeduplication\", \"-version\");\npb.redirectErrorStream(true);\nProcess p = pb.start();\nString output = new String(p.getInputStream().readAllBytes());\nboolean finished = p.waitFor(10, TimeUnit.SECONDS);\nif (finished && p.exitValue() != 0) {\n    System.out.println(\"Kombinacja flag odrzucona przez JVM: \" + output.lines().findFirst().orElse(\"\"));\n} else if (finished) {\n    System.out.println(\"JVM zaakceptowala te kombinacje flag (kod wyjscia 0)\");\n}"
+    },
+    {
+      "prompt": "Napisz metode `runWithFallback(String... preferredFlags)`, ktora probuje uruchomic AllocatorDemo z pierwsza flaga (np. ZGC), a jesli niedostepna, automatycznie probuje NASTEPNA (np. Shenandoah), a jesli i ta niedostepna - koncowy fallback: G1 (bez dodatkowej flagi). Wypisz, ktory kolektor ostatecznie zostal uzyty.",
+      "hint": "Petla po preferredFlags, uzywajac GcCollectorProbe.isAvailable(), z fallbackiem na null (brak flagi = domyslny G1).",
+      "solution": "static String runWithFallback(GcCollectorProbe probe, String... preferredFlags) throws Exception {\n    for (String flag : preferredFlags) {\n        if (probe.isAvailable(flag)) {\n            System.out.println(\"Uzyto: \" + flag);\n            return flag;\n        }\n    }\n    System.out.println(\"Zaden z preferowanych kolektorow niedostepny - fallback na domyslny G1\");\n    return null;\n}\n\nGcCollectorProbe probe = new GcCollectorProbe();\nrunWithFallback(probe, \"-XX:+UseZGC\", \"-XX:+UseShenandoahGC\");"
+    },
+    {
+      "prompt": "Zmierz czas samego startu JVM (np. \"java <flaga> -version\") dla kazdego dostepnego kolektora (uzyj wynikow z Zadania 22) - wypisz posortowana (od najszybszego) liste czasow startu.",
+      "hint": "Podobny wzorzec co Zadanie 17, z pomiarem System.nanoTime(), posortowana lista.",
+      "solution": "Map<String, String> collectors = Map.of(\"Serial\", \"-XX:+UseSerialGC\", \"Parallel\", \"-XX:+UseParallelGC\", \"G1\", \"-XX:+UseG1GC\");\nList<Map.Entry<String, Long>> times = new ArrayList<>();\nfor (var entry : collectors.entrySet()) {\n    long start = System.nanoTime();\n    ProcessBuilder pb = new ProcessBuilder(javaExe.toString(), entry.getValue(), \"-version\");\n    pb.redirectErrorStream(true);\n    Process p = pb.start();\n    p.getInputStream().readAllBytes();\n    p.waitFor(10, TimeUnit.SECONDS);\n    long ms = (System.nanoTime() - start) / 1_000_000;\n    times.add(Map.entry(entry.getKey(), ms));\n}\ntimes.sort(Map.Entry.comparingByValue());\ntimes.forEach(e -> System.out.println(e.getKey() + \": \" + e.getValue() + \"ms\"));"
+    },
+    {
+      "prompt": "Na podstawie wynikow Zadania 22, napisz w komentarzu krotki \"raport\" (min. 5 zdan) opisujacy, ktory kolektor(y) sa dostepne na TWOJEJ konkretnej maszynie/wersji JDK, a ktorych brakuje, i co to oznacza dla wyboru kolektora w realnym projekcie.",
+      "hint": "Zaleznie od faktycznego wyniku Zadania 22 - na maszynie z tego kursu (OpenJDK 25.0.2) Shenandoah jest niedostepny, reszta (Serial/Parallel/G1/ZGC) dostepna.",
+      "solution": "// Raport (przykladowy, na podstawie OpenJDK 25.0.2 uzywanego w tym kursie): Serial,\n// Parallel, G1 i ZGC sa DOSTEPNE w tym buildzie JDK - wszystkie 4 uruchamiaja sie\n// poprawnie z odpowiednia flaga. Shenandoah NATOMIAST jest NIEDOSTEPNY - JVM zglasza\n// blad 'Unrecognized VM option' dla -XX:+UseShenandoahGC, co oznacza, ze ten konkretny\n// build OpenJDK nie zostal skompilowany z obsluga Shenandoah (to typowe dla wielu\n// standardowych dystrybucji - Shenandoah bywa czesciej wbudowany w buildy Red\n// Hat/OpenJDK dedykowane RHEL). Dla REALNEGO projektu oznacza to, ze przed zalozeniem\n// uzycia konkretnego kolektora na produkcji, NALEZY zweryfikowac jego dostepnosc na\n// docelowej platformie/dystrybucji JDK, zamiast polegac wylacznie na dokumentacji ogolnej."
+    },
+    {
+      "prompt": "FINALNE zadanie lekcji: zbuduj kompletne narzedzie CollectorBenchmarkHarness, ktore dla listy kolektorow (Serial, Parallel, G1, ZGC, Shenandoah - o ile dostepne) uruchamia ten sam program alokacyjny, mierzy calkowity czas wykonania i liczbe linii logu GC, a na koniec wypisuje czytelna tabele porownawcza (kolektor / dostepny? / czas / liczba zdarzen GC). Kazdy uruchomiony proces MUSI miec limit czasu (waitFor + timeout).",
+      "hint": "Kapszton lekcji - polacz GcCollectorProbe (Zadanie 21) z pomiarem czasu (Zadanie 12) i liczba linii GC (Zadanie 3/11).",
+      "solution": "record BenchmarkResult(String name, boolean available, long timeMs, long gcLines) { }\n\nMap<String, String> collectors = new LinkedHashMap<>();\ncollectors.put(\"Serial\", \"-XX:+UseSerialGC\");\ncollectors.put(\"Parallel\", \"-XX:+UseParallelGC\");\ncollectors.put(\"G1\", \"-XX:+UseG1GC\");\ncollectors.put(\"ZGC\", \"-XX:+UseZGC\");\ncollectors.put(\"Shenandoah\", \"-XX:+UseShenandoahGC\");\n\nList<BenchmarkResult> results = new ArrayList<>();\nfor (var entry : collectors.entrySet()) {\n    long start = System.nanoTime();\n    ProcessBuilder pb = new ProcessBuilder(javaExe.toString(), entry.getValue(), \"-Xlog:gc\", \"-cp\", classesDir.toString(), \"AllocatorDemo\");\n    pb.redirectErrorStream(true);\n    Process p = pb.start();\n    String output = new String(p.getInputStream().readAllBytes());\n    boolean finished = p.waitFor(10, TimeUnit.SECONDS);\n    if (!finished) p.destroyForcibly();\n    long ms = (System.nanoTime() - start) / 1_000_000;\n    boolean available = finished && p.exitValue() == 0;\n    long gcLines = output.lines().filter(l -> l.contains(\"GC\") || l.contains(\"Pause\")).count();\n    results.add(new BenchmarkResult(entry.getKey(), available, ms, gcLines));\n}\n\nSystem.out.printf(\"%-12s | %-10s | %-8s | %s%n\", \"Kolektor\", \"Dostepny\", \"Czas(ms)\", \"Linie GC\");\nfor (BenchmarkResult r : results) {\n    System.out.printf(\"%-12s | %-10s | %-8d | %d%n\", r.name(), r.available(), r.timeMs(), r.gcLines());\n}"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki jest glowny cel ZGC i Shenandoah?",
+      "options": {
+        "A": "Pauzy submilisekundowe, niezaleznie od rozmiaru sterty",
+        "B": "Najwyzszy mozliwy throughput",
+        "C": "Najmniejszy footprint pamieciowy",
+        "D": "Kompatybilnosc ze starymi wersjami JVM"
+      },
+      "correct": "A",
+      "explanation": "Oba kolektory celuja w pauzy ponizej 1 milisekundy, niezaleznie od tego, czy sterta ma 1GB czy 1TB."
+    },
+    {
+      "question": "Jaka flaga JVM wlacza ZGC?",
+      "options": {
+        "A": "-XX:+UseZGC",
+        "B": "-XX:+UseG1GC",
+        "C": "-XX:+UseParallelGC",
+        "D": "-XX:+UseSerialGC"
+      },
+      "correct": "A",
+      "explanation": "-XX:+UseZGC to flaga wlaczajaca Z Garbage Collector."
+    },
+    {
+      "question": "Jaka flaga JVM wlacza Shenandoah?",
+      "options": {
+        "A": "-XX:+UseShenandoahGC",
+        "B": "-XX:+UseZGC",
+        "C": "-XX:+UseG1GC",
+        "D": "-XX:+UseLowLatencyGC"
+      },
+      "correct": "A",
+      "explanation": "-XX:+UseShenandoahGC to flaga wlaczajaca kolektor Shenandoah."
+    },
+    {
+      "question": "Czym sa \"colored pointers\" w ZGC?",
+      "options": {
+        "A": "Wykorzystanie nieuzywanych bitow 64-bitowego wskaznika do zakodowania metadanych o stanie obiektu",
+        "B": "Kolorowe oznaczenia w logu GC dla lepszej czytelnosci",
+        "C": "System kolorowania kodu zrodlowego w IDE",
+        "D": "Mechanizm oznaczania pamieci wg koloru procesora"
+      },
+      "correct": "A",
+      "explanation": "Colored pointers koduja informacje (np. czy obiekt zostal przeniesiony) wprost w bitach samego wskaznika."
+    },
+    {
+      "question": "Do czego sluzy \"load barrier\" w ZGC?",
+      "options": {
+        "A": "Sprawdza kolor wskaznika przy kazdym odczycie referencji i 'naprawia' ja w locie jesli obiekt zostal przeniesiony",
+        "B": "Ogranicza maksymalna liczbe watkow aplikacji",
+        "C": "Blokuje zapis do plikow podczas GC",
+        "D": "Kontroluje limit czasu pauzy GC"
+      },
+      "correct": "A",
+      "explanation": "Load barrier to fragment kodu wstawiany przez JIT przy kazdym odczycie referencji, umozliwiajacy samo-naprawiajace sie odczyty (self-healing)."
+    },
+    {
+      "question": "Czym jest \"Brooks pointer\" (forwarding pointer) w Shenandoah?",
+      "options": {
+        "A": "Dodatkowe slowo pamieci przy kazdym obiekcie, wskazujace na jego aktualna kopie",
+        "B": "Nazwa algorytmu kompresji sterty",
+        "C": "Wskaznik do nastepnego watku w kolejce GC",
+        "D": "Licznik cykli GC"
+      },
+      "correct": "A",
+      "explanation": "Brooks pointer to dodatkowe pole przy obiekcie, przez ktore przechodzi kazdy odczyt, umozliwiajac przenoszenie obiektow bez pauzy."
+    },
+    {
+      "question": "Jak Shenandoah koduje informacje o przeniesieniu obiektu, w odroznieniu od ZGC?",
+      "options": {
+        "A": "Jako osobne, dodatkowe pole (slowo) przy obiekcie, a nie w bitach wskaznika",
+        "B": "Identycznie jak ZGC - w bitach wskaznika",
+        "C": "W osobnym pliku na dysku",
+        "D": "Nie koduje takiej informacji wcale"
+      },
+      "correct": "A",
+      "explanation": "Shenandoah trzyma informacje jako dodatkowe slowo PRZY obiekcie (Brooks pointer), podczas gdy ZGC koduje ja W SAMYM wskazniku (colored pointers)."
+    },
+    {
+      "question": "Dlaczego Shenandoah moze byc niedostepny na niektorych buildach JDK?",
+      "options": {
+        "A": "Nie kazda dystrybucja JDK wbudowuje ten kolektor domyslnie (np. bywa wylaczony w Oracle JDK)",
+        "B": "Shenandoah zostal wycofany z Javy",
+        "C": "Shenandoah dziala tylko na systemach Windows",
+        "D": "Shenandoah wymaga oddzielnej licencji komercyjnej"
+      },
+      "correct": "A",
+      "explanation": "Dostepnosc kolektora zalezy od konkretnego buildu JDK - nie kazda dystrybucja wbudowuje kazdy kolektor."
+    },
+    {
+      "question": "Jaki jest jeden z kosztow (tradeoffow) uzycia ZGC/Shenandoah wzgledem G1?",
+      "options": {
+        "A": "Bariery wykonywane przy kazdym dostepie do referencji, obnizajace throughput",
+        "B": "Brak wsparcia dla wielowatkowosci aplikacji",
+        "C": "Koniecznosc wylaczenia JIT compilera",
+        "D": "Niemoznosc dzialania na duzych stertach"
+      },
+      "correct": "A",
+      "explanation": "Load barriers/Brooks pointer dodaja narzut na kazdy dostep do referencji, co obniza surowy throughput w porownaniu do G1."
+    },
+    {
+      "question": "Dlaczego colored pointers wymagaja architektury 64-bitowej?",
+      "options": {
+        "A": "Potrzebne sa 'wolne' bity adresu na zakodowanie metadanych, ktorych brakuje w 32-bitowej przestrzeni",
+        "B": "64-bitowa architektura jest szybsza obliczeniowo",
+        "C": "To wymog licencyjny Oracle",
+        "D": "32-bitowe systemy nie obslugują wskaznikow"
+      },
+      "correct": "A",
+      "explanation": "64-bitowa przestrzen adresowa jest ogromna wzgledem realnych potrzeb, wiec kilka bitow mozna 'poswiecic' na metadane - na 32-bitowej przestrzeni kazdy bit jest juz potrzebny do adresowania."
+    },
+    {
+      "question": "Jak nalezy zareagowac, gdy child JVM zglasza \"Unrecognized VM option\" dla flagi kolektora GC?",
+      "options": {
+        "A": "Potraktowac to jako oczekiwany, przyjazny fallback - kolektor jest niedostepny w tym buildzie",
+        "B": "Zawsze traktowac to jako awarie calego demo/aplikacji",
+        "C": "Zrestartowac cala maszyne",
+        "D": "Zignorowac i zalozyc, ze kolektor jednak dziala"
+      },
+      "correct": "A",
+      "explanation": "To realna wlasciwosc konkretnego buildu JDK, nie awaria - kod powinien obsluzyc ten scenariusz jako przyjazny fallback z czytelnym komunikatem."
+    },
+    {
+      "question": "W jakim scenariuszu G1 (domyslny kolektor) pozostaje lepszym wyborem niz ZGC/Shenandoah?",
+      "options": {
+        "A": "Wiekszosc typowych aplikacji bez ekstremalnych wymagan na pauzy - lepszy balans throughput/latency",
+        "B": "System transakcyjny z SLA opoznien ponizej 1ms",
+        "C": "Aplikacja ze sterta rzedu kilku terabajtow",
+        "D": "Gra sieciowa wymagajaca pauzy poniedziecej ms"
+      },
+      "correct": "A",
+      "explanation": "Dla wiekszosci aplikacji bez ekstremalnych wymagan G1 oferuje lepszy ogolny kompromis niz ZGC/Shenandoah, ktore placa kosztem throughput za bardzo niskie pauzy."
+    },
+    {
+      "question": "Co robi metoda looksLikeUnsupportedOption() z teorii lekcji?",
+      "options": {
+        "A": "Sprawdza kod wyjscia i tresc outputu procesu, by wykryc, czy flaga kolektora jest niewspierana w danym buildzie JDK",
+        "B": "Uruchamia proces z podana flaga kolektora",
+        "C": "Kompiluje kod zrodlowy Javy",
+        "D": "Mierzy czas wykonania procesu"
+      },
+      "correct": "A",
+      "explanation": "Ta metoda analizuje kod wyjscia i frazy w outpucie (np. 'Unrecognized VM option') zeby odroznic realny blad demo od oczekiwanego braku wsparcia dla danej flagi."
+    },
+    {
+      "question": "Co najlepiej opisuje \"ZGC (Z Garbage Collector)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "D": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"ZGC (Z Garbage Collector)\": kolektor niskich pauz uzywajacy colored pointers i load barriers"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Shenandoah GC\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Shenandoah GC\": kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+    },
+    {
+      "question": "Co najlepiej opisuje \"colored pointers\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "B": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "C": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "D": "flaga wlaczajaca ZGC przy starcie JVM"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"colored pointers\": technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+    },
+    {
+      "question": "Co najlepiej opisuje \"load barrier\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"load barrier\": kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Brooks pointer (forwarding pointer)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Brooks pointer (forwarding pointer)\": dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+    },
+    {
+      "question": "Co najlepiej opisuje \"-XX:+UseZGC (flaga JVM)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\": flaga wlaczajaca ZGC przy starcie JVM"
+    },
+    {
+      "question": "Co najlepiej opisuje \"-XX:+UseShenandoahGC (flaga JVM)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "B": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\": flaga wlaczajaca Shenandoah GC przy starcie JVM"
+    },
+    {
+      "question": "Co najlepiej opisuje \"dostepnosc kolektora zalezna od buildu JDK\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\": fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+    },
+    {
+      "question": "Co najlepiej opisuje \"koszt barier na dostepie do referencji\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"koszt barier na dostepie do referencji\": narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+    },
+    {
+      "question": "Co najlepiej opisuje \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\": glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+    },
+    {
+      "question": "Co najlepiej opisuje \"G1 jako domyslny kompromis\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "B": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "wymog architektoniczny dla dzialania colored pointers w ZGC"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"G1 jako domyslny kompromis\": sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+    },
+    {
+      "question": "Co najlepiej opisuje \"p99/p999 latency\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"p99/p999 latency\": percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+    },
+    {
+      "question": "Co najlepiej opisuje \"przyjazny fallback przy braku kolektora\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "kolektor niskich pauz uzywajacy colored pointers i load barriers"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"przyjazny fallback przy braku kolektora\": wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+    },
+    {
+      "question": "Co najlepiej opisuje \"64-bitowa przestrzen adresowa\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "D": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"64-bitowa przestrzen adresowa\": wymog architektoniczny dla dzialania colored pointers w ZGC"
+    },
+    {
+      "question": "Co najlepiej opisuje \"ProcessBuilder z limitem czasu\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"ProcessBuilder z limitem czasu\": wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"ZGC (Z Garbage Collector)\"?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "kolektor niskich pauz uzywajacy colored pointers i load barriers"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"ZGC (Z Garbage Collector)\": kolektor niskich pauz uzywajacy colored pointers i load barriers"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Shenandoah GC\"?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Shenandoah GC\": kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"colored pointers\"?",
+      "options": {
+        "A": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "D": "flaga wlaczajaca ZGC przy starcie JVM"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"colored pointers\": technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"load barrier\"?",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "flaga wlaczajaca Shenandoah GC przy starcie JVM"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"load barrier\": kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"Brooks pointer (forwarding pointer)\"?",
+      "options": {
+        "A": "flaga wlaczajaca ZGC przy starcie JVM",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Brooks pointer (forwarding pointer)\": dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"-XX:+UseZGC (flaga JVM)\"?",
+      "options": {
+        "A": "flaga wlaczajaca ZGC przy starcie JVM",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\": flaga wlaczajaca ZGC przy starcie JVM"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"-XX:+UseShenandoahGC (flaga JVM)\"?",
+      "options": {
+        "A": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "D": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\": flaga wlaczajaca Shenandoah GC przy starcie JVM"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"dostepnosc kolektora zalezna od buildu JDK\"?",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\": fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"koszt barier na dostepie do referencji\"?",
+      "options": {
+        "A": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"koszt barier na dostepie do referencji\": narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\"?",
+      "options": {
+        "A": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\": glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"G1 jako domyslny kompromis\"?",
+      "options": {
+        "A": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "D": "wymog architektoniczny dla dzialania colored pointers w ZGC"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"G1 jako domyslny kompromis\": sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"p99/p999 latency\"?",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"p99/p999 latency\": percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"przyjazny fallback przy braku kolektora\"?",
+      "options": {
+        "A": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "B": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "C": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "D": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"przyjazny fallback przy braku kolektora\": wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"64-bitowa przestrzen adresowa\"?",
+      "options": {
+        "A": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "B": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "C": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "D": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"64-bitowa przestrzen adresowa\": wymog architektoniczny dla dzialania colored pointers w ZGC"
+    },
+    {
+      "question": "Ktore stwierdzenie poprawnie charakteryzuje \"ProcessBuilder z limitem czasu\"?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "B": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "C": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "D": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"ProcessBuilder z limitem czasu\": wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"ZGC (Z Garbage Collector)\".",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "D": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"ZGC (Z Garbage Collector)\": kolektor niskich pauz uzywajacy colored pointers i load barriers"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Shenandoah GC\".",
+      "options": {
+        "A": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "B": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "C": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "D": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Shenandoah GC\": kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"colored pointers\".",
+      "options": {
+        "A": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "B": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "C": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "D": "flaga wlaczajaca ZGC przy starcie JVM"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"colored pointers\": technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"load barrier\".",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "C": "flaga wlaczajaca ZGC przy starcie JVM",
+        "D": "flaga wlaczajaca Shenandoah GC przy starcie JVM"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"load barrier\": kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"Brooks pointer (forwarding pointer)\".",
+      "options": {
+        "A": "flaga wlaczajaca ZGC przy starcie JVM",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "D": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Brooks pointer (forwarding pointer)\": dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\".",
+      "options": {
+        "A": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "B": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "C": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "D": "flaga wlaczajaca ZGC przy starcie JVM"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\": flaga wlaczajaca ZGC przy starcie JVM"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\".",
+      "options": {
+        "A": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "B": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "C": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "D": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\": flaga wlaczajaca Shenandoah GC przy starcie JVM"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\".",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "C": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "D": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\": fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"koszt barier na dostepie do referencji\".",
+      "options": {
+        "A": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "D": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"koszt barier na dostepie do referencji\": narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\".",
+      "options": {
+        "A": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "B": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "C": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "D": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\": glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"G1 jako domyslny kompromis\".",
+      "options": {
+        "A": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "B": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "C": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "D": "wymog architektoniczny dla dzialania colored pointers w ZGC"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"G1 jako domyslny kompromis\": sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"p99/p999 latency\".",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "C": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "D": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"p99/p999 latency\": percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"przyjazny fallback przy braku kolektora\".",
+      "options": {
+        "A": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "B": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "C": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "D": "kolektor niskich pauz uzywajacy colored pointers i load barriers"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"przyjazny fallback przy braku kolektora\": wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"64-bitowa przestrzen adresowa\".",
+      "options": {
+        "A": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "B": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "C": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "D": "wymog architektoniczny dla dzialania colored pointers w ZGC"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"64-bitowa przestrzen adresowa\": wymog architektoniczny dla dzialania colored pointers w ZGC"
+    },
+    {
+      "question": "Wybierz poprawny opis pojecia \"ProcessBuilder z limitem czasu\".",
+      "options": {
+        "A": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "B": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "C": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "D": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"ProcessBuilder z limitem czasu\": wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+    },
+    {
+      "question": "\"ZGC (Z Garbage Collector)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "B": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "C": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "D": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"ZGC (Z Garbage Collector)\": kolektor niskich pauz uzywajacy colored pointers i load barriers"
+    },
+    {
+      "question": "\"Shenandoah GC\" w tej lekcji oznacza:",
+      "options": {
+        "A": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "B": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "C": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"Shenandoah GC\": kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+    },
+    {
+      "question": "\"colored pointers\" w tej lekcji oznacza:",
+      "options": {
+        "A": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "B": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "C": "flaga wlaczajaca ZGC przy starcie JVM",
+        "D": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"colored pointers\": technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+    },
+    {
+      "question": "\"load barrier\" w tej lekcji oznacza:",
+      "options": {
+        "A": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "B": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "C": "flaga wlaczajaca ZGC przy starcie JVM",
+        "D": "flaga wlaczajaca Shenandoah GC przy starcie JVM"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"load barrier\": kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+    },
+    {
+      "question": "\"Brooks pointer (forwarding pointer)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "flaga wlaczajaca ZGC przy starcie JVM",
+        "B": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Brooks pointer (forwarding pointer)\": dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+    },
+    {
+      "question": "\"-XX:+UseZGC (flaga JVM)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "B": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "C": "flaga wlaczajaca ZGC przy starcie JVM",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\": flaga wlaczajaca ZGC przy starcie JVM"
+    },
+    {
+      "question": "\"-XX:+UseShenandoahGC (flaga JVM)\" w tej lekcji oznacza:",
+      "options": {
+        "A": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "B": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "C": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "D": "flaga wlaczajaca Shenandoah GC przy starcie JVM"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\": flaga wlaczajaca Shenandoah GC przy starcie JVM"
+    },
+    {
+      "question": "\"dostepnosc kolektora zalezna od buildu JDK\" w tej lekcji oznacza:",
+      "options": {
+        "A": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "B": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "C": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "D": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\": fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+    },
+    {
+      "question": "\"koszt barier na dostepie do referencji\" w tej lekcji oznacza:",
+      "options": {
+        "A": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "B": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"koszt barier na dostepie do referencji\": narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+    },
+    {
+      "question": "\"submilisekundowe pauzy niezaleznie od rozmiaru sterty\" w tej lekcji oznacza:",
+      "options": {
+        "A": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "B": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "C": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "D": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\": glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+    },
+    {
+      "question": "\"G1 jako domyslny kompromis\" w tej lekcji oznacza:",
+      "options": {
+        "A": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "B": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "C": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "D": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"G1 jako domyslny kompromis\": sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+    },
+    {
+      "question": "\"p99/p999 latency\" w tej lekcji oznacza:",
+      "options": {
+        "A": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "B": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "C": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "D": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"p99/p999 latency\": percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+    },
+    {
+      "question": "\"przyjazny fallback przy braku kolektora\" w tej lekcji oznacza:",
+      "options": {
+        "A": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "B": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "kolektor niskich pauz uzywajacy colored pointers i load barriers"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"przyjazny fallback przy braku kolektora\": wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+    },
+    {
+      "question": "\"64-bitowa przestrzen adresowa\" w tej lekcji oznacza:",
+      "options": {
+        "A": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "B": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "C": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "D": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"64-bitowa przestrzen adresowa\": wymog architektoniczny dla dzialania colored pointers w ZGC"
+    },
+    {
+      "question": "\"ProcessBuilder z limitem czasu\" w tej lekcji oznacza:",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "D": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"ProcessBuilder z limitem czasu\": wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"ZGC (Z Garbage Collector)\"?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "D": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"ZGC (Z Garbage Collector)\": kolektor niskich pauz uzywajacy colored pointers i load barriers"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Shenandoah GC\"?",
+      "options": {
+        "A": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"Shenandoah GC\": kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"colored pointers\"?",
+      "options": {
+        "A": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "B": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "C": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "D": "flaga wlaczajaca ZGC przy starcie JVM"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"colored pointers\": technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"load barrier\"?",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"load barrier\": kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"Brooks pointer (forwarding pointer)\"?",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Brooks pointer (forwarding pointer)\": dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"-XX:+UseZGC (flaga JVM)\"?",
+      "options": {
+        "A": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\": flaga wlaczajaca ZGC przy starcie JVM"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"-XX:+UseShenandoahGC (flaga JVM)\"?",
+      "options": {
+        "A": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "B": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "C": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "D": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\": flaga wlaczajaca Shenandoah GC przy starcie JVM"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"dostepnosc kolektora zalezna od buildu JDK\"?",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\": fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"koszt barier na dostepie do referencji\"?",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"koszt barier na dostepie do referencji\": narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\"?",
+      "options": {
+        "A": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\": glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"G1 jako domyslny kompromis\"?",
+      "options": {
+        "A": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "B": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "C": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "D": "wymog architektoniczny dla dzialania colored pointers w ZGC"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"G1 jako domyslny kompromis\": sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"p99/p999 latency\"?",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"p99/p999 latency\": percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"przyjazny fallback przy braku kolektora\"?",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "kolektor niskich pauz uzywajacy colored pointers i load barriers"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"przyjazny fallback przy braku kolektora\": wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"64-bitowa przestrzen adresowa\"?",
+      "options": {
+        "A": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "D": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"64-bitowa przestrzen adresowa\": wymog architektoniczny dla dzialania colored pointers w ZGC"
+    },
+    {
+      "question": "Ktora odpowiedz najtrafniej opisuje \"ProcessBuilder z limitem czasu\"?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy colored pointers i load barriers",
+        "B": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "C": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia",
+        "D": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"ProcessBuilder z limitem czasu\": wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+    },
+    {
+      "question": "Co najlepiej opisuje \"ZGC (Z Garbage Collector)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "kolektor niskich pauz uzywajacy colored pointers i load barriers"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"ZGC (Z Garbage Collector)\": kolektor niskich pauz uzywajacy colored pointers i load barriers"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Shenandoah GC\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"Shenandoah GC\": kolektor niskich pauz uzywajacy Brooks pointers (forwarding pointers)"
+    },
+    {
+      "question": "Co najlepiej opisuje \"colored pointers\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "B": "technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika",
+        "C": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "D": "flaga wlaczajaca ZGC przy starcie JVM"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"colored pointers\": technika ZGC kodujaca metadane o stanie obiektu w bitach wskaznika"
+    },
+    {
+      "question": "Co najlepiej opisuje \"load barrier\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie",
+        "B": "flaga wlaczajaca ZGC przy starcie JVM",
+        "C": "kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie",
+        "D": "flaga wlaczajaca Shenandoah GC przy starcie JVM"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"load barrier\": kod wykonywany przy kazdym odczycie referencji w ZGC, naprawiajacy ja w locie"
+    },
+    {
+      "question": "Co najlepiej opisuje \"Brooks pointer (forwarding pointer)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "flaga wlaczajaca ZGC przy starcie JVM",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"Brooks pointer (forwarding pointer)\": dodatkowe slowo pamieci przy obiekcie w Shenandoah, wskazujace na aktualna kopie"
+    },
+    {
+      "question": "Co najlepiej opisuje \"-XX:+UseZGC (flaga JVM)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "flaga wlaczajaca ZGC przy starcie JVM",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseZGC (flaga JVM)\": flaga wlaczajaca ZGC przy starcie JVM"
+    },
+    {
+      "question": "Co najlepiej opisuje \"-XX:+UseShenandoahGC (flaga JVM)\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "B": "flaga wlaczajaca Shenandoah GC przy starcie JVM",
+        "C": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "D": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"-XX:+UseShenandoahGC (flaga JVM)\": flaga wlaczajaca Shenandoah GC przy starcie JVM"
+    },
+    {
+      "question": "Co najlepiej opisuje \"dostepnosc kolektora zalezna od buildu JDK\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu",
+        "B": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "C": "fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie",
+        "D": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"dostepnosc kolektora zalezna od buildu JDK\": fakt, ze nie kazda dystrybucja JDK wbudowuje kazdy kolektor domyslnie"
+    },
+    {
+      "question": "Co najlepiej opisuje \"koszt barier na dostepie do referencji\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+      },
+      "correct": "D",
+      "explanation": "Poprawny opis pojecia \"koszt barier na dostepie do referencji\": narzut CPU dodawany przez load barrier/Brooks pointer przy kazdym odczycie obiektu"
+    },
+    {
+      "question": "Co najlepiej opisuje \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "glowny cel ZGC i Shenandoah, odrozniajacy je od G1",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK"
+      },
+      "correct": "A",
+      "explanation": "Poprawny opis pojecia \"submilisekundowe pauzy niezaleznie od rozmiaru sterty\": glowny cel ZGC i Shenandoah, odrozniajacy je od G1"
+    },
+    {
+      "question": "Co najlepiej opisuje \"G1 jako domyslny kompromis\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "B": "sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji",
+        "C": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "D": "wymog architektoniczny dla dzialania colored pointers w ZGC"
+      },
+      "correct": "B",
+      "explanation": "Poprawny opis pojecia \"G1 jako domyslny kompromis\": sytuacja, w ktorej G1 pozostaje lepszym wyborem niz ZGC/Shenandoah dla wiekszosci aplikacji"
+    },
+    {
+      "question": "Co najlepiej opisuje \"p99/p999 latency\" (Kolektory niskich pauz - ZGC i Shenandoah)?",
+      "options": {
+        "A": "wzorzec obslugi sytuacji, gdy dana flaga kolektora jest niewspierana w buildzie JDK",
+        "B": "wymog architektoniczny dla dzialania colored pointers w ZGC",
+        "C": "percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz",
+        "D": "wzorzec bezpiecznego uruchamiania child JVM w demo z gwarancja zakonczenia"
+      },
+      "correct": "C",
+      "explanation": "Poprawny opis pojecia \"p99/p999 latency\": percentyle opoznien czesto uzywane jako kryterium wyboru kolektora niskich pauz"
+    }
+  ]
+}
