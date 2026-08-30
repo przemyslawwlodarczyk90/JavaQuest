@@ -2147,4 +2147,40 @@ backend_err.log'` przez `System.Diagnostics.Process`, `".\"` PRZED `mvnw.cmd` je
 nie ma platformowej tresci) PRZED kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ
 pytania o zgode miedzy lekcjami/rozdzialami — po ukonczeniu `_14_advancedjava` (30/30) przejsc
 automatycznie do `_15_jvm_internals` (nowy sufiks scratchpada `m`), zgodnie z ustalonym rytmem.
+
+### ✅ `_14_advancedjava` KOMPLETNY na platformie edukacyjnej (stan na 2026-08-30): 30/30 lekcji
+
+Dokonczono w tej sesji lekcje 26-30 (26_ServiceLoaderAndSpi, 27_ModulesJpmsBasics,
+28_ModulesAdvanced, 29_AdvancedLanguageBestPractices, 30_CapstoneAdvancedJava) — konczac blok
+"Odkrywanie uslug i modularnosc" (26-28) oraz caly blok "Podsumowanie" (29-30). Kazda 7 sekcji
+teorii/30 zadan/100 quizow, ten sam sprawdzony workflow (`genNNl.js`, sufiks `l`,
+`scratchpad/helpers.js`). Zweryfikowane end-to-end po kazdym z 4 restartow backendu w tej sesji
+(finalnie 30/30 `hasContent: true` dla `_14_advancedjava`) + regresja na `_13_libraries/
+01_WhyLibraries` i `_12_hibernate/01_OrmIntroduction` po kazdym restarcie — zero regresji przez
+cala sesje. Sesja przebiegla w pelni autonomicznie (uzytkownik wyszedl z domu, polecil nie pytac
+o zgode miedzy lekcjami/rozdzialami) — 7 lekcji (17-30 z pominieciem juz gotowych) domknieto w
+jednej sesji: 17-18, 19-20, 21-22, 23-24, 25, 26-27, 28, 29-30 (8 restartow backendu, 8 commitow
+tresci + 2 commity aktualizacji planu).
+
+**Następny krok**: `_14_advancedjava` jest KOMPLETNY. Zgodnie z ustalonym rytmem (ta sama zasada
+co przy przejsciu `_13_libraries` -> `_14_advancedjava`), przejsc automatycznie, BEZ pytania o
+zgode, do **`_15_jvm_internals`** (20 lekcji: `01_JdkJreJvmAndSpecification` … `20_JvmTuningAnd
+BestPracticesCapstone`, pelna lista w `ChapterSeedData.java` i w sekcji `_15_jvm_internals` w
+`CLAUDE.md`), zaczynajac od **lekcji 1 (`01_JdkJreJvmAndSpecification`)**. Nowy sufiks scratchpada
+`m` dla tego rozdzialu (kolejna wolna litera po `l` dla `_14_advancedjava`). Ten sam, sprawdzony
+workflow dla WSZYSTKICH lekcji: czytaj `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_15_jvm_internals/LessonNN_Temat/`, napisz `genNNm.js` w
+scratchpadzie (korzysta z `scratchpad/helpers.js` — TRZEBA odtworzyc na poczatku nowej sesji, tresc
+funkcji `q()`/`fillQuizTo100()` opisana w historii tego pliku, latwa do odtworzenia), zweryfikuj
+`node genNNm.js` (theory:7 exercises:30 quiz:100) PRZED skopiowaniem do `src/main/resources/
+content/_15_jvm_internals/NN_Temat.json` (katalog trzeba bedzie utworzyc — jeszcze nie istnieje),
+restart backendu (WZORZEC z tej sesji: `cmd.exe /c '".\mvnw.cmd" spring-boot:run > backend_out.log
+2> backend_err.log'` przez `System.Diagnostics.Process`, `".\"` PRZED `mvnw.cmd` w argumentach jest
+OBOWIAZKOWE — bez tego prefiksu cmd.exe zglasza "not recognized") + pelna weryfikacja (API +
+regresja NA ROZDZIALE Z `_01`-`_14`, teraz wlaczajac swiezo ukonczony `_14_advancedjava`) PRZED
+kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ zatrzymywania sie na potwierdzenia
+miedzy lekcjami ani rozdzialami — po ukonczeniu `_15_jvm_internals` (20/20) przejsc automatycznie
+do `_16_clean_code` (22 lekcje, sufiks scratchpada `n`), i dalej przez WSZYSTKIE pozostale
+rozdzialy az do `_31_spring_cloud_microservices`, zgodnie z pelna, ostateczna lista rozdzialow w
+`ChapterSeedData.java` — to jeszcze 17 rozdzialow, wiele setek lekcji, wiele kolejnych sesji pracy.
 ---
