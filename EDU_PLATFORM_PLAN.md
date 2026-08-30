@@ -2018,14 +2018,15 @@ rozdziałami). Przy starcie tej sesji naprawiono też przypadkowo wniesioną lit
 (prefiks "cla" przed nazwą klasy w `_31_spring_cloud_microservices/Lesson05_SpringCloudConfigClient`,
 niezacommitowana zmiana z poprzedniej sesji) — cofnięta przez `git checkout`.
 
-### `_14_advancedjava` rozpoczęty na platformie (stan na 2026-08-30): lekcje 1-14/30 UKOŃCZONE
+### `_14_advancedjava` rozpoczęty na platformie (stan na 2026-08-30): lekcje 1-16/30 UKOŃCZONE
 
-Dokończono w tej sesji lekcje 3-14 (03_BoundedTypes, 04_WildcardsExtendsSuper, 05_VarianceAndPecs,
+Dokończono w tej sesji lekcje 3-16 (03_BoundedTypes, 04_WildcardsExtendsSuper, 05_VarianceAndPecs,
 06_TypeErasure, 07_GenericsBestPracticesAndPitfalls, 08_FunctionalInterfaces, 09_LambdaExpressions,
 10_MethodReferences, 11_BuiltInFunctionalInterfaces, 12_Annotations, 13_CustomAnnotations,
-14_AnnotationRetentionAndProcessing) — **cały blok Generykow (lekcje 1-7), caly blok
-Programowania funkcyjnego (lekcje 8-11) I caly blok Adnotacji (lekcje 12-14) sa teraz KOMPLETNE
-na platformie**. Każda 7 sekcji teorii/30 zadań/100 quizów, ten sam sprawdzony workflow
+14_AnnotationRetentionAndProcessing, 15_ReflectionBasics, 16_ReflectionUseCasesAndRisks) —
+**cały blok Generykow (lekcje 1-7), caly blok Programowania funkcyjnego (lekcje 8-11), caly blok
+Adnotacji (lekcje 12-14) sa KOMPLETNE, a blok "Refleksja i mechanizmy dynamiczne" (15-18) jest w
+polowie (15-16/4 gotowe)**. Każda 7 sekcji teorii/30 zadań/100 quizów, ten sam sprawdzony workflow
 (`genNNl.js` w scratchpadzie, sufiks `l`). Zweryfikowane end-to-end po każdym restarcie backendu +
 regresja na wcześniej gotowej lekcji tego samego rozdziału po każdym restarcie — zero regresji
 przez całą sesję. Commitowano po każdej 1 lekcji (nie parami) w tej sesji, bo restart backendu i
@@ -2035,9 +2036,9 @@ sesji wystąpiła regularnie z opóźnieniem do ~30-45s, prawdopodobnie przez ro
 załadowanych lekcji w całym projekcie; NIE restartowano backendu ponownie w żadnym takim
 przypadku, tylko cierpliwie odpytywano ponownie, zgodnie z ustaloną zasadą).
 
-**Następny krok**: kontynuować od **lekcji 15 (`15_ReflectionBasics`)** w `_14_advancedjava` —
-pierwsza lekcja nowego bloku "Refleksja i mechanizmy dynamiczne" (15-18: ReflectionBasics,
-ReflectionUseCasesAndRisks, DynamicProxies, MethodHandles). Ten sam,
+**Następny krok**: kontynuować od **lekcji 17 (`17_DynamicProxies`)** w `_14_advancedjava` —
+kontynuacja bloku "Refleksja i mechanizmy dynamiczne" (15-18: ReflectionBasics [gotowe],
+ReflectionUseCasesAndRisks [gotowe], DynamicProxies, MethodHandles). Ten sam,
 sprawdzony workflow dla WSZYSTKICH kolejnych lekcji: czytaj `_LessonNN_Temat.java` i
 `_Exercises_LessonNN_Temat.java` w
 `src/main/java/com/example/javaquest/_14_advancedjava/LessonNN_Temat/`, napisz `genNNl.js`
