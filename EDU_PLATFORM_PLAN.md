@@ -2003,4 +2003,52 @@ cmd.exe zamiast Start-Process, opisany wyżej w sekcji stanu na 2026-08-29) MUSI
 używany dalej** — Start-Process okazał się niestabilny w tej sesji (proces ginął bez
 śladu błędu). Kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ani
 między rozdziałami, zgodnie z wyraźną prośbą użytkownika z tej sesji.
+
+### ✅ `_13_libraries` KOMPLETNY na platformie edukacyjnej (stan na 2026-08-30): 32/32 lekcji
+
+Dokończono w tej sesji lekcje 17-32 (17_MdcAndLoggingBestPractices, 18_WhyDependencyInjection,
+19-20 Guice, 21-22 MapStruct, 23-24 Apache POI, 25-26 Jsoup, 27-28 Caffeine, 29-30 Picocli,
+31-32 SnakeYAML) — każda 7 sekcji teorii/30 zadań/100 quizów, ten sam sprawdzony workflow
+(`genNNk.js` w scratchpadzie, sufiks `k`, `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`).
+Zweryfikowane end-to-end po każdym restarcie backendu (API zwraca poprawne liczby 7/30/100)
++ regresja na losowej wcześniej gotowej lekcji z innego rozdziału po każdym restarcie —
+zero regresji przez całą sesję. Commitowano co 2-4 lekcje. Sesja kontynuowana w pełni
+autonomicznie (użytkownik wyszedł z domu, polecił nie pytać o zgodę między lekcjami/
+rozdziałami). Przy starcie tej sesji naprawiono też przypadkowo wniesioną literówkę
+(prefiks "cla" przed nazwą klasy w `_31_spring_cloud_microservices/Lesson05_SpringCloudConfigClient`,
+niezacommitowana zmiana z poprzedniej sesji) — cofnięta przez `git checkout`.
+
+### `_14_advancedjava` rozpoczęty na platformie (stan na 2026-08-30): lekcje 1-2/30 UKOŃCZONE
+
+**Następny krok**: kontynuować od **lekcji 3 (`03_BoundedTypes`)** w `_14_advancedjava`. Ten sam,
+sprawdzony workflow dla WSZYSTKICH kolejnych lekcji: czytaj `_LessonNN_Temat.java` i
+`_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_14_advancedjava/LessonNN_Temat/`, napisz `genNNl.js`
+w scratchpadzie (nowy sufiks `l` dla tego rozdziału — już użyty dla lekcji 1-2, kontynuuj),
+korzysta z `scratchpad/helpers.js` (trzeba odtworzyć na początku nowej sesji — treść opisana
+w historii tego pliku, sekcja stanu na 2026-08-28/29), zweryfikuj `node genNNl.js`
+(theory:7 exercises:30 quiz:100) PRZED skopiowaniem do
+`src/main/resources/content/_14_advancedjava/NN_Temat.json` (katalog już utworzony), restart
+backendu (wzorcem System.Diagnostics.Process + cmd.exe opisanym wyżej w sekcji stanu na
+2026-08-29) + pełna weryfikacja (API + regresja, zapytania POJEDYNCZO, z cierpliwością na
+znaną, nieszkodliwą osobliwość "pierwsze kilka zapytań po restarcie mogą dać fałszywe
+0/false") PRZED każdym commitem, commitować co 2-4 lekcje.
+
+Pełna lista 30 lekcji `_14_advancedjava` (z `ChapterSeedData.java`): 01_GenericsIntroduction,
+02_GenericClassesAndMethods, 03_BoundedTypes, 04_WildcardsExtendsSuper, 05_VarianceAndPecs,
+06_TypeErasure, 07_GenericsBestPracticesAndPitfalls, 08_FunctionalInterfaces,
+09_LambdaExpressions, 10_MethodReferences, 11_BuiltInFunctionalInterfaces, 12_Annotations,
+13_CustomAnnotations, 14_AnnotationRetentionAndProcessing, 15_ReflectionBasics,
+16_ReflectionUseCasesAndRisks, 17_DynamicProxies, 18_MethodHandles, 19_SealedClasses,
+20_PatternMatchingInstanceof, 21_PatternMatchingSwitchAndRecordPatterns, 22_SwitchExpressions,
+23_VarAndTypeInference, 24_Immutability, 25_DefensiveCopying, 26_ServiceLoaderAndSpi,
+27_ModulesJpmsBasics, 28_ModulesAdvanced, 29_AdvancedLanguageBestPractices,
+30_CapstoneAdvancedJava.
+
+Po ukończeniu `_14_advancedjava` (30/30) kontynuować kolejno przez WSZYSTKIE pozostałe
+rozdziały aż do `_31_spring_cloud_microservices`, zgodnie z pełną listą w `ChapterSeedData.java`
+— to jeszcze ok. 16 rozdziałów, wiele setek lekcji, wiele kolejnych sesji pracy. Nowy sufiks
+scratchpada per rozdział (`m` dla `_15_jvm_internals`, itd. — kolejna wolna litera alfabetu).
+Kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami,
+zgodnie z wielokrotnie potwierdzoną przez użytkownika zasadą pełnej automatyczności.
 ---
