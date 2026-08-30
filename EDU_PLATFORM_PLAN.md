@@ -2312,4 +2312,15 @@ watchdoga. Zakres naturalnie dał 8 sekcji teorii; dodano 30 ćwiczeń z klasy I
 pytań. End-to-end oraz regresja 100 poprawne; rozdział ma 17/20 lekcji z treścią.
 
 **Następny krok**: `18_JavaFlightRecorderBasics`, następnie 19-20 i `_16_clean_code`.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 18/20 UKOŃCZONA**
+(`18_JavaFlightRecorderBasics`). Materiał odróżnia oś czasu JFR od heap/thread dumpów, opisuje
+ciągłe nagranie jako ograniczony ring buffer, profile default/profile, lifecycle Recording,
+custom events i `shouldCommit()`, korelację w JMC oraz sterowanie przez `jcmd JFR.*` i CLI `jfr`.
+Uwzględnia pomiar narzutu, ochronę danych i produkcyjną retencję plików. Zakres wymagał 9 sekcji
+teorii; ćwiczenia z klasy IDE: 30, quiz: 100 unikalnych pytań. End-to-end i regresja 100
+poprawne; rozdział ma 18/20 lekcji z treścią.
+
+**Następny krok**: `19_ProfilingBasics`, potem capstone `20_JvmTuningAndBestPracticesCapstone`
+i automatyczne przejście do `_16_clean_code`.
 ---
