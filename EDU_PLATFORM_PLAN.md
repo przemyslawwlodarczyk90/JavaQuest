@@ -2198,4 +2198,12 @@ scratchpadzie (kontynuuj sufiks `m`), zweryfikuj `node genNNm.js` (theory:7 exer
 quiz:100) PRZED skopiowaniem do `src/main/resources/content/_15_jvm_internals/NN_Temat.json`,
 restart backendu + pelna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_14`) PRZED kazdym
 commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ pytania o zgode miedzy lekcjami/rozdzialami.
+
+**Stan na 2026-08-30 (kontynuacja): lekcje 3-4/20 UKOŃCZONE** (03_ClassLoadingMechanics,
+04_CustomClassLoaders) — konczy blok "Classloading i bajtkod" (1-5) prawie w calosci, zostala
+lekcja 5. Zweryfikowane end-to-end (4/20 hasContent), regresja na `01_JdkJreJvmAndSpecification`
+i `_13_libraries/01_WhyLibraries` — zero regresji.
+
+**Następny krok**: kontynuować od **lekcji 5 (`05_ClasspathVsModulepath`)** w `_15_jvm_internals`,
+tym samym workflow (sufiks `m`), commitowac co 2-4 lekcje, bez pytania o zgode.
 ---
