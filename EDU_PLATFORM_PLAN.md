@@ -2364,4 +2364,14 @@ regresja capstone poprzedniego rozdziału 100; `_16_clean_code` ma 1/22 `hasCont
 
 **Następny krok**: `02_Naming`, dalej wszystkie lekcje `_16_clean_code` bez zatrzymywania się
 na potwierdzenia, z liczbą sekcji wynikającą z rzeczywistego zakresu tematu.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 2/22 UKOŃCZONA** (`02_Naming`).
+Materiał traktuje nazewnictwo jako część modelu domenowego i kontraktu: intencja zamiast
+mechaniki, spójny glossary, czasowniki `find/getRequired/create`, predykaty boolean, jednostki
+przeniesione do typów, zakres nazwy, unikanie dezinformacji/Hungarian notation oraz bezpieczny
+rename poza granicami kompilatora (JSON/SQL/reflection/public API). Zakres: 11 sekcji teorii,
+30 ćwiczeń z klasy IDE i 100 unikalnych pytań. End-to-end 11/30/100, regresja 100;
+`_16_clean_code` ma 2/22 lekcji z treścią.
+
+**Następny krok**: `03_Comments`, potem kolejne lekcje rozdziału.
 ---
