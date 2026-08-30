@@ -2069,4 +2069,37 @@ rozdziały aż do `_31_spring_cloud_microservices`, zgodnie z pełną listą w `
 scratchpada per rozdział (`m` dla `_15_jvm_internals`, itd. — kolejna wolna litera alfabetu).
 Kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ani między rozdziałami,
 zgodnie z wielokrotnie potwierdzoną przez użytkownika zasadą pełnej automatyczności.
+
+**Stan na 2026-08-30 (kontynuacja, nowa sesja): lekcje 17-18/30 UKOŃCZONE** (17_DynamicProxies,
+18_MethodHandles) — **caly blok "Refleksja i mechanizmy dynamiczne" (15-18) jest teraz
+KOMPLETNY.** Każda 7 sekcji teorii/30 zadań/100 quizów, ten sam sprawdzony workflow (`genNNl.js`
+w scratchpadzie, sufiks `l`, `scratchpad/helpers.js` odtworzony na poczatku tej sesji z opisu w
+historii tego pliku). Zweryfikowane end-to-end po restarcie backendu (18/30 `hasContent: true`
+dla `_14_advancedjava`) + regresja na `16_ReflectionUseCasesAndRisks` (ten sam rozdzial) i
+`_12_hibernate/01_OrmIntroduction` (inny rozdzial) — zero regresji. **Nowy, dzialajacy wzorzec
+startu backendu w PowerShell** (poprzedni `mvnw.cmd` bez prefiksu `.\` w argumentach cmd.exe
+zaczal zawodzic z "'mvnw.cmd' is not recognized" — naprawione uzyciem `".\mvnw.cmd"` jawnie w
+argumentach `cmd.exe /c`; ustawianie JAVA_HOME przez `$psi.EnvironmentVariables["JAVA_HOME"]`
+dziala poprawnie i NIE bylo przyczyna problemu). Osobliwosc "pierwsze zapytania po restarcie =
+0/false" tym razem dotyczyla calego rozdzialu (nie tylko nowych lekcji) i ustapila po ok. 80s
+łącznego oczekiwania — cierpliwe ponawianie zapytan (bez restartu backendu) ponownie zadzialalo.
+Przypadkowo zacommitowane `backend_out.log`/`backend_err.log` usuniete z gita i dodane do
+`.gitignore` w osobnym commicie.
+
+**Następny krok**: kontynuować od **lekcji 19 (`19_SealedClasses`)** w `_14_advancedjava` —
+rozpoczecie bloku "Nowoczesny system typow" (19-22: SealedClasses, PatternMatchingInstanceof,
+PatternMatchingSwitchAndRecordPatterns, SwitchExpressions). Ten sam, sprawdzony workflow: czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_14_advancedjava/LessonNN_Temat/`, napisz `genNNl.js` w
+scratchpadzie (kontynuuj sufiks `l`), korzysta z `scratchpad/helpers.js` (trzeba odtworzyc na
+poczatku nowej sesji), zweryfikuj `node genNNl.js` (theory:7 exercises:30 quiz:100) PRZED
+skopiowaniem do `src/main/resources/content/_14_advancedjava/NN_Temat.json`, restart backendu
+(WZORZEC: `cmd.exe /c '".\mvnw.cmd" spring-boot:run > backend_out.log 2> backend_err.log'` przez
+`System.Diagnostics.Process` z jawnym `".\"` przed `mvnw.cmd`, `$env:JAVA_HOME =
+"C:\Users\kapit\.jdks\openjdk-25.0.2"` ustawiane przez `$psi.EnvironmentVariables["JAVA_HOME"]`)
++ pelna weryfikacja (API + regresja, zapytania POJEDYNCZO, z DUZA cierpliwoscia na osobliwosc
+"pierwsze zapytania po restarcie = 0/false" — moze trwac nawet ~60-90s, sprawdzaj CPU procesu
+java i po prostu czekaj) PRZED kazdym commitem, commitowac co 2-4 lekcje. Kontynuowac BEZ
+zatrzymywania sie na potwierdzenia miedzy lekcjami ani rozdzialami, zgodnie z wyraznym poleceniem
+uzytkownika z tej sesji ("kontynuuj prace, wychodze z domu wiec nie pytaj sie miedzy etapami").
 ---
