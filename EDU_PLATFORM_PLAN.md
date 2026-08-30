@@ -2256,4 +2256,19 @@ zwraca 100, a lista rozdziału pokazuje 11/20 lekcji z `hasContent=true`.
 `_15_jvm_internals`, domknąć blok Garbage Collector, następnie przejść bez zatrzymywania do
 lekcji 13 (`13_JitCompilerBasics`) i dalszych. Ten sam workflow (sufiks `m`), commitować co 2-4
 lekcje i weryfikować 7/30/100 oraz regresję API przed każdym commitem.
+
+**Stan na 2026-08-30 (kontynuacja): lekcje 12-13/20 UKOŃCZONE.** Lekcja
+`12_GcTuningAndLogging` domyka blok Garbage Collector praktycznym tuningiem flag i Unified JVM
+Logging, a `13_JitCompilerBasics` rozpoczyna blok JIT (interpreter, C1/C2, tiered compilation,
+OSR, spekulacja, deoptymalizacja i poprawna rozgrzewka benchmarku). Treść została zbudowana na
+podstawie klas lekcyjnych w IDE; liczba sekcji teorii nie jest sztywnym wymaganiem — priorytetem
+jest pełne, merytoryczne pokrycie tematu. Obie lekcje mają 30 ćwiczeń i 100 pytań, zostały
+zweryfikowane end-to-end na porcie 8083; regresja `_13_libraries/01_WhyLibraries/quiz` zwraca
+100, a rozdział pokazuje 13/20 lekcji z treścią.
+
+**Następny krok**: kontynuować od **lekcji 14 (`14_EscapeAnalysisAndInlining`)**, następnie
+lekcje 15-20 i automatycznie przejść do `_16_clean_code`. Każdą lekcję opierać przede wszystkim
+na wartościowym materiale z klas Java w IDE; dodawać tyle sekcji teorii, ile rzeczywiście wymaga
+temat, bez sztucznego celu liczbowego. Zachować rozbudowane ćwiczenia, rozwiązania, quiz i pełną
+weryfikację API/regresji przed commitem.
 ---
