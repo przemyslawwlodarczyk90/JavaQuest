@@ -2302,4 +2302,14 @@ procedurę potwierdzania poprawki na porównywalnych snapshotach. Liczba sekcji 
 zweryfikowane; rozdział ma 16/20 lekcji z treścią.
 
 **Następny krok**: `17_ThreadDumpBasics`, następnie 18-20 i `_16_clean_code`.
+
+**Stan na 2026-08-30 (kontynuacja): lekcja 17/20 UKOŃCZONA** (`17_ThreadDumpBasics`).
+Lekcja obejmuje interpretację stanów JVM, pełne ThreadInfo z monitorami/synchronizerami,
+deadlock jako cykl wait-for, livelock, contention, pool starvation oraz pozyskiwanie serii dumpów
+przez ThreadMXBean, `jcmd Thread.print`, `jstack -l` i sygnały systemowe. Mocno akcentuje
+różnicę między snapshotem a dowodem, korelację z CPU/latency/kolejkami i bezpieczną automatyzację
+watchdoga. Zakres naturalnie dał 8 sekcji teorii; dodano 30 ćwiczeń z klasy IDE i 100 unikalnych
+pytań. End-to-end oraz regresja 100 poprawne; rozdział ma 17/20 lekcji z treścią.
+
+**Następny krok**: `18_JavaFlightRecorderBasics`, następnie 19-20 i `_16_clean_code`.
 ---
