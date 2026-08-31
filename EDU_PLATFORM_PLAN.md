@@ -2373,5 +2373,46 @@ rename poza granicami kompilatora (JSON/SQL/reflection/public API). Zakres: 11 s
 30 ćwiczeń z klasy IDE i 100 unikalnych pytań. End-to-end 11/30/100, regresja 100;
 `_16_clean_code` ma 2/22 lekcji z treścią.
 
-**Następny krok**: `03_Comments`, potem kolejne lekcje rozdziału.
+### ✅ `_16_clean_code` KOMPLETNY na platformie (stan na 2026-08-31): 22/22 lekcji
+
+Dokończono w tej sesji (autonomicznie, użytkownik wyszedł z domu, bez pytania o zgodę między
+lekcjami/rozdziałami) lekcje 3-22 (03_Comments … 22_CodeReviewBestPracticesAndCapstone) — od
+"Comments" przez cały blok SOLID (07-11), coupling/DRY-KISS-YAGNI/code smells (12-14), proces
+refaktoryzacji + katalog technik (15-16), projektowanie wyjątków/null/niezmienność (17-19), aż po
+static analysis (PMD/SpotBugs, 20), legacy code/dług techniczny (21) i kapsztonowy code review
+(22). Ten sam, sprawdzony workflow: `scratchpad/helpers.js` (odtworzony na początku sesji z
+opisu w historii tego pliku) + `genNNn.js` per lekcja (sufiks `n` dla tego rozdziału), każda
+zweryfikowana `node genNNn.js` (theory:7 exercises:30 quiz:100, poza kilkoma lekcjami z 8-12
+sekcjami teorii wynikającymi z realnego zakresu tematu — 03/05/06/08/16/18/19/20 mają 8-9 sekcji)
+PRZED skopiowaniem do `src/main/resources/content/_16_clean_code/`. Restart backendu + pełna
+weryfikacja API (`curl .../theory`, `.../exercises`, `.../quiz`) + regresja na losowo wybranej,
+wcześniej gotowej lekcji z INNEGO rozdziału (m.in. `_13_libraries/01_WhyLibraries`,
+`_12_hibernate/01_OrmIntroduction`, `_14_advancedjava/30_CapstoneAdvancedJava`,
+`_15_jvm_internals/20_JvmTuningAndBestPracticesCapstone`, `_11_buildtools/01_WhyBuildTools`,
+`_10_dao/01_DaoIntroduction`, `_09_jdbc/01_JdbcIntroduction`) wykonana PRZED każdym z 7 commitów
+tej sesji (03-05, 06-07, 08-10, 11-13, 14-16, 17-19, 20-22) — zero regresji przez całą sesję.
+Backend na porcie 8082, restart wzorcem `cmd.exe /c '".\mvnw.cmd" spring-boot:run > backend_out.log
+2> backend_err.log'` przez `System.Diagnostics.Process`, odczekanie ok. 90-100s po starcie na
+pełne zasilenie bazy H2 treścią (ta sama, znana z poprzednich sesji osobliwość "pierwsze
+zapytanie po restarcie = 0/false" — nieszkodliwa, po prostu czekać/ponowić).
+
+**Następny krok**: `_16_clean_code` jest KOMPLETNY. Zgodnie z ustalonym rytmem (przejście
+`_15_jvm_internals` → `_16_clean_code` bez przerwy), przejść automatycznie, BEZ pytania o zgodę,
+do **`_17_architecture`** (20 lekcji: `01_WhyArchitectureMatters` … `20_ArchitectureCapstone`,
+pełna lista w `ChapterSeedData.java` i w sekcji `_17_architecture` w `CLAUDE.md`), zaczynając od
+lekcji 1. Nowy sufiks scratchpada `o` dla tego rozdziału. Ten sam, sprawdzony workflow: czytaj
+`_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
+`src/main/java/com/example/javaquest/_17_architecture/LessonNN_Temat/`, napisz `genNNo.js` w
+scratchpadzie (korzysta z `scratchpad/helpers.js`), zweryfikuj `node genNNo.js` (theory ok.
+7, exercises:30, quiz:100) PRZED skopiowaniem do `src/main/resources/content/_17_architecture/
+NN_Temat.json` (katalog trzeba będzie utworzyć — jeszcze nie istnieje), restart backendu +
+pełna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_16`, teraz włączając świeżo ukończony
+`_16_clean_code`) PRZED każdym commitem, commitować co 2-4 lekcje. Kontynuować BEZ
+zatrzymywania się na potwierdzenia między lekcjami ani rozdziałami — po ukończeniu
+`_17_architecture` (20/20) przejść automatycznie do `_18_rest_api` (20 lekcji, sufiks `p`), i
+dalej przez wszystkie pozostałe rozdziały aż do `_31_spring_cloud_microservices`, zgodnie z pełną
+listą rozdziałów w `ChapterSeedData.java` — to jeszcze 15 rozdziałów, wiele setek lekcji, wiele
+kolejnych sesji pracy. `Lesson01_WhyArchitectureMatters` już wygenerowana i zweryfikowana w tej
+sesji (`genNNo.js` istnieje, plik `01_WhyArchitectureMatters.json` gotowy do skopiowania i
+weryfikacji na następnym restarcie backendu).
 ---
