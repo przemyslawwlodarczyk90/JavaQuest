@@ -2400,19 +2400,49 @@ zapytanie po restarcie = 0/false" — nieszkodliwa, po prostu czekać/ponowić).
 `_15_jvm_internals` → `_16_clean_code` bez przerwy), przejść automatycznie, BEZ pytania o zgodę,
 do **`_17_architecture`** (20 lekcji: `01_WhyArchitectureMatters` … `20_ArchitectureCapstone`,
 pełna lista w `ChapterSeedData.java` i w sekcji `_17_architecture` w `CLAUDE.md`), zaczynając od
-lekcji 1. Nowy sufiks scratchpada `o` dla tego rozdziału. Ten sam, sprawdzony workflow: czytaj
+lekcji 1. Nowy sufiks scratchpada `o` dla tego rozdziału.
+
+### ✅ `_17_architecture` KOMPLETNY na platformie (stan na 2026-08-31): 20/20 lekcji
+
+Dokończono w tej samej autonomicznej sesji (użytkownik nadal poza domem) wszystkie 20 lekcji
+`_17_architecture` (`01_WhyArchitectureMatters` … `20_ArchitectureCapstone`) — od pytania "po co
+architektura" przez ADR, warstwy, Controller/Service/Repository, bogaty model domenowy, bounded
+context, DTO/mapper, wersjonowanie API, package-by-layer vs by-feature, Dependency Rule,
+Hexagonal/Ports and Adapters, granice transakcji/cache'a/walidacji/błędów, modularny monolit,
+komunikację zdarzeniową, aż po "kiedy mikroserwisy mają sens" i kapsztonowy projekt "Platforma
+Zapisów na Kursy" łączący wszystkie 19 poprzednich lekcji w 1 działającym systemie (moduły
+Courses/Enrollments/Notifications, 6 zweryfikowanych scenariuszy). Ten sam, sprawdzony workflow:
+`scratchpad/helpers.js` + `genNNo.js` per lekcja (sufiks `o`), każda zweryfikowana `node genNNo.js`
+(theory:6-7, exercises:30, quiz:100) PRZED skopiowaniem do `src/main/resources/content/
+_17_architecture/`. Restart backendu + pełna weryfikacja API + regresja na losowej, wcześniej
+gotowej lekcji z `_16_clean_code` (m.in. `01_WhatIsCleanCode`, `09_LiskovSubstitutionPrinciple`,
+`10_InterfaceSegregationPrinciple`, `13_DryKissYagni`, `16_RefactoringCatalog`,
+`22_CodeReviewBestPracticesAndCapstone`) wykonana PRZED każdym z 7 commitów tej sesji (1-3, 4-6,
+7-9, 10-12, 13-15, 16-18, 19-20) — zero regresji przez całą sesję. Jedyna operacyjna osobliwość:
+przy restarcie po lekcjach 19-20 pierwsze 2 kolejne zapytania od razu po ~100s dały `0`/puste
+wyniki (dłuższy niż zwykle czas seedowania, bo baza ma już setki lekcji z treścią) — trzecia
+próba po dodatkowych ~90s oczekiwania zwróciła poprawne dane; nie była to regresja, tylko wolniejsze
+seedowanie przy rosnącej skali treści — warto to uwzględnić w przyszłych sesjach (może być
+potrzebne >100s po restarcie, gdy liczba rozdziałów z treścią dalej rośnie).
+
+**Następny krok**: `_17_architecture` jest KOMPLETNY. Przejść automatycznie, BEZ pytania o zgodę,
+do **`_18_rest_api`** (20 lekcji: `01_HttpDeepDive` … `20_RestApiBestPracticesAndCapstone`, pełna
+lista w `ChapterSeedData.java` i w sekcji `_18_rest_api` w `CLAUDE.md`), zaczynając od lekcji 1.
+Nowy sufiks scratchpada `p` dla tego rozdziału. Ten sam, sprawdzony workflow: czytaj
 `_LessonNN_Temat.java` i `_Exercises_LessonNN_Temat.java` w
-`src/main/java/com/example/javaquest/_17_architecture/LessonNN_Temat/`, napisz `genNNo.js` w
-scratchpadzie (korzysta z `scratchpad/helpers.js`), zweryfikuj `node genNNo.js` (theory ok.
-7, exercises:30, quiz:100) PRZED skopiowaniem do `src/main/resources/content/_17_architecture/
+`src/main/java/com/example/javaquest/_18_rest_api/LessonNN_Temat/`, napisz `genNNp.js` w
+scratchpadzie (korzysta z `scratchpad/helpers.js`), zweryfikuj `node genNNp.js` (theory ok.
+6-7, exercises:30, quiz:100) PRZED skopiowaniem do `src/main/resources/content/_18_rest_api/
 NN_Temat.json` (katalog trzeba będzie utworzyć — jeszcze nie istnieje), restart backendu +
-pełna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_16`, teraz włączając świeżo ukończony
-`_16_clean_code`) PRZED każdym commitem, commitować co 2-4 lekcje. Kontynuować BEZ
-zatrzymywania się na potwierdzenia między lekcjami ani rozdziałami — po ukończeniu
-`_17_architecture` (20/20) przejść automatycznie do `_18_rest_api` (20 lekcji, sufiks `p`), i
-dalej przez wszystkie pozostałe rozdziały aż do `_31_spring_cloud_microservices`, zgodnie z pełną
-listą rozdziałów w `ChapterSeedData.java` — to jeszcze 15 rozdziałów, wiele setek lekcji, wiele
-kolejnych sesji pracy. `Lesson01_WhyArchitectureMatters` już wygenerowana i zweryfikowana w tej
-sesji (`genNNo.js` istnieje, plik `01_WhyArchitectureMatters.json` gotowy do skopiowania i
-weryfikacji na następnym restarcie backendu).
+pełna weryfikacja (API + regresja NA ROZDZIALE Z `_01`-`_17`, teraz włączając świeżo ukończony
+`_17_architecture`) PRZED każdym commitem, commitować co 2-4 lekcje. Po restarcie backendu
+odczekaj min. 100-150s przed pierwszym curl (seedowanie rośnie wraz z liczbą lekcji w bazie -
+patrz osobliwość wyżej), a jeśli pierwszy wynik jest pusty, po prostu odczekaj kolejne ~60-90s i
+spróbuj ponownie zamiast zakładać błąd. Kontynuować BEZ zatrzymywania się na potwierdzenia między
+lekcjami ani rozdziałami — po ukończeniu `_18_rest_api` (20/20) przejść automatycznie do
+`_19_security_basics` (21 lekcji, sufiks `q`), i dalej przez wszystkie pozostałe rozdziały aż do
+`_31_spring_cloud_microservices`, zgodnie z pełną listą rozdziałów w `ChapterSeedData.java` — to
+jeszcze 14 rozdziałów, wiele setek lekcji, wiele kolejnych sesji pracy.
+`Lesson01_HttpDeepDive` już wygenerowana w tej sesji (`gen01p.js` istnieje w scratchpadzie, plik
+gotowy do uruchomienia i skopiowania na początku następnej sesji/kontynuacji).
 ---
