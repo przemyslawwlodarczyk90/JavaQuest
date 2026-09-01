@@ -2445,4 +2445,51 @@ lekcjami ani rozdziałami — po ukończeniu `_18_rest_api` (20/20) przejść au
 jeszcze 14 rozdziałów, wiele setek lekcji, wiele kolejnych sesji pracy.
 `Lesson01_HttpDeepDive` już wygenerowana w tej sesji (`gen01p.js` istnieje w scratchpadzie, plik
 gotowy do uruchomienia i skopiowania na początku następnej sesji/kontynuacji).
+
+### ✅ `_18_rest_api` KOMPLETNY na platformie (stan na 2026-09-01): 20/20 lekcji
+
+Dokończone w nowej, autonomicznej sesji (użytkownik wyszedł z domu, kontynuacja bez pytania o
+zgodę między lekcjami/rozdziałami) — lekcje 19-20 (`19_RestVsRpcVsGraphQL`,
+`20_RestApiBestPracticesAndCapstone`) dopisane, zweryfikowane API (`theory:7 exercises:30
+quiz:100` obie) i regresja na `_17_architecture/01_WhyArchitectureMatters` (100 quizów) —
+zero regresji. Workflow: `scratchpad/helpers.js` (odtworzony na nowo w tej sesji — poprzednie
+scratchpade nie przetrwały między sesjami, bo są w katalogu tymczasowym per-sesja) +
+`genNNp.js` per lekcja. Commit: `f1c545f`.
+
+**Następny krok zrealizowany automatycznie**: przejście do `_19_security_basics` (21 lekcji,
+sufiks scratchpada `q`), zaczynając od `01_AuthenticationVsAuthorization`.
+
+### `_19_security_basics` w toku na platformie (stan na 2026-09-01): 5/21 lekcji
+
+`01_AuthenticationVsAuthorization`, `02_PasswordHashing`, `03_BCrypt`, `04_SessionsAndCookies`,
+`05_JwtIntroduction` — każda 7 sekcji teorii/30 zadań/100 quizów, zweryfikowane end-to-end przez
+restart backendu + curl (lekcje 1-4 potwierdzone API, lekcja 5 napisana tuż po restarcie -
+zweryfikuj przy następnym restarcie). Commity: `d05981b` (1-2), `51f9616` (3-5).
+
+**WAŻNA UWAGA operacyjna dla kontynuacji**: scratchpad (`C:\Users\kapit\AppData\Local\Temp\claude\...\scratchpad`)
+jest PER-SESJA — jeśli kontynuacja zaczyna się w NOWEJ sesji, `scratchpad/helpers.js` i wszystkie
+`genNNq.js` z tej sesji NIE BĘDĄ dostępne i trzeba je odtworzyć od zera (helpers.js jest prosty,
+patrz historia tego pliku dla wzorca: `theory()`, `exercisesFromPrompts()`, `q()`, `writeLesson()`
+z walidacją dokładnie 30 ćwiczeń i 100 pytań quizowych przed zapisem).
+
+**Ustalony wzorzec generowania treści (ważny dla lekcji 6-21)**: dla każdej lekcji NN_Temat:
+1. Przeczytaj `src/main/java/com/example/javaquest/_19_security_basics/LessonNN_Temat/_LessonNN_Temat.java`
+   (pełna teoria) i `grep -n "Zadanie" -A2 _Exercises_LessonNN_Temat.java` (30 promptów zadań).
+2. Napisz `genNNq.js` w scratchpadzie: 6-7 bloków teorii (CONCEPT/ANALOGY/CODE_EXAMPLE), 30 zadań
+   (WSPÓLNY hint+solution dla całej lekcji — nie per-zadanie, zgodnie z ustalonym w poprzednich
+   sesjach wzorcem), 100 unikalnych pytań quizowych (opcje A-D, `correct`, `explanation`).
+3. `node genNNq.js` — skrypt sam waliduje dokładnie 30/100 i zapisuje do
+   `src/main/resources/content/_19_security_basics/NN_Temat.json`.
+4. Co 3-5 lekcji: restart backendu (`Stop-Process java -Force` + `mvnw.cmd spring-boot:run` w tle
+   przez `System.Diagnostics.Process`, przekierowane do `backend_out.log`/`backend_err.log`),
+   odczekaj ~90-150s (backend startuje w ~10-50s zależnie od JIT/cache, ale seedowanie po starcie
+   bierze dodatkowy czas przy dużej bazie treści), curl-zweryfikuj WSZYSTKIE nowo napisane lekcje
+   + 1 regresja z INNEGO rozdziału, dopiero potem `git commit`.
+
+**Następny krok**: kontynuować `_19_security_basics` od lekcji 6 (`06_OAuth2AndOpenIdConnectIntro`),
+bez pytania o zgodę między lekcjami, aż do ukończenia rozdziału (21/21), po czym automatycznie
+przejść do `_20_spring_core` (23 lekcje) i dalej przez WSZYSTKIE pozostałe rozdziały pozostające
+"TYLKO plan" w tym pliku, zgodnie z pełną listą w `ChapterSeedData.java` — to wiele setek
+pozostałych lekcji, praca rozłożona na wiele kolejnych sesji/wznowień. Backend obecnie NIE jest
+uruchomiony (zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji).
 ---
