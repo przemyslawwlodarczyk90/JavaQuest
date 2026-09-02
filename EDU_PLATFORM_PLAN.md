@@ -2496,18 +2496,18 @@ sesji (katalog per-sesja) — pełny kod `theory()`/`exercisesFromPrompts()`/`q(
 z opisu w tej notatce lub odczytując dowolny `genNNq.js` z historii (nie zostaje w repo, tylko
 wygenerowany JSON).
 
-### `_20_spring_core` w toku na platformie (stan na 2026-09-02): 9/23 lekcji
+### `_20_spring_core` w toku na platformie (stan na 2026-09-02): 15/23 lekcji
 
-`01_WhatIsSpring` ... `09_ConfigurationAndBeanAnnotation` napisane, skompilowane (walidacja
-`node genNNr.js`) i zweryfikowane end-to-end przez restart backendu + curl (theory:8 exercises:30
-quiz:100 dla każdej) + regresja na `_19_security_basics`/`_13_libraries` po każdej parze lekcji —
-zero regresji. Commity: `6a58d79` (1-3), `c88b261` (4-5), `19443f6` (6-7), `d6f462b` (8-9). Ten sam
-workflow co `_19_security_basics`: `helpers.js` (z nowym `factQuiz()` — patrz notatka w sekcji
-`_19_security_basics` wyżej) + `genNNr.js` per lekcja, ok. 18-20 ręcznie napisanych pytań quizowych
-+ `factQuiz` z 9-11 faktów dopełniający do 100.
+`01_WhatIsSpring` ... `15_Profiles` napisane, skompilowane (walidacja `node genNNr.js`) i
+zweryfikowane end-to-end przez restart backendu + curl (theory:8 exercises:30 quiz:100 dla każdej)
++ regresja na `_19_security_basics`/`_13_libraries` po każdej parze lekcji — zero regresji.
+Commity: `6a58d79` (1-3), `c88b261` (4-5), `19443f6` (6-7), `d6f462b` (8-9), `0b838d8` (12-13),
+`1e3d94a` (14-15) — kolejność commitów 10-11 w `7a55533`. Ten sam workflow: `helpers.js` (z
+`factQuiz()`) + `genNNr.js` per lekcja, ok. 12-18 ręcznie napisanych pytań quizowych + `factQuiz`
+z 9-11 faktów dopełniający do 100.
 
-**Następny krok**: kontynuować `_20_spring_core` od lekcji 10 (`10_ConstructorInjection`), BEZ
-pytania o zgodę między lekcjami, aż do ukończenia rozdziału (23/23 — kończy się na
+**Następny krok**: kontynuować `_20_spring_core` od lekcji 16 (`16_PropertiesAndConfiguration`),
+BEZ pytania o zgodę między lekcjami, aż do ukończenia rozdziału (23/23 — kończy się na
 `23_SpringCoreCapstone`), po czym automatycznie przejść do **`_21_spring_boot`** (16 lekcji, nowy
 sufiks scratchpada `s`) i dalej przez WSZYSTKIE pozostałe rozdziały w kolejności:
 `_22_spring_web` (19), `_23_spring_data_jpa` (15), `_24_spring_security` (17),
