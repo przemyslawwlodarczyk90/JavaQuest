@@ -2529,22 +2529,38 @@ MVC — ten sam scenariusz co `_18_rest_api/Lesson20`, teraz zaimplementowany fr
 surowego `HttpServer`. Commity: `b8b3643` (1-3), `c1d3840` (4-6), `9b98031` (7-9), `f9e0187`
 (10-12), `eac670d` (13-15), `12ad874` (16-17), `7700f06` (18-19).
 
-**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_23_spring_data_jpa`** (15
-lekcji: `01_WhatIsSpringDataJpa` ... `15_SpringDataJpaCapstone`, pełna lista w
-`ChapterSeedData.java` i w sekcji `_23_spring_data_jpa` w `CLAUDE.md`). Nowy sufiks scratchpada
-`u` dla tego rozdziału. `Lesson01_WhatIsSpringDataJpa` już wygenerowana w tej sesji (`gen01u.js`
+### ✅ `_23_spring_data_jpa` KOMPLETNY na platformie (stan na 2026-09-02): 15/15 lekcji
+
+Dokończone w tej samej autonomicznej sesji (kontynuacja bez pytania o zgodę) — wszystkie 15 lekcji
+(`01_WhatIsSpringDataJpa` ... `15_SpringDataJpaCapstone`) napisane od zera, każda theory:8
+exercises:30 quiz:100, zweryfikowane end-to-end przez restart backendu + curl + regresja PRZED
+każdym z 7 commitów tej partii (1-3, 4-5, 6-7, 8-9, 10-11, 12-13, 14-15). Workflow:
+`scratchpad/helpers.js` (ten sam plik) + `genNNu.js` per lekcja (sufiks `u`). Kapszton (Lesson15,
+mała "Biblioteka" Author→Book) łączy WSZYSTKICH 14 poprzednich mechanizmów w 9 zweryfikowanych
+scenariuszach. Commity: `ea7a082` (1-3), `d33106b` (4-5), `cb0a987` (6-7), `1255aa7` (8-9),
+`75179ea` (10-11), `920161a` (12-13), `bdec4cd` (14-15).
+
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_24_spring_security`** (17
+lekcji: `01_WhatIsSpringSecurity` ... `17_SpringSecurityCapstone`, pełna lista w
+`ChapterSeedData.java` i w sekcji `_24_spring_security` w `CLAUDE.md`). Nowy sufiks scratchpada
+`v` dla tego rozdziału. `Lesson01_WhatIsSpringSecurity` już wygenerowana w tej sesji (`gen01v.js`
 istnieje w scratchpadzie, plik JSON gotowy na dysku, jeszcze NIE zweryfikowany end-to-end/nie
-scommitowany — pierwszy krok następnej sesji/kontynuacji: restart backendu, curl, commit 1-3).
+scommitowany — pierwszy krok następnej sesji/kontynuacji: restart backendu, curl, commit).
 Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` + `_Exercises_LessonNN_Temat.java` z
-`src/main/java/com/example/javaquest/_23_spring_data_jpa/LessonNN_Temat/`, napisz `genNNu.js`
-korzystając z `factQuiz()`, zweryfikuj `node genNNu.js`, skopiuj JSON do
-`src/main/resources/content/_23_spring_data_jpa/`, restart backendu + curl WSZYSTKICH nowych
+`src/main/java/com/example/javaquest/_24_spring_security/LessonNN_Temat/`, napisz `genNNv.js`
+korzystając z `factQuiz()`, zweryfikuj `node genNNv.js`, skopiuj JSON do
+`src/main/resources/content/_24_spring_security/`, restart backendu + curl WSZYSTKICH nowych
 lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje) — kontynuować BEZ
 zatrzymywania się na potwierdzenia między lekcjami ANI rozdziałami, aktualizując tę sekcję na
-bieżąco. Po `_23_spring_data_jpa` kolejne w kolejności: `_24_spring_security` (17),
+bieżąco. **UWAGA specyficzna dla tego rozdziału**: KAŻDA lekcja demonstrująca Security w akcji
+musi zaczynać się od `System.setProperty("spring.autoconfigure.exclude", "")` PRZED `.run()`
+(NIE `SpringApplicationBuilder.properties(...)`, które ma niższy priorytet niż globalny
+`application.properties` wyłączający Security dla reszty repo) i kończyć
+`System.clearProperty(...)` w `finally` — pełne wyjaśnienie w kodzie Lesson01 i w sekcji
+`_24_spring_security` w `CLAUDE.md`. Po `_24_spring_security` kolejne w kolejności:
 `_25_unit_testing` (20), `_26_integration_testing` (16), `_27_spring_test` (20),
 `_28_java_evolution` (24), `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16),
-`_31_spring_cloud_microservices` (19) — to wciąż ok. 230 pozostałych lekcji po dokończeniu
-`_23_spring_data_jpa`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
+`_31_spring_cloud_microservices` (19) — to wciąż ok. 213 pozostałych lekcji po dokończeniu
+`_24_spring_security`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
 wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
 ---
