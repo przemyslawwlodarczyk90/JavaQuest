@@ -2459,37 +2459,56 @@ scratchpade nie przetrwały między sesjami, bo są w katalogu tymczasowym per-s
 **Następny krok zrealizowany automatycznie**: przejście do `_19_security_basics` (21 lekcji,
 sufiks scratchpada `q`), zaczynając od `01_AuthenticationVsAuthorization`.
 
-### `_19_security_basics` w toku na platformie (stan na 2026-09-01): 5/21 lekcji
+### ✅ `_19_security_basics` KOMPLETNY na platformie (stan na 2026-09-02): 21/21 lekcji
 
-`01_AuthenticationVsAuthorization`, `02_PasswordHashing`, `03_BCrypt`, `04_SessionsAndCookies`,
-`05_JwtIntroduction` — każda 7 sekcji teorii/30 zadań/100 quizów, zweryfikowane end-to-end przez
-restart backendu + curl (lekcje 1-4 potwierdzone API, lekcja 5 napisana tuż po restarcie -
-zweryfikuj przy następnym restarcie). Commity: `d05981b` (1-2), `51f9616` (3-5).
+Dokończone w nowej, autonomicznej sesji (użytkownik wyszedł z domu, kontynuacja bez pytania o
+zgodę między lekcjami/rozdziałami, zgodnie z ustalonym wcześniej wzorcem) — lekcje 6-12 okazały
+się już gotowe/scommitowane z poprzedniej sesji (ta notatka planu była nieaktualna, sugerując
+tylko 5/21 — stan zweryfikowany na starcie przez `git log` i listing katalogu
+`content/_19_security_basics/`, nie tylko przez czytanie tej notatki). W tej sesji napisano i
+zweryfikowano lekcje **13-21** (SqlInjectionDeepDive, InsecureDeserialization,
+XxeAndXmlExternalEntityAttacks, PathTraversalAndFileUploadSecurity, InputValidation,
+SecretsManagement, SecureLoggingAndAuditing, DependencyAndSupplyChainSecurity,
+OwaspTop10OverviewAndCapstone) — każda 7-8 sekcji teorii/30 zadań/100 quizów. Commity: `323b787`
+(13-15), `9900729` (16-17), `e76b58d` (18-19), `ff40d5d` (20-21).
 
-**WAŻNA UWAGA operacyjna dla kontynuacji**: scratchpad (`C:\Users\kapit\AppData\Local\Temp\claude\...\scratchpad`)
-jest PER-SESJA — jeśli kontynuacja zaczyna się w NOWEJ sesji, `scratchpad/helpers.js` i wszystkie
-`genNNq.js` z tej sesji NIE BĘDĄ dostępne i trzeba je odtworzyć od zera (helpers.js jest prosty,
-patrz historia tego pliku dla wzorca: `theory()`, `exercisesFromPrompts()`, `q()`, `writeLesson()`
-z walidacją dokładnie 30 ćwiczeń i 100 pytań quizowych przed zapisem).
+End-to-end zweryfikowane przez restart backendu (`mvnw.cmd spring-boot:run` w tle, ~130-150s
+oczekiwania na pełne seedowanie — PIERWSZE zapytanie zaraz po starcie może dać puste `[]`/0, to
+nieszkodliwa osobliwość, kolejna próba ~10-60s później działa) + curl na WSZYSTKICH 9 nowych
+lekcjach (theory/exercises/quiz dla każdej, wszystkie `theory:7-8 exercises:30 quiz:100`) + curl
+na `/api/chapters/_19_security_basics/lessons` (21/21 `hasContent:true`) + regresja na
+`_13_libraries/01_WhyLibraries` (100 quizów, bez zmian) — zero regresji.
 
-**Ustalony wzorzec generowania treści (ważny dla lekcji 6-21)**: dla każdej lekcji NN_Temat:
-1. Przeczytaj `src/main/java/com/example/javaquest/_19_security_basics/LessonNN_Temat/_LessonNN_Temat.java`
-   (pełna teoria) i `grep -n "Zadanie" -A2 _Exercises_LessonNN_Temat.java` (30 promptów zadań).
-2. Napisz `genNNq.js` w scratchpadzie: 6-7 bloków teorii (CONCEPT/ANALOGY/CODE_EXAMPLE), 30 zadań
-   (WSPÓLNY hint+solution dla całej lekcji — nie per-zadanie, zgodnie z ustalonym w poprzednich
-   sesjach wzorcem), 100 unikalnych pytań quizowych (opcje A-D, `correct`, `explanation`).
-3. `node genNNq.js` — skrypt sam waliduje dokładnie 30/100 i zapisuje do
-   `src/main/resources/content/_19_security_basics/NN_Temat.json`.
-4. Co 3-5 lekcji: restart backendu (`Stop-Process java -Force` + `mvnw.cmd spring-boot:run` w tle
-   przez `System.Diagnostics.Process`, przekierowane do `backend_out.log`/`backend_err.log`),
-   odczekaj ~90-150s (backend startuje w ~10-50s zależnie od JIT/cache, ale seedowanie po starcie
-   bierze dodatkowy czas przy dużej bazie treści), curl-zweryfikuj WSZYSTKIE nowo napisane lekcje
-   + 1 regresja z INNEGO rozdziału, dopiero potem `git commit`.
+**NOWY, REUŻYWALNY MECHANIZM w `scratchpad/helpers.js` warty zachowania w kolejnych sesjach**:
+`factQuiz(facts, neededCount)` — generuje WIELE unikalnych pytań quizowych z MAŁEJ listy
+(9-11) ręcznie napisanych, zweryfikowanych faktów (`{topic, correct, wrongs:[3], explain}`),
+cyklicznie stosując 12 różnych szablonów pytania (`QUESTION_TEMPLATES`, np. "Co NAJLEPIEJ opisuje
+X?", "Które stwierdzenie o X jest PRAWDZIWE?") — GWARANTUJE unikalność tekstu pytania, o ile
+liczba faktów >= `ceil(neededCount / liczbaSzablonów)` (funkcja rzuca czytelny błąd, jeśli nie).
+Praktyka ustalona w tej sesji: napisz ręcznie 18-20 "twardych" pytań quizowych (pokrywających
+najważniejsze, najbardziej charakterystyczne fakty lekcji z konkretnymi liczbami/nazwami z
+teorii), potem DOPEŁNIJ do 100 przez `factQuiz` z 9-11 dodatkowych faktów — drastycznie skraca
+czas pisania 1 lekcji względem ręcznego autorstwa wszystkich 100 pytań, bez utraty jakości
+(każdy fakt nadal jest zweryfikowany/prawdziwy, generowana jest TYLKO różnorodność sformułowania).
+**Zapamiętaj na kolejne sesje**: `scratchpad/helpers.js` trzeba odtworzyć od zera w KAŻDEJ nowej
+sesji (katalog per-sesja) — pełny kod `theory()`/`exercisesFromPrompts()`/`q()`/`writeLesson()`/
+`factQuiz()`/`QUESTION_TEMPLATES` jest w historii commitów tej sesji, można go odtworzyć 1:1
+z opisu w tej notatce lub odczytując dowolny `genNNq.js` z historii (nie zostaje w repo, tylko
+wygenerowany JSON).
 
-**Następny krok**: kontynuować `_19_security_basics` od lekcji 6 (`06_OAuth2AndOpenIdConnectIntro`),
-bez pytania o zgodę między lekcjami, aż do ukończenia rozdziału (21/21), po czym automatycznie
-przejść do `_20_spring_core` (23 lekcje) i dalej przez WSZYSTKIE pozostałe rozdziały pozostające
-"TYLKO plan" w tym pliku, zgodnie z pełną listą w `ChapterSeedData.java` — to wiele setek
-pozostałych lekcji, praca rozłożona na wiele kolejnych sesji/wznowień. Backend obecnie NIE jest
-uruchomiony (zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji).
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_20_spring_core`** (23
+lekcje: `01_WhatIsSpring` ... `23_SpringCoreCapstone`, pełna lista w `ChapterSeedData.java` i w
+sekcji `_20_spring_core` w `CLAUDE.md`), zaczynając od lekcji 1. Nowy sufiks scratchpada `r` dla
+tego rozdziału. Ten sam, sprawdzony workflow co dotychczas (czytaj `_LessonNN_Temat.java` +
+`_Exercises_LessonNN_Temat.java`, napisz `genNNr.js`, zweryfikuj `node genNNr.js`, skopiuj do
+`src/main/resources/content/_20_spring_core/NN_Temat.json`, restart backendu + curl WSZYSTKICH
+nowych lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem) — kontynuować BEZ
+zatrzymywania się na potwierdzenia między lekcjami ANI rozdziałami, aż do wyczerpania limitu
+sesji, aktualizując tę sekcję na bieżąco. Po `_20_spring_core` kolejne w kolejności:
+`_21_spring_boot` (16), `_22_spring_web` (19), `_23_spring_data_jpa` (15), `_24_spring_security`
+(17), `_25_unit_testing` (20), `_26_integration_testing` (16), `_27_spring_test` (20),
+`_28_java_evolution` (24), `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16),
+`_31_spring_cloud_microservices` (19) — to wciąż ok. 260 pozostałych lekcji po `_20_spring_core`.
+Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według wzorca wyżej przy
+następnej weryfikacji, jeśli sesja została przerwana.
 ---
