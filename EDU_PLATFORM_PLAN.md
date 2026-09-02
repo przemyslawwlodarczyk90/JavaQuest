@@ -2496,29 +2496,31 @@ sesji (katalog per-sesja) — pełny kod `theory()`/`exercisesFromPrompts()`/`q(
 z opisu w tej notatce lub odczytując dowolny `genNNq.js` z historii (nie zostaje w repo, tylko
 wygenerowany JSON).
 
-### `_20_spring_core` w toku na platformie (stan na 2026-09-02): 15/23 lekcji
+### ✅ `_20_spring_core` KOMPLETNY na platformie (stan na 2026-09-02): 23/23 lekcje
 
-`01_WhatIsSpring` ... `15_Profiles` napisane, skompilowane (walidacja `node genNNr.js`) i
-zweryfikowane end-to-end przez restart backendu + curl (theory:8 exercises:30 quiz:100 dla każdej)
-+ regresja na `_19_security_basics`/`_13_libraries` po każdej parze lekcji — zero regresji.
-Commity: `6a58d79` (1-3), `c88b261` (4-5), `19443f6` (6-7), `d6f462b` (8-9), `0b838d8` (12-13),
-`1e3d94a` (14-15) — kolejność commitów 10-11 w `7a55533`. Ten sam workflow: `helpers.js` (z
-`factQuiz()`) + `genNNr.js` per lekcja, ok. 12-18 ręcznie napisanych pytań quizowych + `factQuiz`
-z 9-11 faktów dopełniający do 100.
+Wszystkie 23 lekcje (`01_WhatIsSpring` ... `23_SpringCoreCapstone`) napisane, skompilowane
+(walidacja `node genNNr.js`) i zweryfikowane end-to-end przez restart backendu + curl
+(theory:8 exercises:30 quiz:100 dla każdej) + regresja na `_19_security_basics`/`_13_libraries`
+po każdej parze lekcji — zero regresji przez całą sesję. Commity: `6a58d79` (1-3), `c88b261` (4-5),
+`19443f6` (6-7), `d6f462b` (8-9), `7a55533` (10-11), `0b838d8` (12-13), `1e3d94a` (14-15),
+`06e4777` (16-17), `d8d5c96` (18-19), `3c2d8bc` (20-21), `4ce7917` (22-23, kapszton "JavaQuest
+Order Processing"). Potwierdzone przez `/api/chapters/_20_spring_core/lessons` — 23/23
+`hasContent:true`. Ten sam workflow: `helpers.js` (z `factQuiz()`) + `genNNr.js` per lekcja,
+ok. 12-18 ręcznie napisanych pytań quizowych + `factQuiz` z 9-11 faktów dopełniający do 100.
 
-**Następny krok**: kontynuować `_20_spring_core` od lekcji 16 (`16_PropertiesAndConfiguration`),
-BEZ pytania o zgodę między lekcjami, aż do ukończenia rozdziału (23/23 — kończy się na
-`23_SpringCoreCapstone`), po czym automatycznie przejść do **`_21_spring_boot`** (16 lekcji, nowy
-sufiks scratchpada `s`) i dalej przez WSZYSTKIE pozostałe rozdziały w kolejności:
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_21_spring_boot`** (16
+lekcji: `01_WhatIsSpringBoot` ... `16_SpringBootCapstone`, pełna lista w `ChapterSeedData.java` i
+w sekcji `_21_spring_boot` w `CLAUDE.md`), zaczynając od lekcji 1. Nowy sufiks scratchpada `s` dla
+tego rozdziału. Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` +
+`_Exercises_LessonNN_Temat.java`, napisz `genNNs.js` korzystając z `factQuiz()`, zweryfikuj
+`node genNNs.js`, skopiuj JSON do `src/main/resources/content/_21_spring_boot/`, restart
+backendu + curl WSZYSTKICH nowych lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem
+co 2-3 lekcje) — kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ANI
+rozdziałami, aktualizując tę sekcję na bieżąco. Po `_21_spring_boot` kolejne w kolejności:
 `_22_spring_web` (19), `_23_spring_data_jpa` (15), `_24_spring_security` (17),
 `_25_unit_testing` (20), `_26_integration_testing` (16), `_27_spring_test` (20),
 `_28_java_evolution` (24), `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16),
 `_31_spring_cloud_microservices` (19) — to wciąż ok. 250 pozostałych lekcji po dokończeniu
-`_20_spring_core`. Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` +
-`_Exercises_LessonNN_Temat.java`, napisz `genNNr.js` korzystając z `factQuiz()`, zweryfikuj
-`node genNNr.js`, skopiuj JSON, restart backendu + curl WSZYSTKICH nowych lekcji + 1 regresja z
-INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje) — kontynuować BEZ zatrzymywania się na
-potwierdzenia między lekcjami ANI rozdziałami, aktualizując tę sekcję na bieżąco. Backend obecnie
-URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji,
-jeśli sesja została przerwana.
+`_21_spring_boot`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
+wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
 ---
