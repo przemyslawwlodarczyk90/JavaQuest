@@ -2496,19 +2496,29 @@ sesji (katalog per-sesja) — pełny kod `theory()`/`exercisesFromPrompts()`/`q(
 z opisu w tej notatce lub odczytując dowolny `genNNq.js` z historii (nie zostaje w repo, tylko
 wygenerowany JSON).
 
-**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_20_spring_core`** (23
-lekcje: `01_WhatIsSpring` ... `23_SpringCoreCapstone`, pełna lista w `ChapterSeedData.java` i w
-sekcji `_20_spring_core` w `CLAUDE.md`), zaczynając od lekcji 1. Nowy sufiks scratchpada `r` dla
-tego rozdziału. Ten sam, sprawdzony workflow co dotychczas (czytaj `_LessonNN_Temat.java` +
-`_Exercises_LessonNN_Temat.java`, napisz `genNNr.js`, zweryfikuj `node genNNr.js`, skopiuj do
-`src/main/resources/content/_20_spring_core/NN_Temat.json`, restart backendu + curl WSZYSTKICH
-nowych lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem) — kontynuować BEZ
-zatrzymywania się na potwierdzenia między lekcjami ANI rozdziałami, aż do wyczerpania limitu
-sesji, aktualizując tę sekcję na bieżąco. Po `_20_spring_core` kolejne w kolejności:
-`_21_spring_boot` (16), `_22_spring_web` (19), `_23_spring_data_jpa` (15), `_24_spring_security`
-(17), `_25_unit_testing` (20), `_26_integration_testing` (16), `_27_spring_test` (20),
+### `_20_spring_core` w toku na platformie (stan na 2026-09-02): 9/23 lekcji
+
+`01_WhatIsSpring` ... `09_ConfigurationAndBeanAnnotation` napisane, skompilowane (walidacja
+`node genNNr.js`) i zweryfikowane end-to-end przez restart backendu + curl (theory:8 exercises:30
+quiz:100 dla każdej) + regresja na `_19_security_basics`/`_13_libraries` po każdej parze lekcji —
+zero regresji. Commity: `6a58d79` (1-3), `c88b261` (4-5), `19443f6` (6-7), `d6f462b` (8-9). Ten sam
+workflow co `_19_security_basics`: `helpers.js` (z nowym `factQuiz()` — patrz notatka w sekcji
+`_19_security_basics` wyżej) + `genNNr.js` per lekcja, ok. 18-20 ręcznie napisanych pytań quizowych
++ `factQuiz` z 9-11 faktów dopełniający do 100.
+
+**Następny krok**: kontynuować `_20_spring_core` od lekcji 10 (`10_ConstructorInjection`), BEZ
+pytania o zgodę między lekcjami, aż do ukończenia rozdziału (23/23 — kończy się na
+`23_SpringCoreCapstone`), po czym automatycznie przejść do **`_21_spring_boot`** (16 lekcji, nowy
+sufiks scratchpada `s`) i dalej przez WSZYSTKIE pozostałe rozdziały w kolejności:
+`_22_spring_web` (19), `_23_spring_data_jpa` (15), `_24_spring_security` (17),
+`_25_unit_testing` (20), `_26_integration_testing` (16), `_27_spring_test` (20),
 `_28_java_evolution` (24), `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16),
-`_31_spring_cloud_microservices` (19) — to wciąż ok. 260 pozostałych lekcji po `_20_spring_core`.
-Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według wzorca wyżej przy
-następnej weryfikacji, jeśli sesja została przerwana.
+`_31_spring_cloud_microservices` (19) — to wciąż ok. 250 pozostałych lekcji po dokończeniu
+`_20_spring_core`. Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` +
+`_Exercises_LessonNN_Temat.java`, napisz `genNNr.js` korzystając z `factQuiz()`, zweryfikuj
+`node genNNr.js`, skopiuj JSON, restart backendu + curl WSZYSTKICH nowych lekcji + 1 regresja z
+INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje) — kontynuować BEZ zatrzymywania się na
+potwierdzenia między lekcjami ANI rozdziałami, aktualizując tę sekcję na bieżąco. Backend obecnie
+URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji,
+jeśli sesja została przerwana.
 ---
