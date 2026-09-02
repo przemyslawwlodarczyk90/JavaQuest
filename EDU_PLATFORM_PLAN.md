@@ -2508,19 +2508,43 @@ Order Processing"). Potwierdzone przez `/api/chapters/_20_spring_core/lessons` �
 `hasContent:true`. Ten sam workflow: `helpers.js` (z `factQuiz()`) + `genNNr.js` per lekcja,
 ok. 12-18 ręcznie napisanych pytań quizowych + `factQuiz` z 9-11 faktów dopełniający do 100.
 
-**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_21_spring_boot`** (16
-lekcji: `01_WhatIsSpringBoot` ... `16_SpringBootCapstone`, pełna lista w `ChapterSeedData.java` i
-w sekcji `_21_spring_boot` w `CLAUDE.md`), zaczynając od lekcji 1. Nowy sufiks scratchpada `s` dla
-tego rozdziału. Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` +
-`_Exercises_LessonNN_Temat.java`, napisz `genNNs.js` korzystając z `factQuiz()`, zweryfikuj
-`node genNNs.js`, skopiuj JSON do `src/main/resources/content/_21_spring_boot/`, restart
-backendu + curl WSZYSTKICH nowych lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem
-co 2-3 lekcje) — kontynuować BEZ zatrzymywania się na potwierdzenia między lekcjami ANI
-rozdziałami, aktualizując tę sekcję na bieżąco. Po `_21_spring_boot` kolejne w kolejności:
-`_22_spring_web` (19), `_23_spring_data_jpa` (15), `_24_spring_security` (17),
+### ✅ `_21_spring_boot` KOMPLETNY na platformie (stan na 2026-09-02): 16/16 lekcji
+
+Dokończone w nowej, autonomicznej sesji (użytkownik wyszedł z domu, kontynuacja bez pytania o
+zgodę między lekcjami/rozdziałami) — lekcje 15-16 (`15_CustomAutoConfigurationAndStarters`,
+`16_SpringBootCapstone`) były już wygenerowane na dysku z poprzedniej sesji (niescommitowane) —
+zweryfikowane end-to-end (theory:8 exercises:30 quiz:100 obie, regresja `_13_libraries/
+01_WhyLibraries` 100 quizów) i scommitowane. Commit: `ef04254`.
+
+### ✅ `_22_spring_web` KOMPLETNY na platformie (stan na 2026-09-02): 19/19 lekcji
+
+Dokończone w tej samej autonomicznej sesji (kontynuacja bez pytania o zgodę) — wszystkie 19
+lekcji (`01_ControllerVsRestController` ... `19_RestApiCapstone`) napisane od zera, każda
+theory:8 exercises:30 quiz:100, zweryfikowane end-to-end przez restart backendu + curl + regresja
+na innym rozdziale PRZED każdym z 7 commitów tej partii (1-3, 4-6, 7-9, 10-12, 13-15, 16-17,
+18-19). Workflow: `scratchpad/helpers.js` (odtworzony z poprzedniej sesji `7efc0b55...`, ten sam
+plik co używany dla `_20`/`_21`) + `genNNt.js` per lekcja (nowy sufiks `t`). Kapszton (Lesson19,
+"JavaQuest Tasks API") łączy WSZYSTKIE 18 poprzednich lekcji w 1 działającym mini-API na Spring
+MVC — ten sam scenariusz co `_18_rest_api/Lesson20`, teraz zaimplementowany frameworkiem zamiast
+surowego `HttpServer`. Commity: `b8b3643` (1-3), `c1d3840` (4-6), `9b98031` (7-9), `f9e0187`
+(10-12), `eac670d` (13-15), `12ad874` (16-17), `7700f06` (18-19).
+
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_23_spring_data_jpa`** (15
+lekcji: `01_WhatIsSpringDataJpa` ... `15_SpringDataJpaCapstone`, pełna lista w
+`ChapterSeedData.java` i w sekcji `_23_spring_data_jpa` w `CLAUDE.md`). Nowy sufiks scratchpada
+`u` dla tego rozdziału. `Lesson01_WhatIsSpringDataJpa` już wygenerowana w tej sesji (`gen01u.js`
+istnieje w scratchpadzie, plik JSON gotowy na dysku, jeszcze NIE zweryfikowany end-to-end/nie
+scommitowany — pierwszy krok następnej sesji/kontynuacji: restart backendu, curl, commit 1-3).
+Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` + `_Exercises_LessonNN_Temat.java` z
+`src/main/java/com/example/javaquest/_23_spring_data_jpa/LessonNN_Temat/`, napisz `genNNu.js`
+korzystając z `factQuiz()`, zweryfikuj `node genNNu.js`, skopiuj JSON do
+`src/main/resources/content/_23_spring_data_jpa/`, restart backendu + curl WSZYSTKICH nowych
+lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje) — kontynuować BEZ
+zatrzymywania się na potwierdzenia między lekcjami ANI rozdziałami, aktualizując tę sekcję na
+bieżąco. Po `_23_spring_data_jpa` kolejne w kolejności: `_24_spring_security` (17),
 `_25_unit_testing` (20), `_26_integration_testing` (16), `_27_spring_test` (20),
 `_28_java_evolution` (24), `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16),
-`_31_spring_cloud_microservices` (19) — to wciąż ok. 250 pozostałych lekcji po dokończeniu
-`_21_spring_boot`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
+`_31_spring_cloud_microservices` (19) — to wciąż ok. 230 pozostałych lekcji po dokończeniu
+`_23_spring_data_jpa`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
 wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
 ---
