@@ -2563,4 +2563,12 @@ musi zaczynać się od `System.setProperty("spring.autoconfigure.exclude", "")` 
 `_31_spring_cloud_microservices` (19) — to wciąż ok. 213 pozostałych lekcji po dokończeniu
 `_24_spring_security`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
 wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
+
+**Stan na 2026-09-02 (ciąg dalszy, ta sama sesja): `_24_spring_security` lekcje 1-9 GOTOWE i
+scommitowane (commity `e6b2724`, `3552482`, `0c48c39`, `8c41cf7`, `53a56ae`).
+`Lesson10_MethodSecurity` już wygenerowana (`gen10v.js` w scratchpadzie), jeszcze NIE
+zweryfikowana end-to-end/nie scommitowana — pierwszy krok następnej kontynuacji: restart
+backendu, curl, commit 10-11 (po dopisaniu też Lesson11). Pozostaje 7 lekcji tego rozdziału:
+11_CustomLoginPage, 12_JwtAuthentication, 13_StatelessSecurity, 14_CorsAndCsrfInSpringSecurity,
+15_OAuth2LoginAndResourceServerIntro, 16_SecurityExceptionHandling, 17_SpringSecurityCapstone.**
 ---
