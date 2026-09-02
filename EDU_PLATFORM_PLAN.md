@@ -2564,11 +2564,32 @@ musi zaczynać się od `System.setProperty("spring.autoconfigure.exclude", "")` 
 `_24_spring_security`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
 wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
 
-**Stan na 2026-09-02 (ciąg dalszy, ta sama sesja): `_24_spring_security` lekcje 1-9 GOTOWE i
-scommitowane (commity `e6b2724`, `3552482`, `0c48c39`, `8c41cf7`, `53a56ae`).
-`Lesson10_MethodSecurity` już wygenerowana (`gen10v.js` w scratchpadzie), jeszcze NIE
-zweryfikowana end-to-end/nie scommitowana — pierwszy krok następnej kontynuacji: restart
-backendu, curl, commit 10-11 (po dopisaniu też Lesson11). Pozostaje 7 lekcji tego rozdziału:
-11_CustomLoginPage, 12_JwtAuthentication, 13_StatelessSecurity, 14_CorsAndCsrfInSpringSecurity,
-15_OAuth2LoginAndResourceServerIntro, 16_SecurityExceptionHandling, 17_SpringSecurityCapstone.**
+### ✅ `_24_spring_security` KOMPLETNY na platformie (stan na 2026-09-02): 17/17 lekcji
+
+Dokończone w tej samej autonomicznej sesji (kontynuacja bez pytania o zgodę) — wszystkie 17 lekcji
+(`01_WhatIsSpringSecurity` ... `17_SpringSecurityCapstone`) napisane od zera, każda theory:8
+(poza Lesson10: theory:7) exercises:30 quiz:100, zweryfikowane end-to-end przez restart backendu +
+curl + regresja na `_20_spring_core/23_SpringCoreCapstone` PRZED każdym z 9 commitów tej partii
+(1, 2, 3, 4, 5, 10-11, 12, 13-14, 15-16, 17). Workflow: `scratchpad/helpers.js` (ten sam plik) +
+`genNNv.js` per lekcja (sufiks `v`). Kapszton (Lesson17, "JavaQuest Secure API") łączy WSZYSTKIE 16
+poprzednich mechanizmów (UserDetailsService+BCrypt, JWT+STATELESS, CORS, exceptionHandling,
+@PreAuthorize) w 9 zweryfikowanych scenariuszach — ten sam scenariusz co
+`_19_security_basics/Lesson21`, teraz deklaratywnie przez Spring Security. Commity: `e6b2724`,
+`3552482`, `0c48c39`, `8c41cf7`, `53a56ae`, `622c778` (10-11), `a623b84` (12), `90ede3d` (13-14),
+`50bc456` (15-16), `f1275be` (17).
+
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_25_unit_testing`** (20
+lekcji: `01_WhyUnitTests` ... `20_UnitTestingCapstone`, pełna lista w `ChapterSeedData.java` i w
+sekcji `_25_unit_testing` w `CLAUDE.md`). Nowy sufiks scratchpada `w` dla tego rozdziału. Ten sam,
+sprawdzony workflow (czytaj `_LessonNN_Temat.java` + `_Exercises_LessonNN_Temat.java` z
+`src/main/java/com/example/javaquest/_25_unit_testing/LessonNN_Temat/`, napisz `genNNw.js`
+korzystając z `factQuiz()`, zweryfikuj `node genNNw.js`, restart backendu + curl WSZYSTKICH nowych
+lekcji + 1 regresja z INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje) — kontynuować BEZ
+zatrzymywania się na potwierdzenia między lekcjami ANI rozdziałami, aktualizując tę sekcję na
+bieżąco. Pozostałe rozdziały po `_25_unit_testing` w kolejności: `_26_integration_testing` (16),
+`_27_spring_test` (20), `_28_java_evolution` (24), `_29_spring_reactive` (17),
+`_30_spring_messaging_and_async` (16), `_31_spring_cloud_microservices` (19) — ok. 176 pozostałych
+lekcji po dokończeniu `_25_unit_testing`. Backend obecnie URUCHOMIONY na porcie 8082 —
+zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji, jeśli sesja została
+przerwana.
 ---
