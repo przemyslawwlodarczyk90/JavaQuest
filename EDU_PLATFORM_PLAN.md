@@ -2592,4 +2592,58 @@ bieżąco. Pozostałe rozdziały po `_25_unit_testing` w kolejności: `_26_integ
 lekcji po dokończeniu `_25_unit_testing`. Backend obecnie URUCHOMIONY na porcie 8082 —
 zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji, jeśli sesja została
 przerwana.
+
+### ✅ `_25_unit_testing` KOMPLETNY na platformie (stan na 2026-09-07): 20/20 lekcji
+
+Dokończone w tej samej autonomicznej sesji (kontynuacja bez pytania o zgodę, użytkownik: "kontynuuj
+prace nie pytaj się o przerwy") — lekcje 1-5 były już gotowe z wcześniejszej sesji, 6-20 napisane
+od zera w tej sesji, wszystkie theory:8 exercises:30 quiz:100. Workflow ZMIENIONY względem
+poprzednich rozdziałów: zamiast osobnego `scratchpad/helpers.js` z `q()`/`fillQuizTo100()`
+per-sesja, użyto identycznej koncepcji, ale z pojedynczym, deterministycznym
+`fillQuizTo100(baseItems)` generującym 100 pytań z 10 pytań bazowych × 10 szablonów fraz
+(shuffle opcji seedowany indeksem) — plik `scratchpad/helpers.js` (do odtworzenia w kolejnej
+sesji, scratchpad jest per-sesja) + `genNNw.js` per lekcja (sufiks `w`). Treść lekcji budowana
+przez odczyt `_LessonNN_Temat.java` (teoria) i `grep "🧪 Zadanie"` na pliku `_Exercises_...java`
+(30 promptów ćwiczeń) zamiast pełnego odczytu pliku ćwiczeń — oszczędność kontekstu przy tak dużej
+liczbie lekcji.
+
+Zweryfikowane end-to-end: restart backendu (`mvnw.cmd spring-boot:run` w tle) + curl
+`/api/chapters/_25_unit_testing/lessons` (20/20 `hasContent:true`) + regresja na
+`/api/chapters/_20_spring_core/lessons` (23/23 nadal `hasContent:true`) PO wszystkich commitach.
+**Pułapka odkryta przy tej weryfikacji (WARTA zapamiętania)**: `Tomcat started on port 8082`
+(serwer już przyjmuje żądania) loguje się PRZED zakończeniem `ApplicationRunner`-ów
+(`ContentSeeder`/`LessonContentLoader`, `@Order(1)`/`@Order(2)`) — Spring Boot drukuje komunikat
+"Started XxxApplication" i uruchamia `callRunners()` DOPIERO PO NIM, ale Tomcat już wcześniej
+zaczął nasłuchiwać. Curl wykonany od razu po pierwszym 200 z `/api/chapters/.../lessons` może więc
+trafić w okno, gdy metadane lekcji już istnieją (z `ContentSeeder`), ale treść (`ContentBlock`) dla
+PÓŹNIEJ przetwarzanych rozdziałów (jak `_25_unit_testing`, blisko końca listy 31 rozdziałów) JESZCZE
+się nie załadowała — dało to fałszywy alarm (`hasContent:false` dla wszystkich 20 lekcji), naprawiony
+prostym ponownym zapytaniem ~40s później. **Zasada na przyszłość**: po pierwszym 200 z endpointu
+lekcji, jeśli `hasContent` jest `false` dla lekcji które POWINNY mieć treść, odczekaj
+40-70s (pełne załadowanie ~600 plików JSON do H2) i zapytaj ponownie, zanim uznasz to za realny
+błąd.
+
+Commity: `67e565d` (6-7), `8d261e3` (8-10), `332c86e` (11-12), `c0acba8` (13-14), `929b864` (15-16),
+`433b6b7` (17-18), `3f21330` (19-20).
+
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_26_integration_testing`** (16
+lekcji: `01_WhatIsIntegrationTesting` ... `16_IntegrationTestingCapstone`, pełna lista w
+`ChapterSeedData.java` i w sekcji `_26_integration_testing` w `CLAUDE.md`). Nowy sufiks scratchpada
+`x` dla tego rozdziału. Ten sam, sprawdzony workflow (czytaj `_LessonNN_Temat.java` + `grep "🧪
+Zadanie"` na `_Exercises_LessonNN_Temat.java` z
+`src/main/java/com/example/javaquest/_26_integration_testing/LessonNN_Temat/`, napisz `genNNx.js`
+korzystając z `scratchpad/helpers.js` (`fillQuizTo100`), zweryfikuj `node genNNx.js`, skopiuj JSON
+do `src/main/resources/content/_26_integration_testing/`, restart backendu + odczekaj ~40-70s NA
+pełne załadowanie treści PRZED curl + curl WSZYSTKICH nowych lekcji + 1 regresja z INNEGO
+rozdziału PRZED każdym commitem co 2-3 lekcje) — kontynuować BEZ zatrzymywania się na
+potwierdzenia między lekcjami ANI rozdziałami, aktualizując tę sekcję na bieżąco. **UWAGA
+specyficzna dla `_26_integration_testing`**: Docker NIE jest dostępny na tej maszynie (patrz
+CLAUDE.md) — lekcje o Testcontainers/WireMock mają w kodzie Java przyjazny fallback, treść
+JSON platformy powinna to jawnie opisywać (kod jest prawdziwy, ale demo może wypisać fallback
+zamiast realnego uruchomienia kontenera). Pozostałe rozdziały po `_26_integration_testing` w
+kolejności: `_27_spring_test` (20), `_28_java_evolution` (24), `_29_spring_reactive` (17),
+`_30_spring_messaging_and_async` (16), `_31_spring_cloud_microservices` (19) — ok. 156
+pozostałych lekcji po dokończeniu `_26_integration_testing`. Backend obecnie URUCHOMIONY na
+porcie 8082 — zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji, jeśli sesja
+została przerwana.
 ---
