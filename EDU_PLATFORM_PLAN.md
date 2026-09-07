@@ -2687,4 +2687,45 @@ kolejności: `_28_java_evolution` (24), `_29_spring_reactive` (17),
 pozostałych lekcji po dokończeniu `_27_spring_test`. Backend obecnie URUCHOMIONY na porcie 8082 —
 zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji, jeśli sesja została
 przerwana.
+
+### ✅ `_27_spring_test` KOMPLETNY na platformie (stan na 2026-09-07): 20/20 lekcji
+
+Dokończone w tej samej autonomicznej sesji co `_25_unit_testing`/`_26_integration_testing`
+(kontynuacja bez pytania o zgodę, użytkownik: "kontynuuj"). Wszystkie 20 lekcji napisane od zera,
+theory:8 exercises:30 quiz:100. Ten sam workflow: `scratchpad/helpers.js` (`fillQuizTo100`) +
+`genNNy.js` per lekcja (sufiks `y`), treść budowana przez odczyt `_LessonNN_Temat.java` +
+`grep "🧪 Zadanie"` na pliku ćwiczeń.
+
+Zweryfikowane end-to-end w 8 rundach restart+curl (po 2-3 lekcjach): `/api/chapters/
+_27_spring_test/lessons` (20/20 `hasContent:true` w finalnej rundzie) + regresja na
+`_25_unit_testing`/`_26_integration_testing`/`_23_spring_data_jpa`/`_24_spring_security`/
+`_20_spring_core` naprzemiennie (wszystkie nadal 100% `hasContent:true`) PO każdym restarcie —
+zero regresji. Kapszton (Lesson20, "JavaQuest Tasks API") łączy `@SpringBootTest(RANDOM_PORT)` +
+`TestRestTemplate` + PRAWDZIWĄ bazę H2 + `@MockitoBean` + `@TestConfiguration` (deterministyczny
+`Clock`) + `@ActiveProfiles` + regułę ArchUnit (kontroler nie omija serwisu), dokładnie
+odzwierciedlając kod źródłowy Java tej lekcji.
+
+Stały wzorzec timingu (ustalony w `_25`/`_26`, potwierdzony ponownie w tym rozdziale): restart
+backendu → `until curl .../lessons | grep 200` (pierwsza gotowość) → dodatkowe `sleep 60` w TYM
+SAMYM tle (`run_in_background: true`) → dopiero WTEDY curl właściwej weryfikacji — bez tego
+dodatkowego opóźnienia zdarzają się fałszywe `hasContent:false` dla świeżo dodanych lekcji.
+
+Commity: `b2c1551` (1-3), `9047064` (4-5), `146c4d3` (6-7), `87de5fa` (8-10), `405471b` (11-13),
+`66b0ed2` (13-15, poprawka numeracji — 13 scommitowane ponownie razem z 14-15),
+`8d65650` (16-18), `92ba5d4` (19-20).
+
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_28_java_evolution`** (24
+lekcje: `01_JavaReleaseCadenceAndLtsExplained` ... `24_JavaEvolutionCapstone`, pełna lista w
+`ChapterSeedData.java` i w sekcji `_28_java_evolution` w `CLAUDE.md`). Nowy sufiks scratchpada `z`
+dla tego rozdziału. Ten sam, sprawdzony workflow: odtwórz `scratchpad/helpers.js`
+(`fillQuizTo100`), czytaj `_LessonNN_Temat.java` + `grep "🧪 Zadanie"` na
+`_Exercises_LessonNN_Temat.java` z `src/main/java/com/example/javaquest/_28_java_evolution/
+LessonNN_Temat/`, napisz `genNNz.js`, zweryfikuj `node genNNz.js`, skopiuj JSON do
+`src/main/resources/content/_28_java_evolution/`, restart backendu → poczekaj na pierwsze 200 →
+DODATKOWE ~60s w tle → dopiero wtedy curl weryfikacji WSZYSTKICH nowych lekcji + 1 regresja z
+INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje. Pozostałe rozdziały po `_28_java_evolution`
+w kolejności: `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16),
+`_31_spring_cloud_microservices` (19) — ok. 76 pozostałych lekcji po dokończeniu
+`_28_java_evolution`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
+wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
 ---
