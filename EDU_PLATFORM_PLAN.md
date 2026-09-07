@@ -2646,4 +2646,45 @@ kolejności: `_27_spring_test` (20), `_28_java_evolution` (24), `_29_spring_reac
 pozostałych lekcji po dokończeniu `_26_integration_testing`. Backend obecnie URUCHOMIONY na
 porcie 8082 — zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji, jeśli sesja
 została przerwana.
+
+### ✅ `_26_integration_testing` KOMPLETNY na platformie (stan na 2026-09-07): 16/16 lekcji
+
+Dokończone w tej samej autonomicznej sesji co `_25_unit_testing` (kontynuacja bez pytania o zgodę).
+Wszystkie 16 lekcji napisane od zera, theory:8 exercises:30 quiz:100. Ten sam workflow co w
+`_25_unit_testing`: `scratchpad/helpers.js` (`fillQuizTo100`) + `genNNx.js` per lekcja (sufiks `x`),
+treść budowana przez odczyt `_LessonNN_Temat.java` + `grep "🧪 Zadanie"` na pliku ćwiczeń.
+
+Zweryfikowane end-to-end w 5 rundach restart+curl (po każdej parze/trójce lekcji): `/api/chapters/
+_26_integration_testing/lessons` (16/16 `hasContent:true`) + regresja na `_25_unit_testing` i
+`_20_spring_core` (nadal 100% `hasContent:true`) PO każdym restarcie — zero regresji. Kapszton
+(Lesson16, "JavaQuest Order Processing") łączy PRAWDZIWĄ bazę H2 + STUBOWANY przez WireMock
+zewnętrzny gateway płatności + Test Data Builder + izolację przez UUID w 3 scenariuszach, dokładnie
+odzwierciedlając kod źródłowy Java tej lekcji.
+
+**Powtórzona pułapka timingu z `_25_unit_testing` (WARTO zapamiętać na przyszłość)**: `Tomcat
+started` loguje się PRZED zakończeniem `ApplicationRunner`-ów (`ContentSeeder`/
+`LessonContentLoader`) — pierwszy 200 z `/api/chapters/.../lessons` NIE gwarantuje, że treść
+najpóźniej przetwarzanych rozdziałów już się załadowała. W tej sesji ustalono stały wzorzec:
+restart backendu → `until curl .../lessons | grep 200` (pierwsza gotowość) → dodatkowe `sleep 60`
+w TYM SAMYM tle (`run_in_background: true`) → dopiero WTEDY curl właściwej weryfikacji. Bez tego
+dodatkowego opóźnienia zdarzają się fałszywe `hasContent:false` dla świeżo dodanych lekcji.
+
+Commity: `124e729` (1-3), `d5c3c14` (4-5), `78e4cc8` (6-8), `f556c37` (9-11), `438fd3c` (12-14),
+`a561a0b` (15-16).
+
+**Następny krok**: przejść automatycznie, BEZ pytania o zgodę, do **`_27_spring_test`** (20
+lekcji: `01_SpringTestModuleOverview` ... `20_SpringTestCapstone`, pełna lista w
+`ChapterSeedData.java` i w sekcji `_27_spring_test` w `CLAUDE.md`). Nowy sufiks scratchpada `y`
+dla tego rozdziału. Ten sam, sprawdzony workflow: odtwórz `scratchpad/helpers.js`
+(`fillQuizTo100`), czytaj `_LessonNN_Temat.java` + `grep "🧪 Zadanie"` na
+`_Exercises_LessonNN_Temat.java` z `src/main/java/com/example/javaquest/_27_spring_test/
+LessonNN_Temat/`, napisz `genNNy.js`, zweryfikuj `node genNNy.js`, skopiuj JSON do
+`src/main/resources/content/_27_spring_test/`, restart backendu → poczekaj na pierwsze 200 →
+DODATKOWE ~60s w tle → dopiero wtedy curl weryfikacji WSZYSTKICH nowych lekcji + 1 regresja z
+INNEGO rozdziału PRZED każdym commitem co 2-3 lekcje. Pozostałe rozdziały po `_27_spring_test` w
+kolejności: `_28_java_evolution` (24), `_29_spring_reactive` (17),
+`_30_spring_messaging_and_async` (16), `_31_spring_cloud_microservices` (19) — ok. 136
+pozostałych lekcji po dokończeniu `_27_spring_test`. Backend obecnie URUCHOMIONY na porcie 8082 —
+zatrzymaj/zrestartuj według wzorca wyżej przy następnej weryfikacji, jeśli sesja została
+przerwana.
 ---
