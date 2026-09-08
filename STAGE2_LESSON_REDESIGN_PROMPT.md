@@ -187,6 +187,34 @@ Jeżeli zagadnienie dotyczy rozwiązania mającego określone zalety i ogranicze
 Na końcu umieść krótkie podsumowanie najważniejszych informacji. Nie powtarzaj całej lekcji
 słowo w słowo.
 
+## Pełne pokrycie API dla lekcji o "narzędziu z wieloma metodami"
+
+Niektóre lekcje uczą nie tyle pojedynczego mechanizmu językowego, co CAŁEGO narzędzia/klasy
+złożonej z wielu powiązanych metod — przykłady: `String`, `StringBuilder`, `Math`, `Arrays`,
+`Random`/`SecureRandom`, `LocalDate`/`LocalTime`/`LocalDateTime`, `BigInteger`/`BigDecimal`,
+`Integer`/inne klasy opakowujące, operatory (arytmetyczne/bitowe/porównania) jako zamknięty
+zestaw symboli, oraz — w dalszych rozdziałach — kolekcje (`List`/`Map`/`Set` i ich odmiany),
+`Stream`, klasy narzędziowe z `java.nio.file`, `java.util.Objects` itd.
+
+Dla TAKICH lekcji nie wystarczy pokazać kilku przykładowych metod — teoria MUSI systematycznie
+wymienić i pokazać (choćby krótkim przykładem użycia) WSZYSTKIE metody/operatory realnie
+związane z omawianym zjawiskiem, które są używane w praktyce, nie tylko te, które akurat
+pojawiły się w pierwotnym materiale źródłowym. Zbuduj to jako czytelną, wyczerpującą listę
+(np. tabelę albo pogrupowane punkty w sekcji definicji/zastosowania/wizualnej), a nie
+przypadkowy podzbiór.
+
+Nie każda lekcja tego wymaga — zwykły mechanizm językowy (np. pętla `for`, instrukcja `if`,
+konstruktor) nie ma "listy metod" do wyczerpania. Rozpoznaj to rozróżnienie świadomie: jeśli
+temat lekcji to KONKRETNA klasa/interfejs z biblioteki standardowej albo zamknięty zestaw
+operatorów, zastosuj to pełne pokrycie; jeśli to koncepcja/konstrukcja języka, trzymaj się
+zwykłej struktury 11 sekcji bez sztucznego dopisywania listy.
+
+Przy migracji rozdziałami: zanim uznasz lekcję za skończoną, zadaj sobie pytanie "czy ta lekcja
+opisuje narzędzie z wieloma metodami, i czy wymieniłem/pokazałem WSZYSTKIE istotne w praktyce
+metody tego narzędzia?" — jeśli nie, uzupełnij PRZED przejściem dalej. Dotyczy to też lekcji już
+zmigrowanych we wcześniejszych etapach — wróć i popraw je, zanim ruszysz dalej z nowymi
+rozdziałami.
+
 ## Zgodność teorii z zadaniami i quizami
 
 Teoria każdej lekcji musi dostarczać wiedzy potrzebnej do wykonania wszystkich przypisanych
