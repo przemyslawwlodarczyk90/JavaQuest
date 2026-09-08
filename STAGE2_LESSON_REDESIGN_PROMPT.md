@@ -429,6 +429,15 @@ jeszcze całego kursu.
 
 Po zatwierdzeniu wzorca przerabiaj kurs rozdziałami albo małymi paczkami lekcji.
 
+**Cały projekt (wszystkie 31 rozdziałów kursu) musi zostać przejechany tą migracją w całości —
+bez wyjątków, mimo wszystkiego, co zostało zrobione wcześniej.** Dotyczy to również rozdziałów,
+które w trakcie wcześniejszych sesji zostały już „ukończone” i zweryfikowane pod starszą wersją
+tej instrukcji (np. `_02_oop`, oraz lekcje 00-13 `_01_fundamentals`) — NIE zakładaj, że wcześniej
+wykonana praca jest wystarczająca tylko dlatego, że przeszła weryfikację w danym momencie. Wróć
+do NICH RÓWNIEŻ i sprawdź je od nowa względem AKTUALNEJ, pełnej treści tej instrukcji (w tym
+sekcji „Pełne pokrycie API” dopisanej później) — uzupełnij, czego brakuje, zanim uznasz dany
+rozdział za faktycznie zamknięty. Nie pomijaj rozdziałów pod pretekstem, że „to już było zrobione”.
+
 Po każdej paczce wykonaj:
 
 - kompilację backendu;

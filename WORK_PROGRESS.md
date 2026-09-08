@@ -5,9 +5,18 @@
 
 ## Aktualny etap
 
-Etap 1-3 — zakończone. **Etap 4 (migracja rozdziałami) — w toku.** `_02_oop` (15/15) KOMPLETNY
-i scommitowany. `_01_fundamentals`: lekcje 00-13 z 17 napisane wg standardu 11 sekcji,
-zweryfikowane (restart+curl+regresja) i **scommitowane** — ALE patrz WAŻNA ZMIANA WYMAGAŃ niżej:
+Etap 1-3 — zakończone. **Etap 4 (migracja rozdziałami) — w toku.**
+
+**DYREKTYWA UŻYTKOWNIKA (zapisana też w STAGE2_LESSON_REDESIGN_PROMPT.md, sekcja Etap 4):**
+cały projekt (wszystkie 31 rozdziałów) MUSI zostać przejechany migracją w całości, mimo
+wszystkiego, co już zrobiono — łącznie z rozdziałami uznanymi wcześniej za "ukończone"
+(`_02_oop`, `_01_fundamentals` 00-13). NIE pomijaj ich pod pretekstem, że były już zweryfikowane
+— trzeba je sprawdzić jeszcze raz względem AKTUALNEJ, pełnej wersji instrukcji (w tym wymogu
+"pełne pokrycie API" opisanego niżej) i uzupełnić braki.
+
+`_02_oop` (15/15) i `_01_fundamentals` 00-13 są scommitowane jako PIERWSZY przebieg — ale zgodnie
+z powyższą dyrektywą wymagają jeszcze DRUGIEGO przebiegu (przeglądu pod kątem pełnego pokrycia
+API i wszystkich pozostałych wymagań instrukcji), zanim zostaną uznane za faktycznie zamknięte.
 te lekcje wymagają jeszcze DODATKOWEGO przeglądu pod nowym kątem (pełne pokrycie API), zanim
 rozdział zostanie uznany za w pełni zgodny z aktualnym standardem.
 
