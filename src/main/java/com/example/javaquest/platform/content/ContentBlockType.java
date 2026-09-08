@@ -49,5 +49,12 @@ public enum ContentBlockType {
     /** 10. Kiedy uzywac danego rozwiazania, a kiedy nie - zalety/ograniczenia/alternatywy. */
     WHEN_TO_USE,
     /** 11. Podsumowanie - najwazniejsze informacje, bez powtarzania calej lekcji. */
-    SUMMARY
+    SUMMARY,
+    /**
+     * Katalog/pelne pokrycie API - dla lekcji o "narzedziu z wieloma metodami" (String, Math,
+     * Arrays, Random, LocalDate...), wymienia i krotko pokazuje WSZYSTKIE istotne w praktyce
+     * metody/operatory zwiazane z omawianym zjawiskiem, nie tylko podzbior z materialu
+     * zrodlowego. Patrz STAGE2_LESSON_REDESIGN_PROMPT.md, sekcja "Pelne pokrycie API".
+     */
+    API_REFERENCE
 }

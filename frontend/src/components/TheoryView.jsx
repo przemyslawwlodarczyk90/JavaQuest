@@ -18,6 +18,7 @@ const TYPE_META = {
   CODE_WRONG: { icon: '❌', label: 'Kod — błędny' },
   CODE_RIGHT: { icon: '✅', label: 'Kod — poprawiony' },
   WHEN_TO_USE: { icon: '🧭', label: 'Kiedy używać, a kiedy nie' },
+  API_REFERENCE: { icon: '📚', label: 'Katalog metod' },
   SUMMARY: { icon: '📋', label: 'Podsumowanie' },
 }
 
