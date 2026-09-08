@@ -2791,3 +2791,33 @@ Kontynuować automatycznie, BEZ pytania o zgodę między lekcjami/rozdziałami (
 użytkownika z tej sesji), z tym samym rygorem weryfikacji (restart+60s+curl+regresja przed każdym
 commitem co 2-3 lekcje).
 ---
+
+### ✅ `_30_spring_messaging_and_async` KOMPLETNY na platformie (stan na 2026-09-08): 16/16 lekcji
+
+Dokończone w tej samej autonomicznej sesji (lekcje 6-16 dopisane, 1-5 były już gotowe).
+Zweryfikowane end-to-end w kilku rundach restart+curl: `/api/chapters/_30_spring_messaging_and_async/
+lessons` (16/16 `hasContent:true`) + regresja na `_26_integration_testing`/`_27_spring_test`/
+`_29_spring_reactive` (wszystkie nadal `hasContent:true`) — zero regresji. Kapszton (Lesson16,
+"JavaQuest Order Processing") łączy @Async+@Scheduled+ApplicationEvent+próbę RabbitMQ z fallbackiem.
+
+Commity: `f0db298` (10-13), `2a3249f` (14-16, rozdział KOMPLETNY + lekcja 1 nowego rozdziału).
+
+**Następny krok**: kontynuować **`_31_spring_cloud_microservices`** (19 lekcji, sufiks scratchpada
+`u`). **Stan na 2026-09-08: lekcje 1-5 już napisane i scommitowane** (`ec5e967`) —
+SpringCloudOverview, ServiceDiscoveryConcepts, SpringCloudNetflixEureka, ConfigServerIntro,
+SpringCloudConfigClient. Pozostaje 14 lekcji (6-19): ApiGatewayIntro, GatewayRoutingAndFilters,
+ClientSideLoadBalancing, CircuitBreakerConcepts, Resilience4jIntegration, DistributedTracingIntro,
+DistributedTracingWithZipkin, DeclarativeHttpClientsWithFeign, SagaPatternIntro,
+EventDrivenMicroservicesWithSpringCloudStream, SecurityAcrossMicroservices,
+ContainerizingSpringBootApps, ObservabilityAcrossServices, MicroservicesCapstone. **UWAGA z
+CLAUDE.md — ten rozdział ma NAJWIĘCEJ udokumentowanych pułapek Spring Cloud** (gateway-mvc
+psuje globalny classpath, `.properties()` niższy priorytet niż app.properties, standalone Eureka
+zawsze próbuje peer-replication na porcie 8761, `server.port=0` łamie Eureka instance-id,
+eureka-client wymaga `@SpringBootApplication` nie `@Configuration`, itd. — patrz sekcja
+`_31_spring_cloud_microservices` w CLAUDE.md dla pełnej listy 7 pułapek) — treść JSON tych lekcji
+powinna je jawnie opisywać, tak jak dotychczasowe lekcje 1-5 już to robią. Docker NIE jest
+dostępny na tej maszynie — Lesson12 (Zipkin) ma fallback. Po dokończeniu `_31` (14 lekcji) CAŁY
+zaplanowany łuk platformy (`_01`-`_31`) będzie KOMPLETNY. Kontynuować automatycznie, BEZ pytania o
+zgodę między lekcjami/rozdziałami, z tym samym rygorem weryfikacji (restart+60s+curl+regresja
+przed każdym commitem co 2-3 lekcje).
+---
