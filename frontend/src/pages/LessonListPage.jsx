@@ -41,9 +41,6 @@ export default function LessonListPage() {
             <Link to={`/rozdzial/${chapterSlug}/${lesson.slug}`} className="lesson-list__title">
               {lesson.title}
             </Link>
-            <span className={`lesson-list__badge ${lesson.hasContent ? 'lesson-list__badge--ready' : ''}`}>
-              {lesson.hasContent ? 'gotowa' : 'treść w przygotowaniu'}
-            </span>
           </li>
         ))}
       </ol>
