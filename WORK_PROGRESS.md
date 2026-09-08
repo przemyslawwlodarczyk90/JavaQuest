@@ -5,65 +5,136 @@
 
 ## Aktualny etap
 
-Etap 1 (analiza) — zakończony. Etap 2 (standard + komponenty) — zakończony. Etap 3 (lekcja
-wzorcowa) — zakończony. **Etap 4 (migracja rozdziałami) — w toku: rozdział `_02_oop` (15/15
-lekcji) napisany, weryfikacja końcowa (restart+curl+regresja) w trakcie, jeszcze BEZ commita.**
+Etap 1-3 — zakończone. **Etap 4 (migracja rozdziałami) — w toku.** `_02_oop` (15/15) KOMPLETNY
+i scommitowany. `_01_fundamentals`: lekcje 00-13 z 17 napisane wg standardu 11 sekcji,
+zweryfikowane (restart+curl+regresja) i **scommitowane** — ALE patrz WAŻNA ZMIANA WYMAGAŃ niżej:
+te lekcje wymagają jeszcze DODATKOWEGO przeglądu pod nowym kątem (pełne pokrycie API), zanim
+rozdział zostanie uznany za w pełni zgodny z aktualnym standardem.
+
+## WAŻNA ZMIANA WYMAGAŃ (2026-09-08, późno w sesji) — PRZECZYTAJ PRZED KONTYNUACJĄ
+
+Użytkownik dodał nowy, obowiązkowy wymóg do `STAGE2_LESSON_REDESIGN_PROMPT.md` (sekcja "Pełne
+pokrycie API dla lekcji o narzędziu z wieloma metodami"): lekcje ucząсe KONKRETNEJ klasy/API z
+wieloma metodami (String, Math, Arrays, Random, LocalDate/Time, BigInteger/BigDecimal, Integer i
+inne wrappery, kolekcje w przyszłych rozdziałach...) MUSZĄ wymieniać i pokazywać WSZYSTKIE
+istotne w praktyce metody tego narzędzia, nie tylko podzbiór z oryginalnego materiału źródłowego.
+Dodano do tego nowy typ bloku **`API_REFERENCE`** (📚 "Katalog metod") w `ContentBlockType.java`
++ `TheoryView.jsx` + `App.css` — już zaimplementowany, skompilowany, zbudowany (backend
+`mvnw.cmd compile` i frontend `npm run build` obie OK), **scommitowany** (`66fc5c4`).
+
+**NASTĘPNY KROK (dosłownie pierwsza rzecz do zrobienia po "kontynuuj"): przejrzeć WSZYSTKIE już
+napisane lekcje (najpierw `_01_fundamentals` 00-13, potem CAŁY `_02_oop`) pod kątem tego nowego
+wymogu i dopisać brakujące katalogi metod (blok `API_REFERENCE`) tam, gdzie potrzeba, ZANIM
+przejdziesz do nowych, niezmigrowanych lekcji.**
+
+Użytkownik wprost wskazał jako wymagające poprawki:
+- **`_01_fundamentals/06_StringsAndBuilder.json`** — brakuje pełnego katalogu metod String
+  (length, charAt, isEmpty, isBlank, equals, equalsIgnoreCase, compareTo, compareToIgnoreCase,
+  contains, startsWith, endsWith, indexOf, lastIndexOf, substring, trim, strip, stripLeading,
+  stripTrailing, toLowerCase, toUpperCase, replace, replaceAll, replaceFirst, split, join,
+  repeat, toCharArray, format, valueOf, concat, matches, chars, lines, intern, hashCode) ORAZ
+  StringBuilder (append, insert, delete, deleteCharAt, replace, reverse, setLength, setCharAt,
+  charAt, length, capacity, indexOf, substring).
+- **`_01_fundamentals/08_MathOperations.json`** — brakuje pełnego katalogu metod Math (abs, max,
+  min, pow, sqrt, cbrt, sin/cos/tan/asin/acos/atan/atan2, toRadians/toDegrees, ceil, floor,
+  round, rint, log, log10, exp, random, PI, E, floorDiv, floorMod, addExact/subtractExact/
+  multiplyExact — overflow-checking, signum, hypot, copySign).
+
+Dodatkowo, na podstawie własnej analizy tej sesji, kandydaci do tego samego przeglądu (lekcje
+"o narzędziu z metodami", NIE lekcje o czystych konstrukcjach językowych):
+- `05_Arrays.json` — katalog metod klasy `Arrays` (sort, copyOf, copyOfRange, equals, deepEquals,
+  fill, binarySearch, asList, deepToString, stream, hashCode).
+- `07_DateAndTime.json` — katalog metod LocalDate/LocalTime/LocalDateTime (plusX/minusX/withX/
+  isBefore/isAfter/isEqual/getX/isLeapYear/lengthOfMonth/atStartOfDay itd.) i ZonedDateTime/Instant.
+- `09_BigNumberTypes.json` — katalog metod BigInteger (add/subtract/multiply/divide/mod/pow/gcd/
+  isProbablePrime/intValue/longValue/compareTo/bitLength/testBit...) i BigDecimal (setScale/
+  stripTrailingZeros/compareTo/toBigInteger/negate/abs...).
+- `12_BinaryAndHex.json` — pełniejszy katalog metod Integer/Long związanych z systemami liczbowymi
+  (toBinaryString/toHexString/toOctalString/parseInt z radix/toString z radix/bitCount/
+  numberOfLeadingZeros/numberOfTrailingZeros/highestOneBit/reverse).
+- `13_BitwiseOperators.json` — czy WSZYSTKIE operatory bitowe (`& | ^ ~ << >> >>>` i ich formy
+  złożone `&= |= ^= <<= >>= >>>=`) są jawnie pokazane, nie tylko część.
+- `15_RandomAndSecureRandom.json` (jeszcze NIE napisana w tej sesji) — pełny katalog metod Random
+  (nextInt/nextInt(bound)/nextInt(origin,bound)/nextLong/nextDouble/nextFloat/nextBoolean/
+  nextGaussian/nextBytes/ints()/doubles()/longs() jako strumienie) — pisz to OD RAZU z pełnym
+  pokryciem, zamiast pisać i potem wracać poprawiać.
+
+Lekcje BEZ tego wymogu (czyste konstrukcje językowe, zostają jak są): 00, 01 (częściowo — sam
+konzept zmiennych, nie API), 02_Operators (do sprawdzenia czy wszystkie operatory pokazane, ale
+to nie jest "klasa z metodami"), 03_Conditionals, 04_Loops, 10_HeapAndStack, 11_TypeCasting,
+14_GarbageCollector, 16_Exceptions.
+
+Cała reszta rozdziałów kursu (`_02_oop` już zrobiony, oraz WSZYSTKIE przyszłe: `_03_collections`
+to będzie SZCZEGÓLNIE ważne dla tego wymogu — List/Map/Set/Stream mają dziesiątki metod każda).
 
 ## Ostatnia ukończona czynność
 
-Przepisano teorię WSZYSTKICH 15 lekcji `_02_oop` (01_ClassesAndObjects … 15_DesignPatterns) na
-nowy standard 11 sekcji (14-15 bloków/lekcję). Poprawiono polskie znaki w zadaniach i quizach
-(pola narracyjne, nigdy `solution`/`code`) świadomym, kumulatywnym słownikiem
-(`scratchpad/polish-dict.js`, ~200 pozycji). Znaleziono i naprawiono **poważny, systemowy błąd
-z Fazy 1**: w 141 miejscach (10 z 15 plików `_02_oop`) słowa "constructor"/"toString"/"valueOf"
-były zastąpione zserializowanym kodem źródłowym wbudowanych funkcji JS (np.
-`"function toString() { [native code] }()"` zamiast `"toString()"`) — najpewniej bug w
-oryginalnym skrypcie generującym ten rozdział w Fazie 1. Naprawiono mechanicznym, bezpiecznym
-skryptem (`scratchpad/fix_native_code_corruption.js`) — w odróżnieniu od poprawek diakrytyków,
-to była BEZPIECZNA globalna zamiana (wzorzec jednoznaczny, nigdy nie występuje legalnie w polskim
-tekście ani w kodzie Java). Kilka plików miało zagnieżdżoną korupcję (2-3 warstwy) — skrypt trzeba
-było uruchomić do skutku (aż do 0 wystąpień), nie tylko raz.
+Dopisano wymóg pełnego pokrycia API do `STAGE2_LESSON_REDESIGN_PROMPT.md`, zaimplementowano nowy
+typ bloku `API_REFERENCE`, zweryfikowano (compile+build), scommitowano. Napisano i zweryfikowano
+`_01_fundamentals` lekcje 00-13 (WG STAREGO zakresu wymagań, przed dodaniem wymogu katalogu API —
+wymagają jeszcze uzupełnienia, patrz wyżej).
 
-## Zmienione pliki (Etap 4, ten rozdział)
+## Zmienione pliki (ten etap, od początku Etapu 4)
 
-Wszystkie 15: `src/main/resources/content/_02_oop/01_ClassesAndObjects.json` …
-`15_DesignPatterns.json` — pełna przebudowa teorii + poprawki diakrytyków + naprawa korupcji
-"native code". Nowe pliki robocze w scratchpadzie (NIE w repo): `polish-dict.js` (współdzielony,
-kumulatywny słownik), `fix_native_code_corruption.js`, `migrate_02oop_NN.js` (per lekcja).
+- `_02_oop/*.json` (15 plików) — KOMPLETNE, scommitowane (`686ff35`), NIE wymaga rewizji pod
+  kątem API_REFERENCE (żadna lekcja OOP nie jest "klasą z wieloma metodami" w tym sensie).
+- `_01_fundamentals/00-13_*.json` (14 plików) — napisane, zweryfikowane, scommitowane
+  (`osobny wcześniejszy commit tej sesji — sprawdź `git log` jeśli potrzebujesz dokładnego hasha`),
+  ALE wymagają jeszcze uzupełnienia o `API_REFERENCE` tam, gdzie wskazano wyżej.
+- `STAGE2_LESSON_REDESIGN_PROMPT.md`, `ContentBlockType.java`, `TheoryView.jsx`, `App.css` —
+  nowy wymóg + nowy typ bloku, scommitowane (`66fc5c4`).
+- `scratchpad/polish-dict.js` (NIE w repo, tylko w katalogu roboczym sesji) — kumulatywny słownik
+  poprawek polskich znaków, ~280 pozycji. Jeśli sesja jest nowa/scratchpad wyczyszczony, TRZEBA
+  go odtworzyć od zera (był budowany iteracyjnie, lekcja po lekcji) — nie ma go nigdzie w repo,
+  tylko w tym pliku roboczym. Warto rozważyć skopiowanie go do repo (np. `scripts/polish-dict.js`)
+  przy najbliższej okazji, żeby nie odtwarzać go w kolejnej sesji od zera.
+- `scratchpad/fix_native_code_corruption.js` (też NIE w repo) — mechaniczny fix bugu "function
+  X() { [native code] }" (patrz niżej) — TEŻ warto skopiować do repo.
 
 ## Wyniki testów / weryfikacji
 
-- Liczniki policzone dla wszystkich 15 plików: teoria 14-15 / zadania 30 / quiz 100 — zgodne.
-- `grep -c "native code"` na wszystkich 15 plikach → 0 wszędzie (potwierdzone finalnym sweepem).
-- Restart backendu w toku w momencie zapisu tej notatki — **jeszcze NIE potwierdzono** przez
-  `curl` że wszystkie 15 lekcji ładuje się bez błędu (`ContentBlockType.valueOf` dla nowych 12
-  typów enuma) ani że nie ma regresji na innym rozdziale. TO JEST NASTĘPNY KROK.
-- `mvnw.cmd compile` / `npm run build`: bez zmian od Etapu 2 (nie modyfikowano kodu Java/JSX w
-  tej turze, tylko treść JSON) — nie wymaga ponownego uruchamiania w tym kroku.
+- `mvnw.cmd compile` i `npm run build` — oba OK po dodaniu API_REFERENCE.
+- Restart backendu + `curl` na kilkunastu lekcjach `_01_fundamentals` (00, 06, 08, 09, 13) →
+  wszystkie ładują 14 bloków teorii bez błędu. Regresja na `_02_oop/03_Constructors` → 15 bloków,
+  bez zmian.
+- Wszystkie 17 plików `_01_fundamentals` (00-16, włącznie z jeszcze niezmigrowanymi 14-16)
+  sprawdzone `grep -c "native code"` → 0 wszędzie.
 
 ## Problemy i decyzje
 
-- Poprawka merytoryczna zastosowana konsekwentnie: "konstruktor to NIE metoda" (zamiast "to
-  specjalna metoda") — znaleziona i naprawiona w Lesson01 i Lesson03 (jedyne miejsca, gdzie
-  faktycznie występowała w treści quizu/teorii tego rozdziału).
-- Tytuły lekcji nadal auto-generowane z slug (nierozwiązane, jak poprzednio odnotowano).
-- **WAŻNE dla kontynuacji migracji innych rozdziałów**: PRZED założeniem, że plik jest wolny od
-  bugu "native code", zawsze zrób `grep -c "native code"` z NIEescapowanym nawiasem (nie
-  `"native code\]"` — w tej sesji escapowana wersja dała fałszywie "0" dla plików, które
-  faktycznie miały korupcję; dokładna przyczyna tej rozbieżności nie została ustalona, ale
-  NIEescapowany wzorzec `"native code"` okazał się wiarygodny). Sprawdź TAKŻE inne rozdziały
-  kursu pod kątem tego samego bugu, jeśli/gdy migracja do nich dotrze — na razie potwierdzone
-  TYLKO w `_02_oop`, ale nie zweryfikowano pozostałych 29 rozdziałów.
+- **Bug "native code" WYSTĘPUJE POZA `_02_oop`** — znaleziony i naprawiony też w
+  `_01_fundamentals/01_Variables.json` i `05_Arrays.json` (nie tylko w `_02_oop`, jak wcześniej
+  sądzono). **Przy KAŻDYM kolejnym rozdziale rób `grep -c "native code" plik.json` jako PIERWSZY
+  krok weryfikacji KAŻDEGO pliku, nie zakładaj, że rozdział jest "bezpieczny", bo poprzedni był.**
+- **Zaobserwowana, niewyjaśniona zawodność pojedynczego sprawdzenia grep/node zaraz po zapisie
+  pliku** (raz dało fałszywe "0" mimo obecności korupcji) — praktyczna zasada: rób corruption-fix
+  jako DOSŁOWNIE OSTATNI krok na danym pliku (po wszystkich innych edycjach), w pętli aż script
+  zwróci "0 poprawek" W TYM SAMYM wywołaniu, i dodaj `sleep 1` przed finalnym potwierdzającym
+  grepem, jeśli coś budzi wątpliwość.
+- Tytuły lekcji nadal auto-generowane z slug (nierozwiązane, temat na później, mniejszy priorytet
+  niż katalogi API).
 
-## Następny krok
+## Następny krok (dokładnie, w kolejności)
 
-1. Poczekaj na pełny start backendu (Tomcat + ContentSeeder/LessonContentLoader, ~90-100s).
-2. `curl /api/chapters/_02_oop/lessons/<KAZDA-Z-15>/theory` — potwierdź, że każda lekcja ładuje
-   pełną liczbę bloków (14-15) bez błędu enuma.
-3. `curl /api/chapters/_20_spring_core/lessons` (regresja na niepowiązanym rozdziale) — potwierdź
-   brak regresji.
-4. Commit lokalny (bez trailera współautorstwa, bez push) — "Etap 4: rozdzial _02_oop wg nowego
-   standardu 11 sekcji (teoria+diakrytyki+naprawa buga native-code) - rozdzial KOMPLETNY".
-5. Zapytać użytkownika / kontynuować kolejny rozdział (`_01_fundamentals`, 17 lekcji) tym samym
-   trybem, zachowując rygor: grep pod kątem "native code" jako PIERWSZY krok przy każdym kolejnym
-   pliku, zanim założysz, że jest czysty.
+1. **Przejrzyj i uzupełnij o `API_REFERENCE` (katalog metod)**: `06_StringsAndBuilder.json`,
+   `08_MathOperations.json` (jawnie wskazane przez użytkownika), potem `05_Arrays.json`,
+   `07_DateAndTime.json`, `09_BigNumberTypes.json`, `12_BinaryAndHex.json`,
+   `13_BitwiseOperators.json` (sprawdź kompletność operatorów).
+2. Dokończ resztę `_01_fundamentals`: `14_GarbageCollector` (JUŻ NAPISANA w tej sesji, ale NIE
+   zapisana do pliku — patrz niżej, PRAWDOPODOBNIE trzeba ją napisać na nowo, sprawdź czy
+   `14_GarbageCollector.json` już ma nową teorię czy jeszcze starą 7-blokową), `15_RandomAndSecureRandom`
+   (pisz OD RAZU z pełnym katalogiem API Random/SecureRandom), `16_Exceptions`.
+3. Restart+curl+regresja+commit dla całego dokończonego `_01_fundamentals` (17/17).
+4. Przejrzyj CAŁY już ukończony `_02_oop` (15 lekcji) pod kątem wymogu API_REFERENCE — bardzo
+   mało prawdopodobne, żeby cokolwiek tam wymagało zmiany (to lekcje o konstrukcjach OOP, nie o
+   klasach z API), ale zgodnie z poleceniem użytkownika NALEŻY to jawnie sprawdzić i odnotować
+   wynik (nawet jeśli to "sprawdzone, nic do zmiany").
+5. Dopiero PO punktach 1-4 przejdź do `_03_collections` (23 lekcje) — TEN rozdział będzie
+   wymagał NAJWIĘCEJ uwagi pod kątem API_REFERENCE (ArrayList/List/Map/Set/Stream mają dziesiątki
+   metod każda) — pisz go OD RAZU z pełnym katalogiem, nie zostawiaj na potem.
+
+**UWAGA o stanie 14_GarbageCollector.json**: w trakcie tej sesji WYGENEROWANO nową teorię dla tej
+lekcji (napisano `migrate_01f_14.js` i URUCHOMIONO go) - ale przez przerwanie sesji (user "kończę
+na dziś") NIE zdążono zweryfikować/scommitować. SPRAWDŹ NAJPIERW `node -e "console.log(require(...).theory.length)"` -
+jeśli pokazuje 14, plik już ma nową teorię (tylko brakuje weryfikacji+commitu); jeśli 7, trzeba
+uruchomić skrypt ponownie.

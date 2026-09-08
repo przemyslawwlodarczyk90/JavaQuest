@@ -524,11 +524,42 @@ Utwórz osobny plik WORK_PROGRESS.md, zawierający:
 - dokładny następny krok.
 
 Aktualizuj ten plik po każdym etapie i przed zakończeniem sesji. Gdy użytkownik w nowej sesji
-napisze „kontynuuj”, najpierw przeczytaj CLAUDE.md i WORK_PROGRESS.md, sprawdź aktualny stan
-plików oraz zmiany w Git, a następnie wznów pracę od zapisanego punktu. Nie rozpoczynaj projektu
-od początku i nie powtarzaj ukończonych etapów.
+napisze „kontynuuj”, najpierw przeczytaj TEN plik (STAGE2_LESSON_REDESIGN_PROMPT.md) oraz
+WORK_PROGRESS.md, sprawdź aktualny stan plików oraz zmiany w Git, a następnie wznów pracę od
+zapisanego punktu. Nie rozpoczynaj projektu od początku i nie powtarzaj ukończonych etapów.
 
 `WORK_PROGRESS.md` ma leżeć w katalogu głównym repozytorium i być JEDYNYM plikiem, który trzeba
 otworzyć, żeby jednym rzutem oka sprawdzić, na jakim etapie stoi praca — bez przeszukiwania historii
 rozmowy ani commitów. Trzymaj go zwięzłym i aktualnym (kilkanaście-kilkadziesiąt linii, nie
 rozrastający się dziennik) — nadpisuj nieaktualne sekcje, zamiast dopisywać kolejne wpisy pod spodem.
+
+Ten plik (STAGE2_LESSON_REDESIGN_PROMPT.md) jest JEDYNYM źródłem instrukcji roboczych dla tej
+inicjatywy — `CLAUDE.md` w katalogu głównym repo celowo zawiera tylko krótki wskaźnik do tego
+pliku i do WORK_PROGRESS.md, bez własnych, potencjalnie sprzecznych instrukcji. Nie przenoś
+instrukcji z powrotem do CLAUDE.md.
+
+## Środowisko i uruchamianie (informacje operacyjne)
+
+- **PowerShell** (nie Bash) do `mvnw.cmd`. `JAVA_HOME` nie jest ustawiony globalnie w tym
+  środowisku — na początku KAŻDEJ sesji: `$env:JAVA_HOME = "C:\Users\kapit\.jdks\openjdk-25.0.2"`.
+- Backend na porcie **8082**. Po starcie Tomcat odpowiada z HTTP 200 ZANIM `ContentSeeder`/
+  `LessonContentLoader` skończą ładować treść z plików JSON do bazy H2 in-memory — odczekaj
+  dodatkowe ~60-100s po pierwszej odpowiedzi 200, zanim ufasz wynikom `curl`.
+- Baza H2 jest **in-memory** i resetuje się przy każdym restarcie backendu, więc migracje treści
+  są bezpieczne (nic trwałego do stracenia).
+- Wzorzec weryfikacji lekcji: `mvnw.cmd compile` (jeśli zmieniono kod Java) + `npm run build`
+  (jeśli zmieniono komponenty frontendu, w katalogu `frontend/`) → restart backendu → poczekaj →
+  `curl http://localhost:8082/api/chapters/<rozdzial>/lessons/<lekcja>/theory` (sprawdź liczbę
+  bloków) → sprawdź regresję na co najmniej jednej NIEZWIĄZANEJ, wcześniej ukończonej lekcji →
+  dopiero wtedy commit.
+- **Znany bug "native code"**: w treści JSON niektórych lekcji (napotkane w `_02_oop` i
+  `_01_fundamentals`, sprawdź KAŻDY kolejny rozdział) słowa "constructor"/"toString"/"valueOf" są
+  zastąpione zserializowanym kodem wbudowanych funkcji JS, np.
+  `"function toString() { [native code] }()"` zamiast `"toString()"`. To bezpieczna do naprawienia
+  globalna zamiana (wzorzec nigdy nie występuje legalnie) — PRZED uznaniem pliku za gotowy zawsze
+  sprawdź `grep -c "native code" plik.json` (bez escapowania nawiasu) i napraw w pętli aż do 0,
+  jako DOSŁOWNIE OSTATNI krok edycji tego pliku (kolejność ma znaczenie — obserwowano zawodność
+  pojedynczego sprawdzenia zaraz po zapisie).
+- Poprawki polskich znaków w zadaniach/quizach: świadomy, kumulatywny słownik słowo-po-słowie
+  (nigdy ślepy globalny find-replace), stosowany WYŁĄCZNIE do pól narracyjnych (prompt/hint/
+  question/options/explanation), NIGDY do pola `solution`/`code` (prawdziwy kod Java).
