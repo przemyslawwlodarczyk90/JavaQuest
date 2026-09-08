@@ -2729,3 +2729,65 @@ w kolejności: `_29_spring_reactive` (17), `_30_spring_messaging_and_async` (16)
 `_28_java_evolution`. Backend obecnie URUCHOMIONY na porcie 8082 — zatrzymaj/zrestartuj według
 wzorca wyżej przy następnej weryfikacji, jeśli sesja została przerwana.
 ---
+
+### ✅ `_28_java_evolution` KOMPLETNY na platformie (stan na 2026-09-08): 24/24 lekcje
+
+Dokończone w NOWEJ sesji (kontynuacja bez pytania o zgodę, użytkownik: "kontynuuj prace... nie
+pytaj sie o zgode pomiedzy rozdzialami"). Lekcje 1-13 były już gotowe z poprzedniej sesji
+(potwierdzone commitami `1bce7c3`/`69951cd`), lekcja 14 była napisana ale niescommitowana —
+lekcje 15-24 napisane od zera w tej sesji, wszystkie theory:8 exercises:30 quiz:100.
+
+**Nowa, WAŻNA pułapka odkryta i naprawiona (dopisz do `scratchpad/helpers.js` na przyszłość)**:
+`theory[].type` MUSI być JEDNĄ z wartości enuma `ContentBlockType` — WYŁĄCZNIE `CONCEPT`,
+`ANALOGY`, `CODE_EXAMPLE`, `DIAGRAM`. Użycie `"RULE"` (wydawało się naturalne dla bloków typu
+"zasada/reguła") dało `IllegalArgumentException: No enum constant ...ContentBlockType.RULE` przy
+starcie `LessonContentLoader`, które PRZERYWA seedowanie treści dla WSZYSTKICH rozdziałów jeszcze
+nieprzetworzonych w tej samej pętli `for (Lesson lesson : lessonRepository.findAll())` — objawiło
+się jako `hasContent:false` dla WIELU już napisanych lekcji, nie tylko tych z błędnym typem.
+Naprawione: `sed -i "s/type: 'RULE'/type: 'CONCEPT'/g"` na dotkniętych plikach gen-skryptów +
+regeneracja. **`scratchpad/helpers.js` NALEŻY zaktualizować o komentarz ostrzegawczy o dozwolonych
+wartościach `type`, żeby ta pułapka nie powtórzyła się w kolejnych rozdziałach.**
+
+Zweryfikowane end-to-end (restart backendu + curl `/api/chapters/_28_java_evolution/lessons`
+24/24 `hasContent:true` + regresja na `_20_spring_core` 23/23 nadal `hasContent:true`) PRZED
+commitem. Kapszton (Lesson24, "JavaQuest Task Processor") łączy sealed rekordy (Lesson14/15) +
+pattern matching switch (Lesson18) + watki wirtualne (Lesson19) + SequencedMap (Lesson20) + text
+blocks (Lesson13) w jednym demo, dokładnie odzwierciedlając kod źródłowy Java tej lekcji.
+
+Commity: `5bb3ba9` (lekcja 14, dokończenie poprzedniej sesji), `<następny>` (15-24, rozdział
+KOMPLETNY).
+
+**Następny krok**: przejść automatycznie do **`_29_spring_reactive`** (17 lekcji). Ten sam,
+sprawdzony workflow (sufiks scratchpada `r`) — **PAMIĘTAJ o pułapce `ContentBlockType` opisanej
+wyżej: używaj WYŁĄCZNIE `CONCEPT`/`ANALOGY`/`CODE_EXAMPLE`/`DIAGRAM` jako `type` bloków teorii.**
+
+### ✅ `_29_spring_reactive` KOMPLETNY na platformie (stan na 2026-09-08): 17/17 lekcji
+
+Dokończone w tej samej sesji co `_28_java_evolution`. Wszystkie 17 lekcji napisane od zera,
+theory:8 exercises:30 quiz:100, workflow z sufiksem `r` (gen01r.js...gen17r.js). Zweryfikowane
+end-to-end w kilku rundach restart+curl (po 3-5 lekcjach): `/api/chapters/_29_spring_reactive/
+lessons` (17/17 `hasContent:true` w finalnej rundzie) + regresja na `_20_spring_core`/
+`_24_spring_security`/`_23_spring_data_jpa`/`_28_java_evolution` naprzemiennie (wszystkie nadal
+100% `hasContent:true`) po każdym restarcie — zero regresji. Kapszton (Lesson17, "JavaQuest
+Reactive Bookshelf") łączy WebFlux kontrolery (Lesson09-10) + R2DBC/DatabaseClient (Lesson13) +
+SecurityWebFilterChain (Lesson14) + StepVerifier (Lesson15) w 6 scenariuszach + bonus, dokładnie
+odzwierciedlając kod źródłowy Java tej lekcji.
+
+Commity: `194cfb1` (16-17, rozdział KOMPLETNY, razem z lekcją 1 nowego rozdziału).
+
+**Następny krok**: przejść automatycznie do **`_30_spring_messaging_and_async`** (16 lekcji:
+`01_AsyncMethodsWithEnableAsync` ... `16_MessagingCapstone`). Sufiks scratchpada `s`
+(gen01s.js...). **Stan na 2026-09-08: lekcje 1-5 już napisane i scommitowane** (`859eeda`) —
+AsyncMethodsWithEnableAsync, TaskExecutorConfiguration, CompletableFutureWithAsync,
+SchedulingWithEnableScheduling, ApplicationEventsDeepDive. Pozostaje 11 lekcji (6-16): JmsIntro,
+SpringJmsTemplate, RabbitMqConcepts, SpringAmqpBasics, KafkaConcepts, SpringKafkaBasics,
+MessageDrivenArchitecturePatterns, ErrorHandlingAndDeadLetterQueues, TestingAsyncAndMessagingCode,
+ChoosingRabbitVsKafka, MessagingCapstone. **UWAGA**: wg CLAUDE.md, Docker NIE jest dostępny na tej
+maszynie — lekcje o RabbitMQ/Kafka (8-11) mają w kodzie Java przyjazny fallback (kod prawdziwy,
+próbuje się połączyć, łapie wyjątek połączenia) — treść JSON platformy powinna to jawnie opisywać.
+Po `_30` zostaje `_31_spring_cloud_microservices` (19 lekcji, sufiks scratchpada do wyboru, np.
+`t`) — ok. 30 pozostałych lekcji po dokończeniu `_30_spring_messaging_and_async` (11+19).
+Kontynuować automatycznie, BEZ pytania o zgodę między lekcjami/rozdziałami (wyraźne życzenie
+użytkownika z tej sesji), z tym samym rygorem weryfikacji (restart+60s+curl+regresja przed każdym
+commitem co 2-3 lekcje).
+---
