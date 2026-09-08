@@ -2802,22 +2802,32 @@ lessons` (16/16 `hasContent:true`) + regresja na `_26_integration_testing`/`_27_
 
 Commity: `f0db298` (10-13), `2a3249f` (14-16, rozdział KOMPLETNY + lekcja 1 nowego rozdziału).
 
-**Następny krok**: kontynuować **`_31_spring_cloud_microservices`** (19 lekcji, sufiks scratchpada
-`u`). **Stan na 2026-09-08: lekcje 1-5 już napisane i scommitowane** (`ec5e967`) —
-SpringCloudOverview, ServiceDiscoveryConcepts, SpringCloudNetflixEureka, ConfigServerIntro,
-SpringCloudConfigClient. Pozostaje 14 lekcji (6-19): ApiGatewayIntro, GatewayRoutingAndFilters,
-ClientSideLoadBalancing, CircuitBreakerConcepts, Resilience4jIntegration, DistributedTracingIntro,
-DistributedTracingWithZipkin, DeclarativeHttpClientsWithFeign, SagaPatternIntro,
-EventDrivenMicroservicesWithSpringCloudStream, SecurityAcrossMicroservices,
-ContainerizingSpringBootApps, ObservabilityAcrossServices, MicroservicesCapstone. **UWAGA z
-CLAUDE.md — ten rozdział ma NAJWIĘCEJ udokumentowanych pułapek Spring Cloud** (gateway-mvc
-psuje globalny classpath, `.properties()` niższy priorytet niż app.properties, standalone Eureka
-zawsze próbuje peer-replication na porcie 8761, `server.port=0` łamie Eureka instance-id,
-eureka-client wymaga `@SpringBootApplication` nie `@Configuration`, itd. — patrz sekcja
-`_31_spring_cloud_microservices` w CLAUDE.md dla pełnej listy 7 pułapek) — treść JSON tych lekcji
-powinna je jawnie opisywać, tak jak dotychczasowe lekcje 1-5 już to robią. Docker NIE jest
-dostępny na tej maszynie — Lesson12 (Zipkin) ma fallback. Po dokończeniu `_31` (14 lekcji) CAŁY
-zaplanowany łuk platformy (`_01`-`_31`) będzie KOMPLETNY. Kontynuować automatycznie, BEZ pytania o
-zgodę między lekcjami/rozdziałami, z tym samym rygorem weryfikacji (restart+60s+curl+regresja
-przed każdym commitem co 2-3 lekcje).
+**`_31_spring_cloud_microservices` KOMPLETNY na platformie (stan na 2026-09-08): 19/19 lekcji.**
+Commity: `ec5e967` (1-5), `d4d477c` (6-7), `1291c88` (8-9), `b8bf408` (10-11), `cffa112` (12),
+`d35f8d5` (13-16), `deb68db` (17-19, rozdział KOMPLETNY). Zweryfikowane end-to-end w kilku rundach
+restart+curl: `/api/chapters/_31_spring_cloud_microservices/lessons` (19/19 `hasContent:true`) +
+regresja na `_20_spring_core` (23/23 nadal `hasContent:true` po każdym restarcie) — zero regresji
+w całej sesji. Pułapki z CLAUDE.md (gateway-mvc globalny, `.properties()` niższy priorytet,
+Eureka peer-replication, `server.port=0` łamie instance-id, eureka-client wymaga
+`@SpringBootApplication`, Zipkin auto-exclude) zostały jawnie opisane w treści JSON wszystkich
+lekcji, które ich dotyczą (03, 06-08, 12, 19 - kapszton). Docker NIE jest dostępny na tej
+maszynie — Lesson12 (Zipkin), Lesson15 (Spring Cloud Stream/RabbitMQ) i Lesson17 (Docker build)
+mają przyjazny fallback opisany w treści.
+
+---
+
+## ✅✅✅ CAŁY ZAPLANOWANY ŁUK PLATFORMY (`_01`-`_31`) KOMPLETNY (stan na 2026-09-08)
+
+Wszystkie 31 rozdziałów kursu javaQuest mają teraz odpowiadającą treść (teoria + 30 zadań + 100
+quizów na lekcję) załadowaną do bazy H2 platformy edukacyjnej, zweryfikowaną end-to-end przez
+restart backendu + curl `hasContent:true` + regresję na wcześniej ukończonych rozdziałach, przy
+zerowych regresjach w całej wieloetapowej pracy. Ostatni ukończony rozdział:
+`_31_spring_cloud_microservices` (19/19), poprzedzony przez `_30_spring_messaging_and_async`
+(16/16), `_29_spring_reactive` (17/17), `_28_java_evolution` (24/24) i wszystkie wcześniejsze
+rozdziały `_01`-`_27` ukończone w poprzednich sesjach.
+
+**Następny krok (jeśli użytkownik zdecyduje się kontynuować w przyszłości)**: brak zaplanowanych
+dalszych rozdziałów treści kursu — ewentualna dalsza praca nad platformą dotyczyłaby już samego
+frontendu/UX/funkcji platformy (np. postęp użytkownika, certyfikaty, wyszukiwanie), nie
+generowania treści lekcji, chyba że użytkownik zaplanuje kolejny rozdział kursu Java.
 ---
