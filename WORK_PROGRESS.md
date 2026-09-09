@@ -32,23 +32,33 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `13_CriticalSection.json` i `34_ThreadDebugging.json` solution/hint-field naprawione w tej sesji),
   oryginalne 30 exercises + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo). Zweryfikowane
   live przez API po restarcie backendu (curl) + regresja na `_01`-`_04` bez zmian.
-- **`_06_networking` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego. `_06_networking` ma 14 lekcji.
+- **`_06_networking` (14/14 lekcji) — KOMPLETNE.** Scommitowane w tej sesji (patrz commit "Etap 4:
+  rozdzial _06_networking..."). Lekcje bez API_REFERENCE (koncepcje/wzorce/protokoły):
+  `01_NetworkingIntroduction`, `03_Socket`, `04_SocketWhois`, `05_SocketHttpDownload`,
+  `07_ServerSocketMultithreaded`, `11_HttpProtocol`. Lekcje z pełnym API_REFERENCE (konkretne
+  klasy): `02_InetAddress`, `06_ServerSocket`, `08_URL`, `09_URLConnection`, `10_HttpURLConnection`,
+  `12_JsonOverNetwork` (HttpClient), `13_XmlParsing` (DOM), `14_HtmlUnit` (WebClient/HtmlPage).
+  Wszystkie 14 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+  oryginalne 30 exercises + 100 quiz zachowane. Zweryfikowane live przez API po restarcie
+  backendu + regresja na `_01`-`_05` bez zmian.
+- **`_07_servlets` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+  Migracja rozdziałami, po kolei, bez pomijania żadnego. `_07_servlets` ma 19 lekcji.
 
 ## Ostatnia ukończona czynność
 
-Ukończono migrację całego rozdziału `_05_multithreading` (37/37 lekcji) na standard 11 sekcji,
+Ukończono migrację całego rozdziału `_06_networking` (14/14 lekcji) na standard 11 sekcji,
 zweryfikowano live przez backend (po `mvnw.cmd resources:resources` + restart), zregresjono
-`_01`-`_04`, i scommitowano jako JEDEN lokalny commit.
+`_01`-`_05`, i scommitowano jako JEDEN lokalny commit.
 
 ## Wyniki testów / weryfikacji
 
-- 37/37 plików `_05_multithreading` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
+- 14/14 plików `_06_networking` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
 - Wszystkie zachowują oryginalne 30 exercises + 100 quiz (sprawdzone liczbowo i live przez API).
-- Live curl po restarcie backendu: próbka `_05_multithreading` (01, 08, 15, 17, 20, 24, 30, 32, 37)
-  — poprawna liczba bloków teorii (14 bez API_REFERENCE, 15 z API_REFERENCE). Regresja na
+- Live curl po restarcie backendu: próbka `_06_networking` (01, 02, 06, 10, 14) — poprawna liczba
+  bloków teorii (14 bez API_REFERENCE, 15 z API_REFERENCE). Regresja na
   `_01_fundamentals/06_StringsAndBuilder`, `_02_oop/11_ObjectClass`, `_03_collections/08_HashMap`,
-  `_04_io/20_Gson` — wszystkie bez zmian (15 bloków każdy, jak wcześniej).
+  `_04_io/20_Gson`, `_05_multithreading/17_AtomicClasses`, `_05_multithreading/37_CommonMistakes`
+  — wszystkie bez zmian.
 
 ## Problemy i decyzje
 
