@@ -51,8 +51,15 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   (Part). Wszystkie 19 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak
   cyrylicy, oryginalne 30 exercises + 100 quiz zachowane. Zweryfikowane live przez API po
   restarcie backendu + regresja na `_01`-`_06` bez zmian.
-- **`_08_sql` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego. `_08_sql` ma 20 lekcji.
+- **`_08_sql` (14/20 lekcji gotowe, JESZCZE NIE SCOMMITOWANE) — W TOKU.**
+  Gotowe: `01`-`11` (patrz poprzednie wpisy), `12_Sorting` (API_REFERENCE), `13_Grouping`
+  (API_REFERENCE), `14_Joins` (API_REFERENCE — katalog typów JOIN). **NASTĘPNY KROK: kontynuuj
+  lekcję 15 `15_SqlRelationships.json`**, dalej 16-20: `16_Subqueries`, `17_Views`, `18_Indexes`,
+  `19_Transactions`, `20_TransactionIsolationLevels`. Po ukończeniu wszystkich 20:
+  `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_07`
+  + JEDEN commit lokalny całego rozdziału `_08_sql`.
+- **`_09_jdbc` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+  Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
