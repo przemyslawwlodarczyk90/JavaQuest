@@ -94,18 +94,35 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   zachowane w każdym pliku (sprawdzone liczbowo i live przez API po `mvnw.cmd resources:resources`
   + restarcie backendu). Regresja na `_01`-`_09` (próbka po jednej lekcji z każdego rozdziału) bez
   zmian.
-- **`_11_buildtools` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_11_buildtools` (30/30 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Rozdział pokrywa Ant
+  (`01`-`10`: podstawy, struktura projektu, classpath, testy/JUnit, pakowanie JAR/WAR/fat-jar,
+  zaawansowane mechanizmy import/macrodef/condition/antcall, Ivy, debugowanie), Maven (`11`-`18`:
+  podstawy/lifecycle, zależności/scope, pluginy, properties/parent/profiles, web+db, testy
+  surefire/failsafe/JaCoCo, publikacja, troubleshooting/wydajność), Gradle (`19`-`25`: podstawy,
+  custom tasks/multi-project, version catalog/BOM, testy+JaCoCo, ekosystem pluginów Shadow/Spring
+  Boot/Checkstyle, publishing maven-publish, troubleshooting/Daemon), oraz blok zamykający
+  (`26`-`30`: porównanie 3 narzędzi, migracje między nimi, CI/CD+sekrety+wersjonowanie w praktyce,
+  rodzina wyjątków classloadingu, kapszton "JavaQuest Build Lab" łączący wszystkie trzy podejścia
+  w jednym projekcie). Lekcje z pełnym `API_REFERENCE` (konkretne API/DSL z wieloma
+  metodami/atrybutami): `03`, `06`, `07`, `08`, `09`, `10` (embedowany Ant + taski XML), `11`-`18`
+  (pom.xml/scope/pluginy/lifecycle Maven), `19`-`25` (build.gradle/konfiguracje zależności/taski
+  Gradle), `29` (rodzina wyjątków classloadingu). Lekcje bez `API_REFERENCE` (koncepcje/porównania/
+  wzorce): `01`, `02`, `04`, `05`, `26`, `27`, `28`, `30`. Wszystkie 30 plików zweryfikowane:
+  poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, brak znaków zastępczych (U+FFFD),
+  oryginalne 30 exercises + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo i live przez API
+  po `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_10` bez zmian.
+- **`_12_hibernate` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
-  **NASTĘPNY KROK: zacznij `_11_buildtools` (30 lekcji) od lekcji 1**, tym samym wzorcem pracy
+  **NASTĘPNY KROK: zacznij `_12_hibernate` (30 lekcji) od lekcji 1**, tym samym wzorcem pracy
   (patrz sekcja "Wzorzec pracy" niżej).
 
 ## Ostatnia ukończona czynność
 
-Ukończono migrację całego rozdziału `_10_dao` (28/28 lekcji, w tym dokończenie lekcji 21-28 w tej
-sesji) na standard 11 sekcji, zweryfikowano live przez backend (po `mvnw.cmd resources:resources`
-+ restart), zregresjono `_01`-`_09`, i scommitowano jako JEDEN lokalny commit. Zgodnie z dyrektywą
-użytkownika ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami") migracja przechodzi
-teraz bez przerwy do `_11_buildtools`.
+Ukończono migrację całego rozdziału `_11_buildtools` (30/30 lekcji) na standard 11 sekcji,
+zweryfikowano live przez backend (po `mvnw.cmd resources:resources` + restart), zregresjono
+`_01`-`_10`, i scommitowano jako JEDEN lokalny commit. Zgodnie z dyrektywą użytkownika ("kontynuuj
+prace, nie pytaj się o zgodę pomiędzy rozdziałami") migracja przechodzi teraz bez przerwy do
+`_12_hibernate`.
 
 ## Wyniki testów / weryfikacji
 
