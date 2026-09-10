@@ -111,18 +111,40 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, brak znaków zastępczych (U+FFFD),
   oryginalne 30 exercises + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo i live przez API
   po `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_10` bez zmian.
-- **`_12_hibernate` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_12_hibernate` (7/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
+  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Gotowe: `01_OrmIntroduction`
+  (impedance mismatch, JPA vs Hibernate, API_REFERENCE dla minimalnego bootstrapu
+  Configuration/SessionFactory/Session), `02_HibernateArchitecture` (SessionFactory vs Session,
+  cykl życia, API_REFERENCE), `03_ProjectSetupAndConfiguration` (hibernate.cfg.xml vs
+  persistence.xml vs programowa konfiguracja, hbm2ddl.auto, API_REFERENCE), `04_FirstEntityAndBasicMapping`
+  (@Entity/@Table/@Column/@Transient, pierwszy zapis/odczyt, API_REFERENCE), `05_PrimaryKeyGeneration`
+  (IDENTITY/SEQUENCE/TABLE/UUID/klucz ręczny, API_REFERENCE), `06_CrudOperations` (persist/find/
+  merge/remove vs save/get/update/delete, pułapka merge() vs update(), API_REFERENCE),
+  `07_SessionVsEntityManager` (Session extends EntityManager, unwrap(), API_REFERENCE). Wszystkie
+  7 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, brak znaków
+  zastępczych, oryginalne 30 exercises + 100 quiz zachowane, live przez API po
+  `mvnw.cmd resources:resources` + restarcie backendu. Regresja na `_01`-`_11` bez zmian.
+  **NASTĘPNY KROK: kontynuuj lekcję 8 `08_Transactions.json`**, dalej po kolei do `30`:
+  `09_EmbeddableTypes`, `10_EnumsAndAttributeConverters`, `11_OneToOneAssociation`,
+  `12_OneToManyAndManyToOne`, `13_ManyToManyAssociation`, `14_CascadeTypes`,
+  `15_FetchTypesAndNPlusOne`, `16_EntityLifecycle`, `17_DirtyCheckingAndFlush`, `18_HqlBasics`,
+  `19_HqlAdvanced`, `20_CriteriaApi`, `21_NativeSqlQueries`, `22_NamedQueries`,
+  `23_FirstLevelCache`, `24_SecondLevelCacheAndQueryCache`, `25_OptimisticLocking`,
+  `26_PessimisticLocking`, `27_InheritanceMapping`, `28_BeanValidationIntegration`,
+  `29_HibernateEnvers`, `30_BestPracticesAndCapstone`. Po ukończeniu wszystkich 30:
+  `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_11`
+  + JEDEN commit lokalny całego rozdziału.
+- **`_13_libraries` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
-  **NASTĘPNY KROK: zacznij `_12_hibernate` (30 lekcji) od lekcji 1**, tym samym wzorcem pracy
-  (patrz sekcja "Wzorzec pracy" niżej).
 
 ## Ostatnia ukończona czynność
 
-Ukończono migrację całego rozdziału `_11_buildtools` (30/30 lekcji) na standard 11 sekcji,
-zweryfikowano live przez backend (po `mvnw.cmd resources:resources` + restart), zregresjono
-`_01`-`_10`, i scommitowano jako JEDEN lokalny commit. Zgodnie z dyrektywą użytkownika ("kontynuuj
-prace, nie pytaj się o zgodę pomiędzy rozdziałami") migracja przechodzi teraz bez przerwy do
-`_12_hibernate`.
+Sesja zatrzymana na życzenie użytkownika ("kończymy na dziś") w trakcie rozdziału `_12_hibernate`
+(7/30 lekcji gotowych). Przed zatrzymaniem: `mvnw.cmd resources:resources` + restart backendu +
+weryfikacja live wszystkich 7 lekcji + regresja na `_01`-`_11` + JEDEN commit lokalny obejmujący
+stan częściowy rozdziału (7/30, jawnie oznaczony jako W TOKU, nie KOMPLETNE). Zgodnie z dyrektywą
+użytkownika migracja ma być kontynuowana bez pytania o zgodę między rozdziałami — przy następnym
+"kontynuuj" wznów dokładnie od lekcji 8, patrz sekcja "Stan rozdziałów" wyżej.
 
 ## Wyniki testów / weryfikacji
 
