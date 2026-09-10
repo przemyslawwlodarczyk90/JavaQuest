@@ -75,26 +75,48 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   Wszystkie 20 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
   oryginalne 30 exercises + 100 quiz zachowane (sprawdzone liczbowo i live przez API po
   `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_08` bez zmian.
-- **`_10_dao` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: zacznij `_10_dao`** —
-  sprawdź obecny format lekcji (prawdopodobnie stary 7-blokowy) i zastosuj ten sam, sprawdzony
-  wzorzec migracji.
+- **`_10_dao` (28/28 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Lekcje bez `API_REFERENCE`
+  (wzorce architektoniczne/koncepcje): `01_DaoIntroduction`, `02_LayeredArchitecture`,
+  `04_JdbcDaoImplementation`, `05_CrudInDao`, `07_ListResultsInDao`, `08_OneToManyDao` (relacja
+  1:N, N+1 problem), `09_ManyToManyDao` (relacja N:M, tabela pośrednia), `10_RepositoryVsDao`,
+  `11_ConnectionFactory`, `12_DatabaseConfiguration`, `13_EnvironmentVariables`, `15_DataSource`,
+  `16_ServiceLayer`, `17_TransactionsInServiceLayer`, `18_SharedConnectionAcrossDao`,
+  `20_ErrorHandlingAcrossLayers`, `21_ValidationBeforeSave`, `22_PaginationInJdbc`,
+  `23_DynamicSorting`, `24_DynamicFiltering`, `26_TestingDao`, `27_SqlLogging`,
+  `28_JdbcBestPractices` (lekcja podsumowująca 9 zasad — PITFALL/CODE_WRONG/CODE_RIGHT oparte na
+  jednym przykładzie łączącym dwie zasady naraz, zgodnie z ustaloną wcześniej konwencją). Lekcje z
+  pełnym `API_REFERENCE`: `03_DaoInterface`, `06_OptionalInDao` (Optional<T>), `14_ConnectionPool`
+  (HikariConfig/HikariDataSource), `19_UnitOfWork` (SqlWork<T>/UnitOfWork), `25_DatabaseMigrations`
+  (Flyway: configure/dataSource/locations/load/migrate/info/validate). Naprawiono 2 przypadki
+  zastanej cyrylicy (`03_DaoInterface` pole `explanation` quizu — "opartа"→"oparta";
+  `23_DynamicSorting` pole `hint` ćwiczenia — "parе"→"pare"). Wszystkie 28 plików zweryfikowane:
+  poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz
+  zachowane w każdym pliku (sprawdzone liczbowo i live przez API po `mvnw.cmd resources:resources`
+  + restarcie backendu). Regresja na `_01`-`_09` (próbka po jednej lekcji z każdego rozdziału) bez
+  zmian.
+- **`_11_buildtools` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+  Migracja rozdziałami, po kolei, bez pomijania żadnego.
+  **NASTĘPNY KROK: zacznij `_11_buildtools` (30 lekcji) od lekcji 1**, tym samym wzorcem pracy
+  (patrz sekcja "Wzorzec pracy" niżej).
 
 ## Ostatnia ukończona czynność
 
-Ukończono migrację całego rozdziału `_09_jdbc` (20/20 lekcji) na standard 11 sekcji, zweryfikowano
-live przez backend (po `mvnw.cmd resources:resources` + restart), zregresjono `_01`-`_08`, i
-scommitowano jako JEDEN lokalny commit.
+Ukończono migrację całego rozdziału `_10_dao` (28/28 lekcji, w tym dokończenie lekcji 21-28 w tej
+sesji) na standard 11 sekcji, zweryfikowano live przez backend (po `mvnw.cmd resources:resources`
++ restart), zregresjono `_01`-`_09`, i scommitowano jako JEDEN lokalny commit. Zgodnie z dyrektywą
+użytkownika ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami") migracja przechodzi
+teraz bez przerwy do `_11_buildtools`.
 
 ## Wyniki testów / weryfikacji
 
-- 20/20 plików `_09_jdbc` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
-- Wszystkie zachowują oryginalne 30 exercises + 100 quiz (sprawdzone liczbowo i live przez API).
-- Live curl po restarcie backendu: WSZYSTKIE 20 lekcji `_09_jdbc` — poprawna liczba bloków teorii
-  (14 bez API_REFERENCE, 15 z API_REFERENCE), 30 exercises, 100 quiz. Regresja na
-  `_01_fundamentals/06_StringsAndBuilder`, `_02_oop/11_ObjectClass`, `_03_collections/08_HashMap`,
-  `_04_io/20_Gson`, `_05_multithreading/32_CompletableFuture`, `_06_networking/14_HtmlUnit`,
-  `_07_servlets/10_Cookies`, `_08_sql/16_Subqueries` — wszystkie bez zmian.
+- 28/28 plików `_10_dao` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy (po naprawie
+  w `03_DaoInterface` i `23_DynamicSorting`), 30 exercises + 100 quiz zachowane liczbowo. Live curl
+  po `mvnw.cmd resources:resources` + restarcie backendu: poprawna liczba bloków teorii (14 lub 15
+  z API_REFERENCE), 30 exercises, 100 quiz — sprawdzone dla wszystkich lekcji 21-28 (nowych w tej
+  sesji). Regresja na `_01_fundamentals/06_StringsAndBuilder`, `_02_oop/11_ObjectClass`,
+  `_03_collections/08_HashMap`, `_04_io/20_Gson`, `_05_multithreading/32_CompletableFuture`,
+  `_06_networking/14_HtmlUnit`, `_07_servlets/10_Cookies`, `_08_sql/16_Subqueries`,
+  `_09_jdbc/20_Mapper` — wszystkie bez zmian.
 
 ## Problemy i decyzje
 
@@ -117,30 +139,54 @@ scommitowano jako JEDEN lokalny commit.
   `34_ThreadDebugging.json` w polu `hint`) wykryte przez standardowy grep cyrylicy i naprawione —
   pojedyncze znaki cyrylicy wmieszane w polski tekst (np. "dajа" zamiast "daja", "Waznа" zamiast
   "Wazna"), najpewniej zaszłość z wcześniejszego etapu pisania kursu, nie błąd tej sesji.
-- Ustalona zasada dot. lekcji-podsumowań (jak `36_BestPractices`, `37_CommonMistakes`, które w
-  oryginale miały nietypowy format z wieloma "zasadami"/"błędami" w jednym): nadal wymagają pełnej
-  struktury 11 sekcji, ale PITFALL/CODE_WRONG/CODE_RIGHT można oprzeć na JEDNYM, reprezentatywnym
-  przykładzie łączącym kilka zasad/błędów naraz, zamiast próbować upchnąć wszystkie oddzielnie.
+- Ustalona zasada dot. lekcji-podsumowań (jak `28_JdbcBestPractices` w `_10_dao`, wcześniej
+  `36_BestPractices`/`37_CommonMistakes` w `_05_multithreading`, które w oryginale miały nietypowy
+  format z wieloma "zasadami"/"błędami" w jednym): nadal wymagają pełnej struktury 11 sekcji, ale
+  PITFALL/CODE_WRONG/CODE_RIGHT można oprzeć na JEDNYM, reprezentatywnym przykładzie łączącym kilka
+  zasad/błędów naraz, zamiast próbować upchnąć wszystkie oddzielnie.
+- **Skrypty `fix_allcaps.js`/`fix_allcaps_residual.js` przeniesione z tymczasowego scratchpada do
+  repo:** żyją teraz na stałe w `scripts/content-migration/` (scommitowane), NIE w
+  `scratchpad/` (katalog tymczasowy per-sesja, czyszczony między sesjami — poprzedni zapis w tym
+  pliku był nieaktualny). Wołaj je jako `node scripts/content-migration/fix_allcaps.js <plik.json>`
+  i analogicznie dla `_residual.js`.
+- **JAVA_HOME nie jest ustawiony domyślnie w tej powłoce** — przed `mvnw.cmd` (resources:resources
+  ORAZ spring-boot:run) trzeba ręcznie: `export JAVA_HOME="/c/Users/kapit/.jdks/openjdk-25.0.2"` +
+  `export PATH="$JAVA_HOME/bin:$PATH"` (JDK 17 pod `.jdks/ms-17.0.17` też dostępny, ale projekt
+  wymaga Javy 21 — `openjdk-25.0.2` kompiluje z `--release 21` poprawnie).
+- **Port 8080 jest TRWALE zajęty przez systemowy proces "AgentService"** (nie backend Javy) — to
+  oczekiwane i już udokumentowane w `application.properties`. Platforma nasłuchuje na porcie 8082.
+- **Background `spring-boot:run` przez Bash tool: NIE łączyć `nohup ... &` z `run_in_background:
+  true`** — uruchomienie samodzielnego `&` wewnątrz polecenia powoduje, że sam wrapper kończy się
+  natychmiast (fałszywe "completed"), a proces potomny bywa zabity razem z drzewem procesów. Podaj
+  `./mvnw.cmd spring-boot:run > out.log 2> err.log` WPROST jako komenda z `run_in_background: true`,
+  bez własnego `&`/`nohup` — tool sam zarządza cyklem życia w tle.
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Przejdź do `_10_dao` (28 lekcji) — sprawdź obecny format lekcji (prawdopodobnie stary
-   7-blokowy, jak każdy dotąd napotkany rozdział) i zacznij migrację tym samym, sprawdzonym wzorcem.
-   Dla lekcji o konkretnym narzędziu/klasie z wieloma metodami (DataSource, connection pool
-   API...) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o wzorcach/koncepcjach
-   (DAO, Repository, warstwa serwisowa jako wzorzec...) pomiń go.
-2. Kontynuuj rozdziałami `_11_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
-   dyrektywą użytkownika z Etapu 4. Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
+1. Zacznij `_11_buildtools` (30 lekcji, Ant/Maven/Gradle) od lekcji 1, tym samym wzorcem pracy
+   (patrz punkt 3 niżej). Dla lekcji o konkretnym narzędziu/pluginie z wieloma opcjami/komendami
+   PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/wzorcach (np. "czym
+   jest build tool", "cykl życia builda" jako pojęcie) pomiń go.
+2. Kontynuuj rozdziałami `_12_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
+   dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
+   potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
    zasoby) + restart backendu + curl na próbce + regresja na poprzednich rozdziałach + JEDEN
    commit lokalny dla całego rozdziału.
 3. **Wzorzec pracy ustalony i sprawdzony w tej sesji (powtarzaj dla każdej kolejnej lekcji/rozdziału):**
    a) Grep `"exercises": [` żeby znaleźć koniec sekcji theory bez czytania całego pliku.
    b) Read tylko sekcji theory (offset/limit).
    c) Edit zastępujący WYŁĄCZNIE starą tablicę theory nową (11 sekcji + API_REFERENCE, gdy
-      uzasadnione) — NIGDY Write na pliku z istniejącymi exercises/quiz.
-   d) Uruchom `scratchpad/fix_allcaps.js` i `scratchpad/fix_allcaps_residual.js` na pliku.
-   e) Waliduj: `node -e "require(...)"` (JSON + liczba bloków), `grep -c "native code"`,
-      `LC_ALL=C.UTF-8 grep -lP '[\x{0400}-\x{04FF}]'` (cyrylica) — napraw natychmiast jeśli coś
+      uzasadnione, w kolejności: INTRO, DEFINITION, ANALOGY, VISUAL_EXAMPLE, CODE_BASIC,
+      CODE_PRACTICAL, STEP_BY_STEP, NOTE, USAGE, PITFALL, CODE_WRONG, CODE_RIGHT,
+      [API_REFERENCE], WHEN_TO_USE, SUMMARY) — NIGDY Write na pliku z istniejącymi
+      exercises/quiz.
+   d) Uruchom `node scripts/content-migration/fix_allcaps.js <plik.json>` i
+      `node scripts/content-migration/fix_allcaps_residual.js <plik.json>`.
+   e) Waliduj (node, bez polegania na `grep -P` — locale w tej powłoce go nie wspiera): JSON valid
+      + liczba bloków theory/exercises(30)/quiz(100), `(tekst.match(/native code/g)||[]).length`,
+      `(tekst.match(/[Ѐ-ӿ]/g)||[]).length` (cyrylica) — napraw natychmiast jeśli coś
       wykryte, nawet jeśli to zastana treść sprzed tej sesji.
-   f) Po całym rozdziale: `mvnw.cmd resources:resources` + restart backendu + curl na próbce +
-      regresja na poprzednich rozdziałach + JEDEN commit lokalny dla całego rozdziału.
+   f) Po całym rozdziale: `export JAVA_HOME=...` + `mvnw.cmd resources:resources` + restart
+      backendu (`run_in_background: true`, BEZ własnego `&`/`nohup`) + curl na próbce nowych lekcji
+      + regresja na próbce z poprzednich rozdziałów + JEDEN commit lokalny dla całego rozdziału +
+      aktualizacja tego pliku (`WORK_PROGRESS.md`).
