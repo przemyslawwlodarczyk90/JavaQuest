@@ -64,26 +64,37 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30
   exercises + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo i live przez API po
   `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_07` bez zmian.
-- **`_09_jdbc` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: zacznij `_09_jdbc`** —
+- **`_09_jdbc` (20/20 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Lekcje z pełnym
+  `API_REFERENCE` (konkretne klasy/interfejsy JDBC z wieloma metodami): `02_JdbcDriver`
+  (Driver/DriverManager), `03_Connection`, `04_Statement`, `05_PreparedStatement`, `06_ResultSet`,
+  `13_JdbcExceptions` (SQLException), `16_BatchProcessing`, `20_Mapper` (EntityMapper<E,C,R>).
+  Lekcje bez `API_REFERENCE` (wzorce/wprowadzenia/koncepcje): `01_JdbcIntroduction`, `07_JdbcInsert`
+  (create-and-fetch), `08_JdbcSelect` (findById/findAll), `09_JdbcUpdate`, `10_JdbcDelete`
+  (hard/soft delete), `11_CreateAndDropTableFromJava`, `12_TryWithResourcesInJdbc`,
+  `14_SqlInjection`, `15_JdbcTransactions`, `17_ResultSetMapping`, `18_DomainModel`, `19_Dto`.
+  Wszystkie 20 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+  oryginalne 30 exercises + 100 quiz zachowane (sprawdzone liczbowo i live przez API po
+  `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_08` bez zmian.
+- **`_10_dao` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+  Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: zacznij `_10_dao`** —
   sprawdź obecny format lekcji (prawdopodobnie stary 7-blokowy) i zastosuj ten sam, sprawdzony
   wzorzec migracji.
 
 ## Ostatnia ukończona czynność
 
-Ukończono migrację całego rozdziału `_08_sql` (20/20 lekcji, w tym 16-20 dokończone w tej sesji)
-na standard 11 sekcji, zweryfikowano live przez backend (po `mvnw.cmd resources:resources` +
-restart), zregresjono `_01`-`_07`, i scommitowano jako JEDEN lokalny commit.
+Ukończono migrację całego rozdziału `_09_jdbc` (20/20 lekcji) na standard 11 sekcji, zweryfikowano
+live przez backend (po `mvnw.cmd resources:resources` + restart), zregresjono `_01`-`_08`, i
+scommitowano jako JEDEN lokalny commit.
 
 ## Wyniki testów / weryfikacji
 
-- 20/20 plików `_08_sql` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
+- 20/20 plików `_09_jdbc` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
 - Wszystkie zachowują oryginalne 30 exercises + 100 quiz (sprawdzone liczbowo i live przez API).
-- Live curl po restarcie backendu: WSZYSTKIE 20 lekcji `_08_sql` — poprawna liczba bloków teorii
+- Live curl po restarcie backendu: WSZYSTKIE 20 lekcji `_09_jdbc` — poprawna liczba bloków teorii
   (14 bez API_REFERENCE, 15 z API_REFERENCE), 30 exercises, 100 quiz. Regresja na
   `_01_fundamentals/06_StringsAndBuilder`, `_02_oop/11_ObjectClass`, `_03_collections/08_HashMap`,
   `_04_io/20_Gson`, `_05_multithreading/32_CompletableFuture`, `_06_networking/14_HtmlUnit`,
-  `_07_servlets/10_Cookies` — wszystkie bez zmian.
+  `_07_servlets/10_Cookies`, `_08_sql/16_Subqueries` — wszystkie bez zmian.
 
 ## Problemy i decyzje
 
@@ -113,13 +124,12 @@ restart), zregresjono `_01`-`_07`, i scommitowano jako JEDEN lokalny commit.
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Przejdź do `_09_jdbc` (20 lekcji) — sprawdź obecny format lekcji (prawdopodobnie stary
+1. Przejdź do `_10_dao` (28 lekcji) — sprawdź obecny format lekcji (prawdopodobnie stary
    7-blokowy, jak każdy dotąd napotkany rozdział) i zacznij migrację tym samym, sprawdzonym wzorcem.
-   Dla lekcji o konkretnym narzędziu/klasie z wieloma metodami (Connection, Statement,
-   PreparedStatement, ResultSet, DataSource...) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla
-   lekcji o zjawiskach/wzorcach (connection pooling, transaction management jako koncepcja...)
-   pomiń go.
-2. Kontynuuj rozdziałami `_10_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
+   Dla lekcji o konkretnym narzędziu/klasie z wieloma metodami (DataSource, connection pool
+   API...) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o wzorcach/koncepcjach
+   (DAO, Repository, warstwa serwisowa jako wzorzec...) pomiń go.
+2. Kontynuuj rozdziałami `_11_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4. Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
    zasoby) + restart backendu + curl na próbce + regresja na poprzednich rozdziałach + JEDEN
    commit lokalny dla całego rozdziału.
