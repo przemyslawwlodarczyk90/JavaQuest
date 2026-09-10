@@ -51,31 +51,39 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   (Part). Wszystkie 19 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak
   cyrylicy, oryginalne 30 exercises + 100 quiz zachowane. Zweryfikowane live przez API po
   restarcie backendu + regresja na `_01`-`_06` bez zmian.
-- **`_08_sql` (14/20 lekcji gotowe, JESZCZE NIE SCOMMITOWANE) — W TOKU.**
-  Gotowe: `01`-`11` (patrz poprzednie wpisy), `12_Sorting` (API_REFERENCE), `13_Grouping`
-  (API_REFERENCE), `14_Joins` (API_REFERENCE — katalog typów JOIN). **NASTĘPNY KROK: kontynuuj
-  lekcję 15 `15_SqlRelationships.json`**, dalej 16-20: `16_Subqueries`, `17_Views`, `18_Indexes`,
-  `19_Transactions`, `20_TransactionIsolationLevels`. Po ukończeniu wszystkich 20:
-  `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_07`
-  + JEDEN commit lokalny całego rozdziału `_08_sql`.
+- **`_08_sql` (20/20 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Lekcje z pełnym
+  `API_REFERENCE`: `04_SqlDataTypes`, `08_DDL`, `09_DML`, `10_Select`, `11_Filtering`,
+  `12_Sorting`, `13_Grouping`, `14_Joins` (konkretne polecenia/klauzule SQL o wielu wariantach).
+  Lekcje bez `API_REFERENCE` (koncepcje/wzorce): `01_DatabaseIntroduction`, `02_RelationalModel`,
+  `03_TableDesign`, `05_NullValues`, `06_DataConstraints`, `07_Normalization`,
+  `15_SqlRelationships`, `16_Subqueries`, `17_Views`, `18_Indexes`, `19_Transactions`,
+  `20_TransactionIsolationLevels`. Lekcje 16-20 (dokończone w tej sesji) obejmują m.in.: EXISTS/
+  NOT EXISTS/NOT IN+NULL pułapkę (16), widoki i łańcuch widoków (17), indeksy + selektywność +
+  EXPLAIN (18), transakcje/ACID/SAVEPOINT (19), poziomy izolacji + dirty/non-repeatable/phantom
+  read + lost update + blokada pesymistyczna/optymistyczna (20). Wszystkie 20 plików
+  zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30
+  exercises + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo i live przez API po
+  `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_07` bez zmian.
 - **`_09_jdbc` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego.
+  Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: zacznij `_09_jdbc`** —
+  sprawdź obecny format lekcji (prawdopodobnie stary 7-blokowy) i zastosuj ten sam, sprawdzony
+  wzorzec migracji.
 
 ## Ostatnia ukończona czynność
 
-Ukończono migrację całego rozdziału `_07_servlets` (19/19 lekcji) na standard 11 sekcji,
-zweryfikowano live przez backend (po `mvnw.cmd resources:resources` + restart), zregresjono
-`_01`-`_06`, i scommitowano jako JEDEN lokalny commit.
+Ukończono migrację całego rozdziału `_08_sql` (20/20 lekcji, w tym 16-20 dokończone w tej sesji)
+na standard 11 sekcji, zweryfikowano live przez backend (po `mvnw.cmd resources:resources` +
+restart), zregresjono `_01`-`_07`, i scommitowano jako JEDEN lokalny commit.
 
 ## Wyniki testów / weryfikacji
 
-- 19/19 plików `_07_servlets` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
+- 20/20 plików `_08_sql` — poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy.
 - Wszystkie zachowują oryginalne 30 exercises + 100 quiz (sprawdzone liczbowo i live przez API).
-- Live curl po restarcie backendu: próbka `_07_servlets` (01, 05, 10, 14, 19) — poprawna liczba
-  bloków teorii (14 bez API_REFERENCE, 15 z API_REFERENCE). Regresja na
+- Live curl po restarcie backendu: WSZYSTKIE 20 lekcji `_08_sql` — poprawna liczba bloków teorii
+  (14 bez API_REFERENCE, 15 z API_REFERENCE), 30 exercises, 100 quiz. Regresja na
   `_01_fundamentals/06_StringsAndBuilder`, `_02_oop/11_ObjectClass`, `_03_collections/08_HashMap`,
-  `_04_io/20_Gson`, `_05_multithreading/32_CompletableFuture`, `_06_networking/14_HtmlUnit`
-  — wszystkie bez zmian.
+  `_04_io/20_Gson`, `_05_multithreading/32_CompletableFuture`, `_06_networking/14_HtmlUnit`,
+  `_07_servlets/10_Cookies` — wszystkie bez zmian.
 
 ## Problemy i decyzje
 
@@ -105,12 +113,13 @@ zweryfikowano live przez backend (po `mvnw.cmd resources:resources` + restart), 
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Przejdź do `_06_networking` (14 lekcji) — sprawdź obecny format lekcji (prawdopodobnie stary
+1. Przejdź do `_09_jdbc` (20 lekcji) — sprawdź obecny format lekcji (prawdopodobnie stary
    7-blokowy, jak każdy dotąd napotkany rozdział) i zacznij migrację tym samym, sprawdzonym wzorcem.
-   Dla lekcji o konkretnym narzędziu/klasie z wieloma metodami (Socket, ServerSocket, URL,
-   HttpClient, InetAddress, DatagramSocket...) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla
-   lekcji o zjawiskach/protokołach/koncepcjach (TCP vs UDP, model klient-serwer...) pomiń go.
-2. Kontynuuj rozdziałami `_07_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
+   Dla lekcji o konkretnym narzędziu/klasie z wieloma metodami (Connection, Statement,
+   PreparedStatement, ResultSet, DataSource...) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla
+   lekcji o zjawiskach/wzorcach (connection pooling, transaction management jako koncepcja...)
+   pomiń go.
+2. Kontynuuj rozdziałami `_10_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4. Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
    zasoby) + restart backendu + curl na próbce + regresja na poprzednich rozdziałach + JEDEN
    commit lokalny dla całego rozdziału.
