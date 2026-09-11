@@ -142,49 +142,43 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01_fundamentals/
   06_StringsAndBuilder`, `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`,
   `_11_buildtools/30_CapstoneBuildLab`, `_12_hibernate/29_HibernateEnvers` bez zmian.
-- **`_14_advancedjava` (26/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
-  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział pokrywa generics,
-  lambdy/functional interfaces, adnotacje, refleksję, nowoczesny system typów, niemutowalność/SPI,
-  i dalej (27-30) prawdopodobnie JPMS (moduły) — lekcja 26 wspomina "Lekcja 27 - JPMS podstawy,
-  Lekcja 28 - JPMS zaawansowane", więc 29-30 nieznane, sprawdź listę plików w katalogu przy
-  wznowieniu. Gotowe: blok generyków 1-7, blok lambd 8-10, blok adnotacji 11-14, blok refleksji
-  15-18, blok nowoczesnego systemu typów 19-22 (wszystkie opisane we wcześniejszych wpisach tego
-  pliku), oraz NOWY blok niemutowalności/SPI 23-26: `23_VarAndTypeInference` (var jako local-type
-  inference, gdzie działa/nie działa, pusty diament, BEZ API_REFERENCE), `24_Immutability` (final
-  chroni tylko referencję nie zawartość, przepis na pełną niemutowalność, BEZ API_REFERENCE),
-  `25_DefensiveCopying` (List.copyOf vs Collections.unmodifiableList, płytka vs głęboka kopia, BEZ
-  API_REFERENCE), `26_ServiceLoaderAndSpi` (SPI jako wzorzec, ServiceLoader, META-INF/services,
-  powiązanie z JDBC/NIO/XML z wcześniejszych rozdziałów, Z API_REFERENCE). Wszystkie 26 plików
-  zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises
-  + 100 quiz zachowane, live przez API po `mvnw.cmd resources:resources` + restarcie backendu.
-  Regresja na `_01_fundamentals/06_StringsAndBuilder`, `_13_libraries/32_YamlToObjectMapping` bez
-  zmian. **UWAGA: backend bywa zabijany przez system z powodu niskiej pamięci — PRZED restartem
-  zawsze najpierw zatrzymaj STARY proces backendu (TaskStop) i DOPIERO POTEM uruchom nowy (nie
-  trzymaj dwóch instancji Spring Boot naraz) — sprawdzone, działa niezawodnie przez całą sesję.
-  Sprawdzaj wolną pamięć PowerShell: `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`.**
-  **NASTĘPNY KROK: kontynuuj lekcję 27** (sprawdź dokładną nazwę pliku w katalogu
-  `_14_advancedjava`, prawdopodobnie JPMS podstawy wg wzmianki w lekcji 26), dalej po kolei do
-  `30`. Po ukończeniu wszystkich 30: `mvnw.cmd resources:resources` + restart backendu + curl
-  weryfikacyjny + regresja na `_01`-`_13` + JEDEN commit lokalny całego rozdziału.
+- **`_14_advancedjava` (30/30 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Rozdział pokrywa
+  pięć klastrów: generyki (1-7: raw types, Pair<K,V>, bounded types, wildcards/PECS, type erasure,
+  best practices), programowanie funkcyjne (8-11: functional interfaces/SAM, lambda/effectively
+  final, method references, java.util.function), adnotacje/refleksja/mechanizmy dynamiczne (12-18:
+  @Override/@Deprecated, własne @interface, retencja/annotation processing, Reflection API,
+  dynamic proxies, MethodHandles), nowoczesny system typów (19-22: sealed classes, pattern matching
+  instanceof, switch pattern matching/record patterns, switch expressions), wnioskowanie
+  typów/niemutowalność/modularność (23-30: var, immutability, defensive copying, ServiceLoader/SPI,
+  JPMS podstawy i zaawansowane, best practices, kapston łączący wszystko). Lekcje z pełnym
+  `API_REFERENCE`: `10` (method references), `11` (java.util.function), `26` (ServiceLoader). Reszta
+  BEZ API_REFERENCE (koncepcje/mechanizmy językowe). Wszystkie 30 plików zweryfikowane: poprawny
+  JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane w
+  każdym pliku (sprawdzone liczbowo i live przez API po `mvnw.cmd resources:resources` + restarcie
+  backendu). Regresja na `_01_fundamentals/06_StringsAndBuilder`,
+  `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`, `_12_hibernate/29_HibernateEnvers`,
+  `_13_libraries/32_YamlToObjectMapping` bez zmian. **WAŻNA LEKCJA OPERACYJNA z tej sesji: backend
+  bywa zabijany przez system z powodu niskiej pamięci — PRZED restartem zawsze najpierw zatrzymaj
+  STARY proces backendu (TaskStop) i DOPIERO POTEM uruchom nowy (nie trzymaj dwóch instancji Spring
+  Boot naraz) — sprawdzone, działa niezawodnie. Sprawdzaj wolną pamięć PowerShell:
+  `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`.**
 - **`_15_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
-Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE) i `_13_libraries` (32/32, KOMPLETNE), oraz
-rozpoczęto `_14_advancedjava` (26/30, W TOKU — bloki generyków 1-7, lambd/method references 8-10,
-adnotacji 11-14, refleksji 15-18, nowoczesnego systemu typów 19-22, niemutowalności/SPI 23-26) w
-tej sesji. `mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbek + regresja
-bez zmian po każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy kolejne dla
-`_13_libraries`, sześć kolejnych dla częściowego stanu `_14_advancedjava` (5/30, potem 10/30, potem
-14/30, potem 18/30, potem 22/30, potem 26/30). WAŻNA LEKCJA operacyjna z tej sesji: przed
-restartem backendu ZAWSZE najpierw zatrzymaj stary proces (TaskStop), dopiero potem uruchom nowy —
-trzymanie dwóch instancji Spring Boot naraz przy niskiej wolnej pamięci (obserwowano spadek do ok.
-2.7GB/16GB) ryzykuje, że system zabije proces backendu; stosowanie tej kolejności rozwiązało
-problem do końca sesji (żaden restart po jej wdrożeniu się nie wysypał). Zgodnie z dyrektywą
-użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez
-zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj" wznów
-`_14_advancedjava` dokładnie od lekcji 27, patrz "Następny krok" niżej.
+Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE), `_13_libraries` (32/32, KOMPLETNE) i
+`_14_advancedjava` (30/30, KOMPLETNE) w tej sesji. `mvnw.cmd resources:resources` + restart backendu
++ weryfikacja live próbek + regresja bez zmian po każdym checkpoincie + commity: jeden dla
+`_12_hibernate`, trzy kolejne dla `_13_libraries`, siedem kolejnych dla `_14_advancedjava` (5/30,
+10/30, 14/30, 18/30, 22/30, 26/30, finalnie 30/30 KOMPLETNE). WAŻNA LEKCJA operacyjna z tej sesji:
+przed restartem backendu ZAWSZE najpierw zatrzymaj stary proces (TaskStop), dopiero potem uruchom
+nowy — trzymanie dwóch instancji Spring Boot naraz przy niskiej wolnej pamięci (obserwowano spadek
+do ok. 2.7GB/16GB) ryzykuje, że system zabije proces backendu; stosowanie tej kolejności rozwiązało
+problem do końca sesji. Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy
+lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami —
+przy następnym "kontynuuj" zacznij `_15_jvm_internals` (20 lekcji) od lekcji 1, patrz "Następny
+krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -242,12 +236,11 @@ zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuu
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Kontynuuj `_14_advancedjava` (30 lekcji) dokładnie od lekcji 27 (sprawdź dokładną nazwę pliku w
-   katalogu — bloki 1-26 już ukończone, patrz "Stan rozdziałów"), tym samym wzorcem pracy (patrz
-   punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ OD RAZU z pełnym
-   katalogiem API_REFERENCE; dla lekcji o koncepcjach/mechanizmach języka pomiń go. PRZED
-   restartem backendu ZAWSZE zatrzymaj stary proces (TaskStop) jako pierwszy krok, potem dopiero
-   uruchom nowy (patrz "Problemy i decyzje" o pamięci).
+1. Zacznij `_15_jvm_internals` (20 lekcji) od lekcji 1, tym samym wzorcem pracy (patrz punkt 3
+   niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ OD RAZU z pełnym katalogiem
+   API_REFERENCE; dla lekcji o koncepcjach/mechanizmach JVM pomiń go. PRZED restartem backendu
+   ZAWSZE zatrzymaj stary proces (TaskStop) jako pierwszy krok, potem dopiero uruchom nowy (patrz
+   "Problemy i decyzje" o pamięci).
 2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
