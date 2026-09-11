@@ -142,18 +142,35 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01_fundamentals/
   06_StringsAndBuilder`, `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`,
   `_11_buildtools/30_CapstoneBuildLab`, `_12_hibernate/29_HibernateEnvers` bez zmian.
-- **`_14_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_14_advancedjava` (5/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
+  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział pokrywa m.in. generics,
+  wildcards, refleksję, adnotacje. Gotowe (blok generyków 1-5): `01_GenericsIntroduction` (raw
+  types vs generyki, Box<T>, BEZ API_REFERENCE — koncepcja językowa), `02_GenericClassesAndMethods`
+  (Pair<K,V>, metody/konstruktory generyczne, interfejsy generyczne, BEZ API_REFERENCE),
+  `03_BoundedTypes` (`<T extends Number>`, wielokrotne ograniczenia `&`, BEZ API_REFERENCE),
+  `04_WildcardsExtendsSuper` (niewariantność, `? extends`/`? super`, producent/konsument, BEZ
+  API_REFERENCE), `05_VarianceAndPecs` (PECS Joshuy Blocha, `Collections.copy`, kowariancja tablic
+  vs niezmienność generyków, BEZ API_REFERENCE). Wszystkie 5 plików zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane, live
+  przez API po `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
+  `_01_fundamentals/06_StringsAndBuilder`, `_13_libraries/32_YamlToObjectMapping` bez zmian.
+  **NASTĘPNY KROK: kontynuuj lekcję 6** (sprawdź dokładną nazwę pliku w katalogu
+  `_14_advancedjava`), dalej po kolei do `30`. Po ukończeniu wszystkich 30:
+  `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_13`
+  + JEDEN commit lokalny całego rozdziału.
+- **`_15_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
-Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE) i `_13_libraries` (32/32, KOMPLETNE) w tej
-sesji. `mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbek + regresja bez
-zmian po każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy kolejne dla `_13_libraries`
-(w miarę postępu, finalnie całość KOMPLETNA). Zgodnie z dyrektywą użytkownika ("cisnij dalej nie
-pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między
-lekcjami i rozdziałami — przy następnym "kontynuuj" zacznij `_14_advancedjava` (30 lekcji: generics,
-wildcards, refleksja, adnotacje itp.) od lekcji 1, patrz "Następny krok" niżej.
+Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE) i `_13_libraries` (32/32, KOMPLETNE), oraz
+rozpoczęto `_14_advancedjava` (5/30, W TOKU — cały blok generyków/wildcards/PECS) w tej sesji.
+`mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbek + regresja bez zmian po
+każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy kolejne dla `_13_libraries`, jeden dla
+częściowego stanu `_14_advancedjava`. Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się
+pomiędzy lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między lekcjami i
+rozdziałami — przy następnym "kontynuuj" wznów `_14_advancedjava` dokładnie od lekcji 6, patrz
+"Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -211,10 +228,11 @@ wildcards, refleksja, adnotacje itp.) od lekcji 1, patrz "Następny krok" niżej
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Zacznij `_14_advancedjava` (30 lekcji) od lekcji 1 `01_GenericsIntroduction.json`, tym samym
-   wzorcem pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ
-   OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/mechanizmach języka
-   (generics jako koncepcja, wildcards, wariancja) pomiń go.
+1. Kontynuuj `_14_advancedjava` (30 lekcji) dokładnie od lekcji 6 (sprawdź dokładną nazwę pliku w
+   katalogu — blok generyków 1-5 już ukończony), tym samym wzorcem pracy (patrz punkt 3 niżej). Dla
+   lekcji o konkretnej klasie/API z wieloma metodami (np. Reflection API, konkretne adnotacje z
+   wieloma atrybutami) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/
+   mechanizmach języka pomiń go.
 2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
