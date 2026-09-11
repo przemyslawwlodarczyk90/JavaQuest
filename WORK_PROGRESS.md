@@ -219,8 +219,33 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   audytu. Cała NOWO PISANA teoria ma pełne polskie znaki jak wszędzie indziej. Wszystkie 20 plików
   zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30
   exercises + 100 quiz zachowane liczbowo w każdym pliku.
-- **`_18_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego.
+- **`_18_rest_api` (20/20 lekcji) — KOMPLETNE.** 20 lekcji o projektowaniu REST API: HTTP deep
+  dive, REST intro (6 ograniczeń Fieldinga + Richardson Maturity Model), zasoby/endpointy, metody
+  HTTP z API_REFERENCE, kody statusu z API_REFERENCE, ciało request/response, content negotiation,
+  projektowanie JSON, path/query params, paginacja/sortowanie/filtrowanie, cache HTTP (ETag/
+  If-Match), projektowanie błędów (RFC 7807), błędy walidacji (collect-all), wersjonowanie
+  (4 strategie), idempotencja (klucz idempotencji), rate limiting (token bucket), Postman,
+  OpenAPI/Swagger, REST vs RPC vs GraphQL, kapston "JavaQuest Tasks API" łączący wszystkie 19
+  lekcji w 1 działające mini-API. Ten sam problem ASCII-only w exercises/quiz co `_17_architecture`
+  (odłożony do Etapu 5, patrz wyżej). Wszystkie 20 plików zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane.
+- **WAŻNY BŁĄD ZNALEZIONY I NAPRAWIONY W TEJ SESJI: `fix_allcaps.js` psuł metody HTTP.**
+  Skrypt używany od początku migracji (Etap 4, wszystkie rozdziały) nie miał `GET`/`POST`/`PUT`/
+  `PATCH`/`DELETE`/`HEAD`/`OPTIONS` na liście `WHITELIST` — trakt ował je jak nadużycie WIELKICH
+  LITER i zamieniał na `get`/`post`/... (środek zdania) albo `Get`/`Post`/... (początek zdania) w
+  polach `exercises`/`quiz`. Naprawiono `WHITELIST` (dodano metody HTTP + kilka innych częstych
+  skrótów: HATEOAS, RBAC, CORS, CSRF, SOLID itp.) i napisano `fix_http_method_case.js` do naprawy
+  już uszkodzonej treści. **Naprawiono i scommitowano `_06_networking` i `_07_servlets`**
+  (jedyne dotąd ukończone rozdziały intensywnie omawiające metody HTTP) — **PRZED przejściem do
+  kolejnych rozdziałów Spring (`_20`+) sprawdź, czy `_19_security_basics` (gdy powstanie) i każdy
+  rozdział wspominający GET/POST/PUT/DELETE/PATCH w exercises/quiz też przechodzi przez
+  `fix_http_method_case.js`** — dodane teraz do standardowego wzorca pracy (patrz punkt 3d niżej).
+- **`_19_security_basics` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+  Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format
+  `_19_security_basics` (prawdopodobnie stary format jak `_17`/`_18`, i prawdopodobnie ASCII-only
+  w exercises/quiz jak `_17`/`_18` — patrz COURSE_CONTENT_HISTORY.md linie ok. 799-838), potem
+  przepisz 20 lekcji tym samym wzorcem. Pamiętaj o `fix_http_method_case.js` (rozdział o
+  bezpieczeństwie API prawie na pewno wspomina GET/POST/PUT/DELETE w exercises/quiz).**
 
 ## Ostatnia ukończona czynność
 
@@ -338,7 +363,10 @@ przy następnym "kontynuuj" wznów `_16_clean_code` dokładnie od lekcji 18, pat
       [API_REFERENCE], WHEN_TO_USE, SUMMARY) — NIGDY Write na pliku z istniejącymi
       exercises/quiz.
    d) Uruchom `node scripts/content-migration/fix_allcaps.js <plik.json>` i
-      `node scripts/content-migration/fix_allcaps_residual.js <plik.json>`.
+      `node scripts/content-migration/fix_allcaps_residual.js <plik.json>`. Dla rozdziałów
+      wspominających metody HTTP w exercises/quiz (`_06`,`_07`,`_17`,`_18`,`_19`+, Spring `_20`+)
+      uruchom DODATKOWO `node scripts/content-migration/fix_http_method_case.js <plik.json>`
+      (naprawia GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS do WIELKICH liter).
    e) Waliduj (node, bez polegania na `grep -P` — locale w tej powłoce go nie wspiera): JSON valid
       + liczba bloków theory/exercises(30)/quiz(100), `(tekst.match(/native code/g)||[]).length`,
       `(tekst.match(/[Ѐ-ӿ]/g)||[]).length` (cyrylica) — napraw natychmiast jeśli coś
