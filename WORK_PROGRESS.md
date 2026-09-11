@@ -162,46 +162,61 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   STARY proces backendu (TaskStop) i DOPIERO POTEM uruchom nowy (nie trzymaj dwóch instancji Spring
   Boot naraz) — sprawdzone, działa niezawodnie. Sprawdzaj wolną pamięć PowerShell:
   `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`.**
-- **`_15_jvm_internals` (8/20 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
-  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział ma 20 lekcji, schodzi
-  poniżej API do samej JVM: classloading/bajtkod (1-5), obszary pamięci heap/stack/metaspace (6-7),
-  Garbage Collector (8-12), JIT (13-14), wycieki pamięci (15), diagnostyka produkcyjna JFR/heap
-  dump/thread dump (16-20). Gotowe: blok classloading/bajtkod 1-5 (`01_JdkJreJvmAndSpecification`,
-  `02_CompilationAndBytecode` — Z API_REFERENCE dla javap, `03_ClassLoadingMechanics`,
-  `04_CustomClassLoaders`, `05_ClasspathVsModulepath` — powiązanie z JPMS z `_14_advancedjava`),
-  oraz NOWY blok pamięci/GC podstawy 6-8: `06_HeapStackMetaspace` (MemoryMXBean/MemoryPoolMXBean,
-  StackOverflowError, -Xss/-XX:MaxMetaspaceSize, Z API_REFERENCE), `07_ReferenceTypesAndStringPool`
-  (Weak/Soft/PhantomReference, Cleaner, String pool, Compact Strings, BEZ API_REFERENCE),
-  `08_GarbageCollectionFoundations` (hipoteza generacyjna, GC roots, mark-sweep-compact, Minor/
-  Major/Full GC, GarbageCollectorMXBean, Z API_REFERENCE). Wszystkie 8 plików zweryfikowane:
+- **`_15_jvm_internals` (14/20 lekcji gotowe i SCOMMITOWANE) — W TOKU.** Rozdział ma 20 lekcji,
+  schodzi poniżej API do samej JVM: classloading/bajtkod (1-5), obszary pamięci heap/stack/
+  metaspace (6-7), Garbage Collector (8-12), JIT (13-14), wycieki pamięci (15), diagnostyka
+  produkcyjna JFR/heap dump/thread dump (16-20). Gotowe: blok classloading/bajtkod 1-5
+  (`01_JdkJreJvmAndSpecification`, `02_CompilationAndBytecode` — Z API_REFERENCE dla javap,
+  `03_ClassLoadingMechanics`, `04_CustomClassLoaders`, `05_ClasspathVsModulepath` — powiązanie z
+  JPMS z `_14_advancedjava`), blok pamięci/GC podstawy 6-8: `06_HeapStackMetaspace`
+  (MemoryMXBean/MemoryPoolMXBean, StackOverflowError, -Xss/-XX:MaxMetaspaceSize, Z API_REFERENCE),
+  `07_ReferenceTypesAndStringPool` (Weak/Soft/PhantomReference, Cleaner, String pool, Compact
+  Strings, BEZ API_REFERENCE), `08_GarbageCollectionFoundations` (hipoteza generacyjna, GC roots,
+  mark-sweep-compact, Minor/Major/Full GC, GarbageCollectorMXBean, Z API_REFERENCE), oraz NOWY blok
+  GC algorytmy/JIT 9-14: `09_GarbageCollectorAlgorithms` (Serial/Parallel/G1/ZGC-Shenandoah,
+  throughput/latency/footprint, BEZ API_REFERENCE), `10_G1GcDeepDive` (regiony, Remembered Sets,
+  Collection Set, Mixed Collections, MaxGCPauseMillis jako soft goal, BEZ API_REFERENCE),
+  `11_LowLatencyCollectors` (colored pointers ZGC, Brooks pointers Shenandoah, load barriers, BEZ
+  API_REFERENCE), `12_GcTuningAndLogging` (Xms/Xmx, NewRatio/SurvivorRatio, UseStringDeduplication,
+  Unified JVM Logging -Xlog, Z API_REFERENCE), `13_JitCompilerBasics` (interpreter/C1/C2, tiered
+  compilation 0-4, OSR, deoptymalizacja, PrintCompilation, Z API_REFERENCE flag diagnostycznych),
+  `14_EscapeAnalysisAndInlining` (escape analysis, scalar replacement, inlining, PrintInlining,
+  DoEscapeAnalysis, Z API_REFERENCE flag diagnostycznych). Wszystkie 14 plików zweryfikowane:
   poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz
   zachowane, live przez API po `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
-  `_01_fundamentals/06_StringsAndBuilder`, `_14_advancedjava/30_CapstoneAdvancedJava` bez zmian.
-  **NASTĘPNY KROK: kontynuuj lekcję 9 `09_GarbageCollectorAlgorithms.json`**, dalej po kolei do
-  `20`: `10_G1GcDeepDive`, `11_LowLatencyCollectors`, `12_GcTuningAndLogging`,
-  `13_JitCompilerBasics`, `14_EscapeAnalysisAndInlining`, `15_MemoryLeaksInJava`,
+  `_01_fundamentals/06_StringsAndBuilder`, `_12_hibernate/08_Transactions`,
+  `_13_libraries/32_YamlToObjectMapping`, `_14_advancedjava/01_GenericsIntroduction` bez zmian.
+  **UWAGA operacyjna z tej sesji: lekcje 9-10 zostały napisane w POPRZEDNIEJ sesji, ale NIE
+  scommitowane wtedy (git log pokazywał commit tylko do lekcji 8) — odkryte i naprawione na
+  początku tej sesji, scommitowane razem z lekcjami 11-14 w jednym commicie.**
+  **NASTĘPNY KROK: kontynuuj lekcję 15 `15_MemoryLeaksInJava.json`**, dalej po kolei do `20`:
   `16_HeapDumpBasics`, `17_ThreadDumpBasics`, `18_JavaFlightRecorderBasics`, `19_ProfilingBasics`,
   `20_JvmTuningAndBestPracticesCapstone`. Po ukończeniu wszystkich 20:
   `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_14`
-  + JEDEN commit lokalny całego rozdziału.
+  + JEDEN commit lokalny całego rozdziału (albo kontynuacja checkpointów co kilka lekcji, jak
+  dotychczas).
 - **`_16_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
 Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE), `_13_libraries` (32/32, KOMPLETNE) i
-`_14_advancedjava` (30/30, KOMPLETNE), oraz rozpoczęto `_15_jvm_internals` (8/20, W TOKU — bloki
-classloading/bajtkod 1-5, pamięć/GC podstawy 6-8) w tej sesji. `mvnw.cmd resources:resources` +
-restart backendu + weryfikacja live próbek + regresja bez zmian po każdym checkpoincie + commity:
-jeden dla `_12_hibernate`, trzy kolejne dla `_13_libraries`, siedem kolejnych dla `_14_advancedjava`
-(finalnie 30/30 KOMPLETNE), dwa kolejne dla częściowego stanu `_15_jvm_internals` (4/20, potem
-8/20). WAŻNA LEKCJA operacyjna z tej sesji: przed restartem backendu ZAWSZE najpierw zatrzymaj
-stary proces (TaskStop), dopiero potem uruchom nowy — trzymanie dwóch instancji Spring Boot naraz
-przy niskiej wolnej pamięci (obserwowano spadek do ok. 2.7GB/16GB) ryzykuje, że system zabije
-proces backendu; stosowanie tej kolejności rozwiązało problem do końca sesji. Zgodnie z dyrektywą
-użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez
-zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj" wznów
-`_15_jvm_internals` dokładnie od lekcji 9, patrz "Następny krok" niżej.
+`_14_advancedjava` (30/30, KOMPLETNE) w poprzednich sesjach, oraz kontynuowano `_15_jvm_internals`
+w tej sesji — dopisano i scommitowano lekcje 9-14 (algorytmy GC, G1 wewnętrznie, ZGC/Shenandoah,
+strojenie i logowanie GC, JIT compiler, escape analysis/inlining), łącznie 14/20, W TOKU. Na
+początku tej sesji wykryto, że lekcje 9-10 (napisane w poprzedniej sesji) NIE zostały wtedy
+scommitowane mimo zapisu w tym pliku sugerującego, że były — naprawione przez zweryfikowanie ich
+poprawności (JSON, liczba bloków, native code, cyrylica, live przez API) i scommitowanie razem z
+nowo napisanymi lekcjami 11-14 w jednym commicie. `mvnw.cmd resources:resources` + restart backendu
+(stary proces zatrzymany przez `taskkill` po PID z `netstat`, bo task ID z poprzedniej sesji nie
+był już śledzony w tej) + weryfikacja live próbek (14/15 bloków teorii zgodnie z oczekiwaniem) +
+regresja na `_01_fundamentals`, `_12_hibernate`, `_13_libraries`, `_14_advancedjava` bez zmian.
+WAŻNA LEKCJA operacyjna: seedowanie treści do H2 po restarcie backendu z pełnym 31-rozdziałowym
+kursem trwa teraz zauważalnie dłużej (ok. 30-35s od startu procesu do dostępności treści przez
+API) — warto odczekać/ponowić curl kilka razy zamiast od razu zakładać błąd przy pustej odpowiedzi
+`[]`. Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę")
+migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami — przy następnym
+"kontynuuj" wznów `_15_jvm_internals` dokładnie od lekcji 15, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -259,13 +274,15 @@ zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuu
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Kontynuuj `_15_jvm_internals` (20 lekcji) dokładnie od lekcji 9
-   `09_GarbageCollectorAlgorithms.json` (bloki classloading/bajtkod 1-5 i pamięć/GC podstawy 6-8
-   już ukończone), tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/
-   API z wieloma metodami PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o
-   koncepcjach/mechanizmach JVM pomiń go. PRZED restartem backendu ZAWSZE zatrzymaj stary proces
-   (TaskStop) jako pierwszy krok, potem dopiero uruchom nowy (patrz "Problemy i decyzje" o
-   pamięci).
+1. Kontynuuj `_15_jvm_internals` (20 lekcji) dokładnie od lekcji 15
+   `15_MemoryLeaksInJava.json` (lekcje 1-14 już ukończone i scommitowane), tym samym wzorcem pracy
+   (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ OD RAZU z
+   pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/mechanizmach JVM pomiń go. PRZED
+   restartem backendu ZAWSZE zatrzymaj stary proces jako pierwszy krok (TaskStop, albo jeśli task
+   ID nie jest już śledzony w bieżącej sesji — `netstat -ano | grep :8082` + `taskkill //PID <pid>
+   //F`), dopiero potem uruchom nowy (patrz "Problemy i decyzje" o pamięci). PO restarcie odczekaj
+   ok. 30-40s i ponów curl kilka razy zanim uznasz brak treści za błąd — seedowanie całego kursu do
+   H2 zajmuje teraz zauważalnie więcej czasu niż na początku migracji.
 2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
