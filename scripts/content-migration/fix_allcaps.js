@@ -7,7 +7,13 @@ const WHITELIST = new Set([
   'GC','JVM','JDK','JRE','API','HTTP','HTTPS','REST','JSON','XML','SQL','JNI','OOM','CPU','RAM',
   'URL','URI','ID','IO','UI','JEP','LTS','ASCII','UTF','POJO','ORM','CRUD','JAR','WAR','TCP','IP',
   'DNS','JWT','CSS','HTML','SDK','IDE','JPA','DTO','DAO','JIT','G1','ZGC','MB','KB','GB','JAVA',
-  'PI', 'E', 'A', 'B', 'C', 'D', 'AND', 'OR', 'XOR', 'NOT', 'TODO', 'FIXME'
+  'PI', 'E', 'A', 'B', 'C', 'D', 'AND', 'OR', 'XOR', 'NOT', 'TODO', 'FIXME',
+  // Metody HTTP - musza zostac WIELKIMI literami, to nazwy protokolu, nie emfaza
+  'GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','CONNECT','TRACE',
+  // Inne czeste skroty techniczne napotkane w rozdzialach REST/architektura/bezpieczenstwo
+  'HATEOAS','POX','RPC','SSRF','RBAC','CORS','CSRF','SSL','TLS','JWE','JWS','OWASP','SPA',
+  'ETAG','TTL','SLA','CDN','ACID','CQRS','SAGA','DDD','SRP','OCP','LSP','ISP','DIP','SOLID',
+  'YAGNI','KISS','DRY','ADR'
 ]);
 
 const LOW_MAP = { 'Ą':'ą','Ć':'ć','Ę':'ę','Ł':'ł','Ń':'ń','Ó':'ó','Ś':'ś','Ź':'ź','Ż':'ż' };
