@@ -130,17 +130,45 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   backendu). Regresja na `_01_fundamentals/06_StringsAndBuilder`,
   `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`, `_11_buildtools/30_CapstoneBuildLab`
   bez zmian.
-- **`_13_libraries` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_13_libraries` (8/32 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
+  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział ma 32 lekcje (nie 30) —
+  Lombok, Apache Commons (Lang3/IO/Collections4), Guava, OkHttp, SLF4J+Logback, Guice, MapStruct,
+  Apache POI, Jsoup, Caffeine, Picocli, SnakeYAML. Gotowe: `01_WhyLibraries` (czym jest biblioteka
+  zewnetrzna, SemVer, checklist oceny, BEZ API_REFERENCE — wprowadzenie koncepcyjne),
+  `02_ChoosingAndAddingDependencies` (zaleznosci transytywne, scope Maven, exclusions, BOM,
+  API_REFERENCE), `03_LombokBasics` (@Getter/@Setter/@ToString/@EqualsAndHashCode/@Data,
+  API_REFERENCE), `04_LombokConstructorsAndBuilder` (@NoArgsConstructor/@AllArgsConstructor/
+  @RequiredArgsConstructor/@Builder/@Builder.Default/@Value, API_REFERENCE),
+  `05_LombokAdvancedAndPitfalls` (@With/@Slf4j/toBuilder, pulapki: callSuper, mutowalne pola w
+  HashSet, rekurencja w dwukierunkowych relacjach, API_REFERENCE), `06_CommonsLang3`
+  (StringUtils/ObjectUtils/Validate/RandomStringUtils/ArrayUtils, API_REFERENCE), `07_CommonsIO`
+  (FileUtils/IOUtils/FilenameUtils/LineIterator, API_REFERENCE), `08_CommonsCollections4`
+  (CollectionUtils/MapUtils/ListUtils/Bag/MultiValuedMap, API_REFERENCE). Wszystkie 8 plików
+  zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises
+  + 100 quiz zachowane, live przez API po `mvnw.cmd resources:resources` + restarcie backendu.
+  Regresja na `_01_fundamentals/06_StringsAndBuilder`, `_12_hibernate/30_BestPracticesAndCapstone`
+  bez zmian. **NASTĘPNY KROK: kontynuuj lekcję 9 `09_GuavaImmutableCollections.json`**, dalej po
+  kolei do `32`: `10_GuavaMultimapMultisetBiMap`, `11_GuavaPreconditionsAndCache`,
+  `12_OkHttpBasics`, `13_OkHttpAsyncAndInterceptors`, `14_OkHttpStreamingAndTesting`,
+  `15_WhySlf4jNotSystemOut`, `16_LogbackConfiguration`, `17_MdcAndLoggingBestPractices`,
+  `18_WhyDependencyInjection`, `19_GuiceBasics`, `20_GuiceAdvancedModulesAndScopes`,
+  `21_MapStructBasics`, `22_MapStructAdvancedMappings`, `23_ApachePoiWritingExcel`,
+  `24_ApachePoiReadingAndStyling`, `25_JsoupParsingHtml`, `26_JsoupAdvancedScraping`,
+  `27_CaffeineBasics`, `28_CaffeineLoadingAndAsyncCache`, `29_PicocliBasics`,
+  `30_PicocliSubcommandsAndValidation`, `31_SnakeYamlBasics`, `32_YamlToObjectMapping`. Po
+  ukończeniu wszystkich 32: `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny
+  + regresja na `_01`-`_12` + JEDEN commit lokalny całego rozdziału.
+- **`_14_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
-Dokończono rozdział `_12_hibernate` w tej sesji (lekcje 8-30, 23 lekcje przepisane na standard 11
-sekcji). `mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbki nowych lekcji
-+ regresja na `_01`/`_05`/`_09`/`_11` bez zmian + JEDEN commit lokalny całego rozdziału (30/30,
-KOMPLETNE). Zgodnie z dyrektywą użytkownika migracja jest kontynuowana bez pytania o zgodę między
-rozdziałami — przy następnym "kontynuuj" rozpocznij `_13_libraries` od lekcji 1, patrz "Następny
-krok" niżej.
+Dokończono rozdział `_12_hibernate` w tej sesji (lekcje 8-30, KOMPLETNE, scommitowane) i rozpoczęto
+`_13_libraries` (lekcje 1-8/32 gotowe, W TOKU). `mvnw.cmd resources:resources` + restart backendu +
+weryfikacja live próbek obu rozdziałów + regresja bez zmian + JEDEN commit dla `_12_hibernate`
+(KOMPLETNE) + JEDEN commit dla stanu częściowego `_13_libraries` (8/32, jawnie W TOKU). Zgodnie z
+dyrektywą użytkownika migracja jest kontynuowana bez pytania o zgodę między rozdziałami — przy
+następnym "kontynuuj" wznów dokładnie od lekcji 9 `_13_libraries`, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -198,9 +226,11 @@ krok" niżej.
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Zacznij `_13_libraries` od lekcji 1, tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji
+1. Kontynuuj `_13_libraries` (32 lekcje, NIE 30) dokładnie od lekcji 9
+   `09_GuavaImmutableCollections.json`, tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji
    o konkretnej bibliotece/klasie z wieloma metodami PISZ OD RAZU z pełnym katalogiem
-   API_REFERENCE; dla lekcji o koncepcjach/wzorcach pomiń go.
+   API_REFERENCE; dla lekcji o koncepcjach/wzorcach pomiń go. Pełna lista pozostałych lekcji: patrz
+   sekcja "Stan rozdziałów" wyżej.
 2. Kontynuuj rozdziałami `_14_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
