@@ -142,29 +142,30 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01_fundamentals/
   06_StringsAndBuilder`, `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`,
   `_11_buildtools/30_CapstoneBuildLab`, `_12_hibernate/29_HibernateEnvers` bez zmian.
-- **`_14_advancedjava` (14/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
+- **`_14_advancedjava` (18/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
   scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział pokrywa generics,
-  lambdy/functional interfaces, adnotacje, i dalej (do lekcji 30) prawdopodobnie refleksję/inne
-  mechanizmy — sprawdź listę plików w katalogu przy wznowieniu. Gotowe: blok generyków 1-7 (BEZ
-  API_REFERENCE — koncepcje/mechanizmy językowe: raw types, Pair<K,V>, bounded types, wildcards,
-  PECS, type erasure, best practices); blok lambd 8-10 (`08_FunctionalInterfaces` — reguła SAM, BEZ
-  API_REFERENCE; `09_LambdaExpressions` — effectively final/this, BEZ API_REFERENCE;
-  `10_MethodReferences` — 4 rodzaje `::`, Z API_REFERENCE); blok adnotacji 11-14
-  (`11_BuiltInFunctionalInterfaces` — 43 interfejsy z java.util.function, Z API_REFERENCE;
-  `12_Annotations` — @Override/@Deprecated/@SuppressWarnings, BEZ API_REFERENCE;
-  `13_CustomAnnotations` — @interface, @Target/@Retention/@Documented/@Inherited/@Repeatable, BEZ
-  API_REFERENCE; `14_AnnotationRetentionAndProcessing` — 3 poziomy retencji, AbstractProcessor, BEZ
-  API_REFERENCE). Wszystkie 14 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0,
-  brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane, live przez API po
-  `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
+  lambdy/functional interfaces, adnotacje, refleksję, i dalej (19-30) sealed classes/pattern
+  matching/prawdopodobnie inne nowoczesne mechanizmy Javy — sprawdź listę plików w katalogu przy
+  wznowieniu. Gotowe: blok generyków 1-7, blok lambd 8-10, blok adnotacji 11-14 (wszystkie opisane
+  we wcześniejszych wpisach tego pliku), oraz NOWY blok refleksji 15-18: `15_ReflectionBasics`
+  (Class/Field/Method/Constructor, getX vs getDeclaredX, setAccessible, BEZ API_REFERENCE —
+  koncepcja mechanizmu, choć konkretne API), `16_ReflectionUseCasesAndRisks` (DI/Hibernate/Jackson/
+  JUnit jako realne zastosowania, ryzyka: wydajność/hermetyzacja/kruchość/JPMS, BEZ API_REFERENCE),
+  `17_DynamicProxies` (java.lang.reflect.Proxy, InvocationHandler, powiązanie z Hibernate lazy-
+  loading i Spring AOP, BEZ API_REFERENCE), `18_MethodHandles` (MethodHandles.lookup, findVirtual/
+  findStatic/findConstructor/findGetter/findSetter, invoke vs invokeExact, powiązanie z
+  invokedynamic dla lambd, BEZ API_REFERENCE). Wszystkie 18 plików zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane, live
+  przez API po `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
   `_01_fundamentals/06_StringsAndBuilder`, `_13_libraries/32_YamlToObjectMapping` bez zmian.
-  **UWAGA: backend bywa zabijany przez system z powodu niskiej pamięci (obserwowane w tej sesji) —
-  sprawdź dostępną pamięć przed restartem (PowerShell:
-  `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`), rozważ rzadsze restarty
-  (co więcej lekcji naraz) jeśli pamięć jest napięta.**
-  **NASTĘPNY KROK: kontynuuj lekcję 15** (sprawdź dokładną nazwę pliku w katalogu
-  `_14_advancedjava`, prawdopodobnie ReflectionBasics wg wcześniejszego listingu), dalej po kolei
-  do `30`. Po ukończeniu wszystkich 30: `mvnw.cmd resources:resources` + restart backendu + curl
+  **UWAGA: backend bywa zabijany przez system z powodu niskiej pamięci (obserwowane wielokrotnie w
+  tej sesji, wolna pamięć spadała do ok. 2.7GB/16GB) — PRZED restartem zawsze najpierw zatrzymaj
+  STARY proces backendu (TaskStop) i DOPIERO POTEM uruchom nowy (nie trzymaj dwóch instancji Spring
+  Boot naraz) — to obniżyło szczytowe zużycie i restart przeszedł bez problemu. Sprawdzaj wolną
+  pamięć PowerShell: `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`.**
+  **NASTĘPNY KROK: kontynuuj lekcję 19** (sprawdź dokładną nazwę pliku w katalogu
+  `_14_advancedjava`, prawdopodobnie SealedClasses wg wcześniejszego listingu), dalej po kolei do
+  `30`. Po ukończeniu wszystkich 30: `mvnw.cmd resources:resources` + restart backendu + curl
   weryfikacyjny + regresja na `_01`-`_13` + JEDEN commit lokalny całego rozdziału.
 - **`_15_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
@@ -172,15 +173,17 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
 ## Ostatnia ukończona czynność
 
 Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE) i `_13_libraries` (32/32, KOMPLETNE), oraz
-rozpoczęto `_14_advancedjava` (14/30, W TOKU — bloki generyków 1-7, lambd/method references 8-10,
-adnotacji 11-14) w tej sesji. `mvnw.cmd resources:resources` + restart backendu + weryfikacja live
-próbek + regresja bez zmian po każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy
-kolejne dla `_13_libraries`, trzy kolejne dla częściowego stanu `_14_advancedjava` (5/30, potem
-10/30, potem 14/30). Zaobserwowano w tej sesji, że system zabija proces backendu z powodu niskiej
-pamięci — jeśli się to powtórzy, sprawdź wolną pamięć przed restartem i rozważ rzadsze restarty.
-Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja
-była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj"
-wznów `_14_advancedjava` dokładnie od lekcji 15, patrz "Następny krok" niżej.
+rozpoczęto `_14_advancedjava` (18/30, W TOKU — bloki generyków 1-7, lambd/method references 8-10,
+adnotacji 11-14, refleksji 15-18) w tej sesji. `mvnw.cmd resources:resources` + restart backendu +
+weryfikacja live próbek + regresja bez zmian po każdym checkpoincie + commity: jeden dla
+`_12_hibernate`, trzy kolejne dla `_13_libraries`, cztery kolejne dla częściowego stanu
+`_14_advancedjava` (5/30, potem 10/30, potem 14/30, potem 18/30). WAŻNA LEKCJA operacyjna z tej
+sesji: przed restartem backendu ZAWSZE najpierw zatrzymaj stary proces (TaskStop), dopiero potem
+uruchom nowy — trzymanie dwóch instancji Spring Boot naraz przy niskiej wolnej pamięci (obserwowano
+spadek do ok. 2.7GB/16GB) ryzykuje, że system zabije proces backendu. Zgodnie z dyrektywą
+użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez
+zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj" wznów
+`_14_advancedjava` dokładnie od lekcji 19, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -238,11 +241,12 @@ wznów `_14_advancedjava` dokładnie od lekcji 15, patrz "Następny krok" niżej
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Kontynuuj `_14_advancedjava` (30 lekcji) dokładnie od lekcji 15 (sprawdź dokładną nazwę pliku w
-   katalogu — bloki generyków 1-7, lambd/method references 8-10, adnotacji 11-14 już ukończone),
-   tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma
-   metodami (np. Reflection API — Class/Method/Field z wieloma metodami) PISZ OD RAZU z pełnym
-   katalogiem API_REFERENCE; dla lekcji o koncepcjach/mechanizmach języka pomiń go.
+1. Kontynuuj `_14_advancedjava` (30 lekcji) dokładnie od lekcji 19 (sprawdź dokładną nazwę pliku w
+   katalogu — bloki generyków 1-7, lambd/method references 8-10, adnotacji 11-14, refleksji 15-18
+   już ukończone), tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/
+   API z wieloma metodami PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/
+   mechanizmach języka pomiń go. PRZED restartem backendu ZAWSZE zatrzymaj stary proces (TaskStop)
+   jako pierwszy krok, potem dopiero uruchom nowy (patrz "Problemy i decyzje" o pamięci).
 2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
