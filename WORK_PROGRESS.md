@@ -142,19 +142,24 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01_fundamentals/
   06_StringsAndBuilder`, `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`,
   `_11_buildtools/30_CapstoneBuildLab`, `_12_hibernate/29_HibernateEnvers` bez zmian.
-- **`_14_advancedjava` (5/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
-  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział pokrywa m.in. generics,
-  wildcards, refleksję, adnotacje. Gotowe (blok generyków 1-5): `01_GenericsIntroduction` (raw
-  types vs generyki, Box<T>, BEZ API_REFERENCE — koncepcja językowa), `02_GenericClassesAndMethods`
-  (Pair<K,V>, metody/konstruktory generyczne, interfejsy generyczne, BEZ API_REFERENCE),
-  `03_BoundedTypes` (`<T extends Number>`, wielokrotne ograniczenia `&`, BEZ API_REFERENCE),
-  `04_WildcardsExtendsSuper` (niewariantność, `? extends`/`? super`, producent/konsument, BEZ
-  API_REFERENCE), `05_VarianceAndPecs` (PECS Joshuy Blocha, `Collections.copy`, kowariancja tablic
-  vs niezmienność generyków, BEZ API_REFERENCE). Wszystkie 5 plików zweryfikowane: poprawny JSON,
-  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane, live
-  przez API po `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
-  `_01_fundamentals/06_StringsAndBuilder`, `_13_libraries/32_YamlToObjectMapping` bez zmian.
-  **NASTĘPNY KROK: kontynuuj lekcję 6** (sprawdź dokładną nazwę pliku w katalogu
+- **`_14_advancedjava` (10/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
+  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział pokrywa generics,
+  wildcards, type erasure, lambdy, referencje do metod, i dalej (do lekcji 30) prawdopodobnie
+  refleksję/adnotacje/inne mechanizmy — sprawdź listę plików w katalogu przy wznowieniu. Gotowe:
+  blok generyków 1-7 (`01_GenericsIntroduction`, `02_GenericClassesAndMethods`, `03_BoundedTypes`,
+  `04_WildcardsExtendsSuper`, `05_VarianceAndPecs` — PECS, `06_TypeErasure`,
+  `07_GenericsBestPracticesAndPitfalls` — lekcja podsumowująca), wszystkie BEZ API_REFERENCE
+  (koncepcje/mechanizmy językowe); blok lambd 8-10 (`08_FunctionalInterfaces` — reguła SAM, BEZ
+  API_REFERENCE, `09_LambdaExpressions` — effectively final/this, BEZ API_REFERENCE,
+  `10_MethodReferences` — 4 rodzaje `::`, Z API_REFERENCE jako katalog składniowy). Wszystkie 10
+  plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30
+  exercises + 100 quiz zachowane, live przez API po `mvnw.cmd resources:resources` + restarcie
+  backendu. Regresja na `_01_fundamentals/06_StringsAndBuilder`,
+  `_13_libraries/32_YamlToObjectMapping` bez zmian. **UWAGA: backend bywa zabijany przez system z
+  powodu niskiej pamięci (obserwowane w tej sesji) — sprawdź dostępną pamięć przed restartem
+  (PowerShell: `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`), rozważ
+  rzadsze restarty (co więcej lekcji naraz) jeśli pamięć jest napięta.**
+  **NASTĘPNY KROK: kontynuuj lekcję 11** (sprawdź dokładną nazwę pliku w katalogu
   `_14_advancedjava`), dalej po kolei do `30`. Po ukończeniu wszystkich 30:
   `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_13`
   + JEDEN commit lokalny całego rozdziału.
@@ -164,13 +169,15 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
 ## Ostatnia ukończona czynność
 
 Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE) i `_13_libraries` (32/32, KOMPLETNE), oraz
-rozpoczęto `_14_advancedjava` (5/30, W TOKU — cały blok generyków/wildcards/PECS) w tej sesji.
-`mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbek + regresja bez zmian po
-każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy kolejne dla `_13_libraries`, jeden dla
-częściowego stanu `_14_advancedjava`. Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się
-pomiędzy lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między lekcjami i
-rozdziałami — przy następnym "kontynuuj" wznów `_14_advancedjava` dokładnie od lekcji 6, patrz
-"Następny krok" niżej.
+rozpoczęto `_14_advancedjava` (10/30, W TOKU — bloki generyków 1-7 i lambd/method references 8-10)
+w tej sesji. `mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbek + regresja
+bez zmian po każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy kolejne dla
+`_13_libraries`, dwa kolejne dla częściowego stanu `_14_advancedjava` (5/30, potem 10/30).
+Zaobserwowano w tej sesji, że system zabija proces backendu z powodu niskiej pamięci — jeśli się to
+powtórzy, sprawdź wolną pamięć przed restartem i rozważ rzadsze restarty. Zgodnie z dyrektywą
+użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez
+zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj" wznów
+`_14_advancedjava` dokładnie od lekcji 11, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -228,11 +235,11 @@ rozdziałami — przy następnym "kontynuuj" wznów `_14_advancedjava` dokładni
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Kontynuuj `_14_advancedjava` (30 lekcji) dokładnie od lekcji 6 (sprawdź dokładną nazwę pliku w
-   katalogu — blok generyków 1-5 już ukończony), tym samym wzorcem pracy (patrz punkt 3 niżej). Dla
-   lekcji o konkretnej klasie/API z wieloma metodami (np. Reflection API, konkretne adnotacje z
-   wieloma atrybutami) PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/
-   mechanizmach języka pomiń go.
+1. Kontynuuj `_14_advancedjava` (30 lekcji) dokładnie od lekcji 11 (sprawdź dokładną nazwę pliku w
+   katalogu — bloki generyków 1-7 i lambd/method references 8-10 już ukończone), tym samym wzorcem
+   pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami (np.
+   Reflection API, konkretne adnotacje z wieloma atrybutami) PISZ OD RAZU z pełnym katalogiem
+   API_REFERENCE; dla lekcji o koncepcjach/mechanizmach języka pomiń go.
 2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
