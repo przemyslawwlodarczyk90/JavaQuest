@@ -162,23 +162,46 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   STARY proces backendu (TaskStop) i DOPIERO POTEM uruchom nowy (nie trzymaj dwóch instancji Spring
   Boot naraz) — sprawdzone, działa niezawodnie. Sprawdzaj wolną pamięć PowerShell:
   `Get-CimInstance Win32_OperatingSystem | Select FreePhysicalMemory`.**
-- **`_15_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_15_jvm_internals` (4/20 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
+  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział ma 20 lekcji, schodzi
+  poniżej API do samej JVM: classloading/bajtkod (1-5), obszary pamięci heap/stack/metaspace (6-7),
+  Garbage Collector (8-12), JIT (13-14), wycieki pamięci (15), diagnostyka produkcyjna JFR/heap
+  dump/thread dump (16-20). Gotowe: `01_JdkJreJvmAndSpecification` (JLS vs JVMS, HotSpot/GraalVM/
+  OpenJ9, architektura JVM, BEZ API_REFERENCE), `02_CompilationAndBytecode` (pipeline javac,
+  struktura .class, instrukcje bajtkodu, javap, Z API_REFERENCE dla opcji javap),
+  `03_ClassLoadingMechanics` (hierarchia Bootstrap/Platform/Application, parent-first delegation,
+  Loading/Linking/Initialization, leniwa inicjalizacja, BEZ API_REFERENCE),
+  `04_CustomClassLoaders` (własny ClassLoader, findClass/defineClass, tożsamość klasy = nazwa+
+  loader, BEZ API_REFERENCE). Wszystkie 4 pliki zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane, live
+  przez API po `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
+  `_01_fundamentals/06_StringsAndBuilder`, `_14_advancedjava/30_CapstoneAdvancedJava` bez zmian.
+  **NASTĘPNY KROK: kontynuuj lekcję 5 `05_ClasspathVsModulepath.json`**, dalej po kolei do `20`:
+  `06_HeapStackMetaspace`, `07_ReferenceTypesAndStringPool`, `08_GarbageCollectionFoundations`,
+  `09_GarbageCollectorAlgorithms`, `10_G1GcDeepDive`, `11_LowLatencyCollectors`,
+  `12_GcTuningAndLogging`, `13_JitCompilerBasics`, `14_EscapeAnalysisAndInlining`,
+  `15_MemoryLeaksInJava`, `16_HeapDumpBasics`, `17_ThreadDumpBasics`,
+  `18_JavaFlightRecorderBasics`, `19_ProfilingBasics`, `20_JvmTuningAndBestPracticesCapstone`. Po
+  ukończeniu wszystkich 20: `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny
+  + regresja na `_01`-`_14` + JEDEN commit lokalny całego rozdziału.
+- **`_16_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
 Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE), `_13_libraries` (32/32, KOMPLETNE) i
-`_14_advancedjava` (30/30, KOMPLETNE) w tej sesji. `mvnw.cmd resources:resources` + restart backendu
-+ weryfikacja live próbek + regresja bez zmian po każdym checkpoincie + commity: jeden dla
-`_12_hibernate`, trzy kolejne dla `_13_libraries`, siedem kolejnych dla `_14_advancedjava` (5/30,
-10/30, 14/30, 18/30, 22/30, 26/30, finalnie 30/30 KOMPLETNE). WAŻNA LEKCJA operacyjna z tej sesji:
-przed restartem backendu ZAWSZE najpierw zatrzymaj stary proces (TaskStop), dopiero potem uruchom
-nowy — trzymanie dwóch instancji Spring Boot naraz przy niskiej wolnej pamięci (obserwowano spadek
-do ok. 2.7GB/16GB) ryzykuje, że system zabije proces backendu; stosowanie tej kolejności rozwiązało
-problem do końca sesji. Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy
-lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami —
-przy następnym "kontynuuj" zacznij `_15_jvm_internals` (20 lekcji) od lekcji 1, patrz "Następny
-krok" niżej.
+`_14_advancedjava` (30/30, KOMPLETNE), oraz rozpoczęto `_15_jvm_internals` (4/20, W TOKU — bloki
+classloading/bajtkod 1-4) w tej sesji. `mvnw.cmd resources:resources` + restart backendu +
+weryfikacja live próbek + regresja bez zmian po każdym checkpoincie + commity: jeden dla
+`_12_hibernate`, trzy kolejne dla `_13_libraries`, siedem kolejnych dla `_14_advancedjava` (finalnie
+30/30 KOMPLETNE), jeden kolejny dla częściowego stanu `_15_jvm_internals` (4/20). WAŻNA LEKCJA
+operacyjna z tej sesji: przed restartem backendu ZAWSZE najpierw zatrzymaj stary proces (TaskStop),
+dopiero potem uruchom nowy — trzymanie dwóch instancji Spring Boot naraz przy niskiej wolnej
+pamięci (obserwowano spadek do ok. 2.7GB/16GB) ryzykuje, że system zabije proces backendu;
+stosowanie tej kolejności rozwiązało problem do końca sesji. Zgodnie z dyrektywą użytkownika
+("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez
+zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj" wznów
+`_15_jvm_internals` dokładnie od lekcji 5, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -236,11 +259,12 @@ krok" niżej.
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Zacznij `_15_jvm_internals` (20 lekcji) od lekcji 1, tym samym wzorcem pracy (patrz punkt 3
-   niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ OD RAZU z pełnym katalogiem
-   API_REFERENCE; dla lekcji o koncepcjach/mechanizmach JVM pomiń go. PRZED restartem backendu
-   ZAWSZE zatrzymaj stary proces (TaskStop) jako pierwszy krok, potem dopiero uruchom nowy (patrz
-   "Problemy i decyzje" o pamięci).
+1. Kontynuuj `_15_jvm_internals` (20 lekcji) dokładnie od lekcji 5
+   `05_ClasspathVsModulepath.json` (bloki classloading/bajtkod 1-4 już ukończone), tym samym
+   wzorcem pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ
+   OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/mechanizmach JVM pomiń go.
+   PRZED restartem backendu ZAWSZE zatrzymaj stary proces (TaskStop) jako pierwszy krok, potem
+   dopiero uruchom nowy (patrz "Problemy i decyzje" o pamięci).
 2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
