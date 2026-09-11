@@ -130,41 +130,30 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   backendu). Regresja na `_01_fundamentals/06_StringsAndBuilder`,
   `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`, `_11_buildtools/30_CapstoneBuildLab`
   bez zmian.
-- **`_13_libraries` (20/32 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
-  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Rozdział ma 32 lekcje (nie 30) —
-  Lombok, Apache Commons (Lang3/IO/Collections4), Guava, OkHttp, SLF4J+Logback, Guice, MapStruct,
-  Apache POI, Jsoup, Caffeine, Picocli, SnakeYAML. Gotowe (1-20): `01_WhyLibraries` (BEZ
-  API_REFERENCE — wprowadzenie koncepcyjne), `02_ChoosingAndAddingDependencies` (scope/exclusions/
-  BOM, API_REFERENCE), `03-05_Lombok*` (podstawy/konstruktory+Builder/zaawansowane+pulapki,
-  API_REFERENCE), `06_CommonsLang3`/`07_CommonsIO`/`08_CommonsCollections4` (API_REFERENCE),
-  `09-11_Guava*` (ImmutableCollections/Multimap+Multiset+BiMap+Table/Preconditions+Cache,
-  API_REFERENCE), `12-14_OkHttp*` (podstawy/async+interceptory/streaming+testy, API_REFERENCE),
-  `15-17_*` (SLF4J vs System.out/Logback config/MDC+dobre praktyki, API_REFERENCE),
-  `18_WhyDependencyInjection` (tight coupling, IoC, BEZ API_REFERENCE), `19-20_Guice*`
-  (podstawy @Inject+Module/scope+@Provides+Provider+@Named, API_REFERENCE). Wszystkie 20 plików
+- **`_13_libraries` (32/32 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Rozdział miał 32 lekcje
+  (nie 30, jak pierwotnie zanotowano) — Lombok (03-05), Apache Commons Lang3/IO/Collections4
+  (06-08), Guava (09-11), OkHttp (12-14), SLF4J+Logback (15-17), Guice (18-20), MapStruct (21-22),
+  Apache POI (23-24), Jsoup (25-26), Caffeine (27-28), Picocli (29-30), SnakeYAML (31-32), plus
+  wprowadzenie (01) i zarządzanie zależnościami (02). Lekcje BEZ `API_REFERENCE` (wprowadzenia
+  koncepcyjne): `01_WhyLibraries`, `18_WhyDependencyInjection`. Wszystkie pozostałe 30 lekcji MAJĄ
+  pełny `API_REFERENCE` (konkretne biblioteki/klasy z wieloma metodami). Wszystkie 32 pliki
   zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises
-  + 100 quiz zachowane, live przez API po `mvnw.cmd resources:resources` + restarcie backendu.
-  Regresja na `_01_fundamentals/06_StringsAndBuilder`, `_12_hibernate/22_NamedQueries` bez zmian.
-  **NASTĘPNY KROK: kontynuuj lekcję 21 `21_MapStructBasics.json`**, dalej po kolei do `32`:
-  `22_MapStructAdvancedMappings`, `23_ApachePoiWritingExcel`, `24_ApachePoiReadingAndStyling`,
-  `25_JsoupParsingHtml`, `26_JsoupAdvancedScraping`, `27_CaffeineBasics`,
-  `28_CaffeineLoadingAndAsyncCache`, `29_PicocliBasics`, `30_PicocliSubcommandsAndValidation`,
-  `31_SnakeYamlBasics`, `32_YamlToObjectMapping`. Po ukończeniu wszystkich 32:
-  `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_12`
-  + JEDEN commit lokalny całego rozdziału.
+  + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo i live przez API po
+  `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01_fundamentals/
+  06_StringsAndBuilder`, `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`,
+  `_11_buildtools/30_CapstoneBuildLab`, `_12_hibernate/29_HibernateEnvers` bez zmian.
 - **`_14_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
-Dokończono rozdział `_12_hibernate` w tej sesji (lekcje 8-30, KOMPLETNE, scommitowane) i kontynuowano
-`_13_libraries` (lekcje 1-20/32 gotowe, W TOKU — Lombok, Apache Commons, Guava, OkHttp, SLF4J/
-Logback, Guice ukończone jako spójne bloki tematyczne). `mvnw.cmd resources:resources` + restart
-backendu + weryfikacja live próbek + regresja bez zmian po każdym checkpoincie + commit dla
-`_12_hibernate` (KOMPLETNE) + dwa kolejne commity dla stanu częściowego `_13_libraries` (8/32, potem
-20/32, jawnie W TOKU). Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy
-lekcjami o zgodę") migracja jest kontynuowana bez zatrzymywania się — przy następnym "kontynuuj"
-wznów dokładnie od lekcji 21 `_13_libraries`, patrz "Następny krok" niżej.
+Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE) i `_13_libraries` (32/32, KOMPLETNE) w tej
+sesji. `mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbek + regresja bez
+zmian po każdym checkpoincie + commity: jeden dla `_12_hibernate`, trzy kolejne dla `_13_libraries`
+(w miarę postępu, finalnie całość KOMPLETNA). Zgodnie z dyrektywą użytkownika ("cisnij dalej nie
+pytaj się pomiędzy lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między
+lekcjami i rozdziałami — przy następnym "kontynuuj" zacznij `_14_advancedjava` (30 lekcji: generics,
+wildcards, refleksja, adnotacje itp.) od lekcji 1, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -222,12 +211,11 @@ wznów dokładnie od lekcji 21 `_13_libraries`, patrz "Następny krok" niżej.
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Kontynuuj `_13_libraries` (32 lekcje, NIE 30) dokładnie od lekcji 21
-   `21_MapStructBasics.json`, tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji
-   o konkretnej bibliotece/klasie z wieloma metodami PISZ OD RAZU z pełnym katalogiem
-   API_REFERENCE; dla lekcji o koncepcjach/wzorcach pomiń go. Pełna lista pozostałych lekcji: patrz
-   sekcja "Stan rozdziałów" wyżej.
-2. Kontynuuj rozdziałami `_14_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
+1. Zacznij `_14_advancedjava` (30 lekcji) od lekcji 1 `01_GenericsIntroduction.json`, tym samym
+   wzorcem pracy (patrz punkt 3 niżej). Dla lekcji o konkretnej klasie/API z wieloma metodami PISZ
+   OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/mechanizmach języka
+   (generics jako koncepcja, wildcards, wariancja) pomiń go.
+2. Kontynuuj rozdziałami `_15_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
    zasoby) + restart backendu + curl na próbce + regresja na poprzednich rozdziałach + JEDEN
