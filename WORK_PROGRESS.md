@@ -186,27 +186,40 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   "ROZDZIAL KOMPLETNY 20/20"). **UWAGA operacyjna: lekcje 9-10 zostały napisane w POPRZEDNIEJ
   sesji, ale NIE scommitowane wtedy (git log pokazywał commit tylko do lekcji 8) — odkryte i
   naprawione na początku tej sesji.**
-- **`_16_clean_code` (17/22 lekcji gotowe i SCOMMITOWANE) — W TOKU.** 22 lekcje: fundamenty
-  clean code (1-6: czym jest clean code, nazewnictwo, komentarze, metody/funkcje, formatowanie,
-  klasy/odpowiedzialności), zasady SOLID (7-11: SRP, OCP, LSP, ISP, DIP), sprzężenie/kohezja/DRY-
-  KISS-YAGNI (12-13), code smells i refaktoryzacja (14-16), projektowanie wyjątków i null handling
-  (17-18), niezmienność w praktyce (19), narzędzia statycznej analizy (20), legacy code/dług
-  techniczny (21), capstone code review (22). Gotowe 1-17: fundamenty (1-6, w tym naprawiona
-  zastana cyrylica w `05_Formatting` quiz — "gestо" -> "gesto"), cały blok SOLID (7-11, PITFALL/
-  CODE_WRONG/CODE_RIGHT świadomie pokazują DWA różne błędy — złamanie zasady ORAZ jej nadgorliwe,
-  przedwczesne zastosowanie/over-engineering), sprzężenie/DRY-KISS-YAGNI (12-13), code smells +
-  refaktoryzacja: proces i katalog technik (14-16, każda z 8 technik w 16 jawnie powiązana z
-  konkretnym smellem z 14), projektowanie wyjątków (17: wyjątki vs kody błędów, unchecked vs
-  checked, exception translation, catch najwęższego typu). WSZYSTKIE 17 plików BEZ API_REFERENCE
-  (potwierdzona hipoteza: rozdział o zasadach/praktykach/wzorcach). Wszystkie zweryfikowane:
-  poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, 30 exercises + 100 quiz zachowane,
-  live przez API po `mvnw.cmd resources:resources` + restarcie backendu. Regresja na
-  `_03_collections/08_HashMap`, `_15_jvm_internals/01_JdkJreJvmAndSpecification`,
-  `_05_multithreading/32_CompletableFuture`, `_06_networking/14_HtmlUnit`, `_04_io/20_Gson`,
-  `_09_jdbc/20_Mapper`, `_02_oop/11_ObjectClass` bez zmian. **NASTĘPNY KROK: kontynuuj lekcję 18
-  `18_NullHandling.json`**, dalej po kolei: `19_ImmutabilityInPractice`, `20_StaticAnalysisTools`,
-  `21_LegacyCodeAndTechnicalDebt`, `22_CodeReviewBestPracticesAndCapstone` (koniec rozdziału).
-- **`_17_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_16_clean_code` (22/22 lekcji) — KOMPLETNE.** Scommitowane (5 commitów, do `67a1096`,
+  lekcje 18-22 dopisane w poprzedniej sesji ale WORK_PROGRESS.md nie był zaktualizowany — stan
+  odkryty i naprawiony na początku tej sesji). Wszystkie 22 pliki zweryfikowane w tej sesji:
+  poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, 30 exercises + 100 quiz zachowane
+  liczbowo, WSZYSTKIE BEZ API_REFERENCE poza `20_StaticAnalysisTools` (15 bloków — PMD/SpotBugs).
+  Zweryfikowane live przez API po restarcie backendu (lekcje 18-22 + regresja na
+  `_01_fundamentals/06_StringsAndBuilder`, `_09_jdbc/20_Mapper`,
+  `_15_jvm_internals/20_JvmTuningAndBestPracticesCapstone` — wszystkie bez zmian).
+- **`_17_architecture` (20/20 lekcji) — KOMPLETNE, dokończone w tej sesji.** 20 lekcji o
+  architekturze aplikacji: fundamenty (1-2: po co architektura, ADR), warstwy i role (3-5: layered
+  architecture, Controller/Service/Repository, anemiczny vs bogaty model), granice modelu i API
+  (6-9: bounded context/DDD-lite, DTO/mapper, wersjonowanie API, package-by-layer vs by-feature),
+  kierunek zależności i hexagonal (10-12: Dependency Rule, hexagonal intro, porty/adaptery w
+  praktyce), przekroje poprzeczne (13-16: granice transakcji, cache, walidacja, obsługa błędów),
+  organizacja systemów (17-19: modularny monolit, komunikacja zdarzeniowa, kiedy mikroserwisy mają
+  sens), kapston (20: "Platforma Zapisów na Kursy" łącząca wszystkie 19 lekcji w 1 działający
+  modularny monolit). **WAŻNE ODKRYCIE tej sesji: cały rozdział był w STARYM formacie treści**
+  (typy `CONCEPT`/`CODE_EXAMPLE`, nie 11-sekcyjny standard) — wymagał pełnej przebudowy teorii jak
+  rozdziały `_01`-`_16`; wykonano dla wszystkich 20 lekcji. Znaleziony i poprawiony błąd
+  merytoryczny z oryginalnej treści: autorstwo "Big Ball of Mud" (1997) to Brian Foote i Joseph
+  Yoder (nie "Foster i Hyland/Hylanda" jak było w starej treści) — poprawiono w lekcji 1.
+  **ZNANY, ŚWIADOMIE ODŁOŻONY PROBLEM (dotyczy też prawdopodobnie `_18_rest_api`,
+  `_19_security_basics`): exercises/quiz tego rozdziału są napisane CELOWO ASCII-only** (bez
+  polskich znaków) — udokumentowana decyzja z sesji pisania SAMEGO KURSU Javy
+  (`COURSE_CONTENT_HISTORY.md` ok. linii 799-838, dot. plików źródłowych `_17`-`_19`), którą
+  odziedziczyła wygenerowana z niej treść JSON platformy. Zgodnie z wzorcem z 16 poprzednich
+  rozdziałów NIE modyfikowano exercises/quiz poza uruchomieniem
+  `fix_allcaps.js`/`fix_allcaps_residual.js` (te nie przywracają diakrytyków, tylko naprawiają
+  WIELKIE LITERY) — pełne odtworzenie polskich znaków w exercises/quiz dla `_17`-`_19` to osobne,
+  większe zadanie (wymaga podejścia słownikowego, nie global-replace), zostawione do Etapu 5
+  audytu. Cała NOWO PISANA teoria ma pełne polskie znaki jak wszędzie indziej. Wszystkie 20 plików
+  zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30
+  exercises + 100 quiz zachowane liczbowo w każdym pliku.
+- **`_18_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
