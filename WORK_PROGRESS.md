@@ -186,14 +186,24 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   "ROZDZIAL KOMPLETNY 20/20"). **UWAGA operacyjna: lekcje 9-10 zostały napisane w POPRZEDNIEJ
   sesji, ale NIE scommitowane wtedy (git log pokazywał commit tylko do lekcji 8) — odkryte i
   naprawione na początku tej sesji.**
-- **`_16_clean_code` (0/22 lekcji) — NIE ROZPOCZĘTE, NASTĘPNY W KOLEJCE.** 22 lekcje: fundamenty
+- **`_16_clean_code` (8/22 lekcji gotowe i SCOMMITOWANE) — W TOKU.** 22 lekcje: fundamenty
   clean code (1-6: czym jest clean code, nazewnictwo, komentarze, metody/funkcje, formatowanie,
   klasy/odpowiedzialności), zasady SOLID (7-11: SRP, OCP, LSP, ISP, DIP), sprzężenie/kohezja/DRY-
   KISS-YAGNI (12-13), code smells i refaktoryzacja (14-16), projektowanie wyjątków i null handling
   (17-18), niezmienność w praktyce (19), narzędzia statycznej analizy (20), legacy code/dług
-  techniczny (21), capstone code review (22). Prawdopodobnie WIĘKSZOŚĆ lekcji BEZ API_REFERENCE
-  (to rozdział o zasadach/praktykach/wzorcach, nie o konkretnych klasach z wieloma metodami) —
-  ocenić per-lekcja przy pisaniu, zgodnie z ustaloną zasadą.
+  techniczny (21), capstone code review (22). Gotowe: `01_WhatIsCleanCode`, `02_Naming`,
+  `03_Comments`, `04_MethodsAndFunctions`, `05_Formatting` (naprawiona zastana cyrylica w quiz —
+  "gestо" -> "gesto"), `06_ClassesAndResponsibilities`, `07_SingleResponsibilityPrinciple`,
+  `08_OpenClosedPrinciple` — WSZYSTKIE BEZ API_REFERENCE (potwierdzona hipoteza: rozdział o
+  zasadach/praktykach/wzorcach, nie o konkretnych klasach z wieloma metodami do udokumentowania).
+  PITFALL/CODE_WRONG/CODE_RIGHT w lekcjach SOLID (7-8) świadomie pokazują DWA różne błędy — złamanie
+  zasady ORAZ jej nadgorliwe, przedwczesne zastosowanie (over-engineering) — obie strony błędu są
+  równie ważne dla tego tematu. Wszystkie 8 plików zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, 30 exercises + 100 quiz zachowane, live przez API po
+  `mvnw.cmd resources:resources` + restarcie backendu. Regresja na `_03_collections/08_HashMap`,
+  `_15_jvm_internals/01_JdkJreJvmAndSpecification` bez zmian. **NASTĘPNY KROK: kontynuuj lekcję 9
+  `09_LiskovSubstitutionPrinciple.json`**, dalej po kolei do `22` (patrz "Następny krok" niżej dla
+  pełnej listy pozostałych lekcji).
 - **`_17_...` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
@@ -215,9 +225,12 @@ bloków 14/15, 30 exercises, 100 quiz) + regresja na 8 próbkach z `_01`-`_14` b
 LEKCJA operacyjna: seedowanie treści do H2 po restarcie backendu z pełnym 31-rozdziałowym kursem
 trwa teraz zauważalnie dłużej (zaobserwowano do ok. 45-50s od startu procesu do dostępności treści
 przez API) — warto odczekać/ponowić curl kilka razy zamiast od razu zakładać błąd przy pustej
-odpowiedzi `[]`. Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o
-zgodę") migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami — przy
-następnym "kontynuuj" rozpocznij `_16_clean_code` od lekcji 1, patrz "Następny krok" niżej.
+odpowiedzi `[]`. Bezpośrednio po ukończeniu `_15_jvm_internals` rozpoczęto `_16_clean_code` w TEJ
+SAMEJ sesji — ukończono i scommitowano lekcje 1-8/22 (fundamenty clean code 1-6, SOLID SRP+OCP
+7-8), w trzech commitach (1-4, 5-6, 7-8) z weryfikacją live i regresją po każdym. Zgodnie z
+dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy lekcjami o zgodę") migracja była
+kontynuowana bez zatrzymywania się między lekcjami i rozdziałami — przy następnym "kontynuuj" wznów
+`_16_clean_code` dokładnie od lekcji 9, patrz "Następny krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -275,10 +288,17 @@ następnym "kontynuuj" rozpocznij `_16_clean_code` od lekcji 1, patrz "Następny
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Rozpocznij `_16_clean_code` (22 lekcje) od lekcji 1 `01_WhatIsCleanCode.json`, tym samym
-   wzorcem pracy (patrz punkt 3 niżej). To rozdział o zasadach/praktykach (SOLID, DRY/KISS/YAGNI,
-   code smells, refaktoryzacja) — WIĘKSZOŚĆ lekcji prawdopodobnie BEZ API_REFERENCE, ocenić
-   per-lekcja. PRZED restartem backendu ZAWSZE zatrzymaj stary proces jako pierwszy krok (TaskStop,
+1. Kontynuuj `_16_clean_code` (22 lekcje) dokładnie od lekcji 9
+   `09_LiskovSubstitutionPrinciple.json` (lekcje 1-8 już ukończone i scommitowane), tym samym
+   wzorcem pracy (patrz punkt 3 niżej), dalej po kolei: `10_InterfaceSegregationPrinciple`,
+   `11_DependencyInversionPrinciple` (koniec bloku SOLID), `12_CouplingCohesionAndLawOfDemeter`,
+   `13_DryKissYagni`, `14_CodeSmells`, `15_RefactoringBasics`, `16_RefactoringCatalog`,
+   `17_ExceptionDesign`, `18_NullHandling`, `19_ImmutabilityInPractice`, `20_StaticAnalysisTools`,
+   `21_LegacyCodeAndTechnicalDebt`, `22_CodeReviewBestPracticesAndCapstone`. To rozdział o
+   zasadach/praktykach (SOLID, DRY/KISS/YAGNI, code smells, refaktoryzacja) — potwierdzone w
+   lekcjach 1-8: WSZYSTKIE dotychczasowe BEZ API_REFERENCE, oceniać per-lekcja dalej (możliwy
+   wyjątek: `20_StaticAnalysisTools` może uzasadniać krótki katalog narzędzi, ocenić przy pisaniu).
+   PRZED restartem backendu ZAWSZE zatrzymaj stary proces jako pierwszy krok (TaskStop,
    albo jeśli task ID nie jest już śledzony w bieżącej sesji — `netstat -ano | grep :8082` +
    `taskkill //PID <pid> //F`), dopiero potem uruchom nowy (patrz "Problemy i decyzje" o pamięci).
    PO restarcie odczekaj ok. 40-50s i ponów curl kilka razy zanim uznasz brak treści za błąd —
