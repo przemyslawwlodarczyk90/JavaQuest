@@ -111,40 +111,36 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, brak znaków zastępczych (U+FFFD),
   oryginalne 30 exercises + 100 quiz zachowane w każdym pliku (sprawdzone liczbowo i live przez API
   po `mvnw.cmd resources:resources` + restarcie backendu). Regresja na `_01`-`_10` bez zmian.
-- **`_12_hibernate` (7/30 lekcji gotowe, JESZCZE NIE SCOMMITOWANE w chwili pisania — będą
-  scommitowane na koniec tej sesji razem z tym wpisem) — W TOKU.** Gotowe: `01_OrmIntroduction`
-  (impedance mismatch, JPA vs Hibernate, API_REFERENCE dla minimalnego bootstrapu
-  Configuration/SessionFactory/Session), `02_HibernateArchitecture` (SessionFactory vs Session,
-  cykl życia, API_REFERENCE), `03_ProjectSetupAndConfiguration` (hibernate.cfg.xml vs
-  persistence.xml vs programowa konfiguracja, hbm2ddl.auto, API_REFERENCE), `04_FirstEntityAndBasicMapping`
-  (@Entity/@Table/@Column/@Transient, pierwszy zapis/odczyt, API_REFERENCE), `05_PrimaryKeyGeneration`
-  (IDENTITY/SEQUENCE/TABLE/UUID/klucz ręczny, API_REFERENCE), `06_CrudOperations` (persist/find/
-  merge/remove vs save/get/update/delete, pułapka merge() vs update(), API_REFERENCE),
-  `07_SessionVsEntityManager` (Session extends EntityManager, unwrap(), API_REFERENCE). Wszystkie
-  7 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, brak znaków
-  zastępczych, oryginalne 30 exercises + 100 quiz zachowane, live przez API po
-  `mvnw.cmd resources:resources` + restarcie backendu. Regresja na `_01`-`_11` bez zmian.
-  **NASTĘPNY KROK: kontynuuj lekcję 8 `08_Transactions.json`**, dalej po kolei do `30`:
-  `09_EmbeddableTypes`, `10_EnumsAndAttributeConverters`, `11_OneToOneAssociation`,
+- **`_12_hibernate` (30/30 lekcji) — KOMPLETNE.** Scommitowane w tej sesji. Lekcje 1-8 (bootstrap,
+  architektura, konfiguracja, pierwsza encja, generowanie kluczy, CRUD, Session vs EntityManager,
+  transakcje), 10, 18-22, 24-29 mają pełny `API_REFERENCE` (konkretne API/adnotacje z wieloma
+  metodami: Transaction/EntityTransaction, @Enumerated/AttributeConverter, HQL podstawy/zaawansowane,
+  CriteriaBuilder, createNativeQuery, @NamedQuery, @Cacheable/@Cache, @Version, LockModeType,
+  @Inheritance, Bean Validation adnotacje, Hibernate Envers/AuditReader). Lekcje bez `API_REFERENCE`
+  (koncepcje/wzorce/mechanizmy): `09_EmbeddableTypes`, `11_OneToOneAssociation`,
   `12_OneToManyAndManyToOne`, `13_ManyToManyAssociation`, `14_CascadeTypes`,
-  `15_FetchTypesAndNPlusOne`, `16_EntityLifecycle`, `17_DirtyCheckingAndFlush`, `18_HqlBasics`,
-  `19_HqlAdvanced`, `20_CriteriaApi`, `21_NativeSqlQueries`, `22_NamedQueries`,
-  `23_FirstLevelCache`, `24_SecondLevelCacheAndQueryCache`, `25_OptimisticLocking`,
-  `26_PessimisticLocking`, `27_InheritanceMapping`, `28_BeanValidationIntegration`,
-  `29_HibernateEnvers`, `30_BestPracticesAndCapstone`. Po ukończeniu wszystkich 30:
-  `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny + regresja na `_01`-`_11`
-  + JEDEN commit lokalny całego rozdziału.
+  `15_FetchTypesAndNPlusOne`, `16_EntityLifecycle`, `17_DirtyCheckingAndFlush`, `23_FirstLevelCache`,
+  `30_BestPracticesAndCapstone` (lekcja podsumowująca — PITFALL/CODE_WRONG/CODE_RIGHT oparte na
+  jednym przykładzie łączącym trzy zasady naraz: długa transakcja + EAGER + brak @Version, zgodnie
+  z konwencją lekcji-podsumowań). Naprawiono 1 przypadek zastanej cyrylicy w quizie
+  `26_PessimisticLocking` (pole `options`/`explanation`, "przekroczyло" -> "przekroczylo", spójnie
+  z ASCII-stylem otaczającego tekstu). Wszystkie 30 plików zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane w każdym
+  pliku (sprawdzone liczbowo i live przez API po `mvnw.cmd resources:resources` + restarcie
+  backendu). Regresja na `_01_fundamentals/06_StringsAndBuilder`,
+  `_05_multithreading/32_CompletableFuture`, `_09_jdbc/20_Mapper`, `_11_buildtools/30_CapstoneBuildLab`
+  bez zmian.
 - **`_13_libraries` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego.
 
 ## Ostatnia ukończona czynność
 
-Sesja zatrzymana na życzenie użytkownika ("kończymy na dziś") w trakcie rozdziału `_12_hibernate`
-(7/30 lekcji gotowych). Przed zatrzymaniem: `mvnw.cmd resources:resources` + restart backendu +
-weryfikacja live wszystkich 7 lekcji + regresja na `_01`-`_11` + JEDEN commit lokalny obejmujący
-stan częściowy rozdziału (7/30, jawnie oznaczony jako W TOKU, nie KOMPLETNE). Zgodnie z dyrektywą
-użytkownika migracja ma być kontynuowana bez pytania o zgodę między rozdziałami — przy następnym
-"kontynuuj" wznów dokładnie od lekcji 8, patrz sekcja "Stan rozdziałów" wyżej.
+Dokończono rozdział `_12_hibernate` w tej sesji (lekcje 8-30, 23 lekcje przepisane na standard 11
+sekcji). `mvnw.cmd resources:resources` + restart backendu + weryfikacja live próbki nowych lekcji
++ regresja na `_01`/`_05`/`_09`/`_11` bez zmian + JEDEN commit lokalny całego rozdziału (30/30,
+KOMPLETNE). Zgodnie z dyrektywą użytkownika migracja jest kontynuowana bez pytania o zgodę między
+rozdziałami — przy następnym "kontynuuj" rozpocznij `_13_libraries` od lekcji 1, patrz "Następny
+krok" niżej.
 
 ## Wyniki testów / weryfikacji
 
@@ -202,11 +198,10 @@ użytkownika migracja ma być kontynuowana bez pytania o zgodę między rozdzia�
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Zacznij `_11_buildtools` (30 lekcji, Ant/Maven/Gradle) od lekcji 1, tym samym wzorcem pracy
-   (patrz punkt 3 niżej). Dla lekcji o konkretnym narzędziu/pluginie z wieloma opcjami/komendami
-   PISZ OD RAZU z pełnym katalogiem API_REFERENCE; dla lekcji o koncepcjach/wzorcach (np. "czym
-   jest build tool", "cykl życia builda" jako pojęcie) pomiń go.
-2. Kontynuuj rozdziałami `_12_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
+1. Zacznij `_13_libraries` od lekcji 1, tym samym wzorcem pracy (patrz punkt 3 niżej). Dla lekcji
+   o konkretnej bibliotece/klasie z wieloma metodami PISZ OD RAZU z pełnym katalogiem
+   API_REFERENCE; dla lekcji o koncepcjach/wzorcach pomiń go.
+2. Kontynuuj rozdziałami `_14_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
    dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
    potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
    zasoby) + restart backendu + curl na próbce + regresja na poprzednich rozdziałach + JEDEN
