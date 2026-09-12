@@ -319,35 +319,59 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   zachowane, live przez API (próbki: lekcje 1, 2, 8, 17, 19) i regresja bez zmian na
   `_21_spring_boot`, `_20_spring_core`, `_19_security_basics`, `_18_rest_api`, `_07_servlets`,
   `_01_fundamentals`.
-- **`_23_spring_data_jpa` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_23_spring_data_jpa` (15/15 lekcji) — KOMPLETNE.** Scommitowane (`6bac804`). 15 lekcji: co to
+  jest Spring Data JPA i dynamiczny proxy repozytorium (1), hierarchia interfejsów
+  Repository→CrudRepository→PagingAndSortingRepository→JpaRepository z pełnym API_REFERENCE (2),
+  pułapka `save()` INSERT vs UPDATE po obecności ID i niepewność `deleteById` na brakującym ID
+  (wersja zależna) (3), query methods generowane z nazwy metody z pełnym API_REFERENCE słów
+  kluczowych (4), custom queries przez `@Query` z JPQL/SQL natywnym i `@Modifying` wymagające
+  transakcji (5), `Pageable`/`Page`/`Slice` jako automatyzacja ręcznego stronicowania z
+  `_22_spring_web` (6), relacje encji przez repozytoria z kaskadowym zapisem i nawigacją przez
+  podkreślnik w query methods (7), `@Transactional` z dwoma udokumentowanymi pułapkami — checked
+  wyjątek nie cofa domyślnie, self-invocation omija proxy (8), N+1 zmierzony naprawdę przez własny
+  `StatementInspector` i naprawiony `JOIN FETCH` (9), `@EntityGraph` jako deklaratywna alternatywa
+  dla `JOIN FETCH` (10), projekcje zamknięte/otwarte/DTO/dynamiczne (11), `Specification` jako
+  dynamiczne query budowane programowo (12), JPA Auditing z pułapką cichego `null` bez
+  `AuditorAware` (13), automatyczna integracja Flyway z pułapką rekurencyjnego skanowania
+  lokalizacji (14), kapston "Biblioteka" łączący wszystkie 14 lekcji w działającej domenie
+  Autor-Książka z prawdziwym schematem Flyway (15). Każda lekcja przeszła przez
+  `fix_http_method_case.js` (bez istotnych trafień — rozdział nie dotyczy bezpośrednio HTTP).
+  Wszystkie 15 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy
+  (jedna literówka własnego autorstwa "PROZNIEJSZY" zamiast "PÓŹNIEJSZY" w lekcji 13 wykryta i
+  naprawiona przed uruchomieniem fix scripts), oryginalne 30 exercises + 100 quiz zachowane, live
+  przez API (próbki: lekcje 1, 2, 4, 9, 15) i regresja bez zmian na `_22_spring_web`,
+  `_21_spring_boot`, `_20_spring_core`, `_19_security_basics`, `_18_rest_api`, `_12_hibernate`,
+  `_01_fundamentals`.
+- **`_24_spring_security` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format
-  `_23_spring_data_jpa` (prawdopodobnie stary format jak `_17`-`_22`), potem przepisz tym samym
-  wzorcem 11 sekcji. Ten rozdział prawdopodobnie odwołuje się wprost do stronicowania/sortowania
-  ręcznego z `_22_spring_web/Lesson12-13` (Pageable/Page<T> jako automatyzacja tego samego) —
-  sprawdź, czy wspomina GET/POST i w razie potrzeby uruchom `fix_http_method_case.js`.**
+  `_24_spring_security` (prawdopodobnie stary format jak `_17`-`_23`), potem przepisz tym samym
+  wzorcem 11 sekcji. Ten rozdział prawdopodobnie odwołuje się wprost do `_19_security_basics`
+  (protokołowe podstawy bezpieczeństwa) jako fundamentu i pokazuje konkretny mechanizm Spring
+  Security — sprawdź, czy wspomina GET/POST (np. `.requestMatchers(HttpMethod.GET, ...)`) i w razie
+  potrzeby uruchom `fix_http_method_case.js`.**
 
 ## Ostatnia ukończona czynność
 
-Ukończono i scommitowano rozdział `_22_spring_web` (19/19, KOMPLETNE, commit `a29984c`) w tej
-sesji, bezpośrednio po `_21_spring_boot` (16/16, `2d3bd84`) i `_20_spring_core` (23/23, `f6b420b`),
-wszystkie trzy w tej samej, ciągłej sesji. Dla `_22_spring_web`: każda z 19 lekcji przepisana od
-zera z 8-blokowego formatu CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, potem
-`fix_allcaps.js` + `fix_allcaps_residual.js` + `fix_http_method_case.js` (rozdział intensywnie
-wspomina GET/POST/PUT/PATCH/DELETE), walidacja Node po każdej lekcji. Lekcje 2 (`@RequestMapping`)
-i 17 (klienci HTTP) dostały dodatkowy blok `API_REFERENCE`. Jedno odstępstwo: lekcja 2 miała 1
-przypadkowe cyrylickie "а" w słowie "dajа" w tekście exercises (nie w nowo napisanej teorii),
-wykryte i naprawione ręcznie przed kontynuacją. Po napisaniu wszystkich 19 lekcji: pełna walidacja
-zbiorcza (wszystkie OK), `mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany
-przez PowerShell `Stop-Process` po PID z `netstat`, seedowanie treści do H2 zakończone po ~60s od
-startu procesu tym razem — dłużej niż zwykle, warto przy następnym restarcie odczekać/ponowić curl
-kilka razy zamiast zakładać błąd), weryfikacja live przez
-`/api/chapters/{chapter}/lessons/{lesson}/theory|exercises|quiz` na próbkach lekcji 1, 2, 8, 17, 19,
-regresja bez zmian na `_21_spring_boot`, `_20_spring_core`, `_19_security_basics`, `_18_rest_api`,
-`_07_servlets`, `_01_fundamentals`. Jeden commit z pełnym opisem wszystkich 19 lekcji, bez stopki
-atrybucji (zgodnie z STAGE2_LESSON_REDESIGN_PROMPT.md). Zgodnie z dyrektywą użytkownika ("nie pytaj
-o zgodę pomiędzy lekcjami, leć do samego końca") migracja była kontynuowana bez zatrzymywania się
-między lekcjami i rozdziałami — przy następnym "kontynuuj" zacznij `_23_spring_data_jpa` od
-sprawdzenia formatu lekcji 1, patrz "Następny krok" wyżej.
+Ukończono i scommitowano rozdział `_23_spring_data_jpa` (15/15, KOMPLETNE, commit `6bac804`) w tej
+sesji, po `_22_spring_web` (19/19, `a29984c`), `_21_spring_boot` (16/16, `2d3bd84`) i
+`_20_spring_core` (23/23, `f6b420b`) — cztery rozdziały ukończone w tej samej, ciągłej sesji. Dla
+`_23_spring_data_jpa`: każda z 15 lekcji przepisana od zera z 8-blokowego formatu
+CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, potem `fix_allcaps.js` + `fix_allcaps_residual.js`
++ `fix_http_method_case.js` (bez istotnych trafień, rozdział nie dotyczy bezpośrednio HTTP),
+walidacja Node po każdej lekcji. Lekcje 2 (hierarchia interfejsów) i 4 (query methods) dostały
+dodatkowy blok `API_REFERENCE`. Jedno odstępstwo: literówka własnego autorstwa "PROZNIEJSZY"
+zamiast "PÓŹNIEJSZY" w lekcji 13, wykryta i naprawiona ręcznie przed uruchomieniem fix scripts. Po
+napisaniu wszystkich 15 lekcji: pełna walidacja zbiorcza (wszystkie OK), `mvnw.cmd
+resources:resources`, restart backendu (stary proces zatrzymany przez PowerShell `Stop-Process` po
+PID z `netstat`, seedowanie treści do H2 zakończone po ~54s od startu procesu), weryfikacja live
+przez `/api/chapters/{chapter}/lessons/{lesson}/theory|exercises|quiz` na próbkach lekcji 1, 2, 4,
+9, 15, regresja bez zmian na `_22_spring_web`, `_21_spring_boot`, `_20_spring_core`,
+`_19_security_basics`, `_18_rest_api`, `_12_hibernate`, `_01_fundamentals`. Jeden commit z pełnym
+opisem wszystkich 15 lekcji, bez stopki atrybucji (zgodnie z STAGE2_LESSON_REDESIGN_PROMPT.md).
+Zgodnie z dyrektywą użytkownika ("nie pytaj o zgodę pomiędzy lekcjami, leć do samego końca")
+migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami — przy następnym
+"kontynuuj" zacznij `_24_spring_security` od sprawdzenia formatu lekcji 1, patrz "Następny krok"
+wyżej.
 
 ## Wyniki testów / weryfikacji
 
