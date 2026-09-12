@@ -240,12 +240,24 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   kolejnych rozdziałów Spring (`_20`+) sprawdź, czy `_19_security_basics` (gdy powstanie) i każdy
   rozdział wspominający GET/POST/PUT/DELETE/PATCH w exercises/quiz też przechodzi przez
   `fix_http_method_case.js`** — dodane teraz do standardowego wzorca pracy (patrz punkt 3d niżej).
-- **`_19_security_basics` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_19_security_basics` (21/21 lekcji) — KOMPLETNE.** 21 lekcji (nie 20 — kapston to lekcja 21):
+  AuthN vs AuthZ (1), hasła — hashowanie i BCrypt (2-3), sesje/ciasteczka (4), JWT (5), OAuth2/OIDC
+  (6), RBAC/ABAC (7), HTTPS/TLS (8), CORS (9), CSRF (10), XSS (11), nagłówki bezpieczeństwa (12),
+  SQL injection deep dive (13), niebezpieczna deserializacja (14), XXE (15), path traversal/upload
+  (16), walidacja wejścia (17), zarządzanie sekretami (18), bezpieczne logowanie/audyt z łańcuchem
+  skrótów (19), bezpieczeństwo zależności/supply chain (20), kapston OWASP Top 10 łączący
+  wszystkie 20 lekcji w 1 zabezpieczony mini-endpoint (21). Ten sam problem ASCII-only w
+  exercises/quiz co `_17`/`_18` (odłożony do Etapu 5). Każda lekcja przeszła przez
+  `fix_http_method_case.js` — rozdział intensywnie wspomina GET/POST/PUT/DELETE w przykładach.
+  Wszystkie 21 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+  oryginalne 30 exercises + 100 quiz zachowane.
+- **`_20_spring_core` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format
-  `_19_security_basics` (prawdopodobnie stary format jak `_17`/`_18`, i prawdopodobnie ASCII-only
-  w exercises/quiz jak `_17`/`_18` — patrz COURSE_CONTENT_HISTORY.md linie ok. 799-838), potem
-  przepisz 20 lekcji tym samym wzorcem. Pamiętaj o `fix_http_method_case.js` (rozdział o
-  bezpieczeństwie API prawie na pewno wspomina GET/POST/PUT/DELETE w exercises/quiz).**
+  `_20_spring_core` (prawdopodobnie stary format jak `_17`/`_18`/`_19`), potem przepisz tym samym
+  wzorcem 11 sekcji. Rozdziały Spring (`_20`-`_31`) prawdopodobnie też wspominają GET/POST/PUT w
+  kontekście `@GetMapping`/`@PostMapping` — pamiętaj o `fix_http_method_case.js` i sprawdź, czy
+  adnotacje Spring (np. "GetMapping" bez `@`) nie kolidują z tym skryptem (regex ma word boundary,
+  więc "GetMapping" nie powinno być dotknięte, ale zweryfikuj przy pierwszej lekcji).**
 
 ## Ostatnia ukończona czynność
 
