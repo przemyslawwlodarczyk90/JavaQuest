@@ -251,43 +251,61 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `fix_http_method_case.js` — rozdział intensywnie wspomina GET/POST/PUT/DELETE w przykładach.
   Wszystkie 21 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
   oryginalne 30 exercises + 100 quiz zachowane.
-- **`_20_spring_core` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_20_spring_core` (23/23 lekcji) — KOMPLETNE.** Scommitowane (`f6b420b`). 23 lekcje (nie 20 —
+  odkryto podczas pracy, że rozdział ma pełne fundamenty Spring Core): co to jest Spring i przegląd
+  wersji (1-2), IoC/Hollywood principle (3), Dependency Injection ogólnie (4), style konfiguracji
+  XML/Java/adnotacje (5), Bean i ApplicationContext (6-7), stereotypy @Component/@Service/
+  @Repository/@Controller (8), @Configuration+@Bean pełny vs lite mode z CODE_WRONG/CODE_RIGHT (9),
+  constructor injection (10), field injection i dlaczego unikać (11), @Qualifier/@Primary (12),
+  cykliczne zależności i zmiana domyślnego zachowania w Spring Boot 2.6 (13), zakresy beanów
+  singleton/prototype i pułapka "zamrożonego" prototype naprawiana przez ObjectProvider (14),
+  profile @Profile z negacją/koniunkcją (15), właściwości konfiguracyjne @Value/Environment/
+  PropertySource (16), SpEL (17), callbacki cyklu życia @PostConstruct/@PreDestroy vs
+  InitializingBean/DisposableBean vs initMethod/destroyMethod (18), BeanPostProcessor/
+  BeanFactoryPostProcessor jako mechanizm pod spodem @Autowired/@PostConstruct (19), zdarzenia
+  aplikacyjne ApplicationEventPublisher/@EventListener jako rozwiązanie cyklicznych zależności (20),
+  podstawy AOP z pełnym API_REFERENCE 5 rodzajów rady i JDK proxy vs CGLIB (21), zaawansowane
+  pointcuty execution() i pułapka self-invocation omijająca proxy (22), kapston "JavaQuest Order
+  Processing" łączący wszystkie 22 lekcje w jednym gołym `AnnotationConfigApplicationContext` bez
+  Spring Boota (23). Każda lekcja przeszła przez `fix_http_method_case.js` — rozdział wspomina
+  GET/POST/PUT w kontekście `@GetMapping`/`@PostMapping`; potwierdzono, że word-boundary regex nie
+  koliduje z nazwami adnotacji Spring (np. "GetMapping" nie jest dotykane, bo nie ma dopasowania na
+  granicy słowa w obie strony). Wszystkie 23 pliki zweryfikowane: poprawny JSON, `grep -c
+  "native code"` = 0, brak cyrylicy (jedno przypadkowe wystąpienie cyrylickiego "е" w słowie "ideę"
+  w lekcji 15 znalezione i naprawione ręcznie), oryginalne 30 exercises + 100 quiz zachowane, live
+  przez API (próbki: lekcje 1, 13, 21, 23) i regresja bez zmian na `_19_security_basics`,
+  `_18_rest_api`, `_17_architecture`, `_07_servlets` (w tym potwierdzono, że naprawa
+  `fix_http_method_case.js` z poprzedniej sesji trzyma się — pozostałe małe litery get/post/put w
+  `_07_servlets` to wyłącznie legalne fragmenty URL-i i wywołania metod Map, nie uszkodzone nazwy
+  metod HTTP), `_01_fundamentals`.
+- **`_21_spring_boot` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format
-  `_20_spring_core` (prawdopodobnie stary format jak `_17`/`_18`/`_19`), potem przepisz tym samym
-  wzorcem 11 sekcji. Rozdziały Spring (`_20`-`_31`) prawdopodobnie też wspominają GET/POST/PUT w
-  kontekście `@GetMapping`/`@PostMapping` — pamiętaj o `fix_http_method_case.js` i sprawdź, czy
-  adnotacje Spring (np. "GetMapping" bez `@`) nie kolidują z tym skryptem (regex ma word boundary,
-  więc "GetMapping" nie powinno być dotknięte, ale zweryfikuj przy pierwszej lekcji).**
+  `_21_spring_boot` (prawdopodobnie stary format jak `_17`-`_19`), potem przepisz tym samym wzorcem
+  11 sekcji. Ten rozdział niemal na pewno intensywnie wspomina GET/POST/PUT (auto-konfiguracja
+  kontrolerów REST, `application.yml`, actuator) — pamiętaj o `fix_http_method_case.js` po każdej
+  lekcji.**
 
 ## Ostatnia ukończona czynność
 
-Dokończono rozdziały `_12_hibernate` (30/30, KOMPLETNE), `_13_libraries` (32/32, KOMPLETNE),
-`_14_advancedjava` (30/30, KOMPLETNE) w poprzednich sesjach, oraz `_15_jvm_internals` (20/20,
-KOMPLETNE) w tej sesji — dopisano i scommitowano lekcje 9-20 (algorytmy GC, G1 wewnętrznie,
-ZGC/Shenandoah, strojenie i logowanie GC, JIT compiler, escape analysis/inlining, wycieki pamięci,
-heap dump, thread dump, JFR, profilowanie, capstone). Na początku tej sesji wykryto, że lekcje 9-10
-(napisane w poprzedniej sesji) NIE zostały wtedy scommitowane mimo zapisu w tym pliku sugerującego,
-że były — naprawione przez zweryfikowanie ich poprawności (JSON, liczba bloków, native code,
-cyrylica, live przez API) i scommitowanie razem z nowo napisanymi lekcjami 11-14. Dwa commity w tej
-sesji: pierwszy dla lekcji 9-14, drugi dla lekcji 15-20 (finalny, z adnotacją "ROZDZIAL KOMPLETNY
-20/20"). `mvnw.cmd resources:resources` + restart backendu (stary proces zatrzymany przez
-`taskkill` po PID z `netstat`, bo task ID z poprzedniej sesji nie był już śledzony w tej,
-dwukrotnie w tej sesji) + weryfikacja live WSZYSTKICH 20 lekcji rozdziału (curl, poprawna liczba
-bloków 14/15, 30 exercises, 100 quiz) + regresja na 8 próbkach z `_01`-`_14` bez zmian. WAŻNA
-LEKCJA operacyjna: seedowanie treści do H2 po restarcie backendu z pełnym 31-rozdziałowym kursem
-trwa teraz zauważalnie dłużej (zaobserwowano do ok. 45-50s od startu procesu do dostępności treści
-przez API) — warto odczekać/ponowić curl kilka razy zamiast od razu zakładać błąd przy pustej
-odpowiedzi `[]`. Bezpośrednio po ukończeniu `_15_jvm_internals` rozpoczęto `_16_clean_code` — w tej
-i poprzedniej sesji ukończono i scommitowano lekcje 1-17/22 (fundamenty 1-6, cały blok SOLID 7-11,
-sprzężenie/DRY-KISS-YAGNI 12-13, code smells + refaktoryzacja proces i katalog 14-16, projektowanie
-wyjątków 17), w kilku commitach po 1-2 lekcje każdy, z weryfikacją live i regresją po każdym
-checkpoincie. W trakcie tej sesji backend był raz zabity przez system z powodu niskiej pamięci
-(automatyczna notyfikacja, nie błąd treści) — zdiagnozowano jako oczekiwane zdarzenie przy niskiej
-wolnej pamięci systemowej, zrestartowano wg standardowej procedury, praca kontynuowana bez utraty
-treści (wszystko było już zapisane na dysku w plikach JSON, backend tylko serwuje z bazy H2 in-memory
-odbudowywanej przy starcie). Zgodnie z dyrektywą użytkownika ("cisnij dalej nie pytaj się pomiędzy
-lekcjami o zgodę") migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami —
-przy następnym "kontynuuj" wznów `_16_clean_code` dokładnie od lekcji 18, patrz "Następny krok" niżej.
+Ukończono i scommitowano rozdział `_20_spring_core` (23/23, KOMPLETNE, commit `f6b420b`) w tej
+sesji — kontynuacja od lekcji 13 (cykliczne zależności), dokończono lekcje 13-23 (poprzednia część
+sesji, przed kompaktowaniem kontekstu, napisała już lekcje 1-12). Każda lekcja: Edit tylko tablicy
+`theory` (bez ruszania exercises/quiz), potem `fix_allcaps.js` + `fix_allcaps_residual.js` +
+`fix_http_method_case.js`, walidacja Node (JSON poprawny, liczba bloków, 30 exercises, 100 quiz,
+zero "native code", zero cyrylicy) — jedno odstępstwo: lekcja 15 (`Profiles.json`) miała 1
+przypadkowe cyrylickie "е" w słowie "ideę" wykryte i naprawione ręcznie przed kontynuacją. Po
+napisaniu wszystkich 23 lekcji: pełna walidacja zbiorcza wszystkich plików na raz (wszystkie OK),
+`mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez PowerShell
+`Stop-Process` po PID z `netstat`, nowy wystartował w ~9s), weryfikacja live przez poprawne
+endpointy API (`/api/chapters/{chapter}/lessons/{lesson}/theory|exercises|quiz` — NIE
+`/api/chapters/{chapter}/lessons/{lesson}` bezpośrednio, które zwraca 404) na próbkach lekcji 1, 13,
+21, 23, regresja bez zmian na `_19_security_basics`, `_18_rest_api`, `_17_architecture`,
+`_07_servlets` (potwierdzono też, że naprawa `fix_http_method_case.js` z poprzedniej sesji nadal
+trzyma się poprawnie), `_01_fundamentals`. Jeden commit z pełnym opisem wszystkich 23 lekcji, bez
+stopki atrybucji (zgodnie z STAGE2_LESSON_REDESIGN_PROMPT.md). Zgodnie z dyrektywą użytkownika
+("nie pytaj o zgodę pomiędzy lekcjami, leć do samego końca") migracja była kontynuowana bez
+zatrzymywania się między lekcjami — przy następnym "kontynuuj" zacznij `_21_spring_boot` od
+sprawdzenia formatu lekcji 1, patrz "Następny krok" wyżej.
 
 ## Wyniki testów / weryfikacji
 
