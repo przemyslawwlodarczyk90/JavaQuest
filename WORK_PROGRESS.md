@@ -278,34 +278,53 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `fix_http_method_case.js` z poprzedniej sesji trzyma się — pozostałe małe litery get/post/put w
   `_07_servlets` to wyłącznie legalne fragmenty URL-i i wywołania metod Map, nie uszkodzone nazwy
   metod HTTP), `_01_fundamentals`.
-- **`_21_spring_boot` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
+- **`_21_spring_boot` (16/16 lekcji) — KOMPLETNE.** Scommitowane (`2d3bd84`). 16 lekcji: co to jest
+  Spring Boot i różnica wobec gołego Spring Framework (1), setup projektu przez Spring Initializr
+  (2), startery jako "kurator zależności" wsparty przez BOM (3), auto-konfiguracja z pełnym
+  API_REFERENCE adnotacji `@Conditional*` (4), `application.properties`/`.yml` automatyczne
+  ładowanie bez `@PropertySource` (5), profile w Boot z automatycznym ładowaniem
+  `application-{profil}` i profile groups (6), `CommandLineRunner`/`ApplicationRunner` (7),
+  `@ConfigurationProperties` z walidacją fail-fast i alternatywą rekordową (8), DevTools i mechanizm
+  dwóch classloaderów (9), logowanie Logback auto-konfigurowane (10), `BasicErrorController` i
+  `ResponseStatusException` (11), Actuator i własny `HealthIndicator` (12), Micrometer/Observation
+  API i distributed tracing, różnica Boot 2 vs Boot 3 (Sleuth→Micrometer Tracing) (13), budowanie
+  wykonywalnego jara i natywny obraz GraalVM (14), własna klasa `@AutoConfiguration` i publikowalny
+  starter dwumodułowy (15), kapston "JavaQuest Notes Service" łączący wszystkie 15 lekcji w
+  działającym mini-serwisie REST z prawdziwym wbudowanym Tomcatem (16). Każda lekcja przeszła przez
+  `fix_http_method_case.js` — rozdział wspomina GET/POST w kontekście REST endpointów demonstracyjnych
+  (`@GetMapping` nie było dotknięte, potwierdzone). Wszystkie 16 plików zweryfikowane: poprawny
+  JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane,
+  live przez API (próbki: lekcje 1, 4, 8, 16 — w tym potwierdzenie API_REFERENCE w lekcji 4) i
+  regresja bez zmian na `_20_spring_core` (lekcje 1 i 13), `_19_security_basics`, `_18_rest_api`,
+  `_07_servlets`, `_01_fundamentals`.
+- **`_22_spring_web` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
   Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format
-  `_21_spring_boot` (prawdopodobnie stary format jak `_17`-`_19`), potem przepisz tym samym wzorcem
-  11 sekcji. Ten rozdział niemal na pewno intensywnie wspomina GET/POST/PUT (auto-konfiguracja
-  kontrolerów REST, `application.yml`, actuator) — pamiętaj o `fix_http_method_case.js` po każdej
-  lekcji.**
+  `_22_spring_web` (prawdopodobnie stary format jak `_17`-`_21`), potem przepisz tym samym wzorcem
+  11 sekcji. Ten rozdział niemal na pewno bardzo intensywnie wspomina GET/POST/PUT/PATCH/DELETE
+  (Spring MVC, `@RequestMapping`/`@GetMapping` itd., REST kontrolery) — pamiętaj o
+  `fix_http_method_case.js` po każdej lekcji.**
 
 ## Ostatnia ukończona czynność
 
-Ukończono i scommitowano rozdział `_20_spring_core` (23/23, KOMPLETNE, commit `f6b420b`) w tej
-sesji — kontynuacja od lekcji 13 (cykliczne zależności), dokończono lekcje 13-23 (poprzednia część
-sesji, przed kompaktowaniem kontekstu, napisała już lekcje 1-12). Każda lekcja: Edit tylko tablicy
-`theory` (bez ruszania exercises/quiz), potem `fix_allcaps.js` + `fix_allcaps_residual.js` +
-`fix_http_method_case.js`, walidacja Node (JSON poprawny, liczba bloków, 30 exercises, 100 quiz,
-zero "native code", zero cyrylicy) — jedno odstępstwo: lekcja 15 (`Profiles.json`) miała 1
-przypadkowe cyrylickie "е" w słowie "ideę" wykryte i naprawione ręcznie przed kontynuacją. Po
-napisaniu wszystkich 23 lekcji: pełna walidacja zbiorcza wszystkich plików na raz (wszystkie OK),
-`mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez PowerShell
-`Stop-Process` po PID z `netstat`, nowy wystartował w ~9s), weryfikacja live przez poprawne
-endpointy API (`/api/chapters/{chapter}/lessons/{lesson}/theory|exercises|quiz` — NIE
-`/api/chapters/{chapter}/lessons/{lesson}` bezpośrednio, które zwraca 404) na próbkach lekcji 1, 13,
-21, 23, regresja bez zmian na `_19_security_basics`, `_18_rest_api`, `_17_architecture`,
-`_07_servlets` (potwierdzono też, że naprawa `fix_http_method_case.js` z poprzedniej sesji nadal
-trzyma się poprawnie), `_01_fundamentals`. Jeden commit z pełnym opisem wszystkich 23 lekcji, bez
-stopki atrybucji (zgodnie z STAGE2_LESSON_REDESIGN_PROMPT.md). Zgodnie z dyrektywą użytkownika
-("nie pytaj o zgodę pomiędzy lekcjami, leć do samego końca") migracja była kontynuowana bez
-zatrzymywania się między lekcjami — przy następnym "kontynuuj" zacznij `_21_spring_boot` od
-sprawdzenia formatu lekcji 1, patrz "Następny krok" wyżej.
+Ukończono i scommitowano rozdział `_21_spring_boot` (16/16, KOMPLETNE, commit `2d3bd84`) w tej
+sesji, bezpośrednio po ukończeniu `_20_spring_core` (23/23, KOMPLETNE, commit `f6b420b`, też w tej
+sesji). Dla `_21_spring_boot`: każda z 16 lekcji przepisana od zera z 8-blokowego formatu
+CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji (Edit tylko tablicy `theory`, bez ruszania
+exercises/quiz), potem `fix_allcaps.js` + `fix_allcaps_residual.js` + `fix_http_method_case.js`,
+walidacja Node po każdej lekcji (JSON poprawny, liczba bloków, 30 exercises, 100 quiz, zero "native
+code", zero cyrylicy) — wszystkie przeszły czysto za pierwszym razem. Lekcja 4 (`AutoConfiguration`)
+i lekcja 21 z poprzedniego rozdziału dostały dodatkowy blok `API_REFERENCE` (odpowiednio: ściągawka
+adnotacji `@Conditional*`, i rodzaje rady AOP). Po napisaniu wszystkich 16 lekcji: pełna walidacja
+zbiorcza wszystkich plików na raz (wszystkie OK), `mvnw.cmd resources:resources`, restart backendu
+(stary proces zatrzymany przez PowerShell `Stop-Process` po PID z `netstat`, nowy wystartował w
+~9s, seedowanie treści do H2 zakończone po ~44s od startu procesu), weryfikacja live przez
+`/api/chapters/{chapter}/lessons/{lesson}/theory|exercises|quiz` na próbkach lekcji 1, 4, 8, 16,
+regresja bez zmian na `_20_spring_core` (lekcje 1 i 13), `_19_security_basics`, `_18_rest_api`,
+`_07_servlets`, `_01_fundamentals`. Jeden commit z pełnym opisem wszystkich 16 lekcji, bez stopki
+atrybucji (zgodnie z STAGE2_LESSON_REDESIGN_PROMPT.md). Zgodnie z dyrektywą użytkownika ("nie pytaj
+o zgodę pomiędzy lekcjami, leć do samego końca") migracja była kontynuowana bez zatrzymywania się
+między lekcjami i rozdziałami — przy następnym "kontynuuj" zacznij `_22_spring_web` od sprawdzenia
+formatu lekcji 1, patrz "Następny krok" wyżej.
 
 ## Wyniki testów / weryfikacji
 
