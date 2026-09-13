@@ -415,27 +415,53 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   oryginalne 30 exercises + 100 quiz zachowane liczbowo, live przez API (próbki: lekcje 1, 5, 9,
   12, 18, 20) i regresja bez zmian na `_26_integration_testing` (lekcje 1, 16),
   `_25_unit_testing`, `_24_spring_security`, `_01_fundamentals`.
-- **`_28_java_evolution` i dalsze (`_29_spring_reactive`, `_30_spring_messaging_and_async`,
-  `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez
-  pomijania żadnego. **NASTĘPNY KROK: sprawdź format `_28_java_evolution` (prawdopodobnie stary
-  format jak `_17`-`_27` były przed migracją), potem przepisz tym samym wzorcem 11 sekcji.**
+- **`_28_java_evolution` (24/24 lekcji) — KOMPLETNE.** Wszystkie 24 lekcje (retrospektywa Java 8 →
+  25: cykl wydań/LTS, lambdy/streamy/Optional w perspektywie historycznej, metody default/static w
+  interfejsach, java.time, JPMS i mniejsze funkcje Javy 9, var w Javie 10, nowe metody
+  String/Files + HttpClient w Javie 11, mechanizm preview features na przykładzie switch-expression
+  Java 12-14, text blocks, rekordy + pattern matching instanceof w Javie 16, sealed classes w Javie
+  17, UTF-8 domyślne + Simple Web Server w Javie 18, wątki wirtualne i structured concurrency Java
+  19-21, pattern matching w switch + record patterns + Sequenced Collections w Javie 21, Unnamed
+  Variables/FFM API/Stream Gatherers Java 22-24, Scoped Values/Compact Source Files Java 25, wybór
+  wersji Javy dla nowego projektu, kapston "JavaQuest Task Processor" łączący sealed rekordy +
+  pattern matching + wątki wirtualne + SequencedMap + text blocks) przepisane na standard 11 sekcji
+  (14-15 bloków, `API_REFERENCE` tylko tam, gdzie uzasadnione: nowe metody String/Files z lekcji 9,
+  Sequenced Collections z lekcji 20 — reszta to zjawiska/ewolucja języka, nie katalogi metod jednej
+  klasy). Każda lekcja przez `fix_allcaps.js` + `fix_allcaps_residual.js`; lekcja 10 (HttpClient,
+  GET) dodatkowo przez `fix_http_method_case.js`. Wszystkie 24 pliki zweryfikowane: poprawny JSON,
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane
+  liczbowo, live przez API (próbki: lekcje 1, 4, 9, 10, 15, 18, 20, 24) i regresja bez zmian na
+  `_27_spring_test` (lekcje 1, 20), `_26_integration_testing`, `_25_unit_testing`,
+  `_01_fundamentals`. Scommitowane checkpointami WIP w ciągu sesji (lekcje 1-3 były już w toku z
+  poprzedniej, przerwanej sesji) — **do zrobienia: jeden finalny commit "Etap 4: rozdzial
+  _28_java_evolution - KOMPLETNE" scalający/zamykający wszystkie WIP checkpointy tego rozdziału.**
+- **`_29_spring_reactive`, `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices` —
+  NIE ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź
+  format `_29_spring_reactive` (prawdopodobnie stary format jak `_17`-`_27` były przed migracją),
+  potem przepisz tym samym wzorcem 11 sekcji.**
 
 ## Ostatnia ukończona czynność
 
-Ukończono i scommitowano rozdział `_27_spring_test` (20/20, KOMPLETNE) w tej sesji, zaraz po
-`_26_integration_testing` (16/16), `_25_unit_testing` (20/20) i `_24_spring_security` (17/17,
-`fb67780`) w tej samej, ciągłej sesji — cztery rozdziały ukończone jednego dnia. Dla
-`_27_spring_test`: każda z 20 lekcji przepisana od zera z 3-blokowego formatu
-CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, potem `fix_allcaps.js` +
-`fix_allcaps_residual.js` + `fix_http_method_case.js` (dla lekcji o MockMvc/TestRestTemplate/
-HTTP). Lekcje 3 (webEnvironment), 12 (TestRestTemplate/WebTestClient) i 18 (ArchUnit) dostały
-dodatkowy blok API_REFERENCE. Po napisaniu wszystkich 20 lekcji: pełna walidacja zbiorcza
-(wszystkie OK), `mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez
-`taskkill //PID` po PID z `netstat`), weryfikacja live przez API na próbkach lekcji 1, 5, 9, 12,
-18, 20, regresja bez zmian na `_26_integration_testing` (lekcje 1, 16), `_25_unit_testing`,
-`_24_spring_security`, `_01_fundamentals`. Zgodnie z dyrektywą użytkownika ("kontynuuj prace, nie
-pytaj się o zgodę między rozdziałami") migracja kontynuowana bez zatrzymywania się — przy
-następnym "kontynuuj" zacznij `_28_java_evolution` od sprawdzenia formatu lekcji 1.
+Ukończono rozdział `_28_java_evolution` (24/24, KOMPLETNE) w tej sesji — kontynuacja z poprzedniej,
+przerwanej między sesjami (lekcje 1-3 były już przepisane, ale niescommitowane; sesja zaczęła się
+komendą użytkownika "kontynuuj prace, ja wychodzę z domu więc nie pytaj się o zgodę — między
+sesjami", więc migracja poszła bez zatrzymywania się aż do końca rozdziału). Każda z 24 lekcji
+przepisana z 3-blokowego formatu CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, w tym lekcje
+bez pierwotnego bloku ANALOGY (15, 16, 17, 21, 22, 23, 24) dostały nowo napisaną analogię. Lekcje 9
+(nowe metody String/Files w Javie 11) i 20 (Sequenced Collections w Javie 21) dostały dodatkowy
+blok API_REFERENCE — reszta świadomie bez niego (tematy to ewolucja/mechanizmy języka, nie katalogi
+metod jednej klasy). Każda lekcja przez `fix_allcaps.js` + `fix_allcaps_residual.js`; lekcja 10
+(HttpClient, GET) dodatkowo przez `fix_http_method_case.js`. Scommitowane ośmioma WIP checkpointami
+w trakcie sesji (lekcje 1-7, 8-10, 11-13, 14-15, 16-17, 18-19, 20, 21, 22-23) — **do zrobienia na
+początku następnej sesji: jeden finalny commit "Etap 4: rozdzial _28_java_evolution - KOMPLETNE"
+(może być pusty/tylko ten plik, jeśli WIP-y już zawierają całą treść) zamykający rozdział, zgodnie
+ze wzorcem z poprzednich rozdziałów.** Po napisaniu wszystkich 24 lekcji: pełna walidacja zbiorcza
+(wszystkie 24 pliki OK), `mvnw.cmd resources:resources`, restart backendu (`run_in_background`),
+weryfikacja live przez API na próbkach lekcji 1, 4, 9, 10, 15, 18, 20, 24, regresja bez zmian na
+`_27_spring_test` (lekcje 1, 20), `_26_integration_testing`, `_25_unit_testing`, `_01_fundamentals`
+— backend zatrzymany po weryfikacji (`taskkill //PID`). Przy następnym "kontynuuj": (1) zrób
+finalny commit zamykający `_28_java_evolution`, (2) zacznij `_29_spring_reactive` od sprawdzenia
+formatu lekcji 1.
 
 ## Wyniki testów / weryfikacji
 
@@ -450,6 +476,14 @@ następnym "kontynuuj" zacznij `_28_java_evolution` od sprawdzenia formatu lekcj
 
 ## Problemy i decyzje
 
+- **Poprawny format endpointów weryfikacyjnych API (ustalony w sesji `_28_java_evolution`):**
+  lista lekcji rozdziału: `GET /api/chapters/{chapterSlug}/lessons` (slug rozdziału z podkreślnikiem,
+  np. `_28_java_evolution`, zwraca `[{slug, title}]` — `slug` lekcji ZAWIERA numer prefiksu, np.
+  `01_JavaReleaseCadenceAndLtsExplained`, NIE samą nazwę bez numeru). Treść lekcji jest pod TRZEMA
+  oddzielnymi endpointami, nie jednym: `GET /api/chapters/{chapterSlug}/lessons/{lessonSlug}/theory`,
+  `.../exercises`, `.../quiz` (każdy zwraca sam JSON-owy array, bez opakowania) — `/api/courses/...`
+  nie istnieje. Jeśli nie znasz dokładnego `lessonSlug` danego rozdziału, najpierw odpytaj listę
+  lekcji zamiast zgadywać nazwę.
 - **WAŻNA LEKCJA TEJ SESJI — backend czyta z `target/classes`, NIE bezpośrednio z `src/main/resources`:**
   `LessonContentLoader` (`platform/content/LessonContentLoader.java`) wczytuje pliki JSON przez
   `ClassPathResource`, czyli z `target/classes/content/...`, skopiowanych tam przez Maven przy
@@ -493,28 +527,26 @@ następnym "kontynuuj" zacznij `_28_java_evolution` od sprawdzenia formatu lekcj
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. Kontynuuj `_16_clean_code` (22 lekcje) dokładnie od lekcji 18
-   `18_NullHandling.json` (lekcje 1-17 już ukończone i scommitowane), tym samym wzorcem pracy
-   (patrz punkt 3 niżej), dalej po kolei: `19_ImmutabilityInPractice`, `20_StaticAnalysisTools`,
-   `21_LegacyCodeAndTechnicalDebt`, `22_CodeReviewBestPracticesAndCapstone` (koniec rozdziału). To
-   rozdział o zasadach/praktykach (SOLID, DRY/KISS/YAGNI, code smells, refaktoryzacja) —
-   potwierdzone w lekcjach 1-17: WSZYSTKIE dotychczasowe BEZ API_REFERENCE, oceniać per-lekcja
-   dalej (możliwy wyjątek: `20_StaticAnalysisTools` może uzasadniać krótki katalog narzędzi, ocenić
-   przy pisaniu). Po ukończeniu lekcji 22: `mvnw.cmd resources:resources` + restart + curl
-   weryfikacyjny na próbce + regresja + JEDEN finalny commit oznaczający `_16_clean_code` jako
-   KOMPLETNE (22/22), analogicznie do zamknięcia `_15_jvm_internals`.
+1. **Najpierw:** zrób jeden finalny commit zamykający `_28_java_evolution` jako KOMPLETNE (24/24) —
+   treść WSZYSTKICH 24 lekcji jest już gotowa i scommitowana ośmioma WIP checkpointami w
+   `git log`, brakuje tylko formalnego zamknięcia rozdziału (analogicznie do commitów kończących
+   `_24`-`_27`). Sprawdź `git log --oneline -10` żeby zobaczyć checkpointy WIP tego rozdziału.
+2. Kontynuuj `_29_spring_reactive` od sprawdzenia formatu lekcji 1 (prawdopodobnie stary format
+   3-blokowy jak `_17`-`_27` przed migracją), tym samym wzorcem pracy (patrz punkt 4 niżej), potem
+   `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices` — ostatnie trzy rozdziały
+   całego kursu. Po każdym rozdziale: `mvnw.cmd resources:resources` + restart backendu + curl
+   weryfikacyjny na próbce + regresja na poprzednich rozdziałach + JEDEN finalny commit oznaczający
+   rozdział jako KOMPLETNE.
    PRZED restartem backendu ZAWSZE zatrzymaj stary proces jako pierwszy krok (TaskStop,
    albo jeśli task ID nie jest już śledzony w bieżącej sesji — `netstat -ano | grep :8082` +
    `taskkill //PID <pid> //F`), dopiero potem uruchom nowy (patrz "Problemy i decyzje" o pamięci).
    PO restarcie odczekaj ok. 40-50s i ponów curl kilka razy zanim uznasz brak treści za błąd —
    seedowanie całego kursu do H2 zajmuje teraz zauważalnie więcej czasu niż na początku migracji
    (rośnie z każdym kolejnym scommitowanym rozdziałem).
-2. Kontynuuj rozdziałami `_16_...` do `_31_...` w kolejności, bez pomijania żadnego, zgodnie z
-   dyrektywą użytkownika z Etapu 4 ("kontynuuj prace, nie pytaj się o zgodę pomiędzy rozdziałami",
-   potwierdzone ponownie 2026-09-10). Po każdym rozdziale: `mvnw.cmd resources:resources` (odśwież
-   zasoby) + restart backendu + curl na próbce + regresja na poprzednich rozdziałach + JEDEN
-   commit lokalny dla całego rozdziału.
-3. **Wzorzec pracy ustalony i sprawdzony w tej sesji (powtarzaj dla każdej kolejnej lekcji/rozdziału):**
+3. Po `_31_spring_cloud_microservices`: CAŁY kurs (31/31 rozdziałów) będzie KOMPLETNY wg nowego
+   standardu 11 sekcji — sprawdzić, czy `STAGE2_LESSON_REDESIGN_PROMPT.md`/`CLAUDE.md` przewidują
+   kolejny etap po zamknięciu Etapu 4, czy to koniec zaplanowanej pracy.
+4. **Wzorzec pracy ustalony i sprawdzony w wielu sesjach (powtarzaj dla każdej kolejnej lekcji/rozdziału):**
    a) Grep `"exercises": [` żeby znaleźć koniec sekcji theory bez czytania całego pliku.
    b) Read tylko sekcji theory (offset/limit).
    c) Edit zastępujący WYŁĄCZNIE starą tablicę theory nową (11 sekcji + API_REFERENCE, gdy
