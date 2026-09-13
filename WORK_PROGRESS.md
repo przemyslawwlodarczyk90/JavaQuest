@@ -342,13 +342,30 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   przez API (próbki: lekcje 1, 2, 4, 9, 15) i regresja bez zmian na `_22_spring_web`,
   `_21_spring_boot`, `_20_spring_core`, `_19_security_basics`, `_18_rest_api`, `_12_hibernate`,
   `_01_fundamentals`.
-- **`_24_spring_security` i dalsze (do `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.**
-  Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format
-  `_24_spring_security` (prawdopodobnie stary format jak `_17`-`_23`), potem przepisz tym samym
-  wzorcem 11 sekcji. Ten rozdział prawdopodobnie odwołuje się wprost do `_19_security_basics`
-  (protokołowe podstawy bezpieczeństwa) jako fundamentu i pokazuje konkretny mechanizm Spring
-  Security — sprawdź, czy wspomina GET/POST (np. `.requestMatchers(HttpMethod.GET, ...)`) i w razie
-  potrzeby uruchom `fix_http_method_case.js`.**
+- **`_24_spring_security` (17/17 lekcji) — KOMPLETNE w tej sesji.** 17 lekcji: co to jest Spring
+  Security i łańcuch filtrów servletowych przed `DispatcherServlet` (1), `SecurityFilterChain` jako
+  jedyny aktualny sposób konfiguracji (2), ewolucja API `WebSecurityConfigurerAdapter`→bean,
+  `authorizeRequests/antMatchers`→`authorizeHttpRequests/requestMatchers`,
+  `@EnableGlobalMethodSecurity`→`@EnableMethodSecurity` (3), domyślne logowanie formularzowe z
+  sesją i CSRF (4), `UserDetailsService` (5), `PasswordEncoder`/BCrypt/`DelegatingPasswordEncoder`
+  z pełnym API_REFERENCE (6), role i uprawnienia `hasRole`/`hasAuthority` (7), jawna konfiguracja
+  `formLogin` z `defaultSuccessUrl`/`failureUrl` (8), warstwowe reguły autoryzacji per metoda HTTP z
+  `denyAll()` fallback (9), `@PreAuthorize`/`@PostAuthorize` i pułapka self-invocation (10), własna
+  strona logowania przez `.loginPage()` (11), własny filtr JWT (`OncePerRequestFilter`) (12),
+  `SessionCreationPolicy`/`STATELESS` (13), `.cors()`/`.csrf()` wbudowane w Security (14), OAuth2
+  Client vs Resource Server, `.oauth2ResourceServer()` (15), `AuthenticationEntryPoint` vs
+  `AccessDeniedHandler` ze spójnym JSON (16), kapston łączący wszystkie 16 lekcji w jednym API z
+  JWT+RBAC+CORS+spójne błędy (17). Lekcja 1 była już częściowo przepisana na początku tej sesji
+  (niescommitowana zmiana z poprzedniej sesji) — dokończona i zweryfikowana. Każda lekcja przeszła
+  przez `fix_allcaps.js` + `fix_allcaps_residual.js` + `fix_http_method_case.js` (rozdział wspomina
+  GET/POST w kontekście `.requestMatchers(HttpMethod.GET, ...)`). Wszystkie 17 plików zweryfikowane:
+  poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz
+  zachowane liczbowo w każdym pliku.
+- **`_25_unit_testing` i dalsze (`_26_integration_testing`, `_27_spring_test`,
+  `_28_java_evolution`, `_29_spring_reactive`, `_30_spring_messaging_and_async`,
+  `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez
+  pomijania żadnego. **NASTĘPNY KROK: sprawdź format `_25_unit_testing` (prawdopodobnie stary
+  format jak `_17`-`_23` były przed migracją), potem przepisz tym samym wzorcem 11 sekcji.**
 
 ## Ostatnia ukończona czynność
 
