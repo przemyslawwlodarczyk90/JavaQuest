@@ -361,34 +361,47 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   GET/POST w kontekście `.requestMatchers(HttpMethod.GET, ...)`). Wszystkie 17 plików zweryfikowane:
   poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz
   zachowane liczbowo w każdym pliku.
-- **`_25_unit_testing` i dalsze (`_26_integration_testing`, `_27_spring_test`,
-  `_28_java_evolution`, `_29_spring_reactive`, `_30_spring_messaging_and_async`,
-  `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez
-  pomijania żadnego. **NASTĘPNY KROK: sprawdź format `_25_unit_testing` (prawdopodobnie stary
-  format jak `_17`-`_23` były przed migracją), potem przepisz tym samym wzorcem 11 sekcji.**
+- **`_25_unit_testing` (20/20 lekcji) — KOMPLETNE w tej sesji.** 20 lekcji: po co testy
+  jednostkowe i piramida testów (1), architektura JUnit 5 Platform/Jupiter/Vintage (2), pierwszy
+  test i wbudowane asercje `Assertions.*` z pełnym API_REFERENCE (3), adnotacje cyklu życia
+  `@BeforeEach`/`@AfterEach`/`@BeforeAll`/`@AfterAll` i `PER_METHOD`/`PER_CLASS` (4), wprowadzenie
+  do AssertJ i łańcuchowe `assertThat` (5), AssertJ dla kolekcji i map z `extracting` (6), AssertJ
+  dla wyjątków i własne asercje przez `AbstractAssert` (7), `@ParameterizedTest` z pełnym
+  API_REFERENCE źródeł danych (8), `@Nested`/`@DisplayName` (9), kontrola kolejności testów i
+  `@RepeatedTest` (10), wykonywanie warunkowe i `Assumptions` (11), `@Tag` i filtrowanie (12),
+  podstawy Mockito z pełnym API_REFERENCE (13), matchery argumentów i `ArgumentCaptor` (14),
+  `@Mock`/`@InjectMocks`/`MockitoExtension` (15), taksonomia dubli testowych (dummy/fake/stub/spy/
+  mock) (16), systematyczne testowanie przypadków brzegowych (17), nazewnictwo i organizacja
+  testów (AAA, `@Nested` wg scenariusza) (18), podstawy pokrycia kodu przez JaCoCo z pełnym
+  API_REFERENCE (19), kapston łączący JUnit 5+AssertJ+Mockito w jednym pełnym pakiecie testów dla
+  `OrderService` (20). Lekcja 1 była już częściowo przepisana na początku tej sesji (niescommitowana
+  zmiana z poprzedniej sesji, tego samego rozdziału `_24`) — nie dotyczyło `_25`, cały rozdział
+  `_25` przepisany od zera w tej sesji. Każda lekcja przeszła przez `fix_allcaps.js` +
+  `fix_allcaps_residual.js` (rozdział nie dotyczy bezpośrednio HTTP, `fix_http_method_case.js`
+  pominięty świadomie). Wszystkie 20 plików zweryfikowane: poprawny JSON, `grep -c "native code"` =
+  0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane liczbowo, live przez API (próbki:
+  lekcje 1, 5, 8, 13, 16, 20) i regresja bez zmian na `_24_spring_security` (lekcje 1, 17),
+  `_23_spring_data_jpa`, `_20_spring_core`, `_19_security_basics`, `_01_fundamentals`.
+- **`_26_integration_testing` i dalsze (`_27_spring_test`, `_28_java_evolution`,
+  `_29_spring_reactive`, `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices`) — NIE
+  ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź
+  format `_26_integration_testing` (prawdopodobnie stary format jak `_17`-`_24` były przed
+  migracją), potem przepisz tym samym wzorcem 11 sekcji.**
 
 ## Ostatnia ukończona czynność
 
-Ukończono i scommitowano rozdział `_23_spring_data_jpa` (15/15, KOMPLETNE, commit `6bac804`) w tej
-sesji, po `_22_spring_web` (19/19, `a29984c`), `_21_spring_boot` (16/16, `2d3bd84`) i
-`_20_spring_core` (23/23, `f6b420b`) — cztery rozdziały ukończone w tej samej, ciągłej sesji. Dla
-`_23_spring_data_jpa`: każda z 15 lekcji przepisana od zera z 8-blokowego formatu
-CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, potem `fix_allcaps.js` + `fix_allcaps_residual.js`
-+ `fix_http_method_case.js` (bez istotnych trafień, rozdział nie dotyczy bezpośrednio HTTP),
-walidacja Node po każdej lekcji. Lekcje 2 (hierarchia interfejsów) i 4 (query methods) dostały
-dodatkowy blok `API_REFERENCE`. Jedno odstępstwo: literówka własnego autorstwa "PROZNIEJSZY"
-zamiast "PÓŹNIEJSZY" w lekcji 13, wykryta i naprawiona ręcznie przed uruchomieniem fix scripts. Po
-napisaniu wszystkich 15 lekcji: pełna walidacja zbiorcza (wszystkie OK), `mvnw.cmd
-resources:resources`, restart backendu (stary proces zatrzymany przez PowerShell `Stop-Process` po
-PID z `netstat`, seedowanie treści do H2 zakończone po ~54s od startu procesu), weryfikacja live
-przez `/api/chapters/{chapter}/lessons/{lesson}/theory|exercises|quiz` na próbkach lekcji 1, 2, 4,
-9, 15, regresja bez zmian na `_22_spring_web`, `_21_spring_boot`, `_20_spring_core`,
-`_19_security_basics`, `_18_rest_api`, `_12_hibernate`, `_01_fundamentals`. Jeden commit z pełnym
-opisem wszystkich 15 lekcji, bez stopki atrybucji (zgodnie z STAGE2_LESSON_REDESIGN_PROMPT.md).
-Zgodnie z dyrektywą użytkownika ("nie pytaj o zgodę pomiędzy lekcjami, leć do samego końca")
-migracja była kontynuowana bez zatrzymywania się między lekcjami i rozdziałami — przy następnym
-"kontynuuj" zacznij `_24_spring_security` od sprawdzenia formatu lekcji 1, patrz "Następny krok"
-wyżej.
+Ukończono i scommitowano rozdział `_25_unit_testing` (20/20, KOMPLETNE) w tej sesji, zaraz po
+`_24_spring_security` (17/17, `fb67780`) w tej samej, ciągłej sesji. Dla `_25_unit_testing`: każda
+z 20 lekcji przepisana od zera z 3-blokowego formatu CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11
+sekcji, potem `fix_allcaps.js` + `fix_allcaps_residual.js`, walidacja Node po każdej lekcji. Lekcje
+3 (Assertions), 8 (źródła danych ParameterizedTest), 13 (Mockito) i 19 (JaCoCo) dostały dodatkowy
+blok API_REFERENCE. Po napisaniu wszystkich 20 lekcji: pełna walidacja zbiorcza (wszystkie OK),
+`mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez `taskkill //PID`
+po PID z `netstat`), weryfikacja live przez API na próbkach lekcji 1, 5, 8, 13, 16, 20, regresja bez
+zmian na `_24_spring_security` (lekcje 1, 17), `_23_spring_data_jpa`, `_20_spring_core`,
+`_19_security_basics`, `_01_fundamentals`. Zgodnie z dyrektywą użytkownika ("kontynuuj prace, nie
+pytaj się o zgodę między rozdziałami") migracja kontynuowana bez zatrzymywania się — przy
+następnym "kontynuuj" zacznij `_26_integration_testing` od sprawdzenia formatu lekcji 1.
 
 ## Wyniki testów / weryfikacji
 
