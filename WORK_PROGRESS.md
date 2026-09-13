@@ -399,26 +399,43 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane liczbowo, live przez API (próbki:
   lekcje 1, 4, 7, 10, 13, 16) i regresja bez zmian na `_25_unit_testing` (lekcje 1, 20),
   `_24_spring_security`, `_23_spring_data_jpa`, `_01_fundamentals`.
-- **`_27_spring_test` i dalsze (`_28_java_evolution`, `_29_spring_reactive`,
-  `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.** Migracja
-  rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format `_27_spring_test`
-  (prawdopodobnie stary format jak `_17`-`_26` były przed migracją), potem przepisz tym samym
-  wzorcem 11 sekcji.**
+- **`_27_spring_test` (20/20 lekcji) — KOMPLETNE w tej sesji.** 20 lekcji: przegląd modułu Spring
+  Test i `SpringExtension` (1), podstawy `@SpringBootTest` (2), opcje `webEnvironment` z pełnym
+  API_REFERENCE (3), koncepcja testów wycinkowych (4), `@WebMvcTest`+`MockMvc` (5), `@DataJpaTest`+
+  `TestEntityManager` (6), `@JsonTest` (7), `@MockitoBean`/`@MockitoSpyBean` (8),
+  `@TestConfiguration` (9), `@ActiveProfiles` w testach (10), `@TestPropertySource`+
+  `@DynamicPropertySource` (11), `TestRestTemplate`+`WebTestClient` z pełnym API_REFERENCE (12),
+  testowanie zabezpieczonych endpointów `@WithMockUser` (13), testowanie kodu transakcyjnego
+  `TestTransaction` (14), `@ServiceConnection` dla Testcontainers (15), testowanie
+  `@Async`/`@Scheduled` (16), cachowanie kontekstu i wydajność testów (17), ArchUnit z pełnym
+  API_REFERENCE (18), dobre praktyki Spring Test (19), kapston łączący wszystko w pełnym teście
+  API zadań z prawdziwą bazą + mockiem + deterministycznym czasem + ArchUnit (20). Lekcje 5, 12,
+  13, 20 (dotyczące MockMvc/TestRestTemplate/HTTP) przeszły przez `fix_http_method_case.js`.
+  Wszystkie 20 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+  oryginalne 30 exercises + 100 quiz zachowane liczbowo, live przez API (próbki: lekcje 1, 5, 9,
+  12, 18, 20) i regresja bez zmian na `_26_integration_testing` (lekcje 1, 16),
+  `_25_unit_testing`, `_24_spring_security`, `_01_fundamentals`.
+- **`_28_java_evolution` i dalsze (`_29_spring_reactive`, `_30_spring_messaging_and_async`,
+  `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez
+  pomijania żadnego. **NASTĘPNY KROK: sprawdź format `_28_java_evolution` (prawdopodobnie stary
+  format jak `_17`-`_27` były przed migracją), potem przepisz tym samym wzorcem 11 sekcji.**
 
 ## Ostatnia ukończona czynność
 
-Ukończono i scommitowano rozdział `_26_integration_testing` (16/16, KOMPLETNE) w tej sesji, zaraz
-po `_25_unit_testing` (20/20) i `_24_spring_security` (17/17, `fb67780`) w tej samej, ciągłej
-sesji. Dla `_26_integration_testing`: każda z 16 lekcji przepisana od zera z 3-blokowego formatu
+Ukończono i scommitowano rozdział `_27_spring_test` (20/20, KOMPLETNE) w tej sesji, zaraz po
+`_26_integration_testing` (16/16), `_25_unit_testing` (20/20) i `_24_spring_security` (17/17,
+`fb67780`) w tej samej, ciągłej sesji — cztery rozdziały ukończone jednego dnia. Dla
+`_27_spring_test`: każda z 20 lekcji przepisana od zera z 3-blokowego formatu
 CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, potem `fix_allcaps.js` +
-`fix_allcaps_residual.js` + `fix_http_method_case.js` (dla lekcji o WireMock/HTTP, retroaktywnie
-zastosowany do całego rozdziału). Po napisaniu wszystkich 16 lekcji: pełna walidacja zbiorcza
+`fix_allcaps_residual.js` + `fix_http_method_case.js` (dla lekcji o MockMvc/TestRestTemplate/
+HTTP). Lekcje 3 (webEnvironment), 12 (TestRestTemplate/WebTestClient) i 18 (ArchUnit) dostały
+dodatkowy blok API_REFERENCE. Po napisaniu wszystkich 20 lekcji: pełna walidacja zbiorcza
 (wszystkie OK), `mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez
-`taskkill //PID` po PID z `netstat`), weryfikacja live przez API na próbkach lekcji 1, 4, 7, 10,
-13, 16, regresja bez zmian na `_25_unit_testing` (lekcje 1, 20), `_24_spring_security`,
-`_23_spring_data_jpa`, `_01_fundamentals`. Zgodnie z dyrektywą użytkownika ("kontynuuj prace, nie
+`taskkill //PID` po PID z `netstat`), weryfikacja live przez API na próbkach lekcji 1, 5, 9, 12,
+18, 20, regresja bez zmian na `_26_integration_testing` (lekcje 1, 16), `_25_unit_testing`,
+`_24_spring_security`, `_01_fundamentals`. Zgodnie z dyrektywą użytkownika ("kontynuuj prace, nie
 pytaj się o zgodę między rozdziałami") migracja kontynuowana bez zatrzymywania się — przy
-następnym "kontynuuj" zacznij `_27_spring_test` od sprawdzenia formatu lekcji 1.
+następnym "kontynuuj" zacznij `_28_java_evolution` od sprawdzenia formatu lekcji 1.
 
 ## Wyniki testów / weryfikacji
 
