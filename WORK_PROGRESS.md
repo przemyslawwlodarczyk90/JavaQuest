@@ -382,26 +382,43 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane liczbowo, live przez API (próbki:
   lekcje 1, 5, 8, 13, 16, 20) i regresja bez zmian na `_24_spring_security` (lekcje 1, 17),
   `_23_spring_data_jpa`, `_20_spring_core`, `_19_security_basics`, `_01_fundamentals`.
-- **`_26_integration_testing` i dalsze (`_27_spring_test`, `_28_java_evolution`,
-  `_29_spring_reactive`, `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices`) — NIE
-  ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź
-  format `_26_integration_testing` (prawdopodobnie stary format jak `_17`-`_24` były przed
-  migracją), potem przepisz tym samym wzorcem 11 sekcji.**
+- **`_26_integration_testing` (16/16 lekcji) — KOMPLETNE w tej sesji.** 16 lekcji: co to jest test
+  integracyjny i różnica wobec jednostkowego (1), cztery główne wyzwania — szybkość, niestabilność,
+  setup/teardown, izolacja (2), H2 in-memory a produkcyjne silniki baz danych (3), wprowadzenie do
+  Testcontainers (4), testowanie repozytorium JDBC przeciw Testcontainers (5), cykl życia i reuse
+  kontenera (6), wprowadzenie do WireMock (7), stubowanie i weryfikacja żądań HTTP (8), testowanie
+  systemu plików i I/O (9), strategie zarządzania danymi testowymi — Test Data Builder i seeder
+  (10), izolacja testów i idempotentność (11), niestabilne testy i pięć sposobów ich naprawy (12),
+  wprowadzenie do testów kontraktowych/Consumer-Driven Contracts (13), integracja testów z
+  pipeline'ami CI/CD (14), siedem zasad dobrych praktyk testów integracyjnych (15), kapston łączący
+  wszystkie 15 lekcji w scenariuszu przetwarzania zamówień z prawdziwą bazą H2 + stubowanym
+  serwisem płatności przez WireMock (16). Każda lekcja przeszła przez `fix_allcaps.js` +
+  `fix_allcaps_residual.js`; lekcje 7, 8 i 16 (WireMock, wspominające GET/POST) dodatkowo przez
+  `fix_http_method_case.js`, retroaktywnie zastosowany też do lekcji 1-6 i 9-15 (bez istotnych
+  trafień poza lekcją 5). Wszystkie 16 plików zweryfikowane: poprawny JSON, `grep -c "native code"`
+  = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane liczbowo, live przez API (próbki:
+  lekcje 1, 4, 7, 10, 13, 16) i regresja bez zmian na `_25_unit_testing` (lekcje 1, 20),
+  `_24_spring_security`, `_23_spring_data_jpa`, `_01_fundamentals`.
+- **`_27_spring_test` i dalsze (`_28_java_evolution`, `_29_spring_reactive`,
+  `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices`) — NIE ROZPOCZĘTE.** Migracja
+  rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź format `_27_spring_test`
+  (prawdopodobnie stary format jak `_17`-`_26` były przed migracją), potem przepisz tym samym
+  wzorcem 11 sekcji.**
 
 ## Ostatnia ukończona czynność
 
-Ukończono i scommitowano rozdział `_25_unit_testing` (20/20, KOMPLETNE) w tej sesji, zaraz po
-`_24_spring_security` (17/17, `fb67780`) w tej samej, ciągłej sesji. Dla `_25_unit_testing`: każda
-z 20 lekcji przepisana od zera z 3-blokowego formatu CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11
-sekcji, potem `fix_allcaps.js` + `fix_allcaps_residual.js`, walidacja Node po każdej lekcji. Lekcje
-3 (Assertions), 8 (źródła danych ParameterizedTest), 13 (Mockito) i 19 (JaCoCo) dostały dodatkowy
-blok API_REFERENCE. Po napisaniu wszystkich 20 lekcji: pełna walidacja zbiorcza (wszystkie OK),
-`mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez `taskkill //PID`
-po PID z `netstat`), weryfikacja live przez API na próbkach lekcji 1, 5, 8, 13, 16, 20, regresja bez
-zmian na `_24_spring_security` (lekcje 1, 17), `_23_spring_data_jpa`, `_20_spring_core`,
-`_19_security_basics`, `_01_fundamentals`. Zgodnie z dyrektywą użytkownika ("kontynuuj prace, nie
+Ukończono i scommitowano rozdział `_26_integration_testing` (16/16, KOMPLETNE) w tej sesji, zaraz
+po `_25_unit_testing` (20/20) i `_24_spring_security` (17/17, `fb67780`) w tej samej, ciągłej
+sesji. Dla `_26_integration_testing`: każda z 16 lekcji przepisana od zera z 3-blokowego formatu
+CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, potem `fix_allcaps.js` +
+`fix_allcaps_residual.js` + `fix_http_method_case.js` (dla lekcji o WireMock/HTTP, retroaktywnie
+zastosowany do całego rozdziału). Po napisaniu wszystkich 16 lekcji: pełna walidacja zbiorcza
+(wszystkie OK), `mvnw.cmd resources:resources`, restart backendu (stary proces zatrzymany przez
+`taskkill //PID` po PID z `netstat`), weryfikacja live przez API na próbkach lekcji 1, 4, 7, 10,
+13, 16, regresja bez zmian na `_25_unit_testing` (lekcje 1, 20), `_24_spring_security`,
+`_23_spring_data_jpa`, `_01_fundamentals`. Zgodnie z dyrektywą użytkownika ("kontynuuj prace, nie
 pytaj się o zgodę między rozdziałami") migracja kontynuowana bez zatrzymywania się — przy
-następnym "kontynuuj" zacznij `_26_integration_testing` od sprawdzenia formatu lekcji 1.
+następnym "kontynuuj" zacznij `_27_spring_test` od sprawdzenia formatu lekcji 1.
 
 ## Wyniki testów / weryfikacji
 
