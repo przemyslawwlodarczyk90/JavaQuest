@@ -433,35 +433,50 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   liczbowo, live przez API (próbki: lekcje 1, 4, 9, 10, 15, 18, 20, 24) i regresja bez zmian na
   `_27_spring_test` (lekcje 1, 20), `_26_integration_testing`, `_25_unit_testing`,
   `_01_fundamentals`. Scommitowane checkpointami WIP w ciągu sesji (lekcje 1-3 były już w toku z
-  poprzedniej, przerwanej sesji) — **do zrobienia: jeden finalny commit "Etap 4: rozdzial
-  _28_java_evolution - KOMPLETNE" scalający/zamykający wszystkie WIP checkpointy tego rozdziału.**
-- **`_29_spring_reactive`, `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices` —
-  NIE ROZPOCZĘTE.** Migracja rozdziałami, po kolei, bez pomijania żadnego. **NASTĘPNY KROK: sprawdź
-  format `_29_spring_reactive` (prawdopodobnie stary format jak `_17`-`_27` były przed migracją),
-  potem przepisz tym samym wzorcem 11 sekcji.**
+  poprzedniej, przerwanej sesji), scommitowane finalnym commitem `7020eb0` ("Etap 4: rozdzial
+  _28_java_evolution - 24/24 lekcje... - KOMPLETNE") po ośmiu WIP checkpointach z tej sesji.
+- **`_29_spring_reactive` (5/17 lekcji) — W TOKU.** Lekcje 1-5 gotowe i scommitowane WIP
+  checkpointami (`f04f14e`, `0c7883a`, `ca40313`): dlaczego reaktywność/C10K/backpressure (1),
+  specyfikacja Reactive Streams przez `java.util.concurrent.Flow` (2), Project Reactor - Mono/Flux
+  jako implementacja, lazy evaluation (3), Mono w szczególe - tworzenie/defaultIfEmpty/
+  switchIfEmpty/map vs flatMap (4), Flux w szczególe - skończony vs nieskończony/concat/zip/merge
+  (5). Wszystkie bez API_REFERENCE (tematy koncepcyjne) — ocenić per-lekcja dalej (Lesson12
+  WebClientDeepDive może uzasadniać katalog metod, ocenić przy pisaniu). **NASTĘPNY KROK: kontynuuj
+  dokładnie od lekcji 6 `06_ReactiveOperators.json`**, dalej po kolei: 7 (ErrorHandling), 8
+  (SchedulersAndThreading), 9 (WebFluxVsSpringMvc), 10 (AnnotatedControllersInWebFlux, uwaga: może
+  wspominać GET/POST — sprawdzić `fix_http_method_case.js`), 11 (FunctionalEndpointsRouterFunction,
+  też HTTP), 12 (WebClientDeepDive, też HTTP — prawdopodobnie z API_REFERENCE), 13 (R2dbcIntro), 14
+  (ReactiveSecurity), 15 (TestingReactiveCodeWithStepVerifier), 16 (WhenToUseReactiveVsBlocking), 17
+  (ReactiveCapstone, koniec rozdziału). Po lekcji 17: pełna walidacja + `mvnw.cmd resources:resources`
+  + restart backendu + curl weryfikacyjny na próbce + regresja + JEDEN finalny commit "Etap 4:
+  rozdzial _29_spring_reactive - KOMPLETNE (17/17)".
+- **`_30_spring_messaging_and_async` (16 lekcji), `_31_spring_cloud_microservices` (19 lekcji) —
+  NIE ROZPOCZĘTE.** Ostatnie dwa rozdziały całego kursu. Migracja rozdziałami, po kolei, bez
+  pomijania żadnego, tym samym wzorcem (sprawdź format lekcji 1 każdego — prawdopodobnie stary
+  3-blokowy format jak reszta przed migracją).
 
 ## Ostatnia ukończona czynność
 
-Ukończono rozdział `_28_java_evolution` (24/24, KOMPLETNE) w tej sesji — kontynuacja z poprzedniej,
-przerwanej między sesjami (lekcje 1-3 były już przepisane, ale niescommitowane; sesja zaczęła się
-komendą użytkownika "kontynuuj prace, ja wychodzę z domu więc nie pytaj się o zgodę — między
-sesjami", więc migracja poszła bez zatrzymywania się aż do końca rozdziału). Każda z 24 lekcji
-przepisana z 3-blokowego formatu CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, w tym lekcje
-bez pierwotnego bloku ANALOGY (15, 16, 17, 21, 22, 23, 24) dostały nowo napisaną analogię. Lekcje 9
-(nowe metody String/Files w Javie 11) i 20 (Sequenced Collections w Javie 21) dostały dodatkowy
-blok API_REFERENCE — reszta świadomie bez niego (tematy to ewolucja/mechanizmy języka, nie katalogi
-metod jednej klasy). Każda lekcja przez `fix_allcaps.js` + `fix_allcaps_residual.js`; lekcja 10
-(HttpClient, GET) dodatkowo przez `fix_http_method_case.js`. Scommitowane ośmioma WIP checkpointami
-w trakcie sesji (lekcje 1-7, 8-10, 11-13, 14-15, 16-17, 18-19, 20, 21, 22-23) — **do zrobienia na
-początku następnej sesji: jeden finalny commit "Etap 4: rozdzial _28_java_evolution - KOMPLETNE"
-(może być pusty/tylko ten plik, jeśli WIP-y już zawierają całą treść) zamykający rozdział, zgodnie
-ze wzorcem z poprzednich rozdziałów.** Po napisaniu wszystkich 24 lekcji: pełna walidacja zbiorcza
-(wszystkie 24 pliki OK), `mvnw.cmd resources:resources`, restart backendu (`run_in_background`),
-weryfikacja live przez API na próbkach lekcji 1, 4, 9, 10, 15, 18, 20, 24, regresja bez zmian na
-`_27_spring_test` (lekcje 1, 20), `_26_integration_testing`, `_25_unit_testing`, `_01_fundamentals`
-— backend zatrzymany po weryfikacji (`taskkill //PID`). Przy następnym "kontynuuj": (1) zrób
-finalny commit zamykający `_28_java_evolution`, (2) zacznij `_29_spring_reactive` od sprawdzenia
-formatu lekcji 1.
+Ukończono rozdział `_28_java_evolution` (24/24, KOMPLETNE, commit `7020eb0`) w tej sesji —
+kontynuacja z poprzedniej, przerwanej między sesjami (lekcje 1-3 były już przepisane, ale
+niescommitowane; sesja zaczęła się komendą użytkownika "kontynuuj prace, ja wychodzę z domu więc
+nie pytaj się o zgodę — między sesjami", więc migracja poszła bez zatrzymywania się). Każda z 24
+lekcji przepisana z 3-blokowego formatu CONCEPT/CODE_EXAMPLE/ANALOGY na standard 11 sekcji, w tym
+lekcje bez pierwotnego bloku ANALOGY (15, 16, 17, 21, 22, 23, 24) dostały nowo napisaną analogię.
+Lekcje 9 (nowe metody String/Files w Javie 11) i 20 (Sequenced Collections w Javie 21) dostały
+dodatkowy blok API_REFERENCE. Każda lekcja przez `fix_allcaps.js` + `fix_allcaps_residual.js`;
+lekcja 10 (HttpClient, GET) dodatkowo przez `fix_http_method_case.js`. Po napisaniu wszystkich 24
+lekcji: pełna walidacja zbiorcza (wszystkie 24 pliki OK), `mvnw.cmd resources:resources`, restart
+backendu (`run_in_background`), weryfikacja live przez API na próbkach lekcji 1, 4, 9, 10, 15, 18,
+20, 24, regresja bez zmian na `_27_spring_test` (lekcje 1, 20), `_26_integration_testing`,
+`_25_unit_testing`, `_01_fundamentals` — backend zatrzymany po weryfikacji (`taskkill //PID`).
+**Ważne odkrycie tej sesji o API:** endpointy weryfikacyjne to `GET /api/chapters/{chapterSlug}
+/lessons` (lista) i `GET /api/chapters/{chapterSlug}/lessons/{lessonSlug}/{theory|exercises|quiz}`
+(treść) — `lessonSlug` ZAWIERA numer prefiksu (np. `01_JavaReleaseCadenceAndLtsExplained`); pełny
+zapis w sekcji "Problemy i decyzje" niżej. Zaraz po zamknięciu `_28`, w tej samej sesji rozpoczęto
+`_29_spring_reactive` — lekcje 1-5/17 gotowe (patrz wyżej), scommitowane trzema WIP checkpointami.
+Sesja kończy się tutaj (bardzo długa, jednodniowa robota: cały `_28` + 5/17 `_29`) — **przy
+następnym "kontynuuj" zacznij `_29_spring_reactive` dokładnie od lekcji 6, patrz szczegóły wyżej.**
 
 ## Wyniki testów / weryfikacji
 
@@ -527,16 +542,15 @@ formatu lekcji 1.
 
 ## Następny krok (dokładnie, w kolejności)
 
-1. **Najpierw:** zrób jeden finalny commit zamykający `_28_java_evolution` jako KOMPLETNE (24/24) —
-   treść WSZYSTKICH 24 lekcji jest już gotowa i scommitowana ośmioma WIP checkpointami w
-   `git log`, brakuje tylko formalnego zamknięcia rozdziału (analogicznie do commitów kończących
-   `_24`-`_27`). Sprawdź `git log --oneline -10` żeby zobaczyć checkpointy WIP tego rozdziału.
-2. Kontynuuj `_29_spring_reactive` od sprawdzenia formatu lekcji 1 (prawdopodobnie stary format
-   3-blokowy jak `_17`-`_27` przed migracją), tym samym wzorcem pracy (patrz punkt 4 niżej), potem
-   `_30_spring_messaging_and_async`, `_31_spring_cloud_microservices` — ostatnie trzy rozdziały
-   całego kursu. Po każdym rozdziale: `mvnw.cmd resources:resources` + restart backendu + curl
-   weryfikacyjny na próbce + regresja na poprzednich rozdziałach + JEDEN finalny commit oznaczający
-   rozdział jako KOMPLETNE.
+1. `_28_java_evolution` już KOMPLETNE i zamknięte finalnym commitem `7020eb0` — nic więcej nie
+   robić w tym rozdziale.
+2. Kontynuuj `_29_spring_reactive` dokładnie od lekcji 6 `06_ReactiveOperators.json` (lekcje 1-5
+   gotowe i scommitowane WIP checkpointami `f04f14e`/`0c7883a`/`ca40313` — szczegóły w sekcji "Stan
+   rozdziałów" wyżej), tym samym wzorcem pracy (patrz punkt 4 niżej), dalej po kolei aż do lekcji 17
+   `17_ReactiveCapstone.json` (koniec rozdziału). Potem `_30_spring_messaging_and_async` (16 lekcji),
+   `_31_spring_cloud_microservices` (19 lekcji) — ostatnie dwa rozdziały całego kursu. Po każdym
+   rozdziale: `mvnw.cmd resources:resources` + restart backendu + curl weryfikacyjny na próbce +
+   regresja na poprzednich rozdziałach + JEDEN finalny commit oznaczający rozdział jako KOMPLETNE.
    PRZED restartem backendu ZAWSZE zatrzymaj stary proces jako pierwszy krok (TaskStop,
    albo jeśli task ID nie jest już śledzony w bieżącej sesji — `netstat -ano | grep :8082` +
    `taskkill //PID <pid> //F`), dopiero potem uruchom nowy (patrz "Problemy i decyzje" o pamięci).
