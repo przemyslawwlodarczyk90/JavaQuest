@@ -435,15 +435,18 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `_01_fundamentals`. Scommitowane checkpointami WIP w ciągu sesji (lekcje 1-3 były już w toku z
   poprzedniej, przerwanej sesji), scommitowane finalnym commitem `7020eb0` ("Etap 4: rozdzial
   _28_java_evolution - 24/24 lekcje... - KOMPLETNE") po ośmiu WIP checkpointach z tej sesji.
-- **`_29_spring_reactive` (5/17 lekcji) — W TOKU.** Lekcje 1-5 gotowe i scommitowane WIP
+- **`_29_spring_reactive` (8/17 lekcji) — W TOKU.** Lekcje 1-5 gotowe i scommitowane WIP
   checkpointami (`f04f14e`, `0c7883a`, `ca40313`): dlaczego reaktywność/C10K/backpressure (1),
   specyfikacja Reactive Streams przez `java.util.concurrent.Flow` (2), Project Reactor - Mono/Flux
   jako implementacja, lazy evaluation (3), Mono w szczególe - tworzenie/defaultIfEmpty/
   switchIfEmpty/map vs flatMap (4), Flux w szczególe - skończony vs nieskończony/concat/zip/merge
   (5). Wszystkie bez API_REFERENCE (tematy koncepcyjne) — ocenić per-lekcja dalej (Lesson12
-  WebClientDeepDive może uzasadniać katalog metod, ocenić przy pisaniu). **NASTĘPNY KROK: kontynuuj
-  dokładnie od lekcji 6 `06_ReactiveOperators.json`**, dalej po kolei: 7 (ErrorHandling), 8
-  (SchedulersAndThreading), 9 (WebFluxVsSpringMvc), 10 (AnnotatedControllersInWebFlux, uwaga: może
+  WebClientDeepDive może uzasadniać katalog metod, ocenić przy pisaniu). Lekcje 6-8 gotowe:
+  operatory `map`/`flatMap`/`concatMap` i kolejność (6), lokalna obsługa błędów, retry, fallback
+  i idempotencja (7), `subscribeOn`/`publishOn`, izolacja blokującego I/O i CPU-bound (8).
+  Każda z lekcji 6-8 ma 15 bloków teorii z `API_REFERENCE`, 30 exercises i 100 quiz; JSON,
+  wymagane typy, brak cyrylicy i `native code` sprawdzone statycznie. **NASTĘPNY KROK: lekcja 9
+  `09_WebFluxVsSpringMvc.json`**, dalej po kolei: 10 (AnnotatedControllersInWebFlux, uwaga: może
   wspominać GET/POST — sprawdzić `fix_http_method_case.js`), 11 (FunctionalEndpointsRouterFunction,
   też HTTP), 12 (WebClientDeepDive, też HTTP — prawdopodobnie z API_REFERENCE), 13 (R2dbcIntro), 14
   (ReactiveSecurity), 15 (TestingReactiveCodeWithStepVerifier), 16 (WhenToUseReactiveVsBlocking), 17
@@ -474,9 +477,9 @@ backendu (`run_in_background`), weryfikacja live przez API na próbkach lekcji 1
 /lessons` (lista) i `GET /api/chapters/{chapterSlug}/lessons/{lessonSlug}/{theory|exercises|quiz}`
 (treść) — `lessonSlug` ZAWIERA numer prefiksu (np. `01_JavaReleaseCadenceAndLtsExplained`); pełny
 zapis w sekcji "Problemy i decyzje" niżej. Zaraz po zamknięciu `_28`, w tej samej sesji rozpoczęto
-`_29_spring_reactive` — lekcje 1-5/17 gotowe (patrz wyżej), scommitowane trzema WIP checkpointami.
-Sesja kończy się tutaj (bardzo długa, jednodniowa robota: cały `_28` + 5/17 `_29`) — **przy
-następnym "kontynuuj" zacznij `_29_spring_reactive` dokładnie od lekcji 6, patrz szczegóły wyżej.**
+`_29_spring_reactive` — lekcje 1-8/17 gotowe (patrz wyżej). Po poprzednich checkpointach 1-5
+przepisano teorie lekcji 6-8 i zweryfikowano je statycznie. Weryfikacja live API pozostaje na koniec
+rozdziału; przy kontynuacji zacznij od lekcji 9.
 
 ## Wyniki testów / weryfikacji
 
@@ -544,8 +547,8 @@ następnym "kontynuuj" zacznij `_29_spring_reactive` dokładnie od lekcji 6, pat
 
 1. `_28_java_evolution` już KOMPLETNE i zamknięte finalnym commitem `7020eb0` — nic więcej nie
    robić w tym rozdziale.
-2. Kontynuuj `_29_spring_reactive` dokładnie od lekcji 6 `06_ReactiveOperators.json` (lekcje 1-5
-   gotowe i scommitowane WIP checkpointami `f04f14e`/`0c7883a`/`ca40313` — szczegóły w sekcji "Stan
+2. Kontynuuj `_29_spring_reactive` dokładnie od lekcji 9 `09_WebFluxVsSpringMvc.json` (lekcje 1-8
+   gotowe, 1-5 scommitowane WIP checkpointami `f04f14e`/`0c7883a`/`ca40313` — szczegóły w sekcji "Stan
    rozdziałów" wyżej), tym samym wzorcem pracy (patrz punkt 4 niżej), dalej po kolei aż do lekcji 17
    `17_ReactiveCapstone.json` (koniec rozdziału). Potem `_30_spring_messaging_and_async` (16 lekcji),
    `_31_spring_cloud_microservices` (19 lekcji) — ostatnie dwa rozdziały całego kursu. Po każdym

@@ -1,51 +1,93 @@
 {
   "theory": [
     {
-      "type": "CONCEPT",
-      "heading": "Blad jako sygnal terminalny w Reactive Streams",
-      "body": "W Reactive Streams (Lesson02), blad jest sygnalem TERMINALNYM (onError) - po nim strumien sie konczy (bez dalszych onNext). Reactor dostarcza bogaty zestaw operatorow do obslugi tego sygnalu - odpowiednik try-catch (`_01_fundamentals/Lesson16`) dla swiata reaktywnego.",
+      "type": "INTRO",
+      "heading": "Po co obsługiwać błędy w strumieniu",
+      "body": "Błąd to osobny sygnał, nie zwykła wartość. Ta lekcja uczy odzyskiwać wynik, ponawiać chwilowe awarie i izolować pojedyncze wadliwe rekordy bez ukrywania realnych problemów.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "onErrorReturn - stala wartosc zastepcza",
-      "body": "Mono.<String>error(new RuntimeException(\"Blad polaczenia\")).onErrorReturn(\"wartosc domyslna\").block() -> \"wartosc domyslna\" - przy bledzie zwracana jest stala, gotowa wartosc.",
+      "type": "DEFINITION",
+      "heading": "onError kończy subskrypcję",
+      "body": "Publisher po `onError` nie wysyła już `onNext` ani `onComplete`. `onErrorResume` nie wskrzesza starego źródła: przełącza się na nowy Publisher. `retry` tworzy nową subskrypcję źródła, więc może powtórzyć efekty uboczne.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "onErrorResume - przelaczenie na inny Mono/Flux",
-      "body": "pobierzZGlownegoZrodla().onErrorResume(blad -> pobierzZZapasowegoZrodla()).block() -> \"dane z zapasowego zrodla\" - przy bledzie mozemy wywolac CALKIEM INNE zrodlo danych (np. cache zamiast bazy), nie tylko zwrocic stala wartosc.",
+      "type": "ANALOGY",
+      "heading": "Plan awaryjny dostawy",
+      "body": "`onErrorReturn` wydaje gotową paczkę zastępczą; `onErrorResume` wybiera innego dostawcę; `retry` wysyła kuriera ponownie; `onErrorMap` tłumaczy techniczny raport na komunikat domenowy. Pierwotna podróż po błędzie nie trwa dalej.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "onErrorMap - przeksztalcenie wyjatku technicznego w biznesowy",
-      "body": "Mono.error(new ConnectException(\"Connection refused\")).onErrorMap(techniczny -> new IllegalStateException(\"Usluga zewnetrzna niedostepna\", techniczny)) - zlapany IllegalStateException ma cause=ConnectException (lancuchowanie zachowane). Powiazanie: `_16_clean_code/Lesson17_ExceptionDesign`.",
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Zakres przechwycenia decyduje o wyniku",
+      "body": "Handler za całym `Flux` daje jeden fallback po błędzie, a potem kończy strumień. Handler wewnątrz `flatMap` lub `concatMap` może obsłużyć porażkę danego elementu i pozwolić przetwarzać kolejne.",
+      "code": "wejście:                  1 ─ 2 ─ 0 ─ 4\nglobalny onErrorReturn:    10 ─ 5 ─ ? ─ koniec\nlokalny onErrorReturn:     10 ─ 5 ─ ? ─ 2 ─ koniec"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Trzy podstawowe reakcje",
+      "body": "Stała wartość jest odpowiednia tylko wtedy, gdy ma sens biznesowy. Funkcja w `onErrorResume` może wybrać cache według przyczyny. `onErrorMap` utrzymuje błąd, ale zmienia jego typ; zachowaj pierwotny wyjątek jako `cause`.",
+      "code": "Mono<String> a = Mono.<String>error(new RuntimeException(\"offline\"))\n    .onErrorReturn(\"brak danych\");\nMono<String> b = pobierzZSerwisu()\n    .onErrorResume(blad -> pobierzZCache());\nMono<String> c = pobierzZSerwisu()\n    .onErrorMap(blad -> new IllegalStateException(\"Usługa niedostępna\", blad));"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Selektowany retry z końcowym fallbackiem",
+      "body": "Zakładamy, że `pobierzZSerwisu()` zwraca zimne `Mono<String>`. Ponawiaj tylko przejściowy `TimeoutException`. `Retry.backoff(2, ...)` oznacza dwie dodatkowe próby po pierwszej subskrypcji; fallback działa po wyczerpaniu retry lub błędzie odrzuconym przez filtr.",
+      "code": "Mono<String> dane = pobierzZSerwisu()\n    .retryWhen(Retry.backoff(2, Duration.ofMillis(100))\n        .filter(blad -> blad instanceof TimeoutException)\n        .doBeforeRetry(s -> log.warn(\"Ponowienie\", s.failure())))\n    .onErrorResume(blad -> pobierzZCache());"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak przebiega retry",
+      "body": "1. Subskrypcja uruchamia pierwsze żądanie.\n2. `TimeoutException` przechodzi przez filtr retry; inne błędy idą do fallbacku.\n3. Po opóźnieniu powstaje nowa subskrypcja; limit 2 daje łącznie najwyżej 3 próby.\n4. Sukces emituje wynik. Po wyczerpaniu prób błąd trafia do `onErrorResume`.\n5. Testuj wynik i liczbę wywołań, nie zakładaj dokładnego czasu ściennego.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "retryWhen(Retry.backoff(...)) - ponawianie z wykladniczym opoznieniem",
-      "body": "Mono.defer(() -> { if (proba < 3) return Mono.error(...); return Mono.just(\"sukces przy probie #\" + proba); }).retryWhen(Retry.backoff(5, Duration.ofMillis(10))).block() -> \"sukces przy probie #3\" po 3 probach. Mono.defer() jest kluczowe - bez niego logika wykonalaby sie tylko RAZ, a retry ponawialby ten sam, juz obliczony sygnal.",
+      "type": "NOTE",
+      "heading": "Leniwość, idempotencja i źródło",
+      "body": "`Mono.defer(...)` odtwarza logikę przy każdej subskrypcji. `Mono.just(operacjaBlokujaca())` oblicza argument już podczas składania pipeline, więc retry nie wywoła go ponownie. Ponowne wysłanie zapisu może zdublować efekt: sprawdź idempotencję lub użyj klucza idempotencji.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Blad w flatMap dla 1 elementu konczy CALY strumien",
-      "body": "Flux.just(1,2,0,4).flatMap(x -> Mono.just(10/x)).collectList().block() - dzielenie przez 0 dla x=0 PRZERYWA caly strumien (ArithmeticException), pozostale elementy (4) NIE SA przetworzone. Naprawa: onErrorReturn WEWNATRZ kazdego wewnetrznego Mono: flatMap(x -> Mono.just(x).map(v->10/v).map(String::valueOf).onErrorReturn(\"BLAD\")) -> [10,5,BLAD,2] - wszystkie elementy przetworzone, tylko problematyczny zastapiony.",
+      "type": "USAGE",
+      "heading": "Timeout, obserwacja i ciche zakończenie",
+      "body": "`doOnError` służy do logowania lub metryk, ale nie pochłania błędu. `timeout(Duration)` może wyemitować `TimeoutException`; w `Flux` domyślnie ogranicza oczekiwanie na kolejny sygnał, niekoniecznie czas całego strumienia. `onErrorComplete` zamienia błąd na zakończenie bez wartości; tylko jeśli utrata danych jest dozwolona.",
+      "code": "Mono<String> bezpieczne = pobierzZSerwisu()\n    .timeout(Duration.ofSeconds(2))\n    .doOnError(blad -> log.warn(\"Nieudana operacja\", blad))\n    .onErrorResume(TimeoutException.class, blad -> pobierzZCache());"
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Nie ponawiaj wszystkiego bez granic",
+      "body": "Natychmiastowy nieograniczony retry potrafi przeciążyć zawodzącą usługę. Błędów walidacji i autoryzacji zwykle nie warto ponawiać. `retry(3)` to pierwsza próba i trzy ponowienia. `Retry.backoff` ma domyślny jitter; po wyczerpaniu `retryWhen` może opakować ostatni wyjątek w błąd wyczerpania prób.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "onErrorContinue - z ostroznoscia",
-      "body": "onErrorContinue() pozwala pominac problematyczne elementy w Flux bez konczenia calego strumienia, ale dokumentacja Reactora OSTRZEGA przed naduzywaniem - moze prowadzic do subtelnych bledow, gdy nie kazdy operator w lancuchu go poprawnie respektuje. Bezpieczniejsza alternatywa (jak w demo powyzej): onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Publishera w flatMap.",
+      "type": "CODE_WRONG",
+      "heading": "Globalny fallback traci resztę wsadu",
+      "body": "Poniżej po dzieleniu przez zero kończy się pierwotny strumień. Wartość 4 nie zostanie przetworzona; globalny handler nie oznacza „pomiń tylko błędny rekord”.",
+      "code": "Flux<String> utrata = Flux.just(1, 2, 0, 4)\n    .map(n -> String.valueOf(10 / n))\n    .onErrorReturn(\"BŁĄD\");\n// 10, 5, BŁĄD"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Lokalny handler pozwala iść dalej",
+      "body": "Potencjalnie zawodną transformację umieść wewnątrz Publishera i przechwyć jej błąd przed spłaszczeniem. `concatMap` zachowuje kolejność. Nie używaj `Mono.just(10 / n)` do przechwycenia wyjątku, bo argument obliczy się przed utworzeniem `Mono`.",
+      "code": "Flux<String> komplet = Flux.just(1, 2, 0, 4)\n    .concatMap(n -> Mono.fromCallable(() -> String.valueOf(10 / n))\n        .onErrorReturn(\"BŁĄD\"));\n// 10, 5, BŁĄD, 2"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Ściąga operatorów",
+      "body": "`onErrorReturn` — stały fallback; `onErrorResume` — nowy Publisher; `onErrorMap` — nowy wyjątek; `onErrorComplete` — zakończenie bez wartości; `doOnError` — obserwacja. `retry(n)` — natychmiastowe ponowienia; `retryWhen(Retry.backoff(...))` — polityka opóźnień, filtrowania, jitter i logowania. `timeout` — granica oczekiwania. `onErrorContinue` ma zależny od operatorów zakres i łatwo je źle zastosować; zwykle lepsza jest lokalna obsługa wewnętrznego Publishera.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Powiazanie z reszta kursu",
-      "body": "Projektowanie wyjatkow: `_16_clean_code/Lesson17_ExceptionDesign`. Architektura obslugi bledow: `_17_architecture/Lesson16`. Dead letter queue: `_30_spring_messaging_and_async`. Testowanie strumieni z bledami: Lesson15 (StepVerifier).",
+      "type": "WHEN_TO_USE",
+      "heading": "Od pojedynczego wywołania do systemu",
+      "body": "Odczyt: krótki timeout, selektywny retry, cache. Wsadowe rekordy: obsługa błędów per element albo zbieranie niepowodzeń jako danych. Ograniczenie współbieżności przez `flatMap(..., concurrency)` nie jest pełnym bulkheadem. Circuit breaker wymaga współdzielonego stanu; dead-letter queue wymaga trwałego zapisu lub brokera.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Świadoma polityka odporności",
+      "body": "`onError` kończy źródło; fallback przełącza wynik, retry ponawia subskrypcję, lokalny handler izoluje rekord. Filtruj błędy, ogranicz próby, zadbaj o idempotencję i testuj zarówno sukces, jak wyczerpanie. Nie ukrywaj awarii, o której klient musi wiedzieć.",
       "code": null
     }
   ],
@@ -233,7 +275,7 @@
         "D": "To synonimy - dzialaja identycznie"
       },
       "correct": "C",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Do czego sluzy `onErrorMap`?",
@@ -269,7 +311,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Blad zostanie zignorowany automatycznie",
         "B": "Caly strumien zostanie przerwany, pozostale elementy nie zostana przetworzone",
@@ -282,7 +324,7 @@
     {
       "question": "Jak naprawic problem z bledem w jednym elemencie `flatMap` bez przerywania calego strumienia?",
       "options": {
-        "A": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "A": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "B": "Nie da sie tego naprawic w Reactorze",
         "C": "Uzyc wylacznie try-catch w kodzie Javy",
         "D": "Zastapic flatMap przez map"
@@ -343,7 +385,7 @@
         "D": "onErrorResume dziala tylko z Flux, nie z Mono"
       },
       "correct": "A",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Pytanie kontrolne: Do czego sluzy `onErrorMap`?",
@@ -379,7 +421,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Pytanie kontrolne: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Pytanie kontrolne: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Tylko problematyczny element zostanie pominiety, reszta bedzie przetworzona normalnie",
         "B": "Caly strumien zostanie przerwany, pozostale elementy nie zostana przetworzone",
@@ -392,7 +434,7 @@
     {
       "question": "Pytanie kontrolne: Jak naprawic problem z bledem w jednym elemencie `flatMap` bez przerywania calego strumienia?",
       "options": {
-        "A": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "A": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "B": "Uzyc wylacznie try-catch w kodzie Javy",
         "C": "Zastapic flatMap przez map",
         "D": "Nie da sie tego naprawic w Reactorze"
@@ -453,7 +495,7 @@
         "D": "onErrorResume pozwala przelaczyc sie na inny Publisher (np. zapasowe zrodlo), nie tylko zwrocic stala wartosc"
       },
       "correct": "D",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Sprawdz swoja wiedze: Do czego sluzy `onErrorMap`?",
@@ -489,7 +531,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Sprawdz swoja wiedze: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Sprawdz swoja wiedze: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Strumien zostanie automatycznie zrestartowany",
         "B": "Blad zostanie zignorowany automatycznie",
@@ -504,7 +546,7 @@
       "options": {
         "A": "Zastapic flatMap przez map",
         "B": "Nie da sie tego naprawic w Reactorze",
-        "C": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "C": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "D": "Uzyc wylacznie try-catch w kodzie Javy"
       },
       "correct": "C",
@@ -563,7 +605,7 @@
         "D": "onErrorResume dziala tylko z Flux, nie z Mono"
       },
       "correct": "C",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Ktora odpowiedz jest poprawna? Do czego sluzy `onErrorMap`?",
@@ -599,7 +641,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Ktora odpowiedz jest poprawna? Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Caly strumien zostanie przerwany, pozostale elementy nie zostana przetworzone",
         "B": "Strumien zostanie automatycznie zrestartowany",
@@ -612,7 +654,7 @@
     {
       "question": "Ktora odpowiedz jest poprawna? Jak naprawic problem z bledem w jednym elemencie `flatMap` bez przerywania calego strumienia?",
       "options": {
-        "A": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "A": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "B": "Nie da sie tego naprawic w Reactorze",
         "C": "Uzyc wylacznie try-catch w kodzie Javy",
         "D": "Zastapic flatMap przez map"
@@ -673,7 +715,7 @@
         "D": "onErrorReturn jest bardziej elastyczny niz onErrorResume"
       },
       "correct": "A",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Wybierz poprawna odpowiedz. Do czego sluzy `onErrorMap`?",
@@ -709,7 +751,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Wybierz poprawna odpowiedz. Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Strumien zostanie automatycznie zrestartowany",
         "B": "Tylko problematyczny element zostanie pominiety, reszta bedzie przetworzona normalnie",
@@ -725,7 +767,7 @@
         "A": "Nie da sie tego naprawic w Reactorze",
         "B": "Uzyc wylacznie try-catch w kodzie Javy",
         "C": "Zastapic flatMap przez map",
-        "D": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono"
+        "D": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono"
       },
       "correct": "D",
       "explanation": "Obsluga bledu na poziomie wewnetrznego Publishera pozwala pozostalym elementom byc przetworzonym."
@@ -783,7 +825,7 @@
         "D": "To synonimy - dzialaja identycznie"
       },
       "correct": "C",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Do czego sluzy `onErrorMap`? (wybierz jedna odpowiedz)",
@@ -819,7 +861,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi? (wybierz jedna odpowiedz)",
+      "question": "Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Caly strumien zostanie przerwany, pozostale elementy nie zostana przetworzone",
         "B": "Blad zostanie zignorowany automatycznie",
@@ -834,7 +876,7 @@
       "options": {
         "A": "Nie da sie tego naprawic w Reactorze",
         "B": "Uzyc wylacznie try-catch w kodzie Javy",
-        "C": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "C": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "D": "Zastapic flatMap przez map"
       },
       "correct": "C",
@@ -893,7 +935,7 @@
         "D": "onErrorResume dziala tylko z Flux, nie z Mono"
       },
       "correct": "A",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Zaznacz poprawna opcje: Do czego sluzy `onErrorMap`?",
@@ -929,7 +971,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Zaznacz poprawna opcje: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Zaznacz poprawna opcje: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Caly strumien zostanie przerwany, pozostale elementy nie zostana przetworzone",
         "B": "Tylko problematyczny element zostanie pominiety, reszta bedzie przetworzona normalnie",
@@ -942,7 +984,7 @@
     {
       "question": "Zaznacz poprawna opcje: Jak naprawic problem z bledem w jednym elemencie `flatMap` bez przerywania calego strumienia?",
       "options": {
-        "A": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "A": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "B": "Zastapic flatMap przez map",
         "C": "Uzyc wylacznie try-catch w kodzie Javy",
         "D": "Nie da sie tego naprawic w Reactorze"
@@ -1003,7 +1045,7 @@
         "D": "onErrorResume pozwala przelaczyc sie na inny Publisher (np. zapasowe zrodlo), nie tylko zwrocic stala wartosc"
       },
       "correct": "D",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Weryfikacja: Do czego sluzy `onErrorMap`?",
@@ -1039,7 +1081,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Weryfikacja: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Weryfikacja: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Blad zostanie zignorowany automatycznie",
         "B": "Strumien zostanie automatycznie zrestartowany",
@@ -1052,7 +1094,7 @@
     {
       "question": "Weryfikacja: Jak naprawic problem z bledem w jednym elemencie `flatMap` bez przerywania calego strumienia?",
       "options": {
-        "A": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "A": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "B": "Nie da sie tego naprawic w Reactorze",
         "C": "Zastapic flatMap przez map",
         "D": "Uzyc wylacznie try-catch w kodzie Javy"
@@ -1113,7 +1155,7 @@
         "D": "onErrorResume dziala tylko z Flux, nie z Mono"
       },
       "correct": "C",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Quiz: Do czego sluzy `onErrorMap`?",
@@ -1149,7 +1191,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Quiz: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi?",
+      "question": "Quiz: Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi?",
       "options": {
         "A": "Caly strumien zostanie przerwany, pozostale elementy nie zostana przetworzone",
         "B": "Strumien zostanie automatycznie zrestartowany",
@@ -1164,7 +1206,7 @@
       "options": {
         "A": "Nie da sie tego naprawic w Reactorze",
         "B": "Uzyc wylacznie try-catch w kodzie Javy",
-        "C": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono",
+        "C": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono",
         "D": "Zastapic flatMap przez map"
       },
       "correct": "C",
@@ -1223,7 +1265,7 @@
         "D": "onErrorReturn jest bardziej elastyczny niz onErrorResume"
       },
       "correct": "A",
-      "explanation": "onErrorResume przyjmuje funkcje zwracajaca CALY nowy Publisher, dajac wieksza elastycznosc."
+      "explanation": "onErrorResume przyjmuje funkcje zwracajaca caly nowy Publisher, dajac wieksza elastycznosc."
     },
     {
       "question": "Do czego sluzy `onErrorMap`? Wskaz prawidlowa odpowiedz.",
@@ -1259,7 +1301,7 @@
       "explanation": "Retry.backoff realizuje strategie wykladniczego opoznienia miedzy kolejnymi probami."
     },
     {
-      "question": "Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, BEZ dodatkowej obslugi? Wskaz prawidlowa odpowiedz.",
+      "question": "Co sie stanie, gdy blad wystapi w jednym elemencie wewnatrz `flatMap` na Flux, bez dodatkowej obslugi? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Strumien zostanie automatycznie zrestartowany",
         "B": "Tylko problematyczny element zostanie pominiety, reszta bedzie przetworzona normalnie",
@@ -1275,7 +1317,7 @@
         "A": "Nie da sie tego naprawic w Reactorze",
         "B": "Zastapic flatMap przez map",
         "C": "Uzyc wylacznie try-catch w kodzie Javy",
-        "D": "Zastosowac onErrorReturn/onErrorResume WEWNATRZ kazdego wewnetrznego Mono"
+        "D": "Zastosowac onErrorReturn/onErrorResume wewnatrz kazdego wewnetrznego Mono"
       },
       "correct": "D",
       "explanation": "Obsluga bledu na poziomie wewnetrznego Publishera pozwala pozostalym elementom byc przetworzonym."

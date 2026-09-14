@@ -1,51 +1,93 @@
 {
   "theory": [
     {
-      "type": "CONCEPT",
-      "heading": "Scheduler - reaktywny odpowiednik ExecutorService",
-      "body": "Bez jawnej konfiguracji, Reactor wykonuje cala operacje na watku, ktory wywolal subscribe() (watek wywolujacy). Scheduler pozwala jawnie wybrac, na jakim watku/puli ma dzialac dana czesc pipeline'u - kluczowe dla (1) operacji blokujacych (JDBC, plikowe I/O) wewnatrz reaktywnego kodu, (2) rownoleglosci CPU-bound. Powiazanie z `_05_multithreading` (pule watkow) - Schedulery to reaktywny odpowiednik ExecutorService.",
+      "type": "INTRO",
+      "heading": "Kiedy strumień zmienia wątek",
+      "body": "Reactor nie tworzy nowego wątku dla każdego operatora. Nauczysz się rozpoznawać granice wykonania, izolować blokujące API i rozdzielać obciążenie I/O-bound od CPU-bound.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Domyslnie: kod dziala na watku wywolujacym subscribe()",
-      "body": "Mono.just(\"wartosc\").doOnNext(x -> System.out.println(Thread.currentThread().getName())).block(); - BEZ jawnego Schedulera, caly pipeline dziala na watku, ktory wywolal subscribe()/block().",
+      "type": "DEFINITION",
+      "heading": "Scheduler planuje pracę",
+      "body": "`Scheduler` dostarcza pracowników i zegar dla operatorów. W prostym synchronicznym źródle bez jawnej granicy sygnały zwykle biegną na wątku subskrybenta. Asynchroniczne źródło, np. klient sieciowy, może emitować na własnych wątkach.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "subscribeOn vs publishOn - gdzie w lancuchu wplywaja na watek",
-      "body": "Mono.fromSupplier(...).subscribeOn(Schedulers.boundedElastic()) // wplywa na CALY lancuch OD POCZATKU .map(...).publishOn(Schedulers.parallel()) // OD TEGO MIEJSCA w dol - inny watek .map(...); - subscribeOn() zmienia watek od samego poczatku (nawet jesli wywolane na koncu lancucha), publishOn() zmienia watek TYLKO od miejsca wywolania w dol.",
+      "type": "ANALOGY",
+      "heading": "Źródło i przesiadka",
+      "body": "`subscribeOn` wybiera miejsce startu subskrypcji upstream; `publishOn` to przesiadka dla downstream. Kilka przesiadek ma koszt. Żaden z tych operatorów sam nie rozdziela wielu elementów na różne rdzenie.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "boundedElastic() - dedykowana pula dla operacji blokujacych",
-      "body": "Flux.range(1,3).flatMap(n -> Mono.fromCallable(() -> { Thread.sleep(20); return \"wynik-\" + n; }).subscribeOn(Schedulers.boundedElastic())).collectList().block(); - KAZDA operacja blokujaca (JDBC/plik/legacy API) wewnatrz reaktywnego kodu MUSI byc opakowana .subscribeOn(Schedulers.boundedElastic()), inaczej zablokuje watki event-loop dla WSZYSTKICH innych zadan.",
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Zaznacz granicę",
+      "body": "Na zimnym `Mono.fromCallable` źródło działa na `boundedElastic`, a po `publishOn` dalsze operatory na `parallel`. Źródła z własną asynchronicznością mogą zmienić wątek niezależnie.",
+      "code": "subscribe()\n  ↓ subscribeOn(boundedElastic)\nfromCallable → map A\n  ↓ publishOn(parallel)\nmap B → subscriber"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Porównaj wątki w jednym łańcuchu",
+      "body": "Umieszczaj `subscribeOn` blisko źródła dla czytelności. `publishOn` zmienia kontekst późniejszych operatorów. Loguj nazwy wątków, ale nie utrwalaj ich jako sztywnych asercji.",
+      "code": "Mono.fromCallable(() -> {\n        System.out.println(\"źródło: \" + Thread.currentThread().getName());\n        return 5;\n    })\n    .subscribeOn(Schedulers.boundedElastic())\n    .map(n -> n * 2)\n    .publishOn(Schedulers.parallel())\n    .map(n -> n + 1);"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Izolowanie blokującego JDBC",
+      "body": "Zakładamy, że `jdbcRepository.find(id)` blokuje. `fromCallable` opóźnia wywołanie do subskrypcji, `subscribeOn` kieruje je na `boundedElastic`, a `flatMap(..., 8)` ogranicza liczbę aktywnych operacji. Limit puli nie zastępuje limitu połączeń bazy.",
+      "code": "Flux<Rekord> rekordy = Flux.fromIterable(ids)\n    .flatMap(id -> Mono.fromCallable(() -> jdbcRepository.find(id))\n        .subscribeOn(Schedulers.boundedElastic()), 8);"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Prześledź wykonanie",
+      "body": "1. Składanie łańcucha nie uruchamia `fromCallable`.\n2. Subskrypcja trafia do `subscribeOn` i jest planowana na wskazanym Schedulerze.\n3. Źródło wykonuje blokujące wywołanie na `boundedElastic`.\n4. `publishOn` przenosi obsługę downstream.\n5. Inne asynchroniczne źródło lub kolejne `publishOn` może znowu zmienić wątek.\n6. Anulowanie subskrypcji nie gwarantuje przerwania już rozpoczętego blokującego I/O.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "parallel() - pula dla obliczen CPU-bound",
-      "body": "Flux.range(1, 1_000_000).parallel().runOn(Schedulers.parallel()).map(x -> (long)x*x).sequential().reduce(0L, Long::sum).block(); - parallel() dzieli strumien na liczbe rdzeni CPU (Runtime.getRuntime().availableProcessors()), runOn() okresla scheduler dla kazdej \"szyny\" rownoleglej.",
+      "type": "NOTE",
+      "heading": "boundedElastic ma limity",
+      "body": "`boundedElastic()` służy do nieuniknionego blokującego I/O. Ma ograniczoną liczbę zasobów i kolejkę; zła konfiguracja nadal może doprowadzić do przeciążenia. Preferuj natywnie nieblokujące API. `parallel()` przeznaczono do krótkich obliczeń, nie do JDBC ani `Thread.sleep`.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Zasada: event-loop NIGDY nie moze byc zablokowany",
-      "body": "Watki event-loop Reactora (domyslny Schedulers.parallel() uzywany wewnatrz WebFlux) obsluguja WIELE jednoczesnych zadan na malej liczbie watkow - zablokowanie choc jednego z nich (np. przez synchroniczne JDBC) blokuje WSZYSTKIE inne zadania czekajace na ten sam watek, niwelujac cala korzysc z reaktywnosci.",
+      "type": "USAGE",
+      "heading": "Równoległa praca CPU",
+      "body": "Samo `publishOn(Schedulers.parallel())` nie rozdziela elementów `Flux` między rdzenie. `parallel().runOn(...).sequential()` tworzy rails; opłacalność zależy od kosztu pracy i narzutu podziału. Porównaj z wersją sekwencyjną na reprezentatywnym obciążeniu.",
+      "code": "Flux<Long> kwadraty = Flux.range(1, 1_000)\n    .parallel()\n    .runOn(Schedulers.parallel())\n    .map(n -> (long) n * n)\n    .sequential();"
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Za późne przeniesienie pracy",
+      "body": "`Mono.just(jdbcRepository.find(id))` uruchamia JDBC podczas składania, przed `subscribeOn`. `publishOn` za blokującym `map` też nie przeniesie wcześniejszej pracy. W WebFlux blokowanie wątku event-loop opóźnia inne żądania obsługiwane przez tę samą pętlę.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Podsumowanie 4 kluczowych Schedulerow",
-      "body": "Schedulers.boundedElastic() - pula dla operacji blokujacych (JDBC, pliki), rozmiar dynamicznie rosnie. Schedulers.parallel() - pula o rozmiarze = liczba rdzeni CPU, dla obliczen CPU-bound. Schedulers.immediate() - brak zmiany watku (synchroniczne wykonanie). Schedulers.single() - jeden, dedykowany watek dla sekwencyjnych zadan.",
+      "type": "CODE_WRONG",
+      "heading": "Praca wykonana przed schedulowaniem",
+      "body": "Poniższy kod tworzy `Mono` dopiero po `find`; scheduler nie ma czego przenieść.",
+      "code": "Mono<Rekord> zbytPozno = Mono.just(jdbcRepository.find(id))\n    .subscribeOn(Schedulers.boundedElastic());"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Leniwe źródło na właściwej puli",
+      "body": "`fromCallable` opóźnia wywołanie. Jeśli `find` zwróci `null`, `Mono.fromCallable` zakończy się pusto — ustal, czy to oczekiwane.",
+      "code": "Mono<Rekord> poprawnie = Mono.fromCallable(() -> jdbcRepository.find(id))\n    .subscribeOn(Schedulers.boundedElastic());"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Dobór Schedulerów",
+      "body": "`boundedElastic()` — blokujące I/O; `parallel()` — CPU-bound; `single()` — wspólny pojedynczy wątek; `immediate()` — bieżący wątek. `newBoundedElastic(threadCap, queuedTaskCap, name)` tworzy osobny Scheduler; zwolnij go przez `dispose()`. `subscribeOn` wpływa na subskrypcję upstream, `publishOn` na downstream; `parallel().runOn()` rozdziela rails.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Powiazanie z reszta kursu",
-      "body": "Pule watkow platformowych: `_05_multithreading`. Watki wirtualne jako alternatywne rozwiazanie tego samego problemu skalowania: `_28_java_evolution/Lesson19` (powiazanie w zadaniu zaawansowanym: benchmark parallel() vs watki wirtualne). R2DBC (reaktywny dostep do bazy, unikajacy problemu blokujacego JDBC): Lesson13.",
+      "type": "WHEN_TO_USE",
+      "heading": "Dobór według obciążenia",
+      "body": "Blokujące źródło opakuj w `fromCallable(...).subscribeOn(boundedElastic())`; przy dużym ruchu limituj współbieżność i obserwuj kolejkę. Dla CPU porównaj wykonanie sekwencyjne z równoległym. Izolacja tenantów osobnymi schedulerami wymaga limitów i zwalniania zasobów. Prawo Little'a pomaga szacować współbieżność przy stabilnym przepływie, ale nie daje uniwersalnego rozmiaru puli.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Zapamiętaj granice",
+      "body": "`subscribeOn` kieruje subskrypcję upstream, `publishOn` przestawia downstream. Blokujące API opóźnij i izoluj na `boundedElastic`; `parallel` zostaw obliczeniom. Scheduler sam nie zapewnia backpressure, izolacji bazy ani automatycznego przyspieszenia.",
       "code": null
     }
   ],
@@ -101,7 +143,7 @@
       "solution": "Wzorcowe rozwiazanie demonstruje domyslne zachowanie (kod dziala na watku wywolujacym subscribe()), a nastepnie uzywa subscribeOn(Schedulers.boundedElastic())/publishOn(Schedulers.parallel()) do jawnej kontroli watku w roznych miejscach lancucha - wypisujac Thread.currentThread().getName() przed i po kazdej zmianie, dowodzac ze subscribeOn wplywa na CALY lancuch niezaleznie od pozycji wywolania, a publishOn TYLKO na czesc PONIZEJ. Kazda symulowana operacja blokujaca (Thread.sleep udajacy JDBC) jest opakowana .subscribeOn(Schedulers.boundedElastic()), nigdy nie dzialajac na domyslnym event-loop. Obliczenia CPU-bound sa zrownoleglane przez .parallel().runOn(Schedulers.parallel()).sequential(). Zadania zaawansowane budowa hybrydowe pipeline'y laczace blokujace legacy wywolania z reaktywnymi operatorami, wlasne ThreadFactory z opisowymi nazwami watkow, narzedzia diagnostyczne watkowosci, oraz projektuja pelne wytyczne architektury watkowosci dla duzej aplikacji reaktywnej."
     },
     {
-      "prompt": "Opakuj legacy blokujace wywolanie JDBC (symulowane) `.subscribeOn(boundedElastic())`.",
+      "prompt": "Opakuj legacy blokujace wywolanie jdbc (symulowane) `.subscribeOn(boundedElastic())`.",
       "hint": "Uzyj Schedulers.boundedElastic()/parallel()/immediate() z subscribeOn/publishOn, aby kontrolowac, na jakim watku wykonuje sie dana czesc pipeline'u Mono/Flux - wypisz nazwe biezacego watku (Thread.currentThread().getName()) w kluczowych miejscach i porownaj zachowanie subscribeOn (caly lancuch od poczatku) z publishOn (tylko dalsza czesc). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie demonstruje domyslne zachowanie (kod dziala na watku wywolujacym subscribe()), a nastepnie uzywa subscribeOn(Schedulers.boundedElastic())/publishOn(Schedulers.parallel()) do jawnej kontroli watku w roznych miejscach lancucha - wypisujac Thread.currentThread().getName() przed i po kazdej zmianie, dowodzac ze subscribeOn wplywa na CALY lancuch niezaleznie od pozycji wywolania, a publishOn TYLKO na czesc PONIZEJ. Kazda symulowana operacja blokujaca (Thread.sleep udajacy JDBC) jest opakowana .subscribeOn(Schedulers.boundedElastic()), nigdy nie dzialajac na domyslnym event-loop. Obliczenia CPU-bound sa zrownoleglane przez .parallel().runOn(Schedulers.parallel()).sequential(). Zadania zaawansowane budowa hybrydowe pipeline'y laczace blokujace legacy wywolania z reaktywnymi operatorami, wlasne ThreadFactory z opisowymi nazwami watkow, narzedzia diagnostyczne watkowosci, oraz projektuja pelne wytyczne architektury watkowosci dla duzej aplikacji reaktywnej."
     },
@@ -151,7 +193,7 @@
       "solution": "Wzorcowe rozwiazanie demonstruje domyslne zachowanie (kod dziala na watku wywolujacym subscribe()), a nastepnie uzywa subscribeOn(Schedulers.boundedElastic())/publishOn(Schedulers.parallel()) do jawnej kontroli watku w roznych miejscach lancucha - wypisujac Thread.currentThread().getName() przed i po kazdej zmianie, dowodzac ze subscribeOn wplywa na CALY lancuch niezaleznie od pozycji wywolania, a publishOn TYLKO na czesc PONIZEJ. Kazda symulowana operacja blokujaca (Thread.sleep udajacy JDBC) jest opakowana .subscribeOn(Schedulers.boundedElastic()), nigdy nie dzialajac na domyslnym event-loop. Obliczenia CPU-bound sa zrownoleglane przez .parallel().runOn(Schedulers.parallel()).sequential(). Zadania zaawansowane budowa hybrydowe pipeline'y laczace blokujace legacy wywolania z reaktywnymi operatorami, wlasne ThreadFactory z opisowymi nazwami watkow, narzedzia diagnostyczne watkowosci, oraz projektuja pelne wytyczne architektury watkowosci dla duzej aplikacji reaktywnej."
     },
     {
-      "prompt": "Zbuduj integracje JDBC klasy produkcyjnej z prawidlowo dobranym rozmiarem `boundedElastic`.",
+      "prompt": "Zbuduj integracje jdbc klasy produkcyjnej z prawidlowo dobranym rozmiarem `boundedElastic`.",
       "hint": "Uzyj Schedulers.boundedElastic()/parallel()/immediate() z subscribeOn/publishOn, aby kontrolowac, na jakim watku wykonuje sie dana czesc pipeline'u Mono/Flux - wypisz nazwe biezacego watku (Thread.currentThread().getName()) w kluczowych miejscach i porownaj zachowanie subscribeOn (caly lancuch od poczatku) z publishOn (tylko dalsza czesc). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie demonstruje domyslne zachowanie (kod dziala na watku wywolujacym subscribe()), a nastepnie uzywa subscribeOn(Schedulers.boundedElastic())/publishOn(Schedulers.parallel()) do jawnej kontroli watku w roznych miejscach lancucha - wypisujac Thread.currentThread().getName() przed i po kazdej zmianie, dowodzac ze subscribeOn wplywa na CALY lancuch niezaleznie od pozycji wywolania, a publishOn TYLKO na czesc PONIZEJ. Kazda symulowana operacja blokujaca (Thread.sleep udajacy JDBC) jest opakowana .subscribeOn(Schedulers.boundedElastic()), nigdy nie dzialajac na domyslnym event-loop. Obliczenia CPU-bound sa zrownoleglane przez .parallel().runOn(Schedulers.parallel()).sequential(). Zadania zaawansowane budowa hybrydowe pipeline'y laczace blokujace legacy wywolania z reaktywnymi operatorami, wlasne ThreadFactory z opisowymi nazwami watkow, narzedzia diagnostyczne watkowosci, oraz projektuja pelne wytyczne architektury watkowosci dla duzej aplikacji reaktywnej."
     },
@@ -203,7 +245,7 @@
   ],
   "quiz": [
     {
-      "question": "Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na watku glownym (main)",
         "B": "Na watku, ktory wywolal subscribe()/block()",
@@ -240,16 +282,16 @@
       "options": {
         "A": "Do synchronicznego wykonania bez zmiany watku",
         "B": "Wylacznie do testow jednostkowych",
-        "C": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "C": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "D": "Do obliczen CPU-bound"
       },
       "correct": "C",
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
-        "A": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "A": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "B": "Wyjatek kompilacji",
         "C": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
         "D": "Automatyczne przekierowanie na boundedElastic przez Reactor"
@@ -291,7 +333,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "Spowoduje blad kompilacji",
         "B": "Wplynie tylko na ostatni operator",
@@ -313,7 +355,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Pytanie kontrolne: Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Pytanie kontrolne: Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na nowym watku z Schedulers.parallel()",
         "B": "Na watku, ktory wywolal subscribe()/block()",
@@ -348,7 +390,7 @@
     {
       "question": "Pytanie kontrolne: Do czego przeznaczony jest `Schedulers.boundedElastic()`?",
       "options": {
-        "A": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "A": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "B": "Do synchronicznego wykonania bez zmiany watku",
         "C": "Do obliczen CPU-bound",
         "D": "Wylacznie do testow jednostkowych"
@@ -357,11 +399,11 @@
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Pytanie kontrolne: Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Pytanie kontrolne: Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Automatyczne przekierowanie na boundedElastic przez Reactor",
         "B": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
-        "C": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "C": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "D": "Wyjatek kompilacji"
       },
       "correct": "C",
@@ -401,7 +443,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Pytanie kontrolne: Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Pytanie kontrolne: Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "I tak wplynie na caly lancuch od poczatku (subskrypcji), niezaleznie od pozycji",
         "B": "Zostanie zignorowane - musi byc na poczatku",
@@ -423,7 +465,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Sprawdz swoja wiedze: Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Sprawdz swoja wiedze: Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na nowym watku z Schedulers.parallel()",
         "B": "Zawsze na watku glownym (main)",
@@ -461,18 +503,18 @@
         "A": "Wylacznie do testow jednostkowych",
         "B": "Do obliczen CPU-bound",
         "C": "Do synchronicznego wykonania bez zmiany watku",
-        "D": "Do operacji blokujacych (JDBC, pliki, legacy API)"
+        "D": "Do operacji blokujacych (jdbc, pliki, legacy API)"
       },
       "correct": "D",
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Sprawdz swoja wiedze: Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Sprawdz swoja wiedze: Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
         "B": "Wyjatek kompilacji",
         "C": "Automatyczne przekierowanie na boundedElastic przez Reactor",
-        "D": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek"
+        "D": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek"
       },
       "correct": "D",
       "explanation": "To najpowazniejszy blad w kodzie reaktywnym - blokuje wspoldzielony, maly zasob watkow."
@@ -511,7 +553,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Sprawdz swoja wiedze: Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Sprawdz swoja wiedze: Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "I tak wplynie na caly lancuch od poczatku (subskrypcji), niezaleznie od pozycji",
         "B": "Spowoduje blad kompilacji",
@@ -533,7 +575,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Ktora odpowiedz jest poprawna? Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na watku glownym (main)",
         "B": "Na watku, ktory wywolal subscribe()/block()",
@@ -570,17 +612,17 @@
       "options": {
         "A": "Wylacznie do testow jednostkowych",
         "B": "Do obliczen CPU-bound",
-        "C": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "C": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "D": "Do synchronicznego wykonania bez zmiany watku"
       },
       "correct": "C",
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Ktora odpowiedz jest poprawna? Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Automatyczne przekierowanie na boundedElastic przez Reactor",
-        "B": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "B": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "C": "Wyjatek kompilacji",
         "D": "Nic - Reactor sam wykrywa i naprawia takie sytuacje"
       },
@@ -621,7 +663,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Ktora odpowiedz jest poprawna? Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "Zostanie zignorowane - musi byc na poczatku",
         "B": "Wplynie tylko na ostatni operator",
@@ -643,7 +685,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Wybierz poprawna odpowiedz. Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na nowym watku z Schedulers.parallel()",
         "B": "Na watku, ktory wywolal subscribe()/block()",
@@ -678,7 +720,7 @@
     {
       "question": "Wybierz poprawna odpowiedz. Do czego przeznaczony jest `Schedulers.boundedElastic()`?",
       "options": {
-        "A": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "A": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "B": "Do synchronicznego wykonania bez zmiany watku",
         "C": "Do obliczen CPU-bound",
         "D": "Wylacznie do testow jednostkowych"
@@ -687,12 +729,12 @@
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Wybierz poprawna odpowiedz. Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Automatyczne przekierowanie na boundedElastic przez Reactor",
         "B": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
         "C": "Wyjatek kompilacji",
-        "D": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek"
+        "D": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek"
       },
       "correct": "D",
       "explanation": "To najpowazniejszy blad w kodzie reaktywnym - blokuje wspoldzielony, maly zasob watkow."
@@ -731,7 +773,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Wybierz poprawna odpowiedz. Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "Spowoduje blad kompilacji",
         "B": "Wplynie tylko na ostatni operator",
@@ -753,7 +795,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera? (wybierz jedna odpowiedz)",
+      "question": "Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Zawsze na watku glownym (main)",
         "B": "Reactor rzuca wyjatek bez jawnego Schedulera",
@@ -788,7 +830,7 @@
     {
       "question": "Do czego przeznaczony jest `Schedulers.boundedElastic()`? (wybierz jedna odpowiedz)",
       "options": {
-        "A": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "A": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "B": "Wylacznie do testow jednostkowych",
         "C": "Do synchronicznego wykonania bez zmiany watku",
         "D": "Do obliczen CPU-bound"
@@ -797,10 +839,10 @@
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop? (wybierz jedna odpowiedz)",
+      "question": "Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Wyjatek kompilacji",
-        "B": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "B": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "C": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
         "D": "Automatyczne przekierowanie na boundedElastic przez Reactor"
       },
@@ -841,7 +883,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow? (wybierz jedna odpowiedz)",
+      "question": "Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Wplynie tylko na ostatni operator",
         "B": "Spowoduje blad kompilacji",
@@ -863,7 +905,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Zaznacz poprawna opcje: Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Zaznacz poprawna opcje: Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na nowym watku z Schedulers.parallel()",
         "B": "Na watku, ktory wywolal subscribe()/block()",
@@ -900,18 +942,18 @@
       "options": {
         "A": "Do obliczen CPU-bound",
         "B": "Do synchronicznego wykonania bez zmiany watku",
-        "C": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "C": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "D": "Wylacznie do testow jednostkowych"
       },
       "correct": "C",
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Zaznacz poprawna opcje: Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Zaznacz poprawna opcje: Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Automatyczne przekierowanie na boundedElastic przez Reactor",
         "B": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
-        "C": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "C": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "D": "Wyjatek kompilacji"
       },
       "correct": "C",
@@ -951,7 +993,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Zaznacz poprawna opcje: Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Zaznacz poprawna opcje: Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "Zostanie zignorowane - musi byc na poczatku",
         "B": "I tak wplynie na caly lancuch od poczatku (subskrypcji), niezaleznie od pozycji",
@@ -973,7 +1015,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Weryfikacja: Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Weryfikacja: Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Zawsze na nowym watku z Schedulers.parallel()",
         "B": "Zawsze na watku glownym (main)",
@@ -1011,18 +1053,18 @@
         "A": "Do synchronicznego wykonania bez zmiany watku",
         "B": "Wylacznie do testow jednostkowych",
         "C": "Do obliczen CPU-bound",
-        "D": "Do operacji blokujacych (JDBC, pliki, legacy API)"
+        "D": "Do operacji blokujacych (jdbc, pliki, legacy API)"
       },
       "correct": "D",
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Weryfikacja: Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Weryfikacja: Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
         "B": "Wyjatek kompilacji",
         "C": "Automatyczne przekierowanie na boundedElastic przez Reactor",
-        "D": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek"
+        "D": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek"
       },
       "correct": "D",
       "explanation": "To najpowazniejszy blad w kodzie reaktywnym - blokuje wspoldzielony, maly zasob watkow."
@@ -1061,7 +1103,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Weryfikacja: Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Weryfikacja: Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "Spowoduje blad kompilacji",
         "B": "I tak wplynie na caly lancuch od poczatku (subskrypcji), niezaleznie od pozycji",
@@ -1083,7 +1125,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Quiz: Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera?",
+      "question": "Quiz: Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera?",
       "options": {
         "A": "Na watku, ktory wywolal subscribe()/block()",
         "B": "Zawsze na watku glownym (main)",
@@ -1119,7 +1161,7 @@
       "question": "Quiz: Do czego przeznaczony jest `Schedulers.boundedElastic()`?",
       "options": {
         "A": "Do obliczen CPU-bound",
-        "B": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "B": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "C": "Wylacznie do testow jednostkowych",
         "D": "Do synchronicznego wykonania bez zmiany watku"
       },
@@ -1127,10 +1169,10 @@
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Quiz: Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop?",
+      "question": "Quiz: Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop?",
       "options": {
         "A": "Automatyczne przekierowanie na boundedElastic przez Reactor",
-        "B": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "B": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "C": "Wyjatek kompilacji",
         "D": "Nic - Reactor sam wykrywa i naprawia takie sytuacje"
       },
@@ -1171,7 +1213,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Quiz: Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow?",
+      "question": "Quiz: Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow?",
       "options": {
         "A": "Wplynie tylko na ostatni operator",
         "B": "Zostanie zignorowane - musi byc na poczatku",
@@ -1193,7 +1235,7 @@
       "explanation": "Scheduler jest reaktywnym odpowiednikiem ExecutorService - obydwa zarzadzaja pulami watkow do wykonania zadan."
     },
     {
-      "question": "Na jakim watku dziala pipeline Mono/Flux BEZ jawnego Schedulera? Wskaz prawidlowa odpowiedz.",
+      "question": "Na jakim watku dziala pipeline Mono/Flux bez jawnego Schedulera? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Na watku, ktory wywolal subscribe()/block()",
         "B": "Zawsze na nowym watku z Schedulers.parallel()",
@@ -1230,18 +1272,18 @@
       "options": {
         "A": "Do obliczen CPU-bound",
         "B": "Do synchronicznego wykonania bez zmiany watku",
-        "C": "Do operacji blokujacych (JDBC, pliki, legacy API)",
+        "C": "Do operacji blokujacych (jdbc, pliki, legacy API)",
         "D": "Wylacznie do testow jednostkowych"
       },
       "correct": "C",
       "explanation": "boundedElastic() ma dynamicznie rosnaca pule przeznaczona na kod blokujacy."
     },
     {
-      "question": "Co grozi uruchomieniem blokujacego wywolania (np. JDBC) na domyslnym watku event-loop? Wskaz prawidlowa odpowiedz.",
+      "question": "Co grozi uruchomieniem blokujacego wywolania (np. Jdbc) na domyslnym watku event-loop? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Automatyczne przekierowanie na boundedElastic przez Reactor",
         "B": "Nic - Reactor sam wykrywa i naprawia takie sytuacje",
-        "C": "Zablokowanie watku event-loop dla WSZYSTKICH innych zadan czekajacych na ten watek",
+        "C": "Zablokowanie watku event-loop dla wszystkich innych zadan czekajacych na ten watek",
         "D": "Wyjatek kompilacji"
       },
       "correct": "C",
@@ -1281,7 +1323,7 @@
       "explanation": "parallel()+runOn()+sequential() to standardowy wzorzec zrownoleglenia obliczen na Flux."
     },
     {
-      "question": "Co bedzie efektem umieszczenia `subscribeOn` na KONCU lancucha operatorow? Wskaz prawidlowa odpowiedz.",
+      "question": "Co bedzie efektem umieszczenia `subscribeOn` na koncu lancucha operatorow? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Zostanie zignorowane - musi byc na poczatku",
         "B": "Spowoduje blad kompilacji",
