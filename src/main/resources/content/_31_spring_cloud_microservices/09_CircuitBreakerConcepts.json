@@ -1,203 +1,239 @@
 {
   "theory": [
     {
-      "type": "CONCEPT",
-      "heading": "Problem: kaskadowa awaria (cascading failure)",
-      "body": "Serwis A wola serwis B. Serwis B zaczyna byc wolny/pada. Bez zabezpieczenia, serwis A czeka na kazde wywolanie do timeoutu - jego wlasne watki/polaczenia sie wyczerpuja, sam staje sie wolny/niedostepny - awaria \"rozlewa sie\" na kolejne serwisy, ktore woloja serwis A. Circuit breaker (wzorzec z ksiazki Michaela Nygarda \"Release It!\", 2007) zatrzymuje to szybko: po przekroczeniu progu bledow, przestaje w ogole probowac wolac B - zwraca blad natychmiast.",
+      "type": "INTRO",
+      "heading": "Gdy jeden padający serwis zabiera ze sobą resztę",
+      "body": "System rozproszony z lekcji 6-8 zyskał routing, konfigurację i load balancing — ale nic dotąd nie chroni go przed jednym, wolno działającym albo padającym serwisem. Ta lekcja pokazuje problem kaskadowej awarii i wzorzec, który go rozwiązuje na poziomie koncepcji — circuit breaker — zanim lekcja 10 pokaże konkretną implementację (Resilience4j).",
       "code": null
     },
     {
-      "type": "CONCEPT",
+      "type": "DEFINITION",
+      "heading": "Czym jest circuit breaker",
+      "body": "Circuit breaker (wzorzec opisany przez Michaela Nygarda w książce \"Release It!\", 2007) to mechanizm, który po przekroczeniu progu błędów w wywołaniach do danego serwisu PRZESTAJE w ogóle próbować go wołać — zwraca błąd (albo zdefiniowaną wartość zastępczą) NATYCHMIAST, bez rzeczywistej próby połączenia. Nazwa pochodzi z elektryki: bezpiecznik (circuit breaker) \"wybija\" obwód, zanim przeciążenie zniszczy coś więcej, zamiast pozwolić prądowi płynąć dalej mimo problemu.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Bezpiecznik elektryczny zamiast płonącej instalacji",
+      "body": "Bez bezpiecznika przeciążony obwód elektryczny płonąłby dalej, aż zniszczyłby całą instalację. Bezpiecznik wybija obwód przy pierwszych oznakach przeciążenia, chroniąc resztę domu kosztem chwilowego braku prądu w jednym miejscu. Circuit breaker w systemie rozproszonym robi dokładnie to samo — \"wybija\" połączenia do padającego serwisu, chroniąc resztę systemu przed rozlaniem się awarii.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jak kaskadowa awaria się rozlewa bez ochrony",
+      "body": "Serwis B pada/zwalnia → Serwis A czeka na KAŻDE wywołanie do timeoutu → wątki/połączenia serwisu A się wyczerpują → serwis A sam staje się wolny/niedostępny → Serwis C (woła A) też zaczyna czekać do timeoutu → ... → awaria rozlewa się po całym systemie, mimo że pierwotny problem dotyczył tylko jednego serwisu B.",
+      "code": null
+    },
+    {
+      "type": "CODE_BASIC",
       "heading": "Trzy stany circuit breakera",
-      "body": "CLOSED (zamkniety) - normalna praca, wywolania przechodza, breaker liczy sukcesy/porazki. OPEN (otwarty) - przekroczony prog bledow - wywolania natychmiast odrzucane, bez prawdziwej proby, przez okreslony czas (wait duration). HALF-OPEN (polotwarty) - po uplywie czasu, breaker przepuszcza ograniczona liczbe zadan testowych - jesli sie udaje, wraca do CLOSED; jesli nie, wraca do OPEN.",
+      "body": "CLOSED (zamknięty) to normalna praca — wywołania przechodzą, breaker liczy sukcesy i porażki. OPEN (otwarty) to stan po przekroczeniu progu błędów — wywołania są odrzucane NATYCHMIAST, bez rzeczywistej próby, przez ustalony czas. HALF_OPEN (półotwarty) to stan przejściowy po upłynięciu tego czasu — breaker przepuszcza ograniczoną liczbę zadań testowych, żeby sprawdzić, czy serwis już wrócił do zdrowia.",
+      "code": "enum Stan { CLOSED, OPEN, HALF_OPEN }\n\nclass ProstyCircuitBreaker {\n    private Stan stan = Stan.CLOSED;\n    private final Deque<Boolean> historia = new ArrayDeque<>();\n    private final int progBledowProcent;\n    private final int oknoProbek;\n}"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Logika wykonania z fallbackiem",
+      "body": "W stanie `OPEN` breaker zwraca fallback bez próby wywołania. W pozostałych stanach próbuje wykonać wywołanie, a wynik rejestruje i ewentualnie zmienia stan.",
+      "code": "<T> T wykonaj(Supplier<T> wywolanie, Supplier<T> fallback) {\n    if (stan == Stan.OPEN) return fallback.get(); // natychmiastowe odrzucenie\n    try {\n        T wynik = wywolanie.get();\n        zarejestruj(true);\n        if (stan == Stan.HALF_OPEN) stan = Stan.CLOSED; // test sie udal\n        return wynik;\n    } catch (RuntimeException e) {\n        zarejestruj(false);\n        if (stan == Stan.HALF_OPEN) stan = Stan.OPEN; // test sie nie udal\n        return fallback.get();\n    }\n}"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Przejście CLOSED → OPEN → HALF_OPEN na przykładzie",
+      "body": "1. Breaker startuje w stanie `CLOSED`, śledząc okno ostatnich N wywołań w strukturze `Deque<Boolean>`.\n2. Przy każdym wywołaniu wynik (sukces/porażka) trafia do okna; jeśli okno przekroczy rozmiar, najstarszy wynik jest usuwany (okno przesuwne).\n3. Przykład: 4 ostatnie próby to `[sukces, porażka, porażka, porażka]` — 75% błędów, powyżej progu 50% — breaker przechodzi do `OPEN`.\n4. Kolejne wywołanie w stanie `OPEN` jest odrzucane NATYCHMIAST — fallback bez jakiejkolwiek próby połączenia z serwisem.\n5. Po upłynięciu ustalonego czasu oczekiwania breaker przechodzi do `HALF_OPEN` i przepuszcza pojedyncze zadanie testowe.\n6. Sukces zadania testowego → powrót do `CLOSED` (serwis wygląda na zdrowy). Porażka → powrót do `OPEN` (serwis wciąż ma problem, kolejna szansa dopiero po następnym czasie oczekiwania).",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Prosty circuit breaker - logika wykonania",
-      "body": "<T> T wykonaj(Supplier<T> wywolanie, Supplier<T> fallback) { if (stan == OPEN) return fallback.get(); try { T wynik = wywolanie.get(); zarejestruj(true); if (stan==HALF_OPEN) stan=CLOSED; return wynik; } catch (RuntimeException e) { zarejestruj(false); if (stan==HALF_OPEN) stan=OPEN; return fallback.get(); } }",
+      "type": "NOTE",
+      "heading": "Dlaczego HALF_OPEN jest niezbędny",
+      "body": "Bez stanu `HALF_OPEN` breaker musiałby albo wrócić do `CLOSED` na ślepo (ryzyko natychmiastowego zalania jeszcze niegotowego serwisu pełnym ruchem), albo zostać w `OPEN` na zawsze (serwis nigdy nie dostałby szansy udowodnić, że już działa). `HALF_OPEN` to kompromis — ograniczona liczba zadań testowych weryfikuje stan przed pełnym otwarciem ruchu z powrotem.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Rejestrowanie wynikow i przejscie do OPEN",
-      "body": "void zarejestruj(boolean sukces) { historia.addLast(sukces); if (historia.size() > oknoProbek) historia.removeFirst(); if (stan==CLOSED && historia.size()>=oknoProbek) { int procentBledow = ...; if (procentBledow >= progBledowProcent) stan = OPEN; } } - okno przesuwne (Deque) sledzi ostatnie N wywolan, licząc procent porazek.",
+      "type": "USAGE",
+      "heading": "Circuit breaker kontra retry - różnica podejścia",
+      "body": "Retry (`_30_spring_messaging_and_async/Lesson13`, `_29_spring_reactive/Lesson07`) może POGORSZYĆ sytuację przy przeciążonym/padającym serwisie — każda kolejna próba dokłada obciążenia do i tak już zajętego systemu. Circuit breaker chroni przed tym scenariuszem — po wykryciu problemu przestaje w ogóle próbować, dając serwisowi czas na regenerację zamiast dobijać go kolejnymi próbami. W praktyce oba mechanizmy często współpracują: retry dla pojedynczych, przejściowych błędów, circuit breaker jako nadrzędna ochrona przed trwałym, powtarzającym się problemem.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Symulacja: 3/4 porazek -> OPEN -> HALF_OPEN",
-      "body": "ProstyCircuitBreaker breaker = new ProstyCircuitBreaker(50, 4); boolean[] wyniki = {true, false, false, false}; // 75% >= 50% -> OPEN - kolejne wywolanie przy stanie OPEN jest odrzucone natychmiast (fallback bez proby). Po symulowanym uplywie czasu (breaker.probaHalfOpen()) zadanie testowe decyduje o powrocie do CLOSED lub OPEN.",
+      "type": "PITFALL",
+      "heading": "Brak fallbacku zamienia ochronę w kolejny punkt awarii",
+      "body": "Circuit breaker bez sensownego fallbacku (np. rzucający dalej ten sam wyjątek) nie chroni przed niczym — tylko szybciej zgłasza tę samą awarię. Wartość circuit breakera bierze się z tego, że wywołujący dostaje SENSOWNĄ odpowiedź zastępczą (dane z cache, wartość domyślna, uprzejmy komunikat) zamiast czekać na timeout.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Dlaczego HALF_OPEN jest potrzebny",
-      "body": "Bez HALF_OPEN: breaker musialby albo wrocic do CLOSED na slepo (ryzyko zalania jeszcze niegotowego serwisu B pelnym ruchem), albo zostac w OPEN na zawsze (serwis B nigdy nie dostanie szansy udowodnic, ze juz dziala). HALF_OPEN to kompromis: ograniczona liczba zadan testowych weryfikuje stan przed pelnym otwarciem ruchu.",
+      "type": "CODE_WRONG",
+      "heading": "Fallback rzucający ten sam wyjątek",
+      "body": "Fallback, który tylko przepakowuje ten sam błąd, nie daje żadnej realnej ochrony wywołującemu.",
+      "code": "T fallback() {\n    throw new ServiceUnavailableException(\"Serwis B niedostepny\"); // to samo co bez breakera"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Fallback zwracający sensowną wartość zastępczą",
+      "body": "Fallback zwracający dane z cache albo bezpieczną wartość domyślną pozwala wywołującemu kontynuować działanie mimo awarii zależności.",
+      "code": "T fallback() {\n    return cache.getOrDefault(kluczZapytania, wartoscDomyslna); // realna ochrona"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Zapowiedź lekcji 10",
+      "body": "Ten prosty, ręcznie napisany circuit breaker ilustruje mechanikę, ale w praktyce nikt nie pisze go od zera — lekcja 10 pokaże Resilience4j zintegrowany ze Spring Cloud Circuit Breaker, z gotową, przetestowaną implementacją stanów, okien przesuwnych i konfiguracją deklaratywną zamiast ręcznego zarządzania stanem.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Circuit breaker vs retry - roznica podejscia",
-      "body": "Retry (ponawianie) moze POGORSZYC sytuacje przy przeciazonym/padajacym serwisie (kazda proba dokłada obciazenia do i tak juz zajetego systemu). Circuit breaker CHRONI przed tym - po wykryciu problemu przestaje w ogole probowac, dajac serwisowi czas na regeneracje.",
-      "code": null
-    },
-    {
-      "type": "CONCEPT",
-      "heading": "Powiazanie z reszta kursu",
-      "body": "Prawdziwa implementacja (Resilience4j + Spring Cloud Circuit Breaker): Lesson10. Integracja z Load Balancerem: Lesson08 (zadanie zaawansowane). Wzorzec bulkhead jako pokrewna technika izolacji: `_05_multithreading`.",
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "Circuit breaker chroni system przed kaskadową awarią — po przekroczeniu progu błędów przestaje w ogóle próbować wołać padający serwis, zwracając fallback natychmiast. Trzy stany (CLOSED, OPEN, HALF_OPEN) balansują między ochroną a szansą na regenerację serwisu. W odróżnieniu od retry, który może pogorszyć sytuację przeciążonego serwisu, circuit breaker aktywnie ogranicza ruch do niego. Fallback bez sensownej wartości zastępczej nie daje żadnej realnej ochrony.",
       "code": null
     }
   ],
   "exercises": [
     {
       "prompt": "Bez terminala - wyjasnij problem kaskadowej awarii (cascading failure).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Wymien 3 stany circuit breakera i krotko opisz kazdy.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj wlasny prosty circuit breaker (jak w lekcji).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Bez terminala - wyjasnij, dlaczego stan OPEN odrzuca zadania natychmiast.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Bez terminala - wyjasnij, dlaczego stan open odrzuca zadania natychmiast.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Bez terminala - wyjasnij cel stanu HALF_OPEN.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Bez terminala - wyjasnij cel stanu half_open.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Zasymuluj przekroczenie progu bledow wywolujace przejscie do OPEN.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Zasymuluj przekroczenie progu bledow wywolujace przejscie do open.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Zasymuluj udane zadanie testowe w HALF_OPEN, wracajace do CLOSED.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Zasymuluj udane zadanie testowe w half_open, wracajace do closed.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Zasymuluj nieudane zadanie testowe w HALF_OPEN, wracajace do OPEN.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Zasymuluj nieudane zadanie testowe w half_open, wracajace do open.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Bez terminala - wyjasnij, czym jest \"fallback\" w kontekscie circuit breakera.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Bez terminala - porownaj circuit breaker z wzorcem retry (retry moze pogorszyc sytuacje, breaker ja chroni).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj okno przesuwne (sliding window) oparte na liczbie zadan (nie stalym rozmiarze).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Dodaj minimalna liczbe wywolan przed oszacowaniem progu bledow (unikaj przedwczesnego OPEN).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Dodaj minimalna liczbe wywolan przed oszacowaniem progu bledow (unikaj przedwczesnego open).",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Zaimplementuj czasowy (nie reczny) czas oczekiwania przed HALF_OPEN.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Zaimplementuj czasowy (nie reczny) czas oczekiwania przed half_open.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Ogranicz liczbe zadan dopuszczonych w HALF_OPEN (nie tylko 1).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Ogranicz liczbe zadan dopuszczonych w half_open (nie tylko 1).",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Bez terminala - porownaj okno oparte na liczbie zadan z oknem opartym na czasie.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj osobne circuit breakery dla roznych serwisow ponizej (downstream).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaloguj przejscia miedzy stanami z znacznikami czasu.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Bez terminala - wyjasnij, ktore wyjatki powinny liczyc sie jako porazki (a ktore nie - np. 404 to nie awaria serwisu).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj fallback zwracajacy ostatnia znana, dobra wartosc z cache'u.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zbadaj i porownaj circuit breaker z wzorcem bulkhead (izolacja zasobow).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Zaimplementuj rosnacy (exponential backoff) czas oczekiwania miedzy kolejnymi probami OPEN->HALF_OPEN.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Zaimplementuj rosnacy (exponential backoff) czas oczekiwania miedzy kolejnymi probami open->half_open.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
-      "prompt": "Zaprojektuj metryki circuit breakera dla obserwowalnosci (liczba OPEN/CLOSED, czas w kazdym stanie).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Zaprojektuj metryki circuit breakera dla obserwowalnosci (liczba open/closed, czas w kazdym stanie).",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj circuit breaker bezpieczny watkowo (powiazanie z `_05_multithreading`).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaprojektuj integracje circuit breakera z Load Balancerem (Lesson08) - wykluczanie niezdrowych instancji.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zbadaj i porownaj Resilience4j z historycznym Netflix Hystrix (poprzednik, w trybie utrzymaniowym).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj lancuch circuit breakerow dla wywolania wieloskokowego (A->B->C).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaprojektuj strategie alertowania przy zdarzeniach otwarcia circuit breakera.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaimplementuj prog wolnych wywolan (slow call rate), nie tylko progu bledow.",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Bez terminala - porownaj circuit breaker na poziomie klienta a na poziomie Gateway (Lesson06-07).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     },
     {
       "prompt": "Zaprojektuj checkliste \"production-ready\" konfiguracji circuit breakera (progi/okna/fallbacki/metryki).",
-      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (CLOSED/OPEN/HALF_OPEN), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie CLOSED->OPEN po przekroczeniu progu, natychmiastowe odrzucenie w OPEN, oraz przejscie HALF_OPEN->CLOSED (sukces) lub HALF_OPEN->OPEN (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zaimplementuj (lub uzyj z demo lekcji) prosty circuit breaker z 3 stanami (closed/open/half_open), oknem przesuwnym probek (Deque<Boolean>) i progiem procentowym bledow - zademonstruj przejscie closed->open po przekroczeniu progu, natychmiastowe odrzucenie w open, oraz przejscie half_open->closed (sukces) lub half_open->open (porazka). Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie implementuje prosty circuit breaker (enum Stan {CLOSED, OPEN, HALF_OPEN}) z metoda wykonaj(Supplier<T> wywolanie, Supplier<T> fallback), oknem przesuwnym probek (Deque<Boolean>) sledzacym ostatnie N wynikow i obliczajacym procent porazek, oraz progiem powodujacym przejscie CLOSED->OPEN po jego przekroczeniu. Demonstruje kolejno: normalna prace (CLOSED), przekroczenie progu bledow (przejscie do OPEN), natychmiastowe odrzucenie kolejnego zadania w stanie OPEN (bez prawdziwej proby), symulowany uplyw czasu oczekiwania (przejscie do HALF_OPEN), oraz zadanie testowe decydujace o powrocie do CLOSED (sukces) lub OPEN (porazka). Zadania zaawansowane implementuja okno oparte na czasie zamiast liczbie probek, minimalna liczbe wywolan przed oszacowaniem progu, wykladnicze opoznienie miedzy probami HALF_OPEN, prog wolnych wywolan (nie tylko bledow), oraz projektuja checkliste production-ready konfiguracji circuit breakera."
     }
   ],
@@ -216,16 +252,16 @@
     {
       "question": "Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "ACTIVE, INACTIVE, PENDING",
-        "B": "CLOSED, OPEN, HALF_OPEN",
-        "C": "START, STOP, RESTART",
-        "D": "ON, OFF, PAUSED"
+        "A": "Active, inactive, pending",
+        "B": "Closed, open, half_open",
+        "C": "Start, stop, restart",
+        "D": "ON, off, paused"
       },
       "correct": "B",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Co dzieje sie w stanie OPEN?",
+      "question": "Co dzieje sie w stanie open?",
       "options": {
         "A": "Tylko polowa wywolan przechodzi",
         "B": "Breaker automatycznie naprawia serwis",
@@ -233,32 +269,32 @@
         "D": "Wywolania przechodza normalnie"
       },
       "correct": "C",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Co dzieje sie w stanie half_open?",
       "options": {
-        "A": "Wszystkie zadania przechodza jak w CLOSED",
+        "A": "Wszystkie zadania przechodza jak w closed",
         "B": "Breaker resetuje sie do stanu poczatkowego",
         "C": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
-        "D": "Wszystkie zadania sa odrzucane jak w OPEN"
+        "D": "Wszystkie zadania sa odrzucane jak w open"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
         "A": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
-        "B": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
+        "B": "Half_open jest potrzebny tylko w testach jednostkowych",
         "C": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
-        "D": "HALF_OPEN jest wymagany przez specyfikacje AMQP"
+        "D": "Half_open jest wymagany przez specyfikacje amqp"
       },
       "correct": "A",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Po okreslonej liczbie sekund niezaleznie od wynikow",
         "B": "Gdy procent bledow w oknie probek przekroczy skonfigurowany prog",
@@ -326,16 +362,16 @@
     {
       "question": "Pytanie kontrolne: Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "ON, OFF, PAUSED",
-        "B": "CLOSED, OPEN, HALF_OPEN",
-        "C": "START, STOP, RESTART",
-        "D": "ACTIVE, INACTIVE, PENDING"
+        "A": "ON, off, paused",
+        "B": "Closed, open, half_open",
+        "C": "Start, stop, restart",
+        "D": "Active, inactive, pending"
       },
       "correct": "B",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Pytanie kontrolne: Co dzieje sie w stanie OPEN?",
+      "question": "Pytanie kontrolne: Co dzieje sie w stanie open?",
       "options": {
         "A": "Wywolania sa natychmiast odrzucane, bez prawdziwej proby",
         "B": "Breaker automatycznie naprawia serwis",
@@ -343,32 +379,32 @@
         "D": "Tylko polowa wywolan przechodzi"
       },
       "correct": "A",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Pytanie kontrolne: Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Pytanie kontrolne: Co dzieje sie w stanie half_open?",
       "options": {
         "A": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
-        "B": "Wszystkie zadania przechodza jak w CLOSED",
-        "C": "Wszystkie zadania sa odrzucane jak w OPEN",
+        "B": "Wszystkie zadania przechodza jak w closed",
+        "C": "Wszystkie zadania sa odrzucane jak w open",
         "D": "Breaker resetuje sie do stanu poczatkowego"
       },
       "correct": "A",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Pytanie kontrolne: Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Pytanie kontrolne: Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
-        "A": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "A": "Half_open jest wymagany przez specyfikacje amqp",
         "B": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
         "C": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
-        "D": "HALF_OPEN jest potrzebny tylko w testach jednostkowych"
+        "D": "Half_open jest potrzebny tylko w testach jednostkowych"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Pytanie kontrolne: Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Pytanie kontrolne: Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Natychmiast po pierwszej porazce",
         "B": "Nigdy automatycznie - wymaga recznej interwencji",
@@ -436,16 +472,16 @@
     {
       "question": "Sprawdz swoja wiedze: Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "ON, OFF, PAUSED",
-        "B": "ACTIVE, INACTIVE, PENDING",
-        "C": "START, STOP, RESTART",
-        "D": "CLOSED, OPEN, HALF_OPEN"
+        "A": "ON, off, paused",
+        "B": "Active, inactive, pending",
+        "C": "Start, stop, restart",
+        "D": "Closed, open, half_open"
       },
       "correct": "D",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Sprawdz swoja wiedze: Co dzieje sie w stanie OPEN?",
+      "question": "Sprawdz swoja wiedze: Co dzieje sie w stanie open?",
       "options": {
         "A": "Breaker automatycznie naprawia serwis",
         "B": "Wywolania przechodza normalnie",
@@ -453,32 +489,32 @@
         "D": "Wywolania sa natychmiast odrzucane, bez prawdziwej proby"
       },
       "correct": "D",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Sprawdz swoja wiedze: Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Sprawdz swoja wiedze: Co dzieje sie w stanie half_open?",
       "options": {
         "A": "Breaker resetuje sie do stanu poczatkowego",
-        "B": "Wszystkie zadania sa odrzucane jak w OPEN",
-        "C": "Wszystkie zadania przechodza jak w CLOSED",
+        "B": "Wszystkie zadania sa odrzucane jak w open",
+        "C": "Wszystkie zadania przechodza jak w closed",
         "D": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia"
       },
       "correct": "D",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Sprawdz swoja wiedze: Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Sprawdz swoja wiedze: Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
         "A": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
-        "B": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
-        "C": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "B": "Half_open jest potrzebny tylko w testach jednostkowych",
+        "C": "Half_open jest wymagany przez specyfikacje amqp",
         "D": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia"
       },
       "correct": "D",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Sprawdz swoja wiedze: Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Sprawdz swoja wiedze: Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Nigdy automatycznie - wymaga recznej interwencji",
         "B": "Po okreslonej liczbie sekund niezaleznie od wynikow",
@@ -546,16 +582,16 @@
     {
       "question": "Ktora odpowiedz jest poprawna? Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "ACTIVE, INACTIVE, PENDING",
-        "B": "CLOSED, OPEN, HALF_OPEN",
-        "C": "START, STOP, RESTART",
-        "D": "ON, OFF, PAUSED"
+        "A": "Active, inactive, pending",
+        "B": "Closed, open, half_open",
+        "C": "Start, stop, restart",
+        "D": "ON, off, paused"
       },
       "correct": "B",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Co dzieje sie w stanie OPEN?",
+      "question": "Ktora odpowiedz jest poprawna? Co dzieje sie w stanie open?",
       "options": {
         "A": "Breaker automatycznie naprawia serwis",
         "B": "Wywolania przechodza normalnie",
@@ -563,32 +599,32 @@
         "D": "Tylko polowa wywolan przechodzi"
       },
       "correct": "C",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Ktora odpowiedz jest poprawna? Co dzieje sie w stanie half_open?",
       "options": {
         "A": "Breaker resetuje sie do stanu poczatkowego",
-        "B": "Wszystkie zadania sa odrzucane jak w OPEN",
+        "B": "Wszystkie zadania sa odrzucane jak w open",
         "C": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
-        "D": "Wszystkie zadania przechodza jak w CLOSED"
+        "D": "Wszystkie zadania przechodza jak w closed"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Ktora odpowiedz jest poprawna? Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
-        "A": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "A": "Half_open jest wymagany przez specyfikacje amqp",
         "B": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
-        "C": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
+        "C": "Half_open jest potrzebny tylko w testach jednostkowych",
         "D": "To jedynie kosmetyczna roznica bez znaczenia praktycznego"
       },
       "correct": "B",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Ktora odpowiedz jest poprawna? Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Natychmiast po pierwszej porazce",
         "B": "Gdy procent bledow w oknie probek przekroczy skonfigurowany prog",
@@ -656,16 +692,16 @@
     {
       "question": "Wybierz poprawna odpowiedz. Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "CLOSED, OPEN, HALF_OPEN",
-        "B": "ON, OFF, PAUSED",
-        "C": "ACTIVE, INACTIVE, PENDING",
-        "D": "START, STOP, RESTART"
+        "A": "Closed, open, half_open",
+        "B": "ON, off, paused",
+        "C": "Active, inactive, pending",
+        "D": "Start, stop, restart"
       },
       "correct": "A",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Co dzieje sie w stanie OPEN?",
+      "question": "Wybierz poprawna odpowiedz. Co dzieje sie w stanie open?",
       "options": {
         "A": "Wywolania sa natychmiast odrzucane, bez prawdziwej proby",
         "B": "Tylko polowa wywolan przechodzi",
@@ -673,32 +709,32 @@
         "D": "Breaker automatycznie naprawia serwis"
       },
       "correct": "A",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Wybierz poprawna odpowiedz. Co dzieje sie w stanie half_open?",
       "options": {
         "A": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
-        "B": "Wszystkie zadania przechodza jak w CLOSED",
-        "C": "Wszystkie zadania sa odrzucane jak w OPEN",
+        "B": "Wszystkie zadania przechodza jak w closed",
+        "C": "Wszystkie zadania sa odrzucane jak w open",
         "D": "Breaker resetuje sie do stanu poczatkowego"
       },
       "correct": "A",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Wybierz poprawna odpowiedz. Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
-        "A": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "A": "Half_open jest wymagany przez specyfikacje amqp",
         "B": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
-        "C": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
+        "C": "Half_open jest potrzebny tylko w testach jednostkowych",
         "D": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia"
       },
       "correct": "D",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Wybierz poprawna odpowiedz. Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Natychmiast po pierwszej porazce",
         "B": "Nigdy automatycznie - wymaga recznej interwencji",
@@ -766,16 +802,16 @@
     {
       "question": "Jakie sa 3 stany circuit breakera? (wybierz jedna odpowiedz)",
       "options": {
-        "A": "ACTIVE, INACTIVE, PENDING",
-        "B": "START, STOP, RESTART",
-        "C": "CLOSED, OPEN, HALF_OPEN",
-        "D": "ON, OFF, PAUSED"
+        "A": "Active, inactive, pending",
+        "B": "Start, stop, restart",
+        "C": "Closed, open, half_open",
+        "D": "ON, off, paused"
       },
       "correct": "C",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Co dzieje sie w stanie OPEN? (wybierz jedna odpowiedz)",
+      "question": "Co dzieje sie w stanie open? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Tylko polowa wywolan przechodzi",
         "B": "Breaker automatycznie naprawia serwis",
@@ -783,32 +819,32 @@
         "D": "Wywolania przechodza normalnie"
       },
       "correct": "C",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Co dzieje sie w stanie HALF_OPEN? (wybierz jedna odpowiedz)",
+      "question": "Co dzieje sie w stanie half_open? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
         "B": "Breaker resetuje sie do stanu poczatkowego",
-        "C": "Wszystkie zadania przechodza jak w CLOSED",
-        "D": "Wszystkie zadania sa odrzucane jak w OPEN"
+        "C": "Wszystkie zadania przechodza jak w closed",
+        "D": "Wszystkie zadania sa odrzucane jak w open"
       },
       "correct": "A",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED? (wybierz jedna odpowiedz)",
+      "question": "Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed? (wybierz jedna odpowiedz)",
       "options": {
-        "A": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
+        "A": "Half_open jest potrzebny tylko w testach jednostkowych",
         "B": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
         "C": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
-        "D": "HALF_OPEN jest wymagany przez specyfikacje AMQP"
+        "D": "Half_open jest wymagany przez specyfikacje amqp"
       },
       "correct": "B",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Kiedy breaker przechodzi z CLOSED do OPEN? (wybierz jedna odpowiedz)",
+      "question": "Kiedy breaker przechodzi z closed do open? (wybierz jedna odpowiedz)",
       "options": {
         "A": "Nigdy automatycznie - wymaga recznej interwencji",
         "B": "Gdy procent bledow w oknie probek przekroczy skonfigurowany prog",
@@ -876,16 +912,16 @@
     {
       "question": "Zaznacz poprawna opcje: Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "CLOSED, OPEN, HALF_OPEN",
-        "B": "START, STOP, RESTART",
-        "C": "ON, OFF, PAUSED",
-        "D": "ACTIVE, INACTIVE, PENDING"
+        "A": "Closed, open, half_open",
+        "B": "Start, stop, restart",
+        "C": "ON, off, paused",
+        "D": "Active, inactive, pending"
       },
       "correct": "A",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Zaznacz poprawna opcje: Co dzieje sie w stanie OPEN?",
+      "question": "Zaznacz poprawna opcje: Co dzieje sie w stanie open?",
       "options": {
         "A": "Wywolania sa natychmiast odrzucane, bez prawdziwej proby",
         "B": "Breaker automatycznie naprawia serwis",
@@ -893,32 +929,32 @@
         "D": "Tylko polowa wywolan przechodzi"
       },
       "correct": "A",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Zaznacz poprawna opcje: Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Zaznacz poprawna opcje: Co dzieje sie w stanie half_open?",
       "options": {
-        "A": "Wszystkie zadania sa odrzucane jak w OPEN",
-        "B": "Wszystkie zadania przechodza jak w CLOSED",
+        "A": "Wszystkie zadania sa odrzucane jak w open",
+        "B": "Wszystkie zadania przechodza jak w closed",
         "C": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
         "D": "Breaker resetuje sie do stanu poczatkowego"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Zaznacz poprawna opcje: Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Zaznacz poprawna opcje: Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
-        "A": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "A": "Half_open jest wymagany przez specyfikacje amqp",
         "B": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
         "C": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
-        "D": "HALF_OPEN jest potrzebny tylko w testach jednostkowych"
+        "D": "Half_open jest potrzebny tylko w testach jednostkowych"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Zaznacz poprawna opcje: Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Zaznacz poprawna opcje: Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Natychmiast po pierwszej porazce",
         "B": "Gdy procent bledow w oknie probek przekroczy skonfigurowany prog",
@@ -986,16 +1022,16 @@
     {
       "question": "Weryfikacja: Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "START, STOP, RESTART",
-        "B": "ON, OFF, PAUSED",
-        "C": "ACTIVE, INACTIVE, PENDING",
-        "D": "CLOSED, OPEN, HALF_OPEN"
+        "A": "Start, stop, restart",
+        "B": "ON, off, paused",
+        "C": "Active, inactive, pending",
+        "D": "Closed, open, half_open"
       },
       "correct": "D",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Weryfikacja: Co dzieje sie w stanie OPEN?",
+      "question": "Weryfikacja: Co dzieje sie w stanie open?",
       "options": {
         "A": "Breaker automatycznie naprawia serwis",
         "B": "Wywolania przechodza normalnie",
@@ -1003,32 +1039,32 @@
         "D": "Wywolania sa natychmiast odrzucane, bez prawdziwej proby"
       },
       "correct": "D",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Weryfikacja: Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Weryfikacja: Co dzieje sie w stanie half_open?",
       "options": {
-        "A": "Wszystkie zadania przechodza jak w CLOSED",
+        "A": "Wszystkie zadania przechodza jak w closed",
         "B": "Breaker resetuje sie do stanu poczatkowego",
-        "C": "Wszystkie zadania sa odrzucane jak w OPEN",
+        "C": "Wszystkie zadania sa odrzucane jak w open",
         "D": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia"
       },
       "correct": "D",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Weryfikacja: Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Weryfikacja: Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
         "A": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
-        "B": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
-        "C": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "B": "Half_open jest potrzebny tylko w testach jednostkowych",
+        "C": "Half_open jest wymagany przez specyfikacje amqp",
         "D": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia"
       },
       "correct": "D",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Weryfikacja: Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Weryfikacja: Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Natychmiast po pierwszej porazce",
         "B": "Nigdy automatycznie - wymaga recznej interwencji",
@@ -1096,16 +1132,16 @@
     {
       "question": "Quiz: Jakie sa 3 stany circuit breakera?",
       "options": {
-        "A": "ACTIVE, INACTIVE, PENDING",
-        "B": "START, STOP, RESTART",
-        "C": "CLOSED, OPEN, HALF_OPEN",
-        "D": "ON, OFF, PAUSED"
+        "A": "Active, inactive, pending",
+        "B": "Start, stop, restart",
+        "C": "Closed, open, half_open",
+        "D": "ON, off, paused"
       },
       "correct": "C",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Quiz: Co dzieje sie w stanie OPEN?",
+      "question": "Quiz: Co dzieje sie w stanie open?",
       "options": {
         "A": "Breaker automatycznie naprawia serwis",
         "B": "Wywolania przechodza normalnie",
@@ -1113,32 +1149,32 @@
         "D": "Tylko polowa wywolan przechodzi"
       },
       "correct": "C",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Quiz: Co dzieje sie w stanie HALF_OPEN?",
+      "question": "Quiz: Co dzieje sie w stanie half_open?",
       "options": {
-        "A": "Wszystkie zadania sa odrzucane jak w OPEN",
+        "A": "Wszystkie zadania sa odrzucane jak w open",
         "B": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
         "C": "Breaker resetuje sie do stanu poczatkowego",
-        "D": "Wszystkie zadania przechodza jak w CLOSED"
+        "D": "Wszystkie zadania przechodza jak w closed"
       },
       "correct": "B",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Quiz: Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED?",
+      "question": "Quiz: Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed?",
       "options": {
-        "A": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "A": "Half_open jest wymagany przez specyfikacje amqp",
         "B": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
-        "C": "HALF_OPEN jest potrzebny tylko w testach jednostkowych",
+        "C": "Half_open jest potrzebny tylko w testach jednostkowych",
         "D": "To jedynie kosmetyczna roznica bez znaczenia praktycznego"
       },
       "correct": "B",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Quiz: Kiedy breaker przechodzi z CLOSED do OPEN?",
+      "question": "Quiz: Kiedy breaker przechodzi z closed do open?",
       "options": {
         "A": "Gdy procent bledow w oknie probek przekroczy skonfigurowany prog",
         "B": "Po okreslonej liczbie sekund niezaleznie od wynikow",
@@ -1206,16 +1242,16 @@
     {
       "question": "Jakie sa 3 stany circuit breakera? Wskaz prawidlowa odpowiedz.",
       "options": {
-        "A": "CLOSED, OPEN, HALF_OPEN",
-        "B": "ACTIVE, INACTIVE, PENDING",
-        "C": "ON, OFF, PAUSED",
-        "D": "START, STOP, RESTART"
+        "A": "Closed, open, half_open",
+        "B": "Active, inactive, pending",
+        "C": "ON, off, paused",
+        "D": "Start, stop, restart"
       },
       "correct": "A",
       "explanation": "To standardowa maszyna stanow wzorca circuit breaker."
     },
     {
-      "question": "Co dzieje sie w stanie OPEN? Wskaz prawidlowa odpowiedz.",
+      "question": "Co dzieje sie w stanie open? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Wywolania sa natychmiast odrzucane, bez prawdziwej proby",
         "B": "Tylko polowa wywolan przechodzi",
@@ -1223,32 +1259,32 @@
         "D": "Breaker automatycznie naprawia serwis"
       },
       "correct": "A",
-      "explanation": "OPEN oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
+      "explanation": "Open oznacza calkowite zablokowanie prob wywolania zawodzacego serwisu."
     },
     {
-      "question": "Co dzieje sie w stanie HALF_OPEN? Wskaz prawidlowa odpowiedz.",
+      "question": "Co dzieje sie w stanie half_open? Wskaz prawidlowa odpowiedz.",
       "options": {
-        "A": "Wszystkie zadania sa odrzucane jak w OPEN",
-        "B": "Wszystkie zadania przechodza jak w CLOSED",
+        "A": "Wszystkie zadania sa odrzucane jak w open",
+        "B": "Wszystkie zadania przechodza jak w closed",
         "C": "Ograniczona liczba zadan testowych przechodzi, by sprawdzic czy serwis wrocil do zdrowia",
         "D": "Breaker resetuje sie do stanu poczatkowego"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
+      "explanation": "Half_open jest kompromisem miedzy pelnym zamknieciem a pelnym otwarciem ruchu."
     },
     {
-      "question": "Dlaczego HALF_OPEN jest potrzebny zamiast bezposredniego przejscia OPEN->CLOSED? Wskaz prawidlowa odpowiedz.",
+      "question": "Dlaczego half_open jest potrzebny zamiast bezposredniego przejscia open->closed? Wskaz prawidlowa odpowiedz.",
       "options": {
-        "A": "HALF_OPEN jest wymagany przez specyfikacje AMQP",
+        "A": "Half_open jest wymagany przez specyfikacje amqp",
         "B": "To jedynie kosmetyczna roznica bez znaczenia praktycznego",
         "C": "Unika ryzyka zalania jeszcze niegotowego serwisu pelnym ruchem, jednoczesnie dajac mu szanse udowodnic powrot do zdrowia",
-        "D": "HALF_OPEN jest potrzebny tylko w testach jednostkowych"
+        "D": "Half_open jest potrzebny tylko w testach jednostkowych"
       },
       "correct": "C",
-      "explanation": "HALF_OPEN to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
+      "explanation": "Half_open to bezpieczny \"test wody\" przed pelnym otwarciem ruchu."
     },
     {
-      "question": "Kiedy breaker przechodzi z CLOSED do OPEN? Wskaz prawidlowa odpowiedz.",
+      "question": "Kiedy breaker przechodzi z closed do open? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Po okreslonej liczbie sekund niezaleznie od wynikow",
         "B": "Natychmiast po pierwszej porazce",
