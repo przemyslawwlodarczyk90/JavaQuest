@@ -460,10 +460,33 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   faktycznie kod HTTP, a nie metoda Javy (np. `Map.get`, `List.put`, encja `Rezerwacja.delete`, itp.)
   przypadkowo złapana przez dopasowanie na granicy słowa.** Scommitowane finalnym commitem tej
   sesji.
-- **`_30_spring_messaging_and_async` (16 lekcji), `_31_spring_cloud_microservices` (19 lekcji) —
-  NIE ROZPOCZĘTE.** Ostatnie dwa rozdziały całego kursu. Migracja rozdziałami, po kolei, bez
-  pomijania żadnego, tym samym wzorcem (sprawdź format lekcji 1 każdego — prawdopodobnie stary
-  3-blokowy format jak reszta przed migracją).
+- **`_30_spring_messaging_and_async` (16/16 lekcji) — KOMPLETNE.** Cały rozdział przepisany z
+  formatu CONCEPT/CODE_EXAMPLE na standard 11 sekcji: `@Async`/`@EnableAsync` (1), konfiguracja
+  `ThreadPoolTaskExecutor` (2), `@Async` z `CompletableFuture` (3), `@Scheduled`/`@EnableScheduling`
+  (4), `ApplicationEvent`/`@EventListener` + `@Async` (5), surowe JMS (6), `JmsTemplate`/
+  `@JmsListener` (7), koncepcje AMQP/RabbitMQ (8), Spring AMQP (`RabbitTemplate`/`@RabbitListener`)
+  (9), koncepcje Kafki (10), Spring Kafka (`KafkaTemplate`/`@KafkaListener`) (11), wzorce
+  architektoniczne message-driven (12), retry + Dead Letter Queue (13), testowanie kodu
+  asynchronicznego/messagingu (14), RabbitMQ vs Kafka (15), kapston "JavaQuest Order Processing"
+  łączący cały rozdział (16). Wszystkie 16 plików zweryfikowane: poprawny JSON, teoria 14-15 bloków
+  w poprawnej kolejności 11 sekcji (API_REFERENCE tylko w lekcji 2 `ThreadPoolTaskExecutor` i 6
+  surowe JMS — reszta to mechanizmy/wzorce/porównania, nie katalogi metod jednej klasy),
+  `grep -c "native code"` = 0, brak cyrylicy, oryginalne 30 exercises + 100 quiz zachowane
+  liczbowo. **WAŻNE ODKRYCIE: `fix_http_method_case.js` NIE URUCHOMIONY na żadnej lekcji tego
+  rozdziału** — sprawdzono explicite, że jedyne dopasowania słów GET/POST/PUT/... w polach
+  narracyjnych to `Future.get()`/`CompletableFuture.get()` (prawdziwe wywołania metod Javy, nie
+  HTTP), więc uruchomienie skryptu uszkodziłoby je tak samo jak wcześniej `ConnectionFactories.get()`
+  w `_29/13_R2dbcIntro.json` — nauczka z tamtego bledu zastosowana świadomie. Zweryfikowane live
+  przez API po `mvnw.cmd resources:resources` + restarcie backendu (próbki lekcji 1, 4, 8, 11, 16)
+  + regresja na `_29_spring_reactive/17_ReactiveCapstone` bez zmian.
+- **`_31_spring_cloud_microservices` (1/19 lekcji) — W TOKU.** Lekcja 1 (Spring Cloud jako
+  "parasol" projektów, nie jeden framework — mapa modułów, własny BOM/release trains, brak
+  wymogu prawdziwej chmury) gotowa. **NASTĘPNY KROK: lekcja 2 `02_ServiceDiscoveryConcepts.json`**,
+  dalej po kolei aż do lekcji 19 (kapston, koniec CAŁEGO kursu — wszystkie 31 rozdziałów będą
+  wtedy na standardzie 11 sekcji). Ten sam wzorzec pracy co zawsze (patrz punkt 4 niżej) — PRZED
+  uruchomieniem `fix_http_method_case.js` na którejkolwiek lekcji tego rozdziału (Gateway/Feign
+  intensywnie wspominają HTTP) najpierw sprawdzić grep na dopasowania w kontekście (`.metoda(` vs
+  samodzielny czasownik), żeby uniknąć powtórki błędu z `_29/13_R2dbcIntro.json`.
 
 ## Ostatnia ukończona czynność
 
