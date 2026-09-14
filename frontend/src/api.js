@@ -34,3 +34,7 @@ export function getExercises(chapterSlug, lessonSlug) {
 export function getQuiz(chapterSlug, lessonSlug) {
   return getJson(lessonPath(chapterSlug, lessonSlug, 'quiz'))
 }
+
+export function getCriticalTopics() {
+  return getJson('/api/critical-topics')
+}
