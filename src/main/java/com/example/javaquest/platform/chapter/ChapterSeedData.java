@@ -356,6 +356,18 @@ public final class ChapterSeedData {
                     "14_SagaPatternIntro", "15_EventDrivenMicroservicesWithSpringCloudStream",
                     "16_SecurityAcrossMicroservices", "17_ContainerizingSpringBootApps",
                     "18_ObservabilityAcrossServices", "19_MicroservicesCapstone"
+            )),
+
+            // Etap 4 dopisany po zamknieciu Etapu 4 "migracja rozdzialami" (_01.._31) - nowy
+            // rozdzial pokrywajacy luke miedzy tym kursem a raportem rynkowym o rekrutacji
+            // (patrz "kytyyczne tematy.md" w katalogu glownym) - zakladka "Krytyczne" na
+            // platformie linkuje tu dla tematow algorytmicznych, ktorych kurs wczesniej nie mial.
+            new ChapterSeed("_32_algorithms_and_data_structures", "Algorytmy i struktury danych", List.of(
+                    "01_BigONotation", "02_ArraysAndStrings", "03_TwoPointers", "04_SlidingWindow",
+                    "05_HashMapPatterns", "06_StackAndQueuePatterns", "07_SortingAlgorithms",
+                    "08_BinarySearch", "09_Recursion", "10_LinkedListPatterns", "11_BinaryTrees",
+                    "12_BreadthFirstSearch", "13_DepthFirstSearch", "14_InterviewStrategy",
+                    "15_AlgorithmsCapstone"
             ))
     );
 
