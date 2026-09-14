@@ -435,24 +435,31 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `_01_fundamentals`. Scommitowane checkpointami WIP w ciągu sesji (lekcje 1-3 były już w toku z
   poprzedniej, przerwanej sesji), scommitowane finalnym commitem `7020eb0` ("Etap 4: rozdzial
   _28_java_evolution - 24/24 lekcje... - KOMPLETNE") po ośmiu WIP checkpointach z tej sesji.
-- **`_29_spring_reactive` (12/17 lekcji) — W TOKU.** Lekcje 1-5 gotowe i scommitowane WIP
-  checkpointami (`f04f14e`, `0c7883a`, `ca40313`): dlaczego reaktywność/C10K/backpressure (1),
-  specyfikacja Reactive Streams przez `java.util.concurrent.Flow` (2), Project Reactor - Mono/Flux
-  jako implementacja, lazy evaluation (3), Mono w szczególe - tworzenie/defaultIfEmpty/
-  switchIfEmpty/map vs flatMap (4), Flux w szczególe - skończony vs nieskończony/concat/zip/merge
-  (5). Wszystkie bez API_REFERENCE (tematy koncepcyjne) — ocenić per-lekcja dalej (Lesson12
-  WebClientDeepDive może uzasadniać katalog metod, ocenić przy pisaniu). Lekcje 6-8 gotowe:
-  operatory `map`/`flatMap`/`concatMap` i kolejność (6), lokalna obsługa błędów, retry, fallback
-  i idempotencja (7), `subscribeOn`/`publishOn`, izolacja blokującego I/O i CPU-bound (8).
-  Lekcje 9-12 gotowe: uczciwe porównanie MVC/WebFlux i wybór serwera (9), kontrakt kontrolera,
-  statusy i SSE (10), WebFlux.fn oraz filtry routera (11), WebClient, statusy, agregacja i retry
-  (12). Lekcje 6-12 mają 14 lub 15 bloków teorii, 30 exercises i 100 quiz; JSON, wymagane typy,
-  brak cyrylicy i `native code` sprawdzone statycznie. Lekcje 9-12 przeszły też
-  `fix_http_method_case.js`. **NASTĘPNY KROK: lekcja 13 `13_R2dbcIntro.json`**, dalej: 14
-  (ReactiveSecurity), 15 (TestingReactiveCodeWithStepVerifier), 16 (WhenToUseReactiveVsBlocking), 17
-  (ReactiveCapstone, koniec rozdziału). Po lekcji 17: pełna walidacja + `mvnw.cmd resources:resources`
-  + restart backendu + curl weryfikacyjny na próbce + regresja + JEDEN finalny commit "Etap 4:
-  rozdzial _29_spring_reactive - KOMPLETNE (17/17)".
+- **`_29_spring_reactive` (17/17 lekcji) — KOMPLETNE.** Cały rozdział przepisany na standard 11
+  sekcji: dlaczego reaktywność/C10K/backpressure (1), specyfikacja Reactive Streams przez
+  `java.util.concurrent.Flow` (2), Project Reactor - Mono/Flux jako implementacja, lazy evaluation
+  (3), Mono w szczególe (4), Flux w szczególe (5), operatory map/flatMap/concatMap (6), obsługa
+  błędów/retry/fallback (7), subscribeOn/publishOn (8), MVC vs WebFlux (9), kontrakt kontrolera/SSE
+  (10), WebFlux.fn (11), WebClient (12), R2DBC (13), Reactive Security (14), StepVerifier (15),
+  kiedy reaktywność a kiedy blokujący kod (16), kapston łączący cały rozdział z realnym gapem
+  naprawionym w teorii (status 201/204 wyprowadzany z wyniku zapisu/liczby usuniętych wierszy, nie
+  zakładany z góry) (17). Wszystkie 17 plików zweryfikowane: poprawny JSON, teoria 14-15 bloków w
+  poprawnej kolejności 11 sekcji + API_REFERENCE gdzie uzasadnione (12/17 lekcji ma API_REFERENCE;
+  1-3, 5, 9 i 16 świadomie bez — czyste koncepcje/porównania), `grep -c "native code"` = 0, brak
+  cyrylicy, oryginalne 30 exercises + 100 quiz zachowane liczbowo w każdym pliku. Zweryfikowane
+  live przez API po `mvnw.cmd resources:resources` + restarcie backendu (lekcje 13-17 + regresja na
+  `_01_fundamentals` bez zmian) — backend zatrzymany po weryfikacji.
+  **BŁĄD ZNALEZIONY I NAPRAWIONY w tej sesji: `fix_http_method_case.js` uszkodził prawdziwy kod R2DBC
+  w `13_R2dbcIntro.json`** — skrypt zamienił `ConnectionFactories.get(...)` i `row.get(...)`
+  (legalne wywołania metod Javy w polu `hint`, nie HTTP GET) na `.GET(...)`, bo dopasowuje słowo
+  "get" bez względu na to, czy jest poprzedzone kropką (wywołanie metody) czy nie (czasownik HTTP).
+  Naprawiono ręcznie (41 wystąpień cofniętych do `.get(`). **Wniosek na przyszłość (rozdziały 30-31):
+  NIE uruchamiaj `fix_http_method_case.js` "na wszelki wypadek" na lekcjach, które nie dotyczą
+  bezpośrednio HTTP/REST — dla lekcji, które trzeba nim objąć, PO uruchomieniu sprawdź
+  `grep -nE '\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\(' plik.json` i ręcznie zweryfikuj, czy to
+  faktycznie kod HTTP, a nie metoda Javy (np. `Map.get`, `List.put`, encja `Rezerwacja.delete`, itp.)
+  przypadkowo złapana przez dopasowanie na granicy słowa.** Scommitowane finalnym commitem tej
+  sesji.
 - **`_30_spring_messaging_and_async` (16 lekcji), `_31_spring_cloud_microservices` (19 lekcji) —
   NIE ROZPOCZĘTE.** Ostatnie dwa rozdziały całego kursu. Migracja rozdziałami, po kolei, bez
   pomijania żadnego, tym samym wzorcem (sprawdź format lekcji 1 każdego — prawdopodobnie stary
