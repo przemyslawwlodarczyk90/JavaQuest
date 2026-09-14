@@ -1,209 +1,251 @@
 {
   "theory": [
     {
-      "type": "CONCEPT",
-      "heading": "Skladnia identyczna z Spring MVC - jedyna roznica: typy zwracane",
-      "body": "Skladnia jest identyczna z `_22_spring_web` (te same adnotacje: @RestController, @GetMapping, @PathVariable, @RequestBody) - jedyna roznica: typy zwracane. Spring MVC zwraca T/ResponseEntity<T> bezposrednio, Spring WebFlux zwraca Mono<T>/Flux<T> - Spring SAM subskrybuje sie do tych typow i obsluguje serializacje/pisanie do odpowiedzi asynchronicznie, w miare jak dane sa gotowe.",
+      "type": "INTRO",
+      "heading": "Kontroler reaktywny to kontrakt HTTP",
+      "body": "Adnotacje z Spring MVC są znajome, ale projektowanie reaktywnego endpointu wymaga decyzji o statusie, błędach, strumieniowaniu i subskrypcji. Zbudujemy odczyt, zapis i Server-Sent Events, a przy każdym pokażemy, co faktycznie dzieje się z `Mono` lub `Flux`.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "GET zwracajacy Flux - kolekcja elementow",
-      "body": "@GetMapping public Flux<Ksiazka> wszystkie() { return Flux.fromIterable(baza.values()); } - Spring sam streamuje elementy do klienta w miare ich gotowosci, bez czekania na cala kolekcje naraz.",
+      "type": "DEFINITION",
+      "heading": "Spring subskrybuje zwrócony Publisher",
+      "body": "W kontrolerze WebFlux zwróć `Mono<T>` dla co najwyżej jednej wartości albo `Flux<T>` dla wielu. Framework subskrybuje Publisher, koduje sygnały do odpowiedzi i reaguje na `onComplete`/`onError`; nie wywołuj `subscribe()` ani `block()` ręcznie w handlerze. `@RestController`, `@GetMapping`, `@RequestBody` i `@PathVariable` wyglądają znajomo, ale sam typ zwracany nie rozstrzyga, czy aplikacja działa na WebFlux.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "GET zwracajacy Mono<ResponseEntity<T>> - pelna kontrola statusu",
-      "body": "@GetMapping(\"/{id}\") public Mono<ResponseEntity<Ksiazka>> jedna(@PathVariable String id) { Ksiazka k = baza.get(id); return k != null ? Mono.just(ResponseEntity.ok(k)) : Mono.just(ResponseEntity.notFound().build()); } - pelna kontrola statusu/naglowkow (jak `_22_spring_web/Lesson06`), ale asynchronicznie.",
+      "type": "ANALOGY",
+      "heading": "Zamówienie z etapami realizacji",
+      "body": "Metoda kontrolera nie wręcza od razu gotowej paczki: przekazuje plan dostawy (`Mono`/`Flux`). Serwer uruchamia plan, koduje gotowe elementy i zamyka odpowiedź po zakończeniu. `ResponseEntity` pozwala osobno ustalić etykietę przesyłki — status i nagłówki — gdy są już znane.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "POST z @RequestBody Mono<T>",
-      "body": "@PostMapping public Mono<ResponseEntity<Ksiazka>> dodaj(@RequestBody Mono<Ksiazka> nowaKsiazka) { return nowaKsiazka.map(k -> { baza.put(k.id(), k); return ResponseEntity.status(CREATED).body(k); }); } - cialo zadania SAMO jest Mono (deserializacja JSON asynchroniczna, nie blokuje watku).",
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Status i treść mogą być gotowe w różnym czasie",
+      "body": "`Mono<ResponseEntity<T>>` czeka na sygnał, by zdecydować o statusie, np. 200 albo 404. `ResponseEntity<Flux<T>>` może określić status i nagłówki wcześniej, podczas gdy elementy ciała dopiero napływają. Po wysłaniu nagłówków nie można już zmienić 200 na 404 z powodu późniejszego błędu kodowania.",
+      "code": "GET /books/7 → findById(7) → Mono<Book>\n                    ├─ onNext(book) → 200 + JSON\n                    └─ onComplete bez wartości → 404\nGET /events → 200 text/event-stream → event 1 → event 2 → ..."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "GET z jednoznacznym 404",
+      "body": "`switchIfEmpty` przenosi brak wartości na status 404. Źródło `repository.findById(id)` jest tutaj reaktywne; blokującego JDBC nie wolno wstawiać bez izolacji z lekcji 8.",
+      "code": "@GetMapping(\"/{id}\")\nMono<ResponseEntity<Book>> jedna(@PathVariable String id) {\n    return repository.findById(id)\n        .map(ResponseEntity::ok)\n        .defaultIfEmpty(ResponseEntity.notFound().build());\n}"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "POST z reaktywnym ciałem i statusem",
+      "body": "`@RequestBody Mono<Book>` pozwala asynchronicznie odczytać JSON. `@Valid` uruchamia walidację Bean Validation (o ile jest skonfigurowana); niepoprawny obiekt powoduje `WebExchangeBindException` i domyślnie status 400. `repository.save` zakładamy jako nieblokujące `Mono<Book>`. `flatMap` jest potrzebny, bo zapis zwraca Publisher. Brak wymaganego ciała również musi być sprawdzony w teście kontraktowym.",
+      "code": "@PostMapping\nMono<ResponseEntity<Book>> dodaj(@Valid @RequestBody Mono<Book> body) {\n    return body\n        .flatMap(repository::save)\n        .map(saved -> ResponseEntity.status(HttpStatus.CREATED).body(saved));\n}"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Życie jednego żądania POST",
+      "body": "1. WebFlux dopasowuje trasę i tworzy Publisher dla ciała żądania.\n2. Framework wywołuje metodę kontrolera; ta składa łańcuch bez blokowania.\n3. Subskrypcja frameworka uruchamia dekodowanie `Mono<Book>`.\n4. Po `onNext` `flatMap` uruchamia nieblokujący zapis.\n5. Wynik zapisu staje się `ResponseEntity` ze statusem 201 i zakodowanym JSON.\n6. Błąd przed wysłaniem odpowiedzi może trafić do obsługi wyjątku; po zatwierdzeniu nagłówków statusu nie da się już zmienić.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Server-Sent Events - streaming danych w czasie",
-      "body": "@GetMapping(value = \"/strumien\", produces = MediaType.TEXT_EVENT_STREAM_VALUE) public Flux<Ksiazka> strumien() { return Flux.fromIterable(baza.values()).delayElements(Duration.ofMillis(20)); } - WLASCIWY use case dla WebFlux: dane strumieniowe emitowane z opoznieniem, klient odbiera je stopniowo, nie wszystkie naraz.",
+      "type": "NOTE",
+      "heading": "Flux i media type: nie każdy JSON płynie natychmiast",
+      "body": "`Flux<Book>` nie oznacza automatycznie, że przeglądarka zobaczy każdy element od razu. Zachowanie flush zależy od typu mediów i kodera; dla jawnego strumieniowania użyj `text/event-stream` (SSE) lub odpowiedniego formatu streaming JSON/NDJSON. `collectList()` na kliencie czeka do `onComplete` i buforuje całość; nie stosuj go do nieskończonego SSE.",
       "code": null
     },
     {
-      "type": "CODE_EXAMPLE",
-      "heading": "Weryfikacja przez WebClient",
-      "body": "List<Ksiazka> ksiazki = client.get().uri(\"/api/ksiazki\").retrieve().bodyToFlux(Ksiazka.class).collectList().block(); - bodyToFlux() dla kolekcji, bodyToMono() dla pojedynczego obiektu - 404 daje WebClientResponseException.NotFound zlapany przez try-catch.",
+      "type": "USAGE",
+      "heading": "SSE dla danych na bieżąco",
+      "body": "SSE działa w jednym kierunku: serwer wysyła zdarzenia do klienta przez długotrwałe połączenie HTTP. `delayElements` jest tylko demonstracją. W produkcji potrzebujesz źródła zdarzeń, polityki odłączania powolnych klientów, heartbeat oraz limitów pamięci i połączeń. Testuj odbiór pierwszych zdarzeń bez czekania na koniec nieskończonego strumienia.",
+      "code": "@GetMapping(value = \"/events\", produces = MediaType.TEXT_EVENT_STREAM_VALUE)\nFlux<Book> events() {\n    return repository.changes(); // źródło reaktywne, nieblokujące\n}"
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Błędy statusu i ukryty koszt pamięci",
+      "body": "`Mono.empty()` z endpointu zwracającego obiekt nie jest automatycznie semantycznym 404; ustaw status świadomie. `collectList` może zapełnić pamięć przy nieograniczonym `Flux`. `skip`/`take` jako pozorna paginacja może wymagać przejścia wielu rekordów, jeśli źródło nie obsługuje paginacji; preferuj limit w bazie. `cache()` na Publisherze może współdzielić dane między użytkownikami — określ klucz, TTL i unieważnianie.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "collectList (czekaj na wszystko) vs SSE (dane na biezaco)",
-      "body": "collectList() na kliencie CZEKA na caly strumien przed zwroceniem wyniku (uzywane w demo/testach) - w prawdziwej aplikacji klient (np. przegladarka z EventSource) odbiera dane Server-Sent Events NA BIEZACO, w miare ich emitowania przez serwer, bez czekania na komplet.",
+      "type": "CODE_WRONG",
+      "heading": "Ręczna subskrypcja gubi wynik",
+      "body": "`subscribe()` uruchamia strumień poza cyklem odpowiedzi HTTP. Kontroler zwraca zanim zapis się zakończy, błędy i anulowanie po rozłączeniu klienta nie są poprawnie powiązane z żądaniem.",
+      "code": "@PostMapping\nMono<Void> dodaj(@RequestBody Mono<Book> body) {\n    body.flatMap(repository::save).subscribe(); // błąd\n    return Mono.empty();\n}"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Zwróć cały łańcuch frameworkowi",
+      "body": "Wartość zwracana reprezentuje zakończenie zapisu; Spring subskrybuje ją i zarządza odpowiedzią. Dla 201 z ciałem użyj wariantu `Mono<ResponseEntity<Book>>` z wcześniejszego przykładu.",
+      "code": "@PostMapping\nMono<Void> dodaj(@RequestBody Mono<Book> body) {\n    return body.flatMap(repository::save).then();\n}"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Elementy kontraktu kontrolera",
+      "body": "`@GetMapping`, `@PostMapping`, `@DeleteMapping` — metoda HTTP; `@PathVariable` i `@RequestParam` — parametry; `@RequestBody Mono<T>` — reaktywne ciało. `Mono<ResponseEntity<T>>` odracza decyzję o statusie; `ResponseEntity<Flux<T>>` ustala ją wcześniej. `MediaType.TEXT_EVENT_STREAM_VALUE` oznacza SSE. `WebFilter` działa w reaktywnym łańcuchu żądań, a `WebTestClient` testuje endpoint bez ręcznego `block()` w kodzie kontrolera.",
       "code": null
     },
     {
-      "type": "CONCEPT",
-      "heading": "Powiazanie z reszta kursu",
-      "body": "Skladnia kontrolerow MVC: `_22_spring_web` (Lesson01-19). ResponseEntity/statusy: `_22_spring_web/Lesson06`. Upload plikow (Flux<DataBuffer>): `_22_spring_web/Lesson14`. Content negotiation: `_18_rest_api/Lesson07`. Testowanie reaktywnych kontrolerow (WebTestClient): `_27_spring_test`.",
+      "type": "WHEN_TO_USE",
+      "heading": "Granice większego API",
+      "body": "Dla CRUD dodaj walidację DTO, spójne mapowanie wyjątków, statusy 201/204/404 i testy kontraktowe. Dla agregacji niezależnych wywołań użyj `Mono.zip`; dla kontekstu tenanta `Context`, a nie pole w singletonowym kontrolerze. Przy uploadzie `DataBuffer` wymaga ostrożności z rozmiarem i zarządzaniem buforami. Rate limiting, cache i bezpieczeństwo aplikuj w odpowiednich warstwach, nie jako ukryte skutki uboczne w `map`.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Oddaj sterowanie WebFlux",
+      "body": "Metoda kontrolera składa i zwraca `Mono`/`Flux`; WebFlux subskrybuje i zapisuje odpowiedź. Status 404 lub 201 ustal jawnie, wybierz odpowiedni media type dla strumienia i nie blokuj event-loop. Ręczne `subscribe()` oraz nieograniczone `collectList()` są częstymi błędami.",
       "code": null
     }
   ],
   "exercises": [
     {
       "prompt": "Stworz metode `@RestController` zwracajaca `Flux<String>`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Stworz metode zwracajaca `Mono<ResponseEntity<T>>`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Uzyj `@PathVariable` w reaktywnej metodzie kontrolera.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Obsluz `@RequestBody Mono<Dto>` w metodzie POST.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zwroc 404 uzywajac `Mono.just(ResponseEntity.notFound().build())`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Uzyj `WebClient` do wywolania endpointu GET zwracajacego `Flux`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
-      "prompt": "Powiaz z `_22_spring_web` - porownaj skladnie kontrolera MVC a WebFlux obok siebie.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Powiaz z `_22_spring_web` - porownaj skladnie kontrolera mvc a WebFlux obok siebie.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj endpoint DELETE zwracajacy `Mono<Void>`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Uzyj `@RequestParam` w reaktywnym kontrolerze do filtrowania.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Bez terminala - wyjasnij, jak Spring sam subskrybuje sie do zwroconego `Mono`/`Flux`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj endpoint Server-Sent Events z `delayElements`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj stronicowany endpoint reaktywny uzywajac `skip`/`take` na `Flux`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj walidacje w reaktywnym kontrolerze uzywajac `filter`/`onErrorResume`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj endpoint agregujacy 2 wywolania reaktywnego serwisu (`Mono.zip`).",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Powiaz z `_22_spring_web/Lesson09` - zaimplementuj `@ExceptionHandler` dla reaktywnego kontrolera.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
-      "prompt": "Porownaj opoznienie `collectList()` (czekaj na wszystko) z streamingiem SSE (dane na biezaco).",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "prompt": "Porownaj opoznienie `collectList()` (czekaj na wszystko) z streamingiem sse (dane na biezaco).",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj endpoint upload pliku uzywajac `Flux<DataBuffer>` (powiazanie z `_22_spring_web/Lesson14`).",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj warunkowa odpowiedz oparta na naglowku `Accept` (powiazanie z `_18_rest_api/Lesson07`).",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj reaktywny endpoint health-check laczacy sprawdzenia wielu zaleznosci.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj logowanie zadan uzywajac `WebFilter` (reaktywny odpowiednik `Filter`, `_07_servlets`).",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj pelne reaktywne API CRUD z walidacja i obsluga bledow.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj endpoint powiadomien w czasie rzeczywistym uzywajac `Flux.create`/`Sinks`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj endpoint z ograniczonym tempem (powiazanie z `_18_rest_api/Lesson16`) uzywajac wlasnego `WebFilter`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj warstwe cache dla reaktywnego endpointu uzywajac `.cache()`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj zlozony endpoint agregujacy wywolujacy 3 podrzedne serwisy reaktywne.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj lagodna odpowiedz bledu przy timeout w reaktywnym kontrolerze.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zbuduj endpoint streamingowy swiadomy backpressure dla duzego zbioru danych.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaimplementuj wielodzierzawcze (multi-tenant) API uzywajac `Context` do propagacji tenanta.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Powiaz z `_27_spring_test` - zbuduj kompleksowy pakiet testow uzywajac `WebTestClient`.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     },
     {
       "prompt": "Zaprojektuj pelna architekture API reaktywnego dla aplikacji dashboardu w czasie rzeczywistym.",
-      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE z delayElements) - uruchom w kontekscie WebApplicationType.REACTIVE z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
+      "hint": "Zbuduj @RestController z metodami zwracajacymi Flux<T> (kolekcja), Mono<ResponseEntity<T>> (pojedynczy obiekt z kontrola statusu), @RequestBody Mono<T> (POST), oraz endpoint Server-Sent Events (produces=text_event_stream_value z delayElements) - uruchom w kontekscie WebApplicationType.Reactive z jawnym NettyReactiveWebServerFactory i zweryfikuj przez WebClient AssertJ. Dla zadan opisowych (bez terminala) napisz zwiezle wyjasnienie jako String wypisywany przez System.out.println.",
       "solution": "Wzorcowe rozwiazanie buduje @RestController z metodami analogicznymi do demo lekcji: GET zwracajacy Flux<T> dla kolekcji (Spring streamuje elementy w miare gotowosci), GET z @PathVariable zwracajacy Mono<ResponseEntity<T>> (ok() dla znalezionego, notFound() dla brakujacego), POST z @RequestBody Mono<T> (deserializacja asynchroniczna przez map), oraz endpoint Server-Sent Events (produces=TEXT_EVENT_STREAM_VALUE, Flux z delayElements symulujacy strumieniowanie w czasie) - kontekst uruchamiany z wymuszonym WebApplicationType.REACTIVE i jawnym bean NettyReactiveWebServerFactory, weryfikacja przez WebClient (bodyToFlux/bodyToMono, obsluga WebClientResponseException.NotFound dla 404) i asercje AssertJ. Zadania zaawansowane implementuja stronicowanie reaktywne, walidacje z onErrorResume, agregacje wielu wywolan przez Mono.zip, WebFilter (reaktywny odpowiednik Filter), upload plikow przez Flux<DataBuffer>, oraz projektuja pelna architekture API reaktywnego dla dashboardu czasu rzeczywistego."
     }
   ],
   "quiz": [
     {
-      "question": "Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux wymaga innej adnotacji niz @RestController",
         "B": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
@@ -238,7 +280,7 @@
     {
       "question": "Co oznacza `@RequestBody Mono<Dto>` jako parametr metody POST?",
       "options": {
-        "A": "Deserializacja JSON blokuje watek jak w MVC",
+        "A": "Deserializacja JSON blokuje watek jak w mvc",
         "B": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody",
         "C": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
         "D": "Parametr musi byc zawsze pusty"
@@ -247,15 +289,15 @@
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
-        "B": "Do ustawienia typu MIME dla plikow binarnych",
+        "B": "Do ustawienia typu mime dla plikow binarnych",
         "C": "Do wylaczenia serializacji odpowiedzi",
         "D": "Do wymuszenia formatu XML zamiast JSON"
       },
       "correct": "A",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -280,15 +322,15 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
-        "B": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
+        "B": "Sse nie moze byc uzyte z collectList() w ogole",
         "C": "To dokladnie to samo zachowanie",
         "D": "collectList() dziala tylko z Mono, nie z Flux"
       },
       "correct": "A",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
@@ -296,7 +338,7 @@
         "A": "Nie istnieje odpowiednik w WebFlux",
         "B": "`ReactiveFilter`",
         "C": "`WebFilter`",
-        "D": "`Interceptor` z Spring MVC"
+        "D": "`Interceptor` z Spring mvc"
       },
       "correct": "C",
       "explanation": "WebFilter jest reaktywnym odpowiednikiem klasycznego Servlet Filter."
@@ -313,7 +355,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Pytanie kontrolne: Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Pytanie kontrolne: Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux nie wspiera @PathVariable",
         "B": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
@@ -349,7 +391,7 @@
       "question": "Pytanie kontrolne: Co oznacza `@RequestBody Mono<Dto>` jako parametr metody POST?",
       "options": {
         "A": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
-        "B": "Deserializacja JSON blokuje watek jak w MVC",
+        "B": "Deserializacja JSON blokuje watek jak w mvc",
         "C": "Parametr musi byc zawsze pusty",
         "D": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody"
       },
@@ -357,15 +399,15 @@
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Pytanie kontrolne: Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Pytanie kontrolne: Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wymuszenia formatu XML zamiast JSON",
         "B": "Do wylaczenia serializacji odpowiedzi",
         "C": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
-        "D": "Do ustawienia typu MIME dla plikow binarnych"
+        "D": "Do ustawienia typu mime dla plikow binarnych"
       },
       "correct": "C",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Pytanie kontrolne: Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -390,21 +432,21 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Pytanie kontrolne: Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Pytanie kontrolne: Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
+        "A": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
         "B": "To dokladnie to samo zachowanie",
         "C": "collectList() dziala tylko z Mono, nie z Flux",
-        "D": "SSE nie moze byc uzyte z collectList() w ogole"
+        "D": "Sse nie moze byc uzyte z collectList() w ogole"
       },
       "correct": "A",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Pytanie kontrolne: Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
         "A": "`WebFilter`",
-        "B": "`Interceptor` z Spring MVC",
+        "B": "`Interceptor` z Spring mvc",
         "C": "`ReactiveFilter`",
         "D": "Nie istnieje odpowiednik w WebFlux"
       },
@@ -423,7 +465,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Sprawdz swoja wiedze: Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Sprawdz swoja wiedze: Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux nie wspiera @PathVariable",
         "B": "WebFlux wymaga innej adnotacji niz @RestController",
@@ -460,22 +502,22 @@
       "options": {
         "A": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody",
         "B": "Parametr musi byc zawsze pusty",
-        "C": "Deserializacja JSON blokuje watek jak w MVC",
+        "C": "Deserializacja JSON blokuje watek jak w mvc",
         "D": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna"
       },
       "correct": "D",
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Sprawdz swoja wiedze: Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Sprawdz swoja wiedze: Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wylaczenia serializacji odpowiedzi",
-        "B": "Do ustawienia typu MIME dla plikow binarnych",
+        "B": "Do ustawienia typu mime dla plikow binarnych",
         "C": "Do wymuszenia formatu XML zamiast JSON",
         "D": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)"
       },
       "correct": "D",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Sprawdz swoja wiedze: Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -500,22 +542,22 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Sprawdz swoja wiedze: Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Sprawdz swoja wiedze: Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
         "A": "collectList() dziala tylko z Mono, nie z Flux",
-        "B": "SSE nie moze byc uzyte z collectList() w ogole",
-        "C": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
+        "B": "Sse nie moze byc uzyte z collectList() w ogole",
+        "C": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
         "D": "To dokladnie to samo zachowanie"
       },
       "correct": "C",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Sprawdz swoja wiedze: Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
         "A": "`WebFilter`",
         "B": "Nie istnieje odpowiednik w WebFlux",
-        "C": "`Interceptor` z Spring MVC",
+        "C": "`Interceptor` z Spring mvc",
         "D": "`ReactiveFilter`"
       },
       "correct": "A",
@@ -533,7 +575,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Ktora odpowiedz jest poprawna? Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux wymaga innej adnotacji niz @RestController",
         "B": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
@@ -571,21 +613,21 @@
         "A": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody",
         "B": "Parametr musi byc zawsze pusty",
         "C": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
-        "D": "Deserializacja JSON blokuje watek jak w MVC"
+        "D": "Deserializacja JSON blokuje watek jak w mvc"
       },
       "correct": "C",
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Ktora odpowiedz jest poprawna? Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wymuszenia formatu XML zamiast JSON",
         "B": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
-        "C": "Do ustawienia typu MIME dla plikow binarnych",
+        "C": "Do ustawienia typu mime dla plikow binarnych",
         "D": "Do wylaczenia serializacji odpowiedzi"
       },
       "correct": "B",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Ktora odpowiedz jest poprawna? Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -610,20 +652,20 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Ktora odpowiedz jest poprawna? Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Ktora odpowiedz jest poprawna? Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
-        "B": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
+        "B": "Sse nie moze byc uzyte z collectList() w ogole",
         "C": "To dokladnie to samo zachowanie",
         "D": "collectList() dziala tylko z Mono, nie z Flux"
       },
       "correct": "A",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Ktora odpowiedz jest poprawna? Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
-        "A": "`Interceptor` z Spring MVC",
+        "A": "`Interceptor` z Spring mvc",
         "B": "`ReactiveFilter`",
         "C": "`WebFilter`",
         "D": "Nie istnieje odpowiednik w WebFlux"
@@ -643,7 +685,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Wybierz poprawna odpowiedz. Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux nie wspiera @PathVariable",
         "B": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
@@ -679,7 +721,7 @@
       "question": "Wybierz poprawna odpowiedz. Co oznacza `@RequestBody Mono<Dto>` jako parametr metody POST?",
       "options": {
         "A": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
-        "B": "Deserializacja JSON blokuje watek jak w MVC",
+        "B": "Deserializacja JSON blokuje watek jak w mvc",
         "C": "Parametr musi byc zawsze pusty",
         "D": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody"
       },
@@ -687,15 +729,15 @@
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Wybierz poprawna odpowiedz. Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wymuszenia formatu XML zamiast JSON",
         "B": "Do wylaczenia serializacji odpowiedzi",
-        "C": "Do ustawienia typu MIME dla plikow binarnych",
+        "C": "Do ustawienia typu mime dla plikow binarnych",
         "D": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)"
       },
       "correct": "D",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Wybierz poprawna odpowiedz. Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -720,22 +762,22 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Wybierz poprawna odpowiedz. Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Wybierz poprawna odpowiedz. Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "Sse nie moze byc uzyte z collectList() w ogole",
         "B": "To dokladnie to samo zachowanie",
         "C": "collectList() dziala tylko z Mono, nie z Flux",
-        "D": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco"
+        "D": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco"
       },
       "correct": "D",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Wybierz poprawna odpowiedz. Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
         "A": "Nie istnieje odpowiednik w WebFlux",
         "B": "`ReactiveFilter`",
-        "C": "`Interceptor` z Spring MVC",
+        "C": "`Interceptor` z Spring mvc",
         "D": "`WebFilter`"
       },
       "correct": "D",
@@ -753,7 +795,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux? (wybierz jedna odpowiedz)",
+      "question": "Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux? (wybierz jedna odpowiedz)",
       "options": {
         "A": "WebFlux wymaga innej adnotacji niz @RestController",
         "B": "Nie ma zadnej roznicy skladniowej",
@@ -790,22 +832,22 @@
       "options": {
         "A": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
         "B": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody",
-        "C": "Deserializacja JSON blokuje watek jak w MVC",
+        "C": "Deserializacja JSON blokuje watek jak w mvc",
         "D": "Parametr musi byc zawsze pusty"
       },
       "correct": "A",
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`? (wybierz jedna odpowiedz)",
+      "question": "Do czego uzywa sie `produces = MediaType.Text_event_stream_value`? (wybierz jedna odpowiedz)",
       "options": {
-        "A": "Do ustawienia typu MIME dla plikow binarnych",
+        "A": "Do ustawienia typu mime dla plikow binarnych",
         "B": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
         "C": "Do wylaczenia serializacji odpowiedzi",
         "D": "Do wymuszenia formatu XML zamiast JSON"
       },
       "correct": "B",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP? (wybierz jedna odpowiedz)",
@@ -830,15 +872,15 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta? (wybierz jedna odpowiedz)",
+      "question": "Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta? (wybierz jedna odpowiedz)",
       "options": {
-        "A": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "Sse nie moze byc uzyte z collectList() w ogole",
         "B": "To dokladnie to samo zachowanie",
-        "C": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
+        "C": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
         "D": "collectList() dziala tylko z Mono, nie z Flux"
       },
       "correct": "C",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`? (wybierz jedna odpowiedz)",
@@ -846,7 +888,7 @@
         "A": "`ReactiveFilter`",
         "B": "Nie istnieje odpowiednik w WebFlux",
         "C": "`WebFilter`",
-        "D": "`Interceptor` z Spring MVC"
+        "D": "`Interceptor` z Spring mvc"
       },
       "correct": "C",
       "explanation": "WebFilter jest reaktywnym odpowiednikiem klasycznego Servlet Filter."
@@ -863,7 +905,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Zaznacz poprawna opcje: Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Zaznacz poprawna opcje: Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux nie wspiera @PathVariable",
         "B": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
@@ -899,7 +941,7 @@
       "question": "Zaznacz poprawna opcje: Co oznacza `@RequestBody Mono<Dto>` jako parametr metody POST?",
       "options": {
         "A": "Parametr musi byc zawsze pusty",
-        "B": "Deserializacja JSON blokuje watek jak w MVC",
+        "B": "Deserializacja JSON blokuje watek jak w mvc",
         "C": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
         "D": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody"
       },
@@ -907,15 +949,15 @@
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Zaznacz poprawna opcje: Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Zaznacz poprawna opcje: Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wymuszenia formatu XML zamiast JSON",
         "B": "Do wylaczenia serializacji odpowiedzi",
         "C": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
-        "D": "Do ustawienia typu MIME dla plikow binarnych"
+        "D": "Do ustawienia typu mime dla plikow binarnych"
       },
       "correct": "C",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Zaznacz poprawna opcje: Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -940,20 +982,20 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Zaznacz poprawna opcje: Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Zaznacz poprawna opcje: Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
+        "A": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
         "B": "collectList() dziala tylko z Mono, nie z Flux",
         "C": "To dokladnie to samo zachowanie",
-        "D": "SSE nie moze byc uzyte z collectList() w ogole"
+        "D": "Sse nie moze byc uzyte z collectList() w ogole"
       },
       "correct": "A",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Zaznacz poprawna opcje: Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
-        "A": "`Interceptor` z Spring MVC",
+        "A": "`Interceptor` z Spring mvc",
         "B": "`WebFilter`",
         "C": "`ReactiveFilter`",
         "D": "Nie istnieje odpowiednik w WebFlux"
@@ -973,7 +1015,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Weryfikacja: Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Weryfikacja: Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "WebFlux nie wspiera @PathVariable",
         "B": "WebFlux wymaga innej adnotacji niz @RestController",
@@ -1008,7 +1050,7 @@
     {
       "question": "Weryfikacja: Co oznacza `@RequestBody Mono<Dto>` jako parametr metody POST?",
       "options": {
-        "A": "Deserializacja JSON blokuje watek jak w MVC",
+        "A": "Deserializacja JSON blokuje watek jak w mvc",
         "B": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody",
         "C": "Parametr musi byc zawsze pusty",
         "D": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna"
@@ -1017,15 +1059,15 @@
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Weryfikacja: Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Weryfikacja: Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wylaczenia serializacji odpowiedzi",
-        "B": "Do ustawienia typu MIME dla plikow binarnych",
+        "B": "Do ustawienia typu mime dla plikow binarnych",
         "C": "Do wymuszenia formatu XML zamiast JSON",
         "D": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)"
       },
       "correct": "D",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Weryfikacja: Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -1050,22 +1092,22 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Weryfikacja: Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Weryfikacja: Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
-        "B": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
+        "B": "Sse nie moze byc uzyte z collectList() w ogole",
         "C": "collectList() dziala tylko z Mono, nie z Flux",
         "D": "To dokladnie to samo zachowanie"
       },
       "correct": "A",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Weryfikacja: Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
         "A": "Nie istnieje odpowiednik w WebFlux",
         "B": "`WebFilter`",
-        "C": "`Interceptor` z Spring MVC",
+        "C": "`Interceptor` z Spring mvc",
         "D": "`ReactiveFilter`"
       },
       "correct": "B",
@@ -1083,7 +1125,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Quiz: Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux?",
+      "question": "Quiz: Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux?",
       "options": {
         "A": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
         "B": "WebFlux wymaga innej adnotacji niz @RestController",
@@ -1121,21 +1163,21 @@
         "A": "Parametr musi byc zawsze pusty",
         "B": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
         "C": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody",
-        "D": "Deserializacja JSON blokuje watek jak w MVC"
+        "D": "Deserializacja JSON blokuje watek jak w mvc"
       },
       "correct": "B",
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Quiz: Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`?",
+      "question": "Quiz: Do czego uzywa sie `produces = MediaType.Text_event_stream_value`?",
       "options": {
         "A": "Do wymuszenia formatu XML zamiast JSON",
         "B": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
-        "C": "Do ustawienia typu MIME dla plikow binarnych",
+        "C": "Do ustawienia typu mime dla plikow binarnych",
         "D": "Do wylaczenia serializacji odpowiedzi"
       },
       "correct": "B",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Quiz: Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP?",
@@ -1160,21 +1202,21 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Quiz: Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta?",
+      "question": "Quiz: Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta?",
       "options": {
-        "A": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "Sse nie moze byc uzyte z collectList() w ogole",
         "B": "To dokladnie to samo zachowanie",
-        "C": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco",
+        "C": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco",
         "D": "collectList() dziala tylko z Mono, nie z Flux"
       },
       "correct": "C",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Quiz: Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`?",
       "options": {
         "A": "`ReactiveFilter`",
-        "B": "`Interceptor` z Spring MVC",
+        "B": "`Interceptor` z Spring mvc",
         "C": "`WebFilter`",
         "D": "Nie istnieje odpowiednik w WebFlux"
       },
@@ -1193,7 +1235,7 @@
       "explanation": "WebTestClient jest omawiany w kontekscie testowania Spring w `_27_spring_test`."
     },
     {
-      "question": "Jaka jest gowna roznica miedzy kontrolerem Spring MVC a WebFlux? Wskaz prawidlowa odpowiedz.",
+      "question": "Jaka jest gowna roznica miedzy kontrolerem Spring mvc a WebFlux? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Typ zwracany - Mono/Flux zamiast T/ResponseEntity<T> bezposrednio",
         "B": "WebFlux nie wspiera @PathVariable",
@@ -1229,7 +1271,7 @@
       "question": "Co oznacza `@RequestBody Mono<Dto>` jako parametr metody POST? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Parametr musi byc zawsze pusty",
-        "B": "Deserializacja JSON blokuje watek jak w MVC",
+        "B": "Deserializacja JSON blokuje watek jak w mvc",
         "C": "Cialo zadania samo jest Mono - deserializacja JSON jest asynchroniczna",
         "D": "To bledna skladnia - nie mozna uzyc Mono jako @RequestBody"
       },
@@ -1237,15 +1279,15 @@
       "explanation": "Reaktywny @RequestBody pozwala na w pelni nieblokujaca deserializacje."
     },
     {
-      "question": "Do czego uzywa sie `produces = MediaType.TEXT_EVENT_STREAM_VALUE`? Wskaz prawidlowa odpowiedz.",
+      "question": "Do czego uzywa sie `produces = MediaType.Text_event_stream_value`? Wskaz prawidlowa odpowiedz.",
       "options": {
         "A": "Do wymuszenia formatu XML zamiast JSON",
         "B": "Do wylaczenia serializacji odpowiedzi",
         "C": "Do zaimplementowania Server-Sent Events (streaming danych w czasie)",
-        "D": "Do ustawienia typu MIME dla plikow binarnych"
+        "D": "Do ustawienia typu mime dla plikow binarnych"
       },
       "correct": "C",
-      "explanation": "TEXT_EVENT_STREAM_VALUE sygnalizuje klientowi strumieniowa naturę odpowiedzi (SSE)."
+      "explanation": "Text_event_stream_value sygnalizuje klientowi strumieniowa naturę odpowiedzi (sse)."
     },
     {
       "question": "Jaka metoda WebClient odbiera Flux z odpowiedzi HTTP? Wskaz prawidlowa odpowiedz.",
@@ -1270,20 +1312,20 @@
       "explanation": "WebClient rzuca specyficzny podtyp WebClientResponseException dla kodow 4xx/5xx."
     },
     {
-      "question": "Czym rozni sie `collectList()` od prawdziwego streamingu SSE po stronie klienta? Wskaz prawidlowa odpowiedz.",
+      "question": "Czym rozni sie `collectList()` od prawdziwego streamingu sse po stronie klienta? Wskaz prawidlowa odpowiedz.",
       "options": {
-        "A": "SSE nie moze byc uzyte z collectList() w ogole",
+        "A": "Sse nie moze byc uzyte z collectList() w ogole",
         "B": "collectList() dziala tylko z Mono, nie z Flux",
         "C": "To dokladnie to samo zachowanie",
-        "D": "collectList() czeka na caly strumien, prawdziwy klient SSE odbiera dane na biezaco"
+        "D": "collectList() czeka na caly strumien, prawdziwy klient sse odbiera dane na biezaco"
       },
       "correct": "D",
-      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji SSE strumieniuje na biezaco."
+      "explanation": "collectList() w demo/testach czeka na komplet danych - w produkcji sse strumieniuje na biezaco."
     },
     {
       "question": "Jaki jest reaktywny odpowiednik `Filter` z `_07_servlets`? Wskaz prawidlowa odpowiedz.",
       "options": {
-        "A": "`Interceptor` z Spring MVC",
+        "A": "`Interceptor` z Spring mvc",
         "B": "Nie istnieje odpowiednik w WebFlux",
         "C": "`ReactiveFilter`",
         "D": "`WebFilter`"

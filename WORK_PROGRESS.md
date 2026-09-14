@@ -435,7 +435,7 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   `_01_fundamentals`. Scommitowane checkpointami WIP w ciągu sesji (lekcje 1-3 były już w toku z
   poprzedniej, przerwanej sesji), scommitowane finalnym commitem `7020eb0` ("Etap 4: rozdzial
   _28_java_evolution - 24/24 lekcje... - KOMPLETNE") po ośmiu WIP checkpointach z tej sesji.
-- **`_29_spring_reactive` (8/17 lekcji) — W TOKU.** Lekcje 1-5 gotowe i scommitowane WIP
+- **`_29_spring_reactive` (12/17 lekcji) — W TOKU.** Lekcje 1-5 gotowe i scommitowane WIP
   checkpointami (`f04f14e`, `0c7883a`, `ca40313`): dlaczego reaktywność/C10K/backpressure (1),
   specyfikacja Reactive Streams przez `java.util.concurrent.Flow` (2), Project Reactor - Mono/Flux
   jako implementacja, lazy evaluation (3), Mono w szczególe - tworzenie/defaultIfEmpty/
@@ -444,11 +444,11 @@ sesji — użytkownik podkreślił, że zależy mu na WSZYSTKICH lekcjach od lek
   WebClientDeepDive może uzasadniać katalog metod, ocenić przy pisaniu). Lekcje 6-8 gotowe:
   operatory `map`/`flatMap`/`concatMap` i kolejność (6), lokalna obsługa błędów, retry, fallback
   i idempotencja (7), `subscribeOn`/`publishOn`, izolacja blokującego I/O i CPU-bound (8).
-  Każda z lekcji 6-8 ma 15 bloków teorii z `API_REFERENCE`, 30 exercises i 100 quiz; JSON,
-  wymagane typy, brak cyrylicy i `native code` sprawdzone statycznie. **NASTĘPNY KROK: lekcja 9
-  `09_WebFluxVsSpringMvc.json`**, dalej po kolei: 10 (AnnotatedControllersInWebFlux, uwaga: może
-  wspominać GET/POST — sprawdzić `fix_http_method_case.js`), 11 (FunctionalEndpointsRouterFunction,
-  też HTTP), 12 (WebClientDeepDive, też HTTP — prawdopodobnie z API_REFERENCE), 13 (R2dbcIntro), 14
+  Lekcje 9-12 gotowe: uczciwe porównanie MVC/WebFlux i wybór serwera (9), kontrakt kontrolera,
+  statusy i SSE (10), WebFlux.fn oraz filtry routera (11), WebClient, statusy, agregacja i retry
+  (12). Lekcje 6-12 mają 14 lub 15 bloków teorii, 30 exercises i 100 quiz; JSON, wymagane typy,
+  brak cyrylicy i `native code` sprawdzone statycznie. Lekcje 9-12 przeszły też
+  `fix_http_method_case.js`. **NASTĘPNY KROK: lekcja 13 `13_R2dbcIntro.json`**, dalej: 14
   (ReactiveSecurity), 15 (TestingReactiveCodeWithStepVerifier), 16 (WhenToUseReactiveVsBlocking), 17
   (ReactiveCapstone, koniec rozdziału). Po lekcji 17: pełna walidacja + `mvnw.cmd resources:resources`
   + restart backendu + curl weryfikacyjny na próbce + regresja + JEDEN finalny commit "Etap 4:
@@ -477,9 +477,10 @@ backendu (`run_in_background`), weryfikacja live przez API na próbkach lekcji 1
 /lessons` (lista) i `GET /api/chapters/{chapterSlug}/lessons/{lessonSlug}/{theory|exercises|quiz}`
 (treść) — `lessonSlug` ZAWIERA numer prefiksu (np. `01_JavaReleaseCadenceAndLtsExplained`); pełny
 zapis w sekcji "Problemy i decyzje" niżej. Zaraz po zamknięciu `_28`, w tej samej sesji rozpoczęto
-`_29_spring_reactive` — lekcje 1-8/17 gotowe (patrz wyżej). Po poprzednich checkpointach 1-5
-przepisano teorie lekcji 6-8 i zweryfikowano je statycznie. Weryfikacja live API pozostaje na koniec
-rozdziału; przy kontynuacji zacznij od lekcji 9.
+`_29_spring_reactive` — lekcje 1-12/17 gotowe (patrz wyżej). Po checkpointach 1-5
+przepisano teorie lekcji 6-12 i zweryfikowano je statycznie; dla lekcji 6-8 wykonano także
+`mvnw.cmd resources:resources`. Weryfikacja live API pozostaje na koniec rozdziału; przy
+kontynuacji zacznij od lekcji 13.
 
 ## Wyniki testów / weryfikacji
 
@@ -547,8 +548,8 @@ rozdziału; przy kontynuacji zacznij od lekcji 9.
 
 1. `_28_java_evolution` już KOMPLETNE i zamknięte finalnym commitem `7020eb0` — nic więcej nie
    robić w tym rozdziale.
-2. Kontynuuj `_29_spring_reactive` dokładnie od lekcji 9 `09_WebFluxVsSpringMvc.json` (lekcje 1-8
-   gotowe, 1-5 scommitowane WIP checkpointami `f04f14e`/`0c7883a`/`ca40313` — szczegóły w sekcji "Stan
+2. Kontynuuj `_29_spring_reactive` dokładnie od lekcji 13 `13_R2dbcIntro.json` (lekcje 1-12
+   gotowe, 1-8 scommitowane WIP checkpointami `f04f14e`/`0c7883a`/`ca40313`/`b603a79` — szczegóły w sekcji "Stan
    rozdziałów" wyżej), tym samym wzorcem pracy (patrz punkt 4 niżej), dalej po kolei aż do lekcji 17
    `17_ReactiveCapstone.json` (koniec rozdziału). Potem `_30_spring_messaging_and_async` (16 lekcji),
    `_31_spring_cloud_microservices` (19 lekcji) — ostatnie dwa rozdziały całego kursu. Po każdym
