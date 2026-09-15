@@ -518,20 +518,32 @@ lekki, 3-lekcyjny rozdział ("jedynie zaczaczyć z grubsza", nie pełny kurs).
 Dodano do `ChapterSeedData.java` (SAME nazwy lekcji, ZERO plików treści JSON — każda lekcja
 pokazuje się w nawigacji jako "treść w przygotowaniu", zweryfikowane live przez API):
 
-- **`_35_linux_fundamentals`** (12 lekcji) — pokrywa `tools-linux` (very-important).
-- **`_36_docker_compose`** (8 lekcji) — pokrywa `tools-docker-compose` (very-important),
+- **`_35_docker_compose`** (8 lekcji) — pokrywa `tools-docker-compose` (very-important),
   naturalne przedłużenie `_34_docker_fundamentals`.
-- **`_37_kubernetes_fundamentals`** (6 lekcji, CELOWO płytki) — pokrywa `cloud-kubernetes`
+- **`_36_kubernetes_fundamentals`** (6 lekcji, CELOWO płytki) — pokrywa `cloud-kubernetes`
   (important); raport rynkowy WPROST odradza głębsze wejście na tym etapie kariery.
-- **`_38_cloud_aws_fundamentals`** (9 lekcji) — pokrywa `cloud-aws` (important); AWS wybrany
+- **`_37_cloud_aws_fundamentals`** (9 lekcji) — pokrywa `cloud-aws` (important); AWS wybrany
   jako "jeden dostawca" zgodnie z rekomendacją raportu.
-- **`_39_redis_and_caching`** (7 lekcji) — pokrywa `other-redis` (important).
-- **`_40_observability_prometheus_grafana`** (7 lekcji) — pokrywa
+- **`_38_redis_and_caching`** (7 lekcji) — pokrywa `other-redis` (important).
+- **`_39_observability_prometheus_grafana`** (7 lekcji) — pokrywa
   `observability-prometheus-grafana` (important).
-- **`_41_rest_assured_testing`** (5 lekcji, celowo krótszy — buduje na `_25`/`_26`/`_27`) —
+- **`_40_rest_assured_testing`** (5 lekcji, celowo krótszy — buduje na `_25`/`_26`/`_27`) —
   pokrywa `testing-rest-assured` (important).
-- **`_42_nosql_overview`** (3 lekcje, NAJKRÓTSZY celowo) — pokrywa `other-nosql` (important),
+- **`_41_nosql_overview`** (3 lekcje, NAJKRÓTSZY celowo) — pokrywa `other-nosql` (important),
   wyłącznie ogólna świadomość/orientacja, NIE pełny kurs NoSQL.
+
+**AKTUALIZACJA (ta sama sesja, natychmiast po powyższym): użytkownik kazał USUNĄĆ
+`_35_linux_fundamentals` w całości** ("wypierdol linuxa, to bedzie zupelnie co innego") —
+Linux/terminal to ODRĘBNY temat, świadomie wyłączony z tej partii rozdziałów. Rozdział USUNIĘTY
+z `ChapterSeedData.java`, pozostałe 7 rozdziałów PRZENUMEROWANE w dół, żeby zamknąć lukę
+(`_36`→`_35` Docker Compose, `_37`→`_36` Kubernetes, `_38`→`_37` AWS, `_39`→`_38` Redis,
+`_40`→`_39` Prometheus/Grafana, `_41`→`_40` REST Assured, `_42`→`_41` NoSQL). `tools-linux` w
+`critical-topics.json` WRACA do stanu "do opracowania" bez żadnego przypisanego rozdziału —
+NIE jest już częścią zaplanowanej kolejki, do ewentualnego osobnego potraktowania później, jeśli
+użytkownik zdecyduje inaczej. Zweryfikowano: `mvnw compile` bez błędów, `_35_linux_fundamentals`
+zwraca teraz HTTP 404 (nie istnieje), wszystkie 7 przenumerowanych rozdziałów widocznych w
+nawigacji z poprawną liczbą lekcji, regresja na `_01_fundamentals`/`_34_docker_fundamentals` bez
+zmian.
 
 `critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
 w ogóle nieobecne). Pozostałych 8 tematów WCIĄŻ oznaczonych jako "do opracowania" (`chapterSlug:
@@ -544,10 +556,10 @@ API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) f
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla tych 8 rozdziałów, rozdział po rozdziale, tym samym wzorcem
+**NASTĘPNY KROK: napisać treść dla tych 7 rozdziałów, rozdział po rozdziale, tym samym wzorcem
 co `_32`/`_33`/`_34`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) — kolejność
-nieustalona przez użytkownika, sugerowana: `_35_linux_fundamentals` i `_36_docker_compose`
-(oba "very-important", naturalna kontynuacja `_34`) jako pierwsze.
+nieustalona przez użytkownika, sugerowana: `_35_docker_compose` ("very-important", naturalna
+kontynuacja `_34`) jako pierwszy.
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
 PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
