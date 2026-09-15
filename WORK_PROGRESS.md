@@ -506,6 +506,56 @@ powtarzające się treści, brakujące zagadnienia, błędy techniczne, polskie 
 oznaczenia "lekcja gotowa"). Nie rozpoczęty w tej sesji — do potwierdzenia z użytkownikiem, czy
 i kiedy go podjąć.
 
+## `_32_algorithms_and_data_structures` (15/15 lekcji) — KOMPLETNE, dopisany PO zamknięciu Etapu 4
+
+Nowy rozdział (NIE część oryginalnego Etapu 4 migracji `_01`-`_31`) dodany, żeby pokryć lukę
+zidentyfikowaną w raporcie rynkowym o rekrutacji Java w Polsce (`kytyyczne tematy.md` w katalogu
+głównym) — kurs nie miał dedykowanego miejsca na wzorce algorytmiczne sprawdzane na assessmentach
+rekrutacyjnych (two pointers, sliding window, BFS/DFS itd.). Zakładka "Krytyczne" na platformie
+(dodana w commicie `c02bc60`, PRZED rozpoczęciem tego rozdziału) linkuje tu dla tematów
+algorytmicznych. `ChapterSeedData.java` już zawierał wpis dla wszystkich 15 lekcji tego rozdziału
+(dopisany z wyprzedzeniem w tej samej sesji/commicie co zakładka "Krytyczne").
+
+**Struktura inna niż rozdziały `_01`-`_31`:** ta sama teoria 14-15 blokow (11 standardowych sekcji
++ `API_REFERENCE` gdzie uzasadnione), ALE exercises/quiz mają ZMIENNĄ, MAŁĄ liczbę pozycji
+(6-12 unikalnych ćwiczeń/pytań na lekcję, NIE stałe 30/100 jak w reszcie kursu) — świadoma decyzja
+zastana na początku pracy nad tym rozdziałem (widoczna już w lekcjach 1-11 napisanych we
+wcześniejszej sesji), kontynuowana w lekcjach 12-15 dokończonych w tej sesji.
+
+15 lekcji: Big-O (1), tablice/stringi (2), two pointers (3), sliding window (4), wzorce hashmap (5),
+stack/queue (6), sortowanie (7), binary search (8), rekurencja/backtracking (9), wzorce na liście
+jednokierunkowej (10), drzewa binarne/BST (11), BFS (12), DFS (13), systematyczny proces
+rozpoznawania wzorca na rozmowie rekrutacyjnej — ZROZUM/DOPASUJ/ZAPLANUJ/ZAIMPLEMENTUJ/PRZETESTUJ
+(14, lekcja metodologiczna BEZ API_REFERENCE), kapston "JavaQuest Friend Network" łączący BFS+DFS
+w jednej klasie z celową pułapką współdzielonego stanu `visited` między niezależnymi wywołaniami
+metod — błąd ogólny (zarządzanie cyklem życia stanu obiektu), nie specyficzny dla samego
+algorytmu (15).
+
+Lekcje 12-15 dokończone i scommitowane w TEJ sesji (poprzednia sesja/agent zostawiła rozdział na
+12/15, NIEscommitowane lekcje 13-15 nie istniały jeszcze). Wszystkie 4 pliki (12-15) przeszły przez
+`fix_allcaps.js`/`fix_allcaps_residual.js` (bez `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). Zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy/znaków
+zastępczych (U+FFFD — jeden przypadkowy w lekcji 14 znaleziony i naprawiony ręcznie PRZED
+uruchomieniem fix scripts). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu (wszystkie 15 lekcji rozdziału + regresja na `_01_fundamentals/
+06_StringsAndBuilder`, `_09_jdbc/20_Mapper`, `_31_spring_cloud_microservices/
+19_MicroservicesCapstone` — bez zmian). Zaktualizowano też `critical-topics.json`: wpis
+`algo-bfs-dfs` (wcześniej `chapterSlug: null` z notatką "brak w kursie") teraz wskazuje na
+`_32_algorithms_and_data_structures/12_BreadthFirstSearch`.
+
+**UWAGA operacyjna z tej sesji — fałszywy alarm przy weryfikacji API:** wzorzec
+`curl ... | node -e "process.stdin..."` (pipe bezpośrednio do node) w tej powłoce Git Bash
+sporadycznie dawał `PARSE_ERR`/puste wyniki dla poprawnie działających endpointów — objaw
+nie miał nic wspólnego z backendem (potwierdzone: te same endpointy zwracały poprawną,
+pełną treść po zapisaniu `curl -s ... > plik.json` do prawdziwej ścieżki Windows i odczycie
+przez `Read`). Podobnie, mieszanie stylu ścieżek POSIX (`/c/Users/...`) jako argumentu dla
+`node -e "...readFileSync('/c/Users/...')"` zawodzi (node.exe NIE tłumaczy ścieżek Git Bash,
+dostaje dosłownie `C:\c\Users\...`) — użyj ścieżki Windows (`C:/Users/...` albo
+`C:\Users\...`) przy odczycie plików przez `node`/`Read`, nie ścieżki POSIX z Bash.
+**Wniosek na przyszłość:** przy weryfikacji API w tej powłoce, zapisuj `curl` do pliku pod
+prawdziwą ścieżką Windows i sprawdzaj rozmiar/treść pliku (`ls -la`, `Read`), zamiast ufać
+wynikowi z `node -e` czytającego stdin/plik przez potok lub ścieżkę POSIX.
+
 ## Ostatnia ukończona czynność
 
 **CAŁY KURS (31/31 rozdziałów) UKOŃCZONY w tej sesji.** Sesja zaczęła się komendą użytkownika
@@ -525,6 +575,13 @@ standardzie 11 sekcji. **Ważne odkrycie tej sesji o API:** endpointy weryfikacy
 **Kolejny krok NIE jest ustalony** — zobacz sekcję "CAŁY KURS" wyżej i "Następny krok" niżej:
 potencjalny Etap 5 (audyt całości) wymaga potwierdzenia z użytkownikiem, zanim zostanie
 rozpoczęty.
+
+**AKTUALIZACJA (sesja z 2026-09-15):** dokończono `_32_algorithms_and_data_structures` (12/15 -> 15/15,
+lekcje 13-15: DFS, Interview Strategy, Algorithms Capstone) — patrz sekcja
+"`_32_algorithms_and_data_structures` (15/15 lekcji) — KOMPLETNE" wyżej po pełne szczegóły.
+Sesja rozpoczęta komendą "kontynuuj prace, wychodze z domu wiec nie pytaj sie miedzy
+rozdzialami o zgode" — kontynuowano dyrektywę z Etapu 4 (nie pytać o zgodę między
+jednostkami pracy) zastosowaną tu do dokończenia rozdziału `_32`.
 
 ## Wyniki testów / weryfikacji
 
