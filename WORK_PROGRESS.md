@@ -546,24 +546,26 @@ nawigacji z poprawną liczbą lekcji, regresja na `_01_fundamentals`/`_34_docker
 zmian.
 
 `critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
-w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose` ZAKTUALIZOWANY (patrz sekcja
-"`_35_docker_compose` (8/8 lekcji) — KOMPLETNE" wyżej) — wskazuje teraz na `_35_docker_compose/
-07_MultiContainerJavaQuestExample`. Pozostałych 6 tematów WCIĄŻ oznaczonych jako "do opracowania"
-(`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby zakładka "Krytyczne"
-nie pokazywała przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip nastąpi ROZDZIAŁ PO
-ROZDZIALE, w miarę pisania treści (dokładnie ten sam wzorzec co przy `_32`/`_33`/`_34`/`_35`).
+w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose` I `cloud-kubernetes`
+ZAKTUALIZOWANE (patrz sekcje "`_35_docker_compose`"/"`_36_kubernetes_fundamentals` — KOMPLETNE"
+wyżej) — wskazują teraz odpowiednio na `_35_docker_compose/07_MultiContainerJavaQuestExample` i
+`_36_kubernetes_fundamentals/06_KubernetesVsDockerComposeCapstone`. Pozostałych 5 tematów WCIĄŻ
+oznaczonych jako "do opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe
+rozdziały, żeby zakładka "Krytyczne" nie pokazywała przedwcześnie "w kursie" dla lekcji bez
+żadnej treści — flip nastąpi ROZDZIAŁ PO ROZDZIALE, w miarę pisania treści (dokładnie ten sam
+wzorzec co przy `_32`/`_33`/`_34`/`_35`/`_36`).
 
 Zweryfikowano: `mvnw compile` bez błędów, wszystkie 8 rozdziałów widoczne w nawigacji live przez
 API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) faktycznie zwraca
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla pozostałych 6 rozdziałów, rozdział po rozdziale, tym samym
-wzorcem co `_32`/`_33`/`_34`/`_35`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
-`_35_docker_compose` UKOŃCZONY w tej sesji (patrz sekcja wyżej), kolejność pozostałych 6 wciąż
-nieustalona przez użytkownika: `_36_kubernetes_fundamentals`, `_37_cloud_aws_fundamentals`,
-`_38_redis_and_caching`, `_39_observability_prometheus_grafana`, `_40_rest_assured_testing`,
-`_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
+**NASTĘPNY KROK: napisać treść dla pozostałych 5 rozdziałów, rozdział po rozdziale, tym samym
+wzorcem co `_32`/`_33`/`_34`/`_35`/`_36`** (14-15 bloków teorii, zmienna mała liczba
+exercises/quiz) — `_35_docker_compose` i `_36_kubernetes_fundamentals` UKOŃCZONE w tej sesji
+(patrz sekcje wyżej), kolejność pozostałych 5 wciąż nieustalona przez użytkownika:
+`_37_cloud_aws_fundamentals`, `_38_redis_and_caching`, `_39_observability_prometheus_grafana`,
+`_40_rest_assured_testing`, `_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
 PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
@@ -572,6 +574,49 @@ PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym je
 sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
 -Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
 poprzedni `TaskStop` zgłosił sukces.**
+
+## `_36_kubernetes_fundamentals` (6/6 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Piąty rozdział dopisany PO zamknięciu `_35_docker_compose`, drugi z siedmiu rozdziałów
+zaplanowanych jako PUSTE scaffoldy — CELOWO NAJPŁYTSZY z pozostałych rozdziałów (6 lekcji,
+priorytet "important", nie "very-important") zgodnie z raportem rynkowym (`kytyyczne tematy.md`),
+który WPROST odradza głębsze wejście w administrację Kubernetesa na tym etapie kariery — rozdział
+buduje WYŁĄCZNIE słownictwo i podstawowe pojęcia (Pod/Deployment/Service/ConfigMap/Secret/kubectl),
+NIE samodzielną umiejętność administrowania klastrem produkcyjnym. Po dokończeniu zaktualizowano
+wpis `cloud-kubernetes` w `critical-topics.json`: wskazuje teraz na `_36_kubernetes_fundamentals/
+06_KubernetesVsDockerComposeCapstone`, `note` wyczyszczone na `null`.
+
+Ten sam lekki format co `_35` (14-15 bloków teorii — lekcja 1, czysto koncepcyjna, świadomie BEZ
+`API_REFERENCE`, stąd 14 zamiast 15 — pozostałe 5 lekcji MAJĄ `API_REFERENCE`, bo dotyczą
+konkretnych obiektów YAML z wieloma polami; 3 unikalne ćwiczenia / 5 unikalnych quizów na
+lekcję). 6 lekcji, KAŻDA świadomie zakotwiczona w konkretnym pojęciu z `_35_docker_compose`: po co
+Kubernetes istnieje — orkiestracja kontenerów na WIELU maszynach, nie jednym hoście, z
+automatycznym odtwarzaniem awarii węzła (1), Pod jako najmniejsza jednostka wdrożenia (grupa
+kontenerów, wzorzec sidecar) + Deployment jako "ile kopii", rolling update, pułapka mylenia Poda z
+kontenerem, pułapka polegania na ulotnym adresie IP Poda (2), Service + selector jako rozwiązanie
+problemu ulotnych adresów — bezpośrednie rozszerzenie segmentacji sieci z `_35/Lesson3`,
+ClusterIP vs LoadBalancer (3), ConfigMap/Secret jako bezpośredni odpowiednik `.env`/`env_file:` z
+`_35/Lesson4`, z NACISKIEM na fundamentalne rozróżnienie kodowania base64 (odwracalne, NIE
+bezpieczne) od szyfrowania (4), kubectl jako odpowiednik `docker compose` CLI z `_35/Lesson6` —
+apply/get/describe/logs, pułapka "edytowałem plik lokalnie, ale zapomniałem o apply" (5), kapston:
+pełna tabela odpowiedników pojęciowych Compose↔Kubernetes (services↔Deployment+Pod,
+networks↔Service+selector, .env/env_file↔ConfigMap/Secret, docker compose↔kubectl,
+depends_on+healthcheck↔readinessProbe) + metoda czterech pytań do świadomej decyzji
+Compose-czy-Kubernetes dla przyszłych projektów, z jawnym ostrzeżeniem przed wyborem Kubernetesa
+"bo tak robią duże firmy" bez realnej potrzeby (6).
+
+Wszystkie 6 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych — dwie literówki znalezione i naprawione ręcznie PRZED walidacją: stray
+wielka litera w środku słowa "techNIcznie"→"technicznie" w lekcji 2, "PROZNIEJ"→"POZNIEJ" w
+rozwiązaniu ćwiczenia w lekcji 6) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`
+(BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej sesji co napisanie.
+
+Zweryfikowane live przez API po restarcie backendu (`./mvnw spring-boot:run`, `JAVA_HOME=/c/Users/
+kapit/.jdks/openjdk-25.0.2`): wszystkie 6 lekcji rozdziału zwracają poprawną liczbę bloków (14 dla
+lekcji 1 bez API_REFERENCE, 15 dla pozostałych 5 / 3 exercises / 5 quiz) PO odczekaniu na ustąpienie
+znanego wyścigu startowego + regresja na `_35_docker_compose/01_WhyDockerCompose` i endpoint
+`critical-topics` — bez zmian. Orphaned `java.exe` sprawdzone i (tym razem: brak) PRZED startem,
+zgodnie ze standardowym krokiem. Scommitowane 6 komitami WIP (jeden na lekcję).
 
 ## `_35_docker_compose` (8/8 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
