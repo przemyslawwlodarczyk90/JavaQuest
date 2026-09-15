@@ -547,27 +547,29 @@ zmian.
 
 `critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
 w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose`, `cloud-kubernetes`,
-`cloud-aws` I `other-redis` ZAKTUALIZOWANE (patrz sekcje "`_35_docker_compose`"/
-"`_36_kubernetes_fundamentals`"/"`_37_cloud_aws_fundamentals`"/"`_38_redis_and_caching` —
-KOMPLETNE" wyżej) — wskazują teraz odpowiednio na `_35_docker_compose/
-07_MultiContainerJavaQuestExample`, `_36_kubernetes_fundamentals/
-06_KubernetesVsDockerComposeCapstone`, `_37_cloud_aws_fundamentals/09_AwsFundamentalsCapstone` i
-`_38_redis_and_caching/07_RedisCachingCapstone`. Pozostałe 3 tematy WCIĄŻ oznaczone jako "do
-opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby
-zakładka "Krytyczne" nie pokazywała przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip
-nastąpi ROZDZIAŁ PO ROZDZIALE, w miarę pisania treści (dokładnie ten sam wzorzec co przy
-`_32`-`_38`).
+`cloud-aws`, `other-redis` I `observability-prometheus-grafana` ZAKTUALIZOWANE (patrz sekcje
+"`_35_docker_compose`"/"`_36_kubernetes_fundamentals`"/"`_37_cloud_aws_fundamentals`"/
+"`_38_redis_and_caching`"/"`_39_observability_prometheus_grafana` — KOMPLETNE" wyżej) —
+wskazują teraz odpowiednio na `_35_docker_compose/07_MultiContainerJavaQuestExample`,
+`_36_kubernetes_fundamentals/06_KubernetesVsDockerComposeCapstone`,
+`_37_cloud_aws_fundamentals/09_AwsFundamentalsCapstone`,
+`_38_redis_and_caching/07_RedisCachingCapstone` i
+`_39_observability_prometheus_grafana/07_ObservabilityCapstone`. Pozostałe 2 tematy WCIĄŻ
+oznaczone jako "do opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe
+rozdziały, żeby zakładka "Krytyczne" nie pokazywała przedwcześnie "w kursie" dla lekcji bez
+żadnej treści — flip nastąpi ROZDZIAŁ PO ROZDZIALE, w miarę pisania treści (dokładnie ten sam
+wzorzec co przy `_32`-`_39`).
 
 Zweryfikowano: `mvnw compile` bez błędów, wszystkie 8 rozdziałów widoczne w nawigacji live przez
 API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) faktycznie zwraca
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla pozostałych 3 rozdziałów, rozdział po rozdziale, tym samym
-wzorcem co `_32`-`_38`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
-`_35_docker_compose`, `_36_kubernetes_fundamentals`, `_37_cloud_aws_fundamentals` i
-`_38_redis_and_caching` UKOŃCZONE w tej sesji (patrz sekcje wyżej), kolejność pozostałych 3
-wciąż nieustalona przez użytkownika: `_39_observability_prometheus_grafana`,
+**NASTĘPNY KROK: napisać treść dla pozostałych 2 rozdziałów, rozdział po rozdziale, tym samym
+wzorcem co `_32`-`_39`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
+`_35_docker_compose`, `_36_kubernetes_fundamentals`, `_37_cloud_aws_fundamentals`,
+`_38_redis_and_caching` i `_39_observability_prometheus_grafana` UKOŃCZONE w tej sesji (patrz
+sekcje wyżej), kolejność pozostałych 2 wciąż nieustalona przez użytkownika:
 `_40_rest_assured_testing`, `_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
@@ -577,6 +579,46 @@ PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym je
 sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
 -Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
 poprzedni `TaskStop` zgłosił sukces.**
+
+## `_39_observability_prometheus_grafana` (7/7 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Ósmy rozdział dopisany PO zamknięciu `_38_redis_and_caching`, piąty z siedmiu rozdziałów
+zaplanowanych jako PUSTE scaffoldy — pokrywa `observability-prometheus-grafana` ("important").
+Po dokończeniu zaktualizowano wpis: wskazuje teraz na `_39_observability_prometheus_grafana/
+07_ObservabilityCapstone`, `note` wyczyszczone na `null`.
+
+Ten sam lekki format co `_35`-`_38` (15 bloków teorii, 3 unikalne ćwiczenia / 5 unikalnych quizów
+na lekcję). 7 lekcji, KAŻDA świadomie zakotwiczona w Micrometer/Actuator z `_21_spring_boot/
+Lesson13`: po co WIZUALIZACJA metryk istnieje — Prometheus zbiera W CZASIE, Grafana wizualizuje,
+model "pull" (system SAM odpytuje aplikację) (1), model danych Prometheus (counter/gauge/
+histogram/summary) + PromQL jako WŁASNY język zapytań, `rate()` jako KLUCZOWA transformacja
+countera (2), Micrometer jako "JDBC dla metryk" (FASADA nad różnymi silnikami) + WŁASNE metryki
+biznesowe + pułapka "eksplozji kardynalności" przy tagach o nieograniczonej liczbie wartości (3),
+uruchomienie Prometheus jako kontenera Z plikiem `prometheus.yml`, `host.docker.internal` (4),
+Grafana — Data Source/Panel/Dashboard, wzorzec "czterech złotych sygnałów", pułapka
+przeładowanego pulpitu bez hierarchii (5), Alerting — reguła alertu z PROGIEM i `for`, `severity`
+jako routing pilności, "zmęczenie alertami" (6), kapston: metoda "pięciu kroków" projektowania
+PEŁNEGO łańcucha obserwowalności, z przykładem systemu płatności i podkreśleniem WAGI metryk
+biznesowych (kod HTTP 200 NIE zawsze oznacza sukces biznesowy) (7).
+
+Wszystkie 7 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`
+(BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP metod, choć wspomina kody statusu).
+Kilka literówek ("techNIcznie"→"technicznie") w wielu lekcjach znalezionych i naprawionych
+ręcznie przed walidacją.
+
+Zweryfikowane live przez API po restarcie backendu (`./mvnw spring-boot:run`, `JAVA_HOME=/c/Users/
+kapit/.jdks/openjdk-25.0.2`): wszystkie 7 lekcji rozdziału zwracają poprawną liczbę bloków (15
+teoria / 3 exercises / 5 quiz) PO odczekaniu na ustąpienie znanego wyścigu startowego + regresja na
+`_38_redis_and_caching/01_WhyDistributedCache` i endpoint `critical-topics` — bez zmian. Orphaned
+`java.exe` sprawdzone (brak) PRZED startem. Scommitowane 7 komitami WIP (jeden na lekcję).
+
+**UWAGA operacyjna z tej sesji (powtórzona): background task monitorujący gotowość treści
+(`until [...] != "0"; do sleep 5; done`) ZOSTAŁ PONOWNIE przerwany przez system z powodu niskiej
+ilości pamięci ("system is running low on memory") — DRUGI raz w tej sesji (pierwszy przy
+weryfikacji `_37`). Rozwiązanie ZADZIAŁAŁO za DRUGIM podejściem (ponowne uruchomienie TEGO SAMEGO
+polecenia w tle) — WARTO potraktować to jako ZNANY, przejściowy problem środowiskowy, NIE błąd
+w logice polecenia — przy kolejnym wystąpieniu, PO PROSTU ponowić TĘ SAMĄ komendę w tle.**
 
 ## `_38_redis_and_caching` (7/7 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
