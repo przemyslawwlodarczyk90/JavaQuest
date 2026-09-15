@@ -506,6 +506,60 @@ powtarzające się treści, brakujące zagadnienia, błędy techniczne, polskie 
 oznaczenia "lekcja gotowa"). Nie rozpoczęty w tej sesji — do potwierdzenia z użytkownikiem, czy
 i kiedy go podjąć.
 
+## `_34_docker_fundamentals` (11/11 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Trzeci rozdział dopisany PO zamknięciu Etapu 4 (po `_32`, `_33`). W przeciwieństwie do `_32`/`_33`
+(które pokrywały tematy CAŁKOWICIE nieobecne w kursie), ten rozdział pokrywa temat, który JUŻ MIAŁ
+przypisany rozdział w `critical-topics.json` (`_31_spring_cloud_microservices/17_Containerizing
+SpringBootApps`), ale z JAWNĄ notatką: "Kurs uczy Dockera w kontekście konteneryzacji mikroserwisów
+(multi-stage build) - warto dodać osobny, wprowadzający rozdział z docker run/volumes/networks."
+Po dokończeniu tego rozdziału zaktualizowano wpis `tools-docker-basics`: wskazuje teraz na
+`_34_docker_fundamentals/03_DockerfileBasics`, `note` wyczyszczone na `null` — **WSZYSTKIE 44
+tematy priorytetu `"critical"` w `critical-topics.json` mają teraz przypisany rozdział BEZ
+żadnej notatki flagującej niepełne pokrycie** (sprawdzone programowo po tej sesji).
+
+ŚWIADOMIE NIE obejmuje: Docker Compose (`tools-docker-compose`, osobny temat "very-important"),
+Kubernetes (`cloud-kubernetes`, "important") — zgodnie z wyraźną instrukcją użytkownika w tej
+sesji ("linux bedzie zupelnie innym tematem, nie rob go jesli nie jest w lekcjach krytycznych,
+jedynie jesli cos zahacza o krytyczne") ograniczono zakres WYŁĄCZNIE do tego, co dotyczyło
+BEZPOŚREDNIO tematu krytycznego (Dockerfile/image/container/run/volumes/networks — dokładnie
+zakres z notatki), NIE rozszerzając na sąsiednie, ale osobne tematy niższego priorytetu.
+
+Ten sam lekki format co `_32`/`_33` (14-15 bloków teorii, `API_REFERENCE` niemal wszędzie — cały
+rozdział to konkretne polecenia CLI Dockera — 3-4 unikalne ćwiczenia / 5 unikalnych quizów na
+lekcję). 11 lekcji: kontener jako izolowany proces dzielący jądro hosta vs pełna VM + analogia
+kontenera transportowego (1), format nazwy obrazu i ID jako prawdziwa tożsamość vs tag jako
+ruchoma/nieruchoma etykieta — bezpośrednia analogia do gałęzi/tagu Gita z `_33/Lesson03,11` (2),
+Dockerfile — FROM/WORKDIR/COPY/RUN/EXPOSE/ENTRYPOINT/CMD + `.dockerignore` jako odpowiednik
+`.gitignore` z `_33/Lesson12` (3), `docker run` (NOWY kontener) vs `docker start` (ISTNIEJĄCY) +
+`-p HOST:KONTENER` (4), warstwy jako niezmienne migawki + cache budowania, efekt domina przy
+unieważnieniu (5), `ENV`/`ARG`/`-e` + pułapka sekretu wypieczonego na stałe w warstwie obrazu,
+analogia do zacommitowanego sekretu z `_33/Lesson12` (6), wolumeny jako przechowywanie niezależne
+od cyklu życia kontenera (7), sieci Dockera z wbudowanym DNS + pułapka `localhost` między
+kontenerami (8), multi-stage build (JDK+Maven w etapie budowania, TYLKO JRE w finalnym) (9),
+`USER` + `COPY --chown=` przeciw domyślnemu rootowi + pełna checklist dobrych praktyk (10),
+kapston "JavaQuest Tasks API + PostgreSQL" łączący wszystkie 10 lekcji w jeden dwukontenerowy
+system, z pułapką "kontener działa" != "usługa gotowa" (`HEALTHCHECK` jako rozwiązanie) (11).
+
+Wszystkie 11 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych — DWA przypadkowe znaki cyrylicy znalezione i naprawione ręcznie
+w trakcie pisania, w lekcjach 9 i 10) i przepuszczone przez `fix_allcaps.js`/
+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej
+sesji co napisanie. Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie
+backendu (wszystkie 11 lekcji rozdziału, PO odczekaniu na ustąpienie krótkiego wyścigu startowego)
++ regresja na `_01_fundamentals/06_StringsAndBuilder`, `_09_jdbc/20_Mapper`, `_32_algorithms_and_
+data_structures/15_AlgorithmsCapstone`, `_33_git_essentials/16_GitWorkflowCapstone`, `_31_spring_
+cloud_microservices/19_MicroservicesCapstone` — bez zmian. Scommitowane 12 komitami WIP (jeden na
+lekcję + jeden dla scaffoldu ChapterSeedData z lekcją 1).
+
+**UWAGA operacyjna z tej sesji: przed startem backendu do weryfikacji `_34`, znaleziono DWA
+osierocone procesy `java.exe` (ten sam PID startowy co poprzedni, niezabity poprawnie przez
+wcześniejsze `TaskStop` mimo komunikatu o sukcesie) — zatrzymane ręcznie przez PowerShell
+`Stop-Process -Force` PRZED uruchomieniem nowego backendu, zgodnie z ustaloną zasadą "zawsze
+zatrzymaj STARY proces przed uruchomieniem nowego". Warto przy przyszłych sesjach sprawdzać
+`Get-Process -Name java` PRZED każdym nowym `spring-boot:run`, nawet jeśli poprzedni `TaskStop`
+zgłosił sukces.**
+
 ## `_33_git_essentials` (16/16 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
 Drugi rozdział dopisany PO zamknięciu Etapu 4 (po `_32_algorithms_and_data_structures`),
