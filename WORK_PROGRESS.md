@@ -546,26 +546,28 @@ nawigacji z poprawną liczbą lekcji, regresja na `_01_fundamentals`/`_34_docker
 zmian.
 
 `critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
-w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose` I `cloud-kubernetes`
-ZAKTUALIZOWANE (patrz sekcje "`_35_docker_compose`"/"`_36_kubernetes_fundamentals` — KOMPLETNE"
-wyżej) — wskazują teraz odpowiednio na `_35_docker_compose/07_MultiContainerJavaQuestExample` i
-`_36_kubernetes_fundamentals/06_KubernetesVsDockerComposeCapstone`. Pozostałych 5 tematów WCIĄŻ
-oznaczonych jako "do opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe
-rozdziały, żeby zakładka "Krytyczne" nie pokazywała przedwcześnie "w kursie" dla lekcji bez
-żadnej treści — flip nastąpi ROZDZIAŁ PO ROZDZIALE, w miarę pisania treści (dokładnie ten sam
-wzorzec co przy `_32`/`_33`/`_34`/`_35`/`_36`).
+w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose`, `cloud-kubernetes` I
+`cloud-aws` ZAKTUALIZOWANE (patrz sekcje "`_35_docker_compose`"/"`_36_kubernetes_fundamentals`"/
+"`_37_cloud_aws_fundamentals` — KOMPLETNE" wyżej) — wskazują teraz odpowiednio na
+`_35_docker_compose/07_MultiContainerJavaQuestExample`,
+`_36_kubernetes_fundamentals/06_KubernetesVsDockerComposeCapstone` i
+`_37_cloud_aws_fundamentals/09_AwsFundamentalsCapstone`. Pozostałych 4 tematy WCIĄŻ oznaczone jako
+"do opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby
+zakładka "Krytyczne" nie pokazywała przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip
+nastąpi ROZDZIAŁ PO ROZDZIALE, w miarę pisania treści (dokładnie ten sam wzorzec co przy
+`_32`/`_33`/`_34`/`_35`/`_36`/`_37`).
 
 Zweryfikowano: `mvnw compile` bez błędów, wszystkie 8 rozdziałów widoczne w nawigacji live przez
 API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) faktycznie zwraca
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla pozostałych 5 rozdziałów, rozdział po rozdziale, tym samym
-wzorcem co `_32`/`_33`/`_34`/`_35`/`_36`** (14-15 bloków teorii, zmienna mała liczba
-exercises/quiz) — `_35_docker_compose` i `_36_kubernetes_fundamentals` UKOŃCZONE w tej sesji
-(patrz sekcje wyżej), kolejność pozostałych 5 wciąż nieustalona przez użytkownika:
-`_37_cloud_aws_fundamentals`, `_38_redis_and_caching`, `_39_observability_prometheus_grafana`,
-`_40_rest_assured_testing`, `_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
+**NASTĘPNY KROK: napisać treść dla pozostałych 4 rozdziałów, rozdział po rozdziale, tym samym
+wzorcem co `_32`-`_37`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
+`_35_docker_compose`, `_36_kubernetes_fundamentals` i `_37_cloud_aws_fundamentals` UKOŃCZONE w
+tej sesji (patrz sekcje wyżej), kolejność pozostałych 4 wciąż nieustalona przez użytkownika:
+`_38_redis_and_caching`, `_39_observability_prometheus_grafana`, `_40_rest_assured_testing`,
+`_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
 PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
@@ -574,6 +576,55 @@ PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym je
 sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
 -Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
 poprzedni `TaskStop` zgłosił sukces.**
+
+## `_37_cloud_aws_fundamentals` (9/9 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Szósty rozdział dopisany PO zamknięciu `_36_kubernetes_fundamentals`, trzeci z siedmiu rozdziałów
+zaplanowanych jako PUSTE scaffoldy — pokrywa `cloud-aws` ("important"). ŚWIADOMIE ograniczony do
+JEDNEGO dostawcy (AWS, najczęstszy w polskich ofertach pracy zgodnie z `kytyyczne tematy.md`) i
+GARSTKI podstawowych usług (EC2/S3/RDS/VPC/CloudWatch/Secrets Manager) — NIE pełna, wielochmurowa
+ekspertyza architektury. Po dokończeniu zaktualizowano wpis `cloud-aws`: wskazuje teraz na
+`_37_cloud_aws_fundamentals/09_AwsFundamentalsCapstone`, `note` wyczyszczone na `null`.
+
+Ten sam lekki format co `_35`/`_36` (15 bloków teorii, 3 unikalne ćwiczenia / 5 unikalnych quizów
+na lekcję). 9 lekcji, KAŻDA świadomie zakotwiczona w KONKRETNYM pojęciu z `_34`-`_36`: po co
+chmura istnieje + model odpowiedzialności współdzielonej + "jeden dostawca dobrze zrozumiany"
+zamiast powierzchownej wiedzy o trzech (1), Region/Availability Zone + IAM na zasadzie "domyślnie
+zabronione" + zasada najmniejszych uprawnień (2), EC2 jako wynajmowany serwer wirtualny +
+`stop`/`terminate` + pułapka zapomnianej, generującej koszty instancji (3), S3 jako
+przechowywanie OBIEKTÓW bez prawdziwych katalogów + domyślnie prywatny bucket + pułapka
+nadmiernie szerokiej polityki publicznego dostępu (4), RDS jako zarządzana baza danych +
+Multi-AZ (wysoka dostępność, NIE skalowanie odczytu) + pułapka publicznie dostępnego RDS (5), VPC
++ Security Group jako TRZECIA implementacja segmentacji sieci znanej z `_35/Lesson3` i
+`_36/Lesson3` + Security Group "stanowa" (6), CloudWatch + Secrets Manager jako TRZECIA
+implementacja `.env`/`Secret` z FAKTYCZNYM szyfrowaniem zamiast base64 (7), pełne wdrożenie
+`tasks-api` łączące WSZYSTKIE usługi z lekcji 1-7 w jeden, uporządkowany, ośmiokrokowy proces z
+jawną logiką zależności między krokami (8), kapston: metoda "sześciu pytań" do samodzielnego
+projektowania DOWOLNEJ nowej architektury AWS, z przykładem scenariusza certyfikatów PDF i
+kontrprzykładem ślepego dodania Multi-AZ bez realnej potrzeby (9).
+
+Wszystkie 9 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych — jeden przypadkowy znak cyrylicy w lekcji 4 ("woluмen"→"wolumen")
+oraz cztery literówki "techNIcznie"→"technicznie" w lekcjach 2/3/6/7/8 znalezione i naprawione
+ręcznie PRZED/PO uruchomieniu fix scripts) i przepuszczone przez `fix_allcaps.js`/
+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej
+sesji co napisanie. Podczas przeglądu kapstonu (lekcja 9) samodzielnie wykryto i naprawiono
+niespójność merytoryczną: blok PITFALL/CODE_WRONG błędnie opisywał architekturę z lekcji 8 jako
+zawierającą komponent "proxy" i ustawienie "Multi-AZ" — ŻADNE z nich faktycznie NIE występuje w
+lekcji 8 (weryfikacja przez grep) — poprawiono opis na zgodny z rzeczywistą treścią lekcji 8.
+
+Zweryfikowane live przez API po restarcie backendu (`./mvnw spring-boot:run`, `JAVA_HOME=/c/Users/
+kapit/.jdks/openjdk-25.0.2`): wszystkie 9 lekcji rozdziału zwracają poprawną liczbę bloków (15
+teoria / 3 exercises / 5 quiz) PO odczekaniu na ustąpienie znanego wyścigu startowego + regresja na
+`_36_kubernetes_fundamentals/01_WhyKubernetes` i endpoint `critical-topics` — bez zmian. Orphaned
+`java.exe` sprawdzone i zatrzymane PRZED każdym restartem, zgodnie ze standardowym krokiem.
+Scommitowane 9 komitami WIP (jeden na lekcję).
+
+**UWAGA operacyjna z tej sesji: podczas weryfikacji tego rozdziału, background task monitorujący
+gotowość treści (`until [ ... ] != "0"; do sleep 5; done`) został PRZERWANY przez system z powodu
+niskiej ilości dostępnej pamięci ("system is running low on memory") — NIE błąd w kodzie/treści.
+Rozwiązanie: pojedyncze `curl` + `sleep 20` + odczyt WYNIKU wprost, zamiast pętli w tle, gdy
+pamięć systemowa jest ograniczona.**
 
 ## `_36_kubernetes_fundamentals` (6/6 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
