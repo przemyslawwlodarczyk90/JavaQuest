@@ -546,20 +546,24 @@ nawigacji z poprawną liczbą lekcji, regresja na `_01_fundamentals`/`_34_docker
 zmian.
 
 `critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
-w ogóle nieobecne). Pozostałych 8 tematów WCIĄŻ oznaczonych jako "do opracowania" (`chapterSlug:
-null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby zakładka "Krytyczne" nie pokazywała
-przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip nastąpi ROZDZIAŁ PO ROZDZIALE, w
-miarę pisania treści (dokładnie ten sam wzorzec co przy `_32`/`_33`/`_34`).
+w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose` ZAKTUALIZOWANY (patrz sekcja
+"`_35_docker_compose` (8/8 lekcji) — KOMPLETNE" wyżej) — wskazuje teraz na `_35_docker_compose/
+07_MultiContainerJavaQuestExample`. Pozostałych 6 tematów WCIĄŻ oznaczonych jako "do opracowania"
+(`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby zakładka "Krytyczne"
+nie pokazywała przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip nastąpi ROZDZIAŁ PO
+ROZDZIALE, w miarę pisania treści (dokładnie ten sam wzorzec co przy `_32`/`_33`/`_34`/`_35`).
 
 Zweryfikowano: `mvnw compile` bez błędów, wszystkie 8 rozdziałów widoczne w nawigacji live przez
 API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) faktycznie zwraca
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla tych 7 rozdziałów, rozdział po rozdziale, tym samym wzorcem
-co `_32`/`_33`/`_34`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) — kolejność
-nieustalona przez użytkownika, sugerowana: `_35_docker_compose` ("very-important", naturalna
-kontynuacja `_34`) jako pierwszy.
+**NASTĘPNY KROK: napisać treść dla pozostałych 6 rozdziałów, rozdział po rozdziale, tym samym
+wzorcem co `_32`/`_33`/`_34`/`_35`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
+`_35_docker_compose` UKOŃCZONY w tej sesji (patrz sekcja wyżej), kolejność pozostałych 6 wciąż
+nieustalona przez użytkownika: `_36_kubernetes_fundamentals`, `_37_cloud_aws_fundamentals`,
+`_38_redis_and_caching`, `_39_observability_prometheus_grafana`, `_40_rest_assured_testing`,
+`_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
 PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
@@ -568,6 +572,56 @@ PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym je
 sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
 -Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
 poprzedni `TaskStop` zgłosił sukces.**
+
+## `_35_docker_compose` (8/8 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Czwarty rozdział dopisany PO zamknięciu wszystkich 44 tematów `"critical"` (po `_32`/`_33`/`_34`),
+pierwszy z siedmiu rozdziałów zaplanowanych jako PUSTE scaffoldy w sekcji "PLANOWANIE" wyżej —
+zgodnie z sugestią w tamtej sekcji, wybrany jako pierwszy do wypełnienia treścią (naturalne
+przedłużenie `_34_docker_fundamentals`, priorytet "very-important"). Po dokończeniu
+zaktualizowano wpis `tools-docker-compose` w `critical-topics.json`: wskazuje teraz na
+`_35_docker_compose/07_MultiContainerJavaQuestExample`, `note` wyczyszczone na `null`.
+
+Ten sam lekki format co `_32`/`_33`/`_34` (15 bloków teorii, 3 unikalne ćwiczenia / 5 unikalnych
+quizów na lekcję — stała liczba w tym rozdziale, nie zmienna jak w poprzednich). 8 lekcji: po co
+Compose istnieje — jeden plik zamiast wielu ręcznych `docker run` (1), składnia pliku YAML,
+`image:` vs `build:`, wcięcia jako hierarchia (2), wiele własnych sieci + segmentacja (publiczne
+proxy odizolowane od bazy danych) + krótka/długa składnia wolumenów (3), `.env` (podstawienia
+`${...}` w SAMYM pliku Compose) vs `env_file:` (wstrzykiwanie DO kontenera) — rozróżnienie
+najczęściej mylone (4), `depends_on` — kolejność startu PROCESU vs `condition: service_healthy` —
+prawdziwe czekanie na gotowość USŁUGI, `restart:` (5), codzienne polecenia `up/down/stop/start/ps/
+logs/exec`, `stop` vs `down`, flaga `-v` przy `down` jako świadomy, nie domyślny wybór (6),
+kapston-jak-przykład: trójwarstwowy system JavaQuest (proxy+api+baza) łączący WSZYSTKIE elementy
+lekcji 1-6 naraz (7), prawdziwy kapston: metoda "sześciu pytań" do samodzielnego projektowania
+DOWOLNEGO nowego układu wieloserwisowego od zera, z przykładem scenariusza notatki+kolejka
+RabbitMQ i kontrprzykładem ślepego kopiowania szablonu do niepasującego kontekstu (8).
+
+Wszystkie 8 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych — dwa przypadkowe znaki znalezione i naprawione ręcznie w lekcji 7:
+brakujący backtick w `_34/Lesson8`) i przepuszczone przez `fix_allcaps.js`/
+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej
+sesji co napisanie. Podczas pisania lekcji 2 samodzielnie wykryto i naprawiono niespójność
+merytoryczną: pierwotny przykład CODE_WRONG/CODE_RIGHT przeczył własnej narracji "cichego błędu"
+(błędne wcięcie wyglądało jak coś, co Compose by od razu odrzucił jako niepoprawny schemat) —
+zastąpiony poprawionym, faktycznie cichym scenariuszem (zmienna trafiająca do sąsiedniego
+serwisu, wciąż poprawna składniowo).
+
+Zweryfikowane live przez API po restarcie backendu (`./mvnw spring-boot:run`, z jawnym
+`JAVA_HOME=/c/Users/kapit/.jdks/openjdk-25.0.2` — patrz uwaga operacyjna niżej): wszystkie 8
+lekcji rozdziału zwracają poprawną liczbę bloków (15 teoria / 3 exercises / 5 quiz) PO
+odczekaniu na ustąpienie znanego wyścigu startowego (`_32`-`_34` uwaga operacyjna) + regresja na
+`_34_docker_fundamentals/01_WhyContainers` i endpoint `critical-topics` — bez zmian. Scommitowane
+8 komitami WIP (jeden na lekcję).
+
+**UWAGA operacyjna z tej sesji (NOWA odmiana wcześniej znanych problemów):** w tej powłoce
+Git Bash polecenie `mvn` NIE jest dostępne na `PATH` — trzeba użyć wrappera `./mvnw` (Linux/Bash)
+zamiast `mvnw.cmd`. Dodatkowo `JAVA_HOME` nie jest ustawiony domyślnie w NOWO otwartej powłoce —
+`./mvnw` bez niego kończy się natychmiast błędem "JAVA_HOME environment variable is not defined
+correctly" (bez podnoszenia procesu Javy w ogóle, więc monitoring logu w pętli `until grep...`
+nigdy nie zobaczy ani "Started", ani "ERROR" — trzeba rozpoznać ten konkretny komunikat i
+zrestartować z jawnym `export JAVA_HOME=/c/Users/kapit/.jdks/openjdk-25.0.2` PRZED `./mvnw`).
+Orphaned `java.exe` (dwa procesy z `openjdk-25.0.2`) ponownie znalezione i zatrzymane PRZED
+startem, zgodnie ze standardowym krokiem ustalonym we wcześniejszych sesjach.
 
 ## `_34_docker_fundamentals` (11/11 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
