@@ -381,6 +381,21 @@ public final class ChapterSeedData {
                     "07_PullRequestWorkflow", "08_Stash", "09_UndoingChanges", "10_CherryPick",
                     "11_Tags", "12_GitignoreAndAttributes", "13_LogBlameAndBisect",
                     "14_CommitConventionsAndBranchingStrategies", "15_GitHooks", "16_GitWorkflowCapstone"
+            )),
+
+            // Trzeci rozdzial dopisany po zamknieciu Etapu 4 (po _32, _33) - pokrywa
+            // "tools-docker-basics" w critical-topics.json: temat priorytetu "critical", ktory MIAL
+            // przypisany rozdzial (_31_spring_cloud_microservices/17_ContainerizingSpringBootApps),
+            // ale z notatka wprost mowiaca, ze kurs uczy Dockera TYLKO w kontekscie konteneryzacji
+            // mikroserwisow (multi-stage build) i "warto dodac osobny, wprowadzajacy rozdzial z
+            // docker run/volumes/networks" - dokladnie to pokrywa ten rozdzial. SWIADOMIE NIE
+            // obejmuje Docker Compose/Kubernetes - to osobne, nizej priorytetowe tematy w
+            // critical-topics.json ("very-important"/"important"), nie czesc tego zadania.
+            new ChapterSeed("_34_docker_fundamentals", "Docker - podstawy konteneryzacji", List.of(
+                    "01_WhyContainers", "02_ImagesAndContainers", "03_DockerfileBasics",
+                    "04_RunningContainers", "05_ImageLayersAndCaching", "06_EnvironmentAndConfiguration",
+                    "07_Volumes", "08_DockerNetworks", "09_MultiStageBuilds",
+                    "10_DockerfileBestPracticesAndSecurity", "11_DockerFundamentalsCapstone"
             ))
     );
 
