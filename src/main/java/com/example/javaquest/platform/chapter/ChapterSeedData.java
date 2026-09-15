@@ -396,6 +396,100 @@ public final class ChapterSeedData {
                     "04_RunningContainers", "05_ImageLayersAndCaching", "06_EnvironmentAndConfiguration",
                     "07_Volumes", "08_DockerNetworks", "09_MultiStageBuilds",
                     "10_DockerfileBestPracticesAndSecurity", "11_DockerFundamentalsCapstone"
+            )),
+
+            // ===== PUSTE ROZDZIALY (PLANOWANIE) - dodane 2026-09-15, TRESC CELOWO NIE ISTNIEJE =====
+            // Na wyrazna prosbe uzytkownika: rozplanowanie (same nazwy lekcji, bez tresci JSON)
+            // WSZYSTKICH pozostalych tematow z critical-topics.json oznaczonych jako
+            // "do opracowania" (priorytet "very-important"/"important" - WSZYSTKIE tematy
+            // "critical" byly juz w 100% pokryte PRZED dodaniem tych rozdzialow, patrz _32/_33/_34
+            // wyzej). Kazdy z tych rozdzialow bedzie POKAZYWAL sie w nawigacji, ale KAZDA jego
+            // lekcja wyswietli sie jako "tresc w przygotowaniu" (LessonContentLoader pomija lekcje
+            // bez odpowiadajacego pliku JSON pod src/main/resources/content/<rozdzial>/ - to
+            // CELOWE, udokumentowane zachowanie Fazy 1, patrz komentarz w LessonContentLoader.java)
+            // - TRESC do napisania w KOLEJNEJ, oddzielnej turze pracy, rozdzial po rozdziale, tym
+            // samym wzorcem co _32/_33/_34 (14-15 blokow teorii, zmienna mala liczba
+            // exercises/quiz). critical-topics.json NIE zostal jeszcze zaktualizowany dla tych
+            // tematow (zostaja "do opracowania"), zeby NIE pokazywac przedwczesnie "w kursie" dla
+            // pustych lekcji - flip nastapi rozdzial po rozdziale, w miare pisania tresci.
+            //
+            // SWIADOMIE POMINIETE (na wyrazna prosbe uzytkownika, "wywalic calkowicie"):
+            // other-react, other-angular - USUNIETE z critical-topics.json, nie beda mialy
+            // zadnego rozdzialu (poza zakresem kursu backendowego, raport sam odradza).
+            //
+            // "other-nosql" jest CELOWO najkrotszy (3 lekcje) - uzytkownik zastrzegl "o nosql
+            // mozna jedynie zachaczyc z grubsza" (tylko ogolna swiadomosc, nie pelny rozdzial).
+
+            // Pokrywa "tools-linux" (very-important, "Brak rozdzialu o Linuksie/terminalu w
+            // kursie - kandydat do nowego rozdzialu").
+            new ChapterSeed("_35_linux_fundamentals", "Linux - podstawy pracy w terminalu", List.of(
+                    "01_WhyLinuxMatters", "02_ShellBasicsAndNavigation", "03_FilesAndDirectories",
+                    "04_FilePermissions", "05_TextProcessingGrepSedAwk", "06_PipesAndRedirection",
+                    "07_ProcessManagement", "08_EnvironmentVariablesAndShellConfig",
+                    "09_PackageManagement", "10_SshAndRemoteAccess", "11_ShellScriptingBasics",
+                    "12_LinuxFundamentalsCapstone"
+            )),
+
+            // Pokrywa "tools-docker-compose" (very-important, "Kurs pokazuje Dockerfile, ale nie
+            // docker-compose.yml dla wielu serwisow (app+DB+broker) - kandydat do nowego
+            // rozdzialu"). Naturalne przedluzenie _34_docker_fundamentals.
+            new ChapterSeed("_36_docker_compose", "Docker Compose - aplikacje wielokontenerowe", List.of(
+                    "01_WhyDockerCompose", "02_ComposeFileBasics",
+                    "03_ServicesNetworksAndVolumesInCompose", "04_EnvironmentAndEnvFiles",
+                    "05_DependsOnAndStartupOrder", "06_ComposeCommandsAndWorkflow",
+                    "07_MultiContainerJavaQuestExample", "08_DockerComposeCapstone"
+            )),
+
+            // Pokrywa "cloud-kubernetes" (important, "swiadomie na niskim priorytecie, raport
+            // odradza glebsze wejscie na tym etapie kariery") - stad CELOWO tylko 6 lekcji,
+            // sama swiadomosc/podstawy, nie glebokie kompetencje operacyjne.
+            new ChapterSeed("_37_kubernetes_fundamentals", "Kubernetes - świadomość podstaw", List.of(
+                    "01_WhyKubernetes", "02_PodsAndDeployments", "03_ServicesAndNetworkingBasics",
+                    "04_ConfigMapsAndSecrets", "05_KubectlBasics",
+                    "06_KubernetesVsDockerComposeCapstone"
+            )),
+
+            // Pokrywa "cloud-aws" (important, "niski priorytet, wybierz jednego dostawce" - AWS
+            // wybrany jako ten jeden dostawca, zgodnie z rekomendacja raportu).
+            new ChapterSeed("_38_cloud_aws_fundamentals", "AWS - podstawy chmury obliczeniowej", List.of(
+                    "01_WhyCloudAndWhyAws", "02_CoreConceptsRegionsAndIam", "03_Ec2Basics",
+                    "04_S3Basics", "05_RdsBasics", "06_VpcBasicsAndNetworking",
+                    "07_CloudWatchAndSecretsManagement", "08_DeployingSpringBootToAws",
+                    "09_AwsFundamentalsCapstone"
+            )),
+
+            // Pokrywa "other-redis" (important, "Kurs uczy cache lokalnego (Caffeine,
+            // _13_libraries), ale nie Redis jako wspoldzielonego cache").
+            new ChapterSeed("_39_redis_and_caching", "Redis i cache współdzielony", List.of(
+                    "01_WhyDistributedCache", "02_RedisDataStructures",
+                    "03_RunningRedisAndBasicCommands", "04_SpringDataRedisIntegration",
+                    "05_CacheInvalidationStrategies", "06_RedisPubSubAwareness",
+                    "07_RedisCachingCapstone"
+            )),
+
+            // Pokrywa "observability-prometheus-grafana" (important, "Actuator/Micrometer sa
+            // omowione, ale nie konkretnie Prometheus/Grafana jako stos wizualizacji").
+            new ChapterSeed("_40_observability_prometheus_grafana", "Prometheus i Grafana - wizualizacja metryk", List.of(
+                    "01_WhyMetricsVisualization", "02_PrometheusDataModelAndPromQL",
+                    "03_MicrometerToPrometheusIntegration", "04_RunningPrometheusLocally",
+                    "05_GrafanaDashboardsBasics", "06_AlertingBasics", "07_ObservabilityCapstone"
+            )),
+
+            // Pokrywa "testing-rest-assured" (important, "Kurs testuje REST przez
+            // MockMvc/WebTestClient - REST Assured jako osobna biblioteka nie jest omowiona").
+            // CELOWO krotszy (5 lekcji) - buduje na juz istniejacej wiedzy testowej z _25/_26/_27.
+            new ChapterSeed("_41_rest_assured_testing", "REST Assured - testowanie API", List.of(
+                    "01_WhyRestAssured", "02_FirstRestAssuredTest",
+                    "03_RequestSpecificationAndAuth", "04_ResponseValidationAndJsonPath",
+                    "05_RestAssuredWithSpringBootCapstone"
+            )),
+
+            // Pokrywa "other-nosql" (important, "Kurs jest w pelni relacyjny (SQL/JPA) - brak
+            // wprowadzenia do NoSQL"). CELOWO NAJKROTSZY rozdzial (3 lekcje) - na wyrazna prosbe
+            // uzytkownika ma to byc WYLACZNIE ogolna swiadomosc/orientacja, NIE pelny kurs NoSQL.
+            new ChapterSeed("_42_nosql_overview", "NoSQL - świadomość podstaw", List.of(
+                    "01_RelationalVsNoSql", "02_DocumentStoresAndMongoDbAwareness",
+                    "03_ColumnAndKeyValueStoresAwareness"
             ))
     );
 
