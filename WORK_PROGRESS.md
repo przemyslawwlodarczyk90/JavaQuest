@@ -546,28 +546,29 @@ nawigacji z poprawną liczbą lekcji, regresja na `_01_fundamentals`/`_34_docker
 zmian.
 
 `critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
-w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose`, `cloud-kubernetes` I
-`cloud-aws` ZAKTUALIZOWANE (patrz sekcje "`_35_docker_compose`"/"`_36_kubernetes_fundamentals`"/
-"`_37_cloud_aws_fundamentals` — KOMPLETNE" wyżej) — wskazują teraz odpowiednio na
-`_35_docker_compose/07_MultiContainerJavaQuestExample`,
-`_36_kubernetes_fundamentals/06_KubernetesVsDockerComposeCapstone` i
-`_37_cloud_aws_fundamentals/09_AwsFundamentalsCapstone`. Pozostałych 4 tematy WCIĄŻ oznaczone jako
-"do opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby
+w ogóle nieobecne). Z pozostałych 7 tematów, `tools-docker-compose`, `cloud-kubernetes`,
+`cloud-aws` I `other-redis` ZAKTUALIZOWANE (patrz sekcje "`_35_docker_compose`"/
+"`_36_kubernetes_fundamentals`"/"`_37_cloud_aws_fundamentals`"/"`_38_redis_and_caching` —
+KOMPLETNE" wyżej) — wskazują teraz odpowiednio na `_35_docker_compose/
+07_MultiContainerJavaQuestExample`, `_36_kubernetes_fundamentals/
+06_KubernetesVsDockerComposeCapstone`, `_37_cloud_aws_fundamentals/09_AwsFundamentalsCapstone` i
+`_38_redis_and_caching/07_RedisCachingCapstone`. Pozostałe 3 tematy WCIĄŻ oznaczone jako "do
+opracowania" (`chapterSlug: null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby
 zakładka "Krytyczne" nie pokazywała przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip
 nastąpi ROZDZIAŁ PO ROZDZIALE, w miarę pisania treści (dokładnie ten sam wzorzec co przy
-`_32`/`_33`/`_34`/`_35`/`_36`/`_37`).
+`_32`-`_38`).
 
 Zweryfikowano: `mvnw compile` bez błędów, wszystkie 8 rozdziałów widoczne w nawigacji live przez
 API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) faktycznie zwraca
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla pozostałych 4 rozdziałów, rozdział po rozdziale, tym samym
-wzorcem co `_32`-`_37`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
-`_35_docker_compose`, `_36_kubernetes_fundamentals` i `_37_cloud_aws_fundamentals` UKOŃCZONE w
-tej sesji (patrz sekcje wyżej), kolejność pozostałych 4 wciąż nieustalona przez użytkownika:
-`_38_redis_and_caching`, `_39_observability_prometheus_grafana`, `_40_rest_assured_testing`,
-`_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
+**NASTĘPNY KROK: napisać treść dla pozostałych 3 rozdziałów, rozdział po rozdziale, tym samym
+wzorcem co `_32`-`_38`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
+`_35_docker_compose`, `_36_kubernetes_fundamentals`, `_37_cloud_aws_fundamentals` i
+`_38_redis_and_caching` UKOŃCZONE w tej sesji (patrz sekcje wyżej), kolejność pozostałych 3
+wciąż nieustalona przez użytkownika: `_39_observability_prometheus_grafana`,
+`_40_rest_assured_testing`, `_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
 PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
@@ -576,6 +577,43 @@ PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym je
 sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
 -Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
 poprzedni `TaskStop` zgłosił sukces.**
+
+## `_38_redis_and_caching` (7/7 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Siódmy rozdział dopisany PO zamknięciu `_37_cloud_aws_fundamentals`, czwarty z siedmiu
+rozdziałów zaplanowanych jako PUSTE scaffoldy — pokrywa `other-redis` ("important"). Po
+dokończeniu zaktualizowano wpis `other-redis`: wskazuje teraz na `_38_redis_and_caching/
+07_RedisCachingCapstone`, `note` wyczyszczone na `null`.
+
+Ten sam lekki format co `_35`-`_37` (15 bloków teorii, 3 unikalne ćwiczenia / 5 unikalnych quizów
+na lekcję). 7 lekcji, KAŻDA świadomie zakotwiczona w cache'owaniu LOKALNYM z `_13_libraries` i
+architekturze wielu-kopii z `_36`/`_37`: po co WSPÓLNY cache istnieje — problem niespójności
+cache'y LOKALNYCH między wieloma kopiami aplikacji, Redis jako cache PRZED bazą danych, NIE jej
+zastępstwo (1), cztery struktury danych (List/Set/Hash/Sorted Set) + zasada "jakie pytanie zadam
+tym danym" analogiczna do wyboru kolekcji w Javie (2), Redis jako kontener Docker — TA SAMA
+procedura co PostgreSQL z `_34`, pułapka `KEYS *` na produkcji + `SCAN` jako bezpieczny zamiennik
+(3), `RedisTemplate` (niski poziom, jak JDBC) vs `@Cacheable`/`@CachePut`/`@CacheEvict` (wysoki
+poziom, jak Spring Data JPA) + pułapka `@Cacheable` na metodzie proxy'ującej z wnętrza klasy (4),
+TTL vs jawne `@CacheEvict` vs write-through — trzy strategie unieważniania, NAJLEPSZA praktyka
+łącząca TTL jako "siatkę bezpieczeństwa" z jawnym unieważnianiem (5), Pub/Sub Redis — ŚWIADOMIE
+KRÓTKA, wprowadzająca lekcja o OGRANICZENIACH (brak trwałości wiadomości), z JASNYM rozróżnieniem
+od Kafki (`_30_spring_messaging_and_async`) dla krytycznych przepływów (6), kapston: metoda
+"pięciu pytań" do samodzielnego projektowania strategii cache'owania dla nowego scenariusza
+(leaderboard), z przykładem Sorted Set jako właściwej struktury zamiast ręcznego sortowania w
+Javie (7).
+
+Wszystkie 7 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`
+(BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej sesji co napisanie. Kilka
+literówek ("techNIcznie"→"technicznie" w kilku lekcjach, "PROZNIEJ"→"POZNIEJ" w lekcji 6)
+znalezionych i naprawionych ręcznie PRZED walidacją.
+
+Zweryfikowane live przez API po restarcie backendu (`./mvnw spring-boot:run`, `JAVA_HOME=/c/Users/
+kapit/.jdks/openjdk-25.0.2`): wszystkie 7 lekcji rozdziału zwracają poprawną liczbę bloków (15
+teoria / 3 exercises / 5 quiz) PO odczekaniu na ustąpienie znanego wyścigu startowego + regresja na
+`_37_cloud_aws_fundamentals/01_WhyCloudAndWhyAws` i endpoint `critical-topics` — bez zmian.
+Orphaned `java.exe` sprawdzone (brak) PRZED startem, zgodnie ze standardowym krokiem. Scommitowane
+7 komitami WIP (jeden na lekcję).
 
 ## `_37_cloud_aws_fundamentals` (9/9 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
