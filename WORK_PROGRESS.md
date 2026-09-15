@@ -506,6 +506,44 @@ powtarzające się treści, brakujące zagadnienia, błędy techniczne, polskie 
 oznaczenia "lekcja gotowa"). Nie rozpoczęty w tej sesji — do potwierdzenia z użytkownikiem, czy
 i kiedy go podjąć.
 
+## `_33_git_essentials` (16/16 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+
+Drugi rozdział dopisany PO zamknięciu Etapu 4 (po `_32_algorithms_and_data_structures`),
+pokrywający JEDYNY temat oznaczony w `critical-topics.json` priorytetem `"critical"` bez
+przypisanego rozdziału: `tools-git` ("Git - codzienne operacje (branch, merge, rebase, PR)",
+wcześniej `chapterSlug: null` z notatką "Brak dedykowanego rozdziału o Git w kursie").
+Zaktualizowano ten wpis: teraz wskazuje `_33_git_essentials/07_PullRequestWorkflow`.
+
+Ten sam lekki format co `_32` (14-15 bloków teorii, 11 standardowych sekcji + `API_REFERENCE`
+gdzie uzasadnione — TU niemal wszędzie, bo cały rozdział to konkretne polecenia CLI Gita —
+ZMIENNA, mała liczba exercises/quiz, 4-6 ćwiczeń / 6-8 quizów na lekcję, NIE stałe 30/100).
+
+16 lekcji: dlaczego kontrola wersji + rozproszony vs scentralizowany model (1), repozytorium/
+HEAD/odwołania względne + `--amend` (2), branching jako lekki, ruchomy wskaźnik (3), merge
+fast-forward vs trójstronny + rozwiązywanie konfliktów (4), rebase + złota zasada "nigdy na
+współdzielonej historii" (5), remote/fetch/pull/push + non-fast-forward (6), Pull Request
+workflow jako funkcja platformy na wierzchu branch+push+merge (7), stash jako stos LIFO (8),
+mapa 4 poziomów cofania: restore/reset (3 tryby)/revert (9), cherry-pick jako selektywny
+rebase pojedynczego commita + backport (10), tagi jako nieruchome wskaźniki (kontrast z
+gałęzią z lekcji 3) (11), gitignore (filtr NA WEJŚCIU) vs gitattributes + wyciek sekretu w
+historii (12), blame + bisect jako binary search na commitach (jawne połączenie z
+`_32_algorithms_and_data_structures/Lesson08`) (13), Conventional Commits + strategie
+branchowania (trunk-based/GitHub Flow/GitFlow) (14), git hooks + pułapka `.git/hooks/`
+niewspółdzielonego między klonami (15), kapston "JavaQuest Tasks API" łączący wszystkie 15
+lekcji w jeden tydzień pracy zespołu (branch->stash->rebase+konflikt->PR->tag->bisect->
+cherry-pick backport, z pułapką pokusy `reset --hard` na współdzielonej gałęzi release) (16).
+
+Wszystkie 16 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`
+(BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej sesji co napisanie.
+Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie backendu
+(wszystkie 16 lekcji rozdziału, PO odczekaniu na ustąpienie krótkiego wyścigu startowego
+opisanego w uwadze operacyjnej wyżej) + regresja na `_01_fundamentals/06_StringsAndBuilder`,
+`_09_jdbc/20_Mapper`, `_32_algorithms_and_data_structures/15_AlgorithmsCapstone`,
+`_31_spring_cloud_microservices/19_MicroservicesCapstone` — bez zmian. Scommitowane 16
+komitami WIP (jeden na lekcję) + wpis całego rozdziału w `ChapterSeedData.java` dodany
+razem z lekcją 1 w jednym commicie.
+
 ## `_32_algorithms_and_data_structures` (15/15 lekcji) — KOMPLETNE, dopisany PO zamknięciu Etapu 4
 
 Nowy rozdział (NIE część oryginalnego Etapu 4 migracji `_01`-`_31`) dodany, żeby pokryć lukę
@@ -556,6 +594,18 @@ dostaje dosłownie `C:\c\Users\...`) — użyj ścieżki Windows (`C:/Users/...`
 prawdziwą ścieżką Windows i sprawdzaj rozmiar/treść pliku (`ls -la`, `Read`), zamiast ufać
 wynikowi z `node -e` czytającego stdin/plik przez potok lub ścieżkę POSIX.
 
+**DODATKOWA obserwacja z tej samej sesji (potwierdzona DWUKROTNIE, przy weryfikacji
+`_32` i osobno `_33`):** nawet przy poprawnej metodzie (curl -> prawdziwa ścieżka Windows
+-> odczyt), zaraz PO tym jak endpoint nawigacyjny (`/lessons`) zaczyna odpowiadać
+(sygnał "backend gotowy"), zapytania o TREŚĆ lekcji (`/theory`, `/exercises`, `/quiz`) mogą
+przez dosłownie kilkanaście-kilkadziesiąt sekund zwracać puste `[]`, mimo że
+`LessonContentLoader` w rzeczywistości skończył pracę bezbłędnie (bez wyjątków w logu) —
+to najwyraźniej krótkie, nieszkodliwe opóźnienie/wyścig przy starcie tego konkretnego
+backendu, nie błąd w treści. **Wniosek na przyszłość:** po potwierdzeniu, że `/lessons`
+odpowiada, odczekaj dodatkowe ~15-30s (albo odpytuj w pętli aż rozmiar odpowiedzi
+przestanie być `2` bajty) PRZED wyciąganiem wniosków z pustej odpowiedzi na endpoint
+treści — nie zakładaj od razu błędu w danych.
+
 ## Ostatnia ukończona czynność
 
 **CAŁY KURS (31/31 rozdziałów) UKOŃCZONY w tej sesji.** Sesja zaczęła się komendą użytkownika
@@ -582,6 +632,13 @@ lekcje 13-15: DFS, Interview Strategy, Algorithms Capstone) — patrz sekcja
 Sesja rozpoczęta komendą "kontynuuj prace, wychodze z domu wiec nie pytaj sie miedzy
 rozdzialami o zgode" — kontynuowano dyrektywę z Etapu 4 (nie pytać o zgodę między
 jednostkami pracy) zastosowaną tu do dokończenia rozdziału `_32`.
+
+**AKTUALIZACJA 2 (ta sama sesja z 2026-09-15):** użytkownik napisał "kontynuj nastepne
+rodzialy critic" (kontynuuj kolejne rozdziały [dla tematów] krytycznych) — zinterpretowane
+jako polecenie napisania NOWEGO rozdziału pokrywającego jedyny temat oznaczony w
+`critical-topics.json` priorytetem `"critical"` bez przypisanego rozdziału: Git. Napisano
+od zera CAŁY rozdział `_33_git_essentials` (16/16 lekcji) w tej samej sesji — patrz osobna
+sekcja "`_33_git_essentials` (16/16 lekcji) — KOMPLETNE" niżej po pełne szczegóły.
 
 ## Wyniki testów / weryfikacji
 
