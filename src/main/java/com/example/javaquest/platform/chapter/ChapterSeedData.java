@@ -368,6 +368,19 @@ public final class ChapterSeedData {
                     "08_BinarySearch", "09_Recursion", "10_LinkedListPatterns", "11_BinaryTrees",
                     "12_BreadthFirstSearch", "13_DepthFirstSearch", "14_InterviewStrategy",
                     "15_AlgorithmsCapstone"
+            )),
+
+            // Kolejny rozdzial pokrywajacy luke z raportu rynkowego (patrz komentarz przy _32
+            // wyzej) - Git to JEDYNY temat oznaczony w critical-topics.json priorytetem "critical"
+            // bez przypisanego rozdzialu ("Brak dedykowanego rozdzialu o Git w kursie - kandydat
+            // do nowego rozdzialu"). Ten sam lekki format co _32 (14-15 blokow teorii, ale
+            // ZMIENNA, MALA liczba exercises/quiz zamiast stalych 30/100).
+            new ChapterSeed("_33_git_essentials", "Git - codzienna praca z systemem kontroli wersji", List.of(
+                    "01_WhyVersionControl", "02_RepositoryCommitsAndStagingArea", "03_BranchingBasics",
+                    "04_MergingAndConflictResolution", "05_Rebase", "06_RemoteRepositories",
+                    "07_PullRequestWorkflow", "08_Stash", "09_UndoingChanges", "10_CherryPick",
+                    "11_Tags", "12_GitignoreAndAttributes", "13_LogBlameAndBisect",
+                    "14_CommitConventionsAndBranchingStrategies", "15_GitHooks", "16_GitWorkflowCapstone"
             ))
     );
 
