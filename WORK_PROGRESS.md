@@ -506,6 +506,57 @@ powtarzające się treści, brakujące zagadnienia, błędy techniczne, polskie 
 oznaczenia "lekcja gotowa"). Nie rozpoczęty w tej sesji — do potwierdzenia z użytkownikiem, czy
 i kiedy go podjąć.
 
+## PLANOWANIE (puste rozdziały) — 8 nowych rozdziałów dla pozostałych tematów "do opracowania"
+
+Po zamknięciu `_32`/`_33`/`_34` (wszystkie 44 tematy `"critical"` w 100% pokryte), użytkownik
+poprosił o rozpisanie (na razie PUSTYCH, bez treści JSON) rozdziałów/lekcji dla WSZYSTKICH
+pozostałych tematów z `critical-topics.json` oznaczonych jako "do opracowania" — z DWOMA
+wyjątkami na wyraźną prośbę użytkownika: `other-react`/`other-angular` USUNIĘTE CAŁKOWICIE z
+`critical-topics.json` (nie będą miały żadnego rozdziału), a `other-nosql` ma dostać TYLKO
+lekki, 3-lekcyjny rozdział ("jedynie zaczaczyć z grubsza", nie pełny kurs).
+
+Dodano do `ChapterSeedData.java` (SAME nazwy lekcji, ZERO plików treści JSON — każda lekcja
+pokazuje się w nawigacji jako "treść w przygotowaniu", zweryfikowane live przez API):
+
+- **`_35_linux_fundamentals`** (12 lekcji) — pokrywa `tools-linux` (very-important).
+- **`_36_docker_compose`** (8 lekcji) — pokrywa `tools-docker-compose` (very-important),
+  naturalne przedłużenie `_34_docker_fundamentals`.
+- **`_37_kubernetes_fundamentals`** (6 lekcji, CELOWO płytki) — pokrywa `cloud-kubernetes`
+  (important); raport rynkowy WPROST odradza głębsze wejście na tym etapie kariery.
+- **`_38_cloud_aws_fundamentals`** (9 lekcji) — pokrywa `cloud-aws` (important); AWS wybrany
+  jako "jeden dostawca" zgodnie z rekomendacją raportu.
+- **`_39_redis_and_caching`** (7 lekcji) — pokrywa `other-redis` (important).
+- **`_40_observability_prometheus_grafana`** (7 lekcji) — pokrywa
+  `observability-prometheus-grafana` (important).
+- **`_41_rest_assured_testing`** (5 lekcji, celowo krótszy — buduje na `_25`/`_26`/`_27`) —
+  pokrywa `testing-rest-assured` (important).
+- **`_42_nosql_overview`** (3 lekcje, NAJKRÓTSZY celowo) — pokrywa `other-nosql` (important),
+  wyłącznie ogólna świadomość/orientacja, NIE pełny kurs NoSQL.
+
+`critical-topics.json`: `other-react`/`other-angular` USUNIĘTE z pliku (nie "do opracowania" —
+w ogóle nieobecne). Pozostałych 8 tematów WCIĄŻ oznaczonych jako "do opracowania" (`chapterSlug:
+null`) — CELOWO nie zaktualizowano ich na nowe rozdziały, żeby zakładka "Krytyczne" nie pokazywała
+przedwcześnie "w kursie" dla lekcji bez żadnej treści — flip nastąpi ROZDZIAŁ PO ROZDZIALE, w
+miarę pisania treści (dokładnie ten sam wzorzec co przy `_32`/`_33`/`_34`).
+
+Zweryfikowano: `mvnw compile` bez błędów, wszystkie 8 rozdziałów widoczne w nawigacji live przez
+API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) faktycznie zwraca
+pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
+jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
+
+**NASTĘPNY KROK: napisać treść dla tych 8 rozdziałów, rozdział po rozdziale, tym samym wzorcem
+co `_32`/`_33`/`_34`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) — kolejność
+nieustalona przez użytkownika, sugerowana: `_35_linux_fundamentals` i `_36_docker_compose`
+(oba "very-important", naturalna kontynuacja `_34`) jako pierwsze.
+
+**UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
+PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
+`ms-17.0.17` — nieużywanego świadomie w żadnym poleceniu tej sesji) — zatrzymane ręcznie przez
+`Stop-Process -Force` przed każdym restartem. To się powtarza wystarczająco często (3 razy w tej
+sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
+-Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
+poprzedni `TaskStop` zgłosił sukces.**
+
 ## `_34_docker_fundamentals` (11/11 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
 Trzeci rozdział dopisany PO zamknięciu Etapu 4 (po `_32`, `_33`). W przeciwieństwie do `_32`/`_33`
