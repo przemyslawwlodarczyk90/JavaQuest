@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -28,8 +29,8 @@ class ChapterController {
     }
 
     @GetMapping("/api/chapters")
-    List<ChapterSummary> getChapters() {
-        return chapterRepository.findAllByOrderBySortOrderAsc().stream()
+    List<ChapterSummary> getChapters(@RequestParam(defaultValue = "JAVA") CourseTrack track) {
+        return chapterRepository.findAllByTrackOrderBySortOrderAsc(track).stream()
                 .map(chapter -> new ChapterSummary(
                         chapter.getSlug(),
                         chapter.getTitle(),

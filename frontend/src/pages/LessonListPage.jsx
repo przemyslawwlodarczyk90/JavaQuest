@@ -29,9 +29,11 @@ export default function LessonListPage() {
     return <p className="error">Nie udało się wczytać lekcji: {error}</p>
   }
 
+  const homePath = chapterSlug.startsWith('_js_') ? '/js' : '/'
+
   return (
     <div>
-      <Link to="/" className="back-link">
+      <Link to={homePath} className="back-link">
         &larr; Wszystkie rozdziały
       </Link>
       <h2>{chapterSlug}</h2>

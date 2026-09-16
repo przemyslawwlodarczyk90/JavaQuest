@@ -34,7 +34,8 @@ class ContentSeeder implements ApplicationRunner {
 
         int chapterOrder = 0;
         for (ChapterSeedData.ChapterSeed seed : ChapterSeedData.CHAPTERS) {
-            Chapter chapter = chapterRepository.save(new Chapter(seed.slug(), seed.title(), chapterOrder++));
+            Chapter chapter = chapterRepository.save(
+                    new Chapter(seed.slug(), seed.title(), chapterOrder++, seed.track()));
 
             int lessonOrder = 0;
             for (String lessonSlug : seed.lessonSlugs()) {

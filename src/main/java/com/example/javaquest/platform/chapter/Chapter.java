@@ -2,6 +2,8 @@ package com.example.javaquest.platform.chapter;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -31,14 +33,19 @@ public class Chapter {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private CourseTrack track;
+
     protected Chapter() {
         // wymagane przez JPA
     }
 
-    public Chapter(String slug, String title, int sortOrder) {
+    public Chapter(String slug, String title, int sortOrder, CourseTrack track) {
         this.slug = slug;
         this.title = title;
         this.sortOrder = sortOrder;
+        this.track = track;
     }
 
     public Long getId() {
@@ -55,5 +62,9 @@ public class Chapter {
 
     public int getSortOrder() {
         return sortOrder;
+    }
+
+    public CourseTrack getTrack() {
+        return track;
     }
 }

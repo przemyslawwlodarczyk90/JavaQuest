@@ -11,8 +11,8 @@ async function getJson(path) {
   return response.json()
 }
 
-export function getChapters() {
-  return getJson('/api/chapters')
+export function getChapters(track = 'JAVA') {
+  return getJson(`/api/chapters?track=${encodeURIComponent(track)}`)
 }
 
 export function getLessons(chapterSlug) {
