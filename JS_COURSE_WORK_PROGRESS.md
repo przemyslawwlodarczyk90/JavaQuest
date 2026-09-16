@@ -341,16 +341,50 @@ teorii/ćwiczeń/quizu (15/8/6, 15/8/6, 15/8/6, 14/8/6, 14/8/6, 14/7/6). Regresj
 pierwsze lekcje rozdziałów 1-8 → bez zmian. Backend zatrzymany po weryfikacji (potwierdzony brak
 procesów `java`).
 
+## `_js_10_moduly` (7/7 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+7 lekcji: czym są moduły ES i dlaczego React ich używa, import nazwany (`{ nazwa }`, alias `as`),
+import domyślny (`export default`, dowolna nazwa po stronie importu), łączenie obu w jednej linii
+(`import domyslny, { nazwane }`), namespace import (`import * as`, eksport domyślny pod kluczem
+`.default`), import dynamiczny (`import()` jako `Promise`, lazy loading, analogia do
+`React.lazy()`), oraz zamykająca lekcja z pełną analogią modułów ES do organizacji komponentów
+React. Wszystkie 7 lekcji BEZ `API_REFERENCE` (14 bloków każda — składnia języka, nie katalog
+metod).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_WhatAreEsModules` | 7/30 | 6/100 |
+| `02_NamedImport` | 8/30 | 6/100 |
+| `03_DefaultImport` | 7/30 | 6/100 |
+| `04_CombiningNamedAndDefaultImport` | 7/30 | 6/100 |
+| `05_NamespaceImport` | 7/30 | 6/100 |
+| `06_DynamicImport` | 7/30 | 6/100 |
+| `07_ModulesAndReactAnalogy` | 7/30 | 6/100 |
+
+Wszystkie 7 plików zweryfikowane: poprawny JSON, brak cyrylicy, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). Znalezione i naprawione DWA błędy PRZED weryfikacją live: (1) omyłkowy zapis placeholder
+zamiast treści w `07_ModulesAndReactAnalogy.json` (natychmiast nadpisany poprawną zawartością),
+(2) brakujące zamykające klamry w bloku `CODE_WRONG` `06_DynamicImport.json`. Zweryfikowane live
+przez API po `mvnw.cmd resources:resources` + restarcie backendu (znaleziono i zamknięto dwa
+osierocone procesy `java` z poprzedniej sesji przed startem nowego backendu): wszystkie 7 lekcji
+zwraca poprawną liczbę bloków teorii/ćwiczeń/quizu (14/7/6, 14/8/6, 14/7/6, 14/7/6, 14/7/6, 14/7/6,
+14/7/6). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-9 → bez zmian.
+Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_10_moduly` jako następny w naturalnej
-kolejności 01→14 — moduły ES: `import`/`export`, import nazwany/domyślny, łączenie obu,
-import przestrzeni nazw, `import()` dynamiczny, analogia modułów do React, 7 lekcji per scaffold
-w `ChapterSeedData.java`) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez
-wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO
-POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100
-pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku,
-żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_11_dom` jako następny w naturalnej kolejności
+01→14 — "Część 3, środowisko przeglądarkowe": czym jest DOM, selekcja elementów, manipulacja
+treścią, tworzenie/usuwanie elementów, atrybuty i data-atrybuty, classList, zmiana stylów CSS przez
+JS, 7 lekcji per scaffold w `ChapterSeedData.java`) — zgodnie z ustaloną strategią: najpierw
+przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w
+każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do
+pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w
+tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
 
 **Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
 w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
