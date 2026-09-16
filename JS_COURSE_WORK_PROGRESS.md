@@ -216,11 +216,46 @@ restarcie backendu: wszystkie 7 lekcji zwraca poprawną liczbę bloków teorii (
 /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-4 → bez zmian.
 Backend zatrzymany po weryfikacji. Scommitowane w tej samej sesji.
 
+## `_js_06_kontrola_przeplywu` (5/5 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+5 lekcji: if/else/ternary (+ guard clause/early return), switch + object-as-map (fallthrough
+świadomy vs przypadkowy), trzy warianty pętli `for`/`for...of`/`for...in` (+ `Object.hasOwn()`,
+pułapka indeksów-stringów w `for...in` na tablicach), `try/catch/finally` (+ własne klasy błędów
+dziedziczące po `Error`), `==` kontra `===` (konwersja typów, `NaN`, `null == undefined`). Wszystkie
+5 lekcji BEZ `API_REFERENCE` (14 bloków każda — czysta mechanika sterowania przepływem, nie
+katalogi metod).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_IfElseAndTernary` | 10/30 | 6/100 |
+| `02_SwitchAndObjectAsMap` | 8/30 | 6/100 |
+| `03_ForForOfForIn` | 16/30 | 6/100 |
+| `04_TryCatchFinally` | 10/30 | 6/100 |
+| `05_LooseVsStrictEquality` | 9/30 | 6/100 |
+
+Wszystkie 5 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Znaleziony i naprawiony błąd składniowy w bloku `CODE_WRONG`
+`04_TryCatchFinally.json` (brakujące zamykające klamry funkcji/catch) przed weryfikacją live.
+Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie backendu (`JAVA_HOME`
+ustawiony ręcznie na `~/.jdks/openjdk-25.0.2` — zmienna nie była ustawiona w środowisku sesji):
+wszystkie 5 lekcji zwraca poprawną liczbę bloków teorii/ćwiczeń/quizu (14/10/6, 14/8/6, 14/16/6,
+14/10/6, 14/9/6). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-5 → bez zmian.
+Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_06_kontrola_przeplywu` jako następny w
-naturalnej kolejności 01→14) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez
-wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO
-POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100
-pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku,
-żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_07_this_i_konteksty` jako następny w
+naturalnej kolejności 01→14 — "Część 2, tematy dopisane pod React": `this`, `call()`, `apply()`,
+`bind()`, 7 lekcji per scaffold w `ChapterSeedData.java`) — zgodnie z ustaloną strategią: najpierw
+przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w
+każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do
+pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w
+tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+
+**Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
+w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
+"$env:USERPROFILE\.jdks\openjdk-25.0.2"` (JDK zarządzany przez IntelliJ, potwierdzony działający).
