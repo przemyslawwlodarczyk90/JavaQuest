@@ -159,9 +159,38 @@ restarcie backendu: wszystkie 5 lekcji zwraca 14 bloków teorii. Regresja: `GET
 `_js_01_zmienne/01_VarKeyword` i `_js_02_typy_danych/01_StringBasics` → 14 bloków każda (bez
 zmian). Backend zatrzymany po weryfikacji. Scommitowane w tej samej sesji.
 
+## `_js_04_tablice` (8/8 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+8 lekcji: podstawy tablic + metody mutujące (push/pop/shift/unshift/splice/reverse + szukanie),
+filter(), map(), forEach(), sort() szczegółowo (comparator, pułapka leksykograficzna), flat()/
+flatMap(), destrukturyzacja tablicowa, spread operator. Lekcja 1 ma pełny `API_REFERENCE` (15
+bloków, katalog wielu metod tablicowych), pozostałe 7 BEZ (14 bloków — każda skupiona na JEDNYM
+mechanizmie/metodzie w głębi, nie katalogu).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_ArrayBasicsAndMutatingMethods` | 24/30 | 8/100 |
+| `02_FilterMethod` | 9/30 | 7/100 |
+| `03_MapMethod` | 9/30 | 6/100 |
+| `04_ForEachMethod` | 7/30 | 6/100 |
+| `05_SortMethodInDepth` | 8/30 | 7/100 |
+| `06_FlatMapAndFlat` | 7/30 | 6/100 |
+| `07_ArrayDestructuring` | 9/30 | 7/100 |
+| `08_ArraySpreadOperator` | 9/30 | 7/100 |
+
+Wszystkie 8 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu: wszystkie 8 lekcji zwraca poprawną liczbę bloków teorii (15/14/14/14/14/14/
+14/14). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-3 → 14 bloków
+każda (bez zmian). Backend zatrzymany po weryfikacji. Scommitowane w tej samej sesji.
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_04_tablice` jako następny w naturalnej
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_05_obiekty` jako następny w naturalnej
 kolejności 01→14) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez wszystkie 14
 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2,
 osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych —
