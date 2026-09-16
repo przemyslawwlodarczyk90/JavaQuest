@@ -106,11 +106,39 @@ restarcie backendu: wszystkie 6 lekcji zwraca poprawną liczbę bloków teorii (
 `_40_rest_assured_testing/01_WhyRestAssured` (14 bloków) — oba bez zmian. Backend zatrzymany po
 weryfikacji. Scommitowane w tej samej sesji.
 
+## `_js_02_typy_danych` (7/7 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+Wszystkie 7 lekcji napisane: String (trzy sposoby zapisu + metody), Number/Math/parseInt,
+BigInt, Boolean/truthy-falsy/null/undefined, Symbol, typy wartościowe vs referencyjne. Lekcje
+`02_StringMethods` i `03_NumberAndArithmetic` mają pełny `API_REFERENCE` (15 bloków — katalogi
+metod/funkcji z wieloma wariantami), pozostałe 5 lekcji BEZ `API_REFERENCE` (14 bloków —
+koncepcje/mechanizmy, nie katalogi metod).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_StringBasics` | 12/30 | 8/100 |
+| `02_StringMethods` | 20/30 | 8/100 |
+| `03_NumberAndArithmetic` | 17/30 | 8/100 |
+| `04_BigInt` | 8/30 | 6/100 |
+| `05_BooleanUndefinedNull` | 10/30 | 8/100 |
+| `06_Symbol` | 7/30 | 6/100 |
+| `07_ValueVsReferenceTypes` | 9/30 | 8/100 |
+
+Wszystkie 7 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu: wszystkie 7 lekcji zwraca poprawną liczbę bloków teorii (14/15/15/14/14/14/14).
+Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT`
+→ 14 (bez zmian), `_js_01_zmienne/01_VarKeyword` → 14 bloków (bez zmian). Backend zatrzymany po
+weryfikacji. Scommitowane w tej samej sesji.
+
 ## Następny krok
 
-**Faza 2 dla `_js_01_zmienne`: dopisać brakujące ćwiczenia/quiz w KAŻDEJ z 6 lekcji, aż do
-30/100** (patrz tabela wyżej) — LUB, jeśli użytkownik zdecyduje, przejść najpierw Fazą 1 przez
-kolejne rozdziały (`_js_02_typy_danych` itd.), a dopiero potem wrócić do uzupełniania wszystkiego
-naraz. Domyślnie (brak innej decyzji użytkownika): kontynuować Fazą 1 przez kolejne rozdziały w
-naturalnej kolejności 01→14, i wracać do uzupełniania w miarę postępu — dokładnie tak, jak to
-opisano w `JS_COURSE_STAGE_PROMPT.md`.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_03_funkcje` jako następny w naturalnej
+kolejności 01→14) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez wszystkie 14
+rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2,
+osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych —
+dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku, żeby żadna sesja nie
+musiała zgadywać, gdzie kontynuować.
