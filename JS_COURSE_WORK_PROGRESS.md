@@ -188,11 +188,39 @@ restarcie backendu: wszystkie 8 lekcji zwraca poprawną liczbę bloków teorii (
 /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-3 → 14 bloków
 każda (bez zmian). Backend zatrzymany po weryfikacji. Scommitowane w tej samej sesji.
 
+## `_js_05_obiekty` (7/7 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+7 lekcji: podstawy obiektów (tworzenie/dostęp/dynamiczny klucz/shorthand), `Object.*`
+(keys/values/entries/fromEntries/assign/freeze), destrukturyzacja obiektowa, optional chaining
+`?.` + nullish coalescing `??`, spread operator na obiektach (immutable update), JSON.stringify/
+parse, obiekt `Date`. Lekcje 2, 6, 7 z pełnym `API_REFERENCE` (15 bloków — katalogi metod),
+pozostałe 4 bez (14 bloków).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_ObjectBasics` | 12/30 | 7/100 |
+| `02_ObjectStaticMethods` | 9/30 | 6/100 |
+| `03_ObjectDestructuring` | 8/30 | 7/100 |
+| `04_OptionalChainingAndNullishCoalescing` | 9/30 | 7/100 |
+| `05_ObjectSpreadOperator` | 8/30 | 6/100 |
+| `06_JsonStringifyAndParse` | 8/30 | 7/100 |
+| `07_DateObject` | 9/30 | 6/100 |
+
+Wszystkie 7 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu: wszystkie 7 lekcji zwraca poprawną liczbę bloków teorii (14/15/14/14/14/15/
+15). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-4 → bez zmian.
+Backend zatrzymany po weryfikacji. Scommitowane w tej samej sesji.
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_05_obiekty` jako następny w naturalnej
-kolejności 01→14) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez wszystkie 14
-rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2,
-osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych —
-dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku, żeby żadna sesja nie
-musiała zgadywać, gdzie kontynuować.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_06_kontrola_przeplywu` jako następny w
+naturalnej kolejności 01→14) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez
+wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO
+POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100
+pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku,
+żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
