@@ -308,16 +308,49 @@ lekcji). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
 /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-7 → bez zmian.
 Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
 
+## `_js_09_kolekcje` (6/6 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+6 lekcji: `Set` (unikalne wartości, `.add()`/`.has()`/`.delete()`/`.size`, deduplikacja tablicy),
+`Map` (klucz-wartość z kluczem dowolnego typu, w tym obiekty), iteracja po `Map` (`for...of`,
+`.forEach()` — UWAGA na kolejność argumentów `(wartość, klucz)` — oraz `.keys()`/`.values()`/
+`.entries()`), konwersje `Map ↔ Object` (`Object.entries()`/`Object.fromEntries()`) i `Set ↔ Array`
+(`Array.from()`), kiedy wybrać `Map`/`Set` zamiast `Object`/`Array` (+ wzorzec liczenia wystąpień),
+`WeakMap`/`WeakSet` (słabe referencje, brak iterowalności, zapobieganie wyciekom pamięci). Lekcje
+1-3 (`Set`, `Map`, iteracja po `Map`) mają pełny `API_REFERENCE` (15 bloków — katalogi metod),
+lekcje 4-6 BEZ (14 bloków — konwersje/zasady wyboru/WeakMap są bardziej koncepcyjne).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_SetUniqueValues` | 8/30 | 6/100 |
+| `02_MapKeyValueWithAnyKeyType` | 8/30 | 6/100 |
+| `03_IteratingOverMap` | 8/30 | 6/100 |
+| `04_MapObjectSetArrayConversions` | 8/30 | 6/100 |
+| `05_WhenToUseMapSetVsObjectArray` | 8/30 | 6/100 |
+| `06_WeakMapAndWeakSet` | 7/30 | 6/100 |
+
+Wszystkie 6 plików zweryfikowane: poprawny JSON, brak cyrylicy, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). Znalezione i naprawione DWA błędy w `03_IteratingOverMap.json` PRZED weryfikacją live:
+błąd składniowy JSON w jednej z opcji quizu (brakujący dwukropek po kluczu `"D"`) oraz brakujące
+zamykające klamry w bloku `CODE_WRONG`. Zweryfikowane live przez API po `mvnw.cmd
+resources:resources` + restarcie backendu: wszystkie 6 lekcji zwraca poprawną liczbę bloków
+teorii/ćwiczeń/quizu (15/8/6, 15/8/6, 15/8/6, 14/8/6, 14/8/6, 14/7/6). Regresja: `GET
+/api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian),
+pierwsze lekcje rozdziałów 1-8 → bez zmian. Backend zatrzymany po weryfikacji (potwierdzony brak
+procesów `java`).
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_09_kolekcje` jako następny w naturalnej
-kolejności 01→14 — `Map`, `Set`, `WeakMap`/`WeakSet`, iteratory, prawdopodobnie pod-tematy
-związane z bardziej zaawansowanymi strukturami danych; dokładna lista lekcji do sprawdzenia w
-`ChapterSeedData.java` na początku pracy nad tym rozdziałem) — zgodnie z ustaloną strategią:
-najpierw przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria + solidny start
-ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać
-każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej lekcji jest i
-będzie zapisywany w tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_10_moduly` jako następny w naturalnej
+kolejności 01→14 — moduły ES: `import`/`export`, import nazwany/domyślny, łączenie obu,
+import przestrzeni nazw, `import()` dynamiczny, analogia modułów do React, 7 lekcji per scaffold
+w `ChapterSeedData.java`) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez
+wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO
+POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100
+pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku,
+żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
 
 **Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
 w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
