@@ -134,9 +134,34 @@ Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?
 → 14 (bez zmian), `_js_01_zmienne/01_VarKeyword` → 14 bloków (bez zmian). Backend zatrzymany po
 weryfikacji. Scommitowane w tej samej sesji.
 
+## `_js_03_funkcje` (5/5 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+5 lekcji: function declaration vs expression (+ hoisting), arrow functions, funkcje anonimowe +
+IIFE, callbacki/predykaty/funkcje wyższego rzędu, closures (domknięcia — liczniki, prywatny
+stan, memoizacja). Wszystkie BEZ `API_REFERENCE` (14 bloków każda — czyste mechanizmy językowe,
+nie katalogi metod).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_FunctionDeclarationVsExpression` | 8/30 | 7/100 |
+| `02_ArrowFunctions` | 12/30 | 7/100 |
+| `03_AnonymousFunctions` | 8/30 | 7/100 |
+| `04_CallbackAndPredicateFunctions` | 11/30 | 7/100 |
+| `05_Closures` | 12/30 | 7/100 |
+
+Wszystkie 5 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu: wszystkie 5 lekcji zwraca 14 bloków teorii. Regresja: `GET
+/api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian),
+`_js_01_zmienne/01_VarKeyword` i `_js_02_typy_danych/01_StringBasics` → 14 bloków każda (bez
+zmian). Backend zatrzymany po weryfikacji. Scommitowane w tej samej sesji.
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_03_funkcje` jako następny w naturalnej
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_04_tablice` jako następny w naturalnej
 kolejności 01→14) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez wszystkie 14
 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2,
 osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych —
