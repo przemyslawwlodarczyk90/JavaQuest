@@ -66,11 +66,51 @@ treści lekcji/ćwiczeń/quizów (`w następnym kroku będziemy uzupełniać lek
     poprawnie renderowana przez istniejący mechanizm "w przygotowaniu" na froncie).
   - Backend zatrzymany po weryfikacji (`Stop-Process`, potwierdzone brak procesów `java`).
 
+## DYREKTYWA UŻYTKOWNIKA (2026-09-16, druga sesja): 30 ćwiczeń / 100 quiz na lekcję, praca dwufazowa
+
+Użytkownik skorygował wcześniejszy zapis (8-15 ćwiczeń/8-12 quiz) — **KAŻDA lekcja MA MIEĆ
+docelowo 30 ćwiczeń i 100 pytań quizowych**, tak jak wczesne rozdziały Javy `_01`-`_16`. Teoria ma
+być "dojechana w kosmos merytorycznie" — pełny, wieloakapitowy, klasyczny styl prozy (BEZ
+nadużywania WIELKICH LITER — sprawdzone na `_01_fundamentals/01_Variables.json` jako wzorzec,
+NIE styl "capsy wszędzie" użyty wcześniej w lekkich rozdziałach Javy `_35`-`_41`).
+
+Ustalono PRACĘ DWUFAZOWĄ (pełny opis w `JS_COURSE_STAGE_PROMPT.md`, sekcja "Ćwiczenia — format i
+liczba"): Faza 1 = kompletna teoria + tyle ćwiczeń/quizu, ile da się napisać bez spadku jakości w
+danej turze. Faza 2 (PRZYSZŁE sesje) = dopisywanie kolejnych, NIEPOWTARZALNYCH ćwiczeń/pytań aż do
+30/100.
+
+## `_js_01_zmienne` (6/6 lekcji) — Faza 1 UKOŃCZONA w tej sesji, Faza 2 (uzupełnianie do 30/100) NIE rozpoczęta
+
+Wszystkie 6 lekcji napisane od zera, pełna teoria (14 bloków każda, standard 11 sekcji, BEZ
+`API_REFERENCE` — cały rozdział to czysta mechanika języka, nie "narzędzie z wieloma metodami").
+Źródło: `dodatkowe materiały/kurs js/js-course/01-zmienne/` (`lekcja.js`+`cwiczenia.js`+
+`dodatkowe.js`), rozwinięte do pełnego standardu + własne, dodatkowe przykłady/ćwiczenia/quiz.
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_VarKeyword` | 19/30 | 20/100 |
+| `02_Hoisting` | 18/30 | 18/100 |
+| `03_LetKeyword` | 17/30 | 17/100 |
+| `04_ConstKeyword` | 17/30 | 15/100 |
+| `05_VariableScopes` | 14/30 | 13/100 |
+| `06_VarLetConstWhenToUse` | 13/30 | 11/100 |
+
+Wszystkie 6 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu: wszystkie 6 lekcji zwraca poprawną liczbę bloków teorii (14 każda). Regresja:
+`GET /api/chapters?track=JAVA` → 41 rozdziałów (bez zmian), `GET /api/chapters?track=JAVASCRIPT`
+→ 14 rozdziałów (bez zmian), `_01_fundamentals/06_StringsAndBuilder` (15 bloków) i
+`_40_rest_assured_testing/01_WhyRestAssured` (14 bloków) — oba bez zmian. Backend zatrzymany po
+weryfikacji. Scommitowane w tej samej sesji.
+
 ## Następny krok
 
-**Pisanie treści lekcji, rozdział po rozdziale, zaczynając od `_js_01_zmienne`** (6 lekcji:
-`01_VarKeyword` … `06_VarLetConstWhenToUse`) — dokładnie wg `JS_COURSE_STAGE_PROMPT.md`. Po
-każdym ukończonym rozdziale: walidacja JSON, `fix_allcaps.js`+`fix_allcaps_residual.js`,
-weryfikacja live przez API (`?track=JAVASCRIPT`), regresja na obu torach, lokalny commit.
-
-Kolejność rozdziałów: naturalna 01→14, chyba że użytkownik zdecyduje inaczej.
+**Faza 2 dla `_js_01_zmienne`: dopisać brakujące ćwiczenia/quiz w KAŻDEJ z 6 lekcji, aż do
+30/100** (patrz tabela wyżej) — LUB, jeśli użytkownik zdecyduje, przejść najpierw Fazą 1 przez
+kolejne rozdziały (`_js_02_typy_danych` itd.), a dopiero potem wrócić do uzupełniania wszystkiego
+naraz. Domyślnie (brak innej decyzji użytkownika): kontynuować Fazą 1 przez kolejne rozdziały w
+naturalnej kolejności 01→14, i wracać do uzupełniania w miarę postępu — dokładnie tak, jak to
+opisano w `JS_COURSE_STAGE_PROMPT.md`.

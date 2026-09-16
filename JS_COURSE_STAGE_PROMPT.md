@@ -132,11 +132,34 @@ tekstowym), ten kurs jest **praktyczny/mechaniczny jak wczesne rozdziały Javy `
 rozwiązujący dokładnie to zadanie (nie opis słowny) — dokładnie w duchu materiału źródłowego
 (`cwiczenia.js`/`dodatkowe.js` już mają takie prompty, tylko bez `hint`/`solution`).
 
-**Docelowa liczba na lekcję:** 8-15 ćwiczeń (dostosuj do tego, ile realnie sensownych,
-NIEPOWTARZALNYCH zadań daje dana sekcja `JS-XXX` w połączonych `cwiczenia.js`+`dodatkowe.js` —
-nie naciągaj do sztywnej liczby kosztem jakości/unikalności). Kwiz: 8-12 pytań na lekcję,
-sprawdzających realne zrozumienie zachowania kodu (np. "co wypisze ta konsola", "który wariant
-jest poprawny"), nie samą definicję słownikową.
+**DYREKTYWA UŻYTKOWNIKA (2026-09-16, koryguje wcześniejszy zapis "8-15/8-12" powyżej —
+NIEAKTUALNY, zostawiony wyłącznie jako historia decyzji): każda lekcja MA MIEĆ dokładnie 30
+ćwiczeń i 100 pytań quizowych** — TA SAMA liczba, co we wczesnych rozdziałach Javy `_01`-`_16`
+(patrz np. `_01_fundamentals/01_Variables.json`). Teoria ma być "dojechana w kosmos
+merytorycznie" — pełne pokrycie tematu, wyczerpujące przykłady, żadnych skrótów jakościowych
+względem kursu Java. To NIE jest "lekki" rozdział w stylu `_32`-`_41`.
+
+**Sposób pracy: DWUFAZOWY, zgodnie z wyraźną instrukcją użytkownika ("zacznij przygotować
+lekcje, a później je uzupełniaj")** — NIE trzeba osiągnąć 30/100 w jednym przebiegu na każdej
+lekcji:
+
+1. **Faza 1 (przygotowanie)** — dla każdej lekcji najpierw kompletna, w pełni dojechana teoria
+   (14-15 bloków) + tyle ćwiczeń/quizu, ile realnie da się napisać W TEJ turze bez spadku
+   jakości (nie mniej niż kilkanaście ćwiczeń i kilkanaście pytań, jeśli to możliwe) —
+   TRAKTOWANE jako lekcja "w przygotowaniu", NIE jako gotowa.
+2. **Faza 2 (uzupełnianie)** — w KOLEJNYCH turach/sesjach, wracaj do lekcji Fazy 1 i DOPISUJ
+   kolejne, NIEPOWTARZALNE ćwiczenia/pytania, aż osiągniesz 30/100 — dopiero WTEDY lekcja jest
+   w pełni gotowa.
+
+`JS_COURSE_WORK_PROGRESS.md` MUSI dla KAŻDEJ lekcji jawnie zapisywać aktualną liczbę ćwiczeń/
+quizu (np. "18/30 ćwiczeń, 22/100 quiz — Faza 1") — żeby kolejna sesja wiedziała, gdzie
+dokładnie kontynuować uzupełnianie, bez zgadywania.
+
+Źródłowe `cwiczenia.js`+`dodatkowe.js` dają maksymalnie ~10-15 gotowych promptów na sekcję
+`JS-XXX` — to WYSTARCZA na dobry START (Faza 1), ale do 30 trzeba DOPISAĆ własne, w tym samym
+duchu (mechaniczne, jednoconceptowe, bez algorytmów/łamigłówek — patrz "Filozofia ćwiczeń" w
+`00-spis-tresci/README.md`). Quiz (100 pytań) trzeba napisać w całości samodzielnie — źródło nie
+ma pytań quizowych w ogóle.
 
 ## Polskie znaki, jakość języka, weryfikacja
 
