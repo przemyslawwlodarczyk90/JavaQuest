@@ -20,7 +20,16 @@ import java.util.List;
  */
 public final class ChapterSeedData {
 
-    public record ChapterSeed(String slug, String title, List<String> lessonSlugs) {
+    /**
+     * {@code track} - domyslnie {@link CourseTrack#JAVA} (konstruktor 3-argumentowy, uzywany
+     * przez wszystkie dotychczasowe rozdzialy kursu Java ponizej, bez zadnych zmian). Rozdzialy
+     * kursu JavaScript (drugi blok platformy, 2026-09) uzywaja jawnie konstruktora
+     * 4-argumentowego z {@link CourseTrack#JAVASCRIPT}.
+     */
+    public record ChapterSeed(String slug, String title, List<String> lessonSlugs, CourseTrack track) {
+        public ChapterSeed(String slug, String title, List<String> lessonSlugs) {
+            this(slug, title, lessonSlugs, CourseTrack.JAVA);
+        }
     }
 
     public static final List<ChapterSeed> CHAPTERS = List.of(
@@ -485,7 +494,96 @@ public final class ChapterSeedData {
             new ChapterSeed("_41_nosql_overview", "NoSQL - świadomość podstaw", List.of(
                     "01_RelationalVsNoSql", "02_DocumentStoresAndMongoDbAwareness",
                     "03_ColumnAndKeyValueStoresAwareness"
-            ))
+            )),
+
+            // ===== DRUGI BLOK PLATFORMY: KURS JAVASCRIPT (2026-09) =====
+            // Struktura/kolejnosc rozdzialow i lekcji ZAPROJEKTOWANA na podstawie gotowego
+            // materialu zrodlowego w "dodatkowe materialy/kurs js/js-course/" (14 folderow
+            // 01-14, kazdy z plikami lekcja.js/cwiczenia.js/dodatkowe.js, patrz README w
+            // "00-spis-tresci"). KAZDY znacznik "JS-XXX" w danym "lekcja.js" odpowiada JEDNEJ
+            // lekcji platformy (90 znacznikow lacznie = 90 lekcji w 14 rozdzialach) - TA SAMA
+            // ziarnistosc, co "JS_COURSE_STAGE_PROMPT.md" (jedyne, obowiazujace zrodlo instrukcji
+            // dla PISANIA tresci tych lekcji, patrz plik w katalogu glownym repo). Rozdzialy
+            // NA RAZIE PUSTE (bez plikow tresci JSON pod src/main/resources/content/) - TA SAMA,
+            // udokumentowana konwencja "w przygotowaniu", co przy scaffoldingu _35-_41 wyzej -
+            // TRESC do napisania w KOLEJNEJ turze pracy, rozdzial po rozdziale.
+            new ChapterSeed("_js_01_zmienne", "JavaScript - zmienne i zasięgi", List.of(
+                    "01_VarKeyword", "02_Hoisting", "03_LetKeyword", "04_ConstKeyword",
+                    "05_VariableScopes", "06_VarLetConstWhenToUse"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_02_typy_danych", "JavaScript - typy danych", List.of(
+                    "01_StringBasics", "02_StringMethods", "03_NumberAndArithmetic", "04_BigInt",
+                    "05_BooleanUndefinedNull", "06_Symbol", "07_ValueVsReferenceTypes"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_03_funkcje", "JavaScript - funkcje", List.of(
+                    "01_FunctionDeclarationVsExpression", "02_ArrowFunctions", "03_AnonymousFunctions",
+                    "04_CallbackAndPredicateFunctions", "05_Closures"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_04_tablice", "JavaScript - tablice", List.of(
+                    "01_ArrayBasicsAndMutatingMethods", "02_FilterMethod", "03_MapMethod",
+                    "04_ForEachMethod", "05_SortMethodInDepth", "06_FlatMapAndFlat",
+                    "07_ArrayDestructuring", "08_ArraySpreadOperator"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_05_obiekty", "JavaScript - obiekty", List.of(
+                    "01_ObjectBasics", "02_ObjectStaticMethods", "03_ObjectDestructuring",
+                    "04_OptionalChainingAndNullishCoalescing", "05_ObjectSpreadOperator",
+                    "06_JsonStringifyAndParse", "07_DateObject"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_06_kontrola_przeplywu", "JavaScript - sterowanie przepływem", List.of(
+                    "01_IfElseAndTernary", "02_SwitchAndObjectAsMap", "03_ForForOfForIn",
+                    "04_TryCatchFinally", "05_LooseVsStrictEquality"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_07_this_i_konteksty", "JavaScript - this i konteksty wywołania", List.of(
+                    "01_ThisBasics", "02_ThisLosingContext", "03_ArrowFunctionsAndThis",
+                    "04_CallMethod", "05_ApplyMethod", "06_BindMethod",
+                    "07_ThisInClassesAndEventHandlers"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_08_klasy", "JavaScript - klasy", List.of(
+                    "01_ClassConstructorAndMethods", "02_ClassFields", "03_GettersAndSetters",
+                    "04_StaticFieldsAndMethods", "05_InheritanceExtendsSuper",
+                    "06_PrivateFieldsAndMethods", "07_ClassVsFactoryFunction"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_09_kolekcje", "JavaScript - kolekcje Map i Set", List.of(
+                    "01_SetUniqueValues", "02_MapKeyValueWithAnyKeyType", "03_IteratingOverMap",
+                    "04_MapObjectSetArrayConversions", "05_WhenToUseMapSetVsObjectArray",
+                    "06_WeakMapAndWeakSet"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_10_moduly", "JavaScript - moduły ES", List.of(
+                    "01_WhatAreEsModules", "02_NamedImport", "03_DefaultImport",
+                    "04_CombiningNamedAndDefaultImport", "05_NamespaceImport", "06_DynamicImport",
+                    "07_ModulesAndReactAnalogy"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_11_dom", "JavaScript - DOM", List.of(
+                    "01_WhatIsTheDom", "02_SelectingDomElements", "03_ManipulatingElementContent",
+                    "04_CreatingAndRemovingElements", "05_AttributesAndDataAttributes",
+                    "06_ClassListDynamicClasses", "07_ChangingCssStylesViaJs"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_12_zdarzenia", "JavaScript - zdarzenia", List.of(
+                    "01_AddEventListener", "02_EventObjectTargetPreventDefaultStopPropagation",
+                    "03_MouseEvents", "04_KeyboardAndFormEvents",
+                    "05_EventPropagationAndDelegation", "06_RegularExpressions"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_13_asynchronicznosc", "JavaScript - asynchroniczność", List.of(
+                    "01_SetTimeoutAndSetInterval", "02_Promises", "03_AsyncAwait", "04_FetchApi",
+                    "05_FormDataAndSendingData", "06_RestApiPatterns"
+            ), CourseTrack.JAVASCRIPT),
+
+            new ChapterSeed("_js_14_srodowisko_przegladarkowe", "JavaScript - środowisko przeglądarkowe", List.of(
+                    "01_WindowObject", "02_LocalStorageAndSessionStorage", "03_WindowLocation",
+                    "04_WindowHistoryAndHistoryApi", "05_EcmaScriptStandards", "06_DebuggingInVsCode"
+            ), CourseTrack.JAVASCRIPT)
     );
 
     private ChapterSeedData() {

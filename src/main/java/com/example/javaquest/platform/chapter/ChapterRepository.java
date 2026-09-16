@@ -10,4 +10,6 @@ public interface ChapterRepository extends JpaRepository<Chapter, Long> {
     Optional<Chapter> findBySlug(String slug);
 
     List<Chapter> findAllByOrderBySortOrderAsc();
+
+    List<Chapter> findAllByTrackOrderBySortOrderAsc(CourseTrack track);
 }

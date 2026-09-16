@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getChapters } from '../api'
 
-export default function ChapterListPage() {
+export default function ChapterListPage({ track = 'JAVA' }) {
   const [status, setStatus] = useState('loading')
   const [chapters, setChapters] = useState([])
   const [error, setError] = useState('')
 
   useEffect(() => {
-    getChapters()
+    setStatus('loading')
+    getChapters(track)
       .then((data) => {
         setChapters(data)
         setStatus('ok')
@@ -17,7 +18,7 @@ export default function ChapterListPage() {
         setError(err.message)
         setStatus('error')
       })
-  }, [])
+  }, [track])
 
   if (status === 'loading') {
     return <p className="hint">Wczytywanie rozdziałów...</p>
