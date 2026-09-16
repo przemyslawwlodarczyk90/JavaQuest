@@ -565,12 +565,15 @@ API z poprawną liczbą lekcji, przykładowa lekcja (`_35/01_WhyLinuxMatters`) f
 pustą treść (`[]`), regresja na `_01_fundamentals`, `_32`, `_33`, `_34` bez zmian. Scommitowane
 jednym commitem (czysto strukturalna zmiana, bez treści merytorycznej do recenzji per-lekcja).
 
-**NASTĘPNY KROK: napisać treść dla pozostałych 2 rozdziałów, rozdział po rozdziale, tym samym
-wzorcem co `_32`-`_39`** (14-15 bloków teorii, zmienna mała liczba exercises/quiz) —
-`_35_docker_compose`, `_36_kubernetes_fundamentals`, `_37_cloud_aws_fundamentals`,
-`_38_redis_and_caching` i `_39_observability_prometheus_grafana` UKOŃCZONE w tej sesji (patrz
-sekcje wyżej), kolejność pozostałych 2 wciąż nieustalona przez użytkownika:
-`_40_rest_assured_testing`, `_41_nosql_overview` (ten ostatni celowo najlżejszy, tylko 3 lekcje).
+**WSZYSTKICH 7 zaplanowanych, pustych rozdziałów (`_35`-`_41`) JEST TERAZ KOMPLETNYCH** —
+`_40_rest_assured_testing` (5/5) i `_41_nosql_overview` (3/3) dokończone w KOLEJNEJ sesji (patrz
+sekcje niżej). `critical-topics.json`: `testing-rest-assured` → `_40_rest_assured_testing/
+05_RestAssuredWithSpringBootCapstone`, `other-nosql` → `_41_nosql_overview/
+03_ColumnAndKeyValueStoresAwareness`, oba `note` wyczyszczone na `null` — **WSZYSTKIE tematy
+"critical"/"very-important"/"important" z `critical-topics.json` (poza świadomie pominiętym
+`tools-linux`, patrz wyżej) mają teraz przypisany rozdział.** NASTĘPNY KROK: Etap 5 (audyt
+całości, `STAGE2_LESSON_REDESIGN_PROMPT.md`) — nierozpoczęty, do potwierdzenia z użytkownikiem,
+kiedy go podjąć. Do tego czasu BRAK zaplanowanej, kolejnej pracy nad nową treścią.
 
 **UWAGA operacyjna z tej sesji (powtórzona, TRZECI raz): osierocone procesy `java.exe` znalezione
 PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym jedna z INNEGO JDK —
@@ -579,6 +582,71 @@ PONOWNIE przed weryfikacją tej zmiany (tym razem 4 procesy: dwie pary, w tym je
 sesji), żeby potraktować to jako STANDARDOWY krok, nie wyjątek: ZAWSZE sprawdzaj `Get-Process
 -Name java` i zatrzymaj wszystko PRZED każdym `spring-boot:run`, niezależnie od tego, czy
 poprzedni `TaskStop` zgłosił sukces.**
+
+## `_41_nosql_overview` (3/3 lekcji) — KOMPLETNE, napisany od zera w KOLEJNEJ sesji
+
+Ostatni z 7 zaplanowanych, pustych rozdziałów — pokrywa `other-nosql` ("important"). CELOWO
+NAJKRÓTSZY rozdział (3 lekcje), NA WYRAŹNĄ prośbę użytkownika: WYŁĄCZNIE ogólna świadomość/
+orientacja W świecie NoSQL, NIE pełny kurs. Po dokończeniu zaktualizowano wpis `other-nosql`:
+wskazuje teraz na `_41_nosql_overview/03_ColumnAndKeyValueStoresAwareness`, `note` wyczyszczone
+na `null`.
+
+3 lekcje, KAŻDA świadomie zakotwiczona W relacyjnej wiedzy Z `_08_sql`-`_23_spring_data_jpa` I
+Z `_38_redis_and_caching` (Redis JAKO JUŻ POZNANY PRZYKŁAD klucz-wartość): model relacyjny vs
+NoSQL JAKO WSPÓLNA nazwa DLA WIELU, RÓŻNYCH podejść — SZTYWNY schemat vs ELASTYCZNA struktura
+dokumentu, transakcje ACID JAKO KLUCZOWA przewaga relacyjnego modelu PRZY ŚCIŚLE powiązanych
+danych (zamówienia+płatności), metoda "PIĘCIU kroków" DO świadomej decyzji (1), MongoDB JAKO
+NAJPOPULARNIEJSZY przedstawiciel modelu dokumentowego — kolekcja/dokument/BSON, PODSTAWOWE CRUD
+(`insertOne`/`find`/`updateOne`/`deleteOne`), pułapka MECHANICZNEGO "PRZETŁUMACZENIA"
+znormalizowanego schematu SQL NA MongoDB Z `$lookup` ZAMIAST naturalnego ZAGNIEŻDŻANIA danych (2),
+kapston: klucz-wartość (PRZYPOMNIENIE Z `_38`) I bazy kolumnowe (Cassandra, ŚWIADOMOŚCIOWA
+wzmianka, modelowanie "OD zapytania" ZAMIAST normalizacji, ŚWIADOME dublowanie danych JAKO
+NORMALNA praktyka W bazach rozproszonych) + tabela PORÓWNAWCZA czterech rodzin NoSQL + metoda
+"CZTERECH pytań" ZAMYKAJĄCA CAŁY rozdział (3). Lekcje 1 i 3 ŚWIADOMIE BEZ `API_REFERENCE`
+(czyste porównania/koncepcje, 14 bloków), lekcja 2 Z `API_REFERENCE` (KONKRETNE operacje MongoDB,
+15 bloków) — JEDYNA lekcja rozdziału POKAZUJĄCA URUCHAMIALNĄ składnię.
+
+Wszystkie 3 pliki napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+cyrylicy/znaków zastępczych) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`
+(BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP). Zweryfikowane live przez API po
+`mvnw.cmd resources:resources` + restarcie backendu (WSZYSTKIE 3 lekcje, poprawna liczba bloków
+14/15/14 teoria, 3 exercises, 5 quiz) + regresja na `_01_fundamentals/06_StringsAndBuilder`,
+`_38_redis_and_caching/01_WhyDistributedCache`, `_39_observability_prometheus_grafana/
+07_ObservabilityCapstone` i endpoint `critical-topics` — bez zmian.
+
+## `_40_rest_assured_testing` (5/5 lekcji) — KOMPLETNE, napisany od zera w KOLEJNEJ sesji
+
+Szósty z 7 zaplanowanych, pustych rozdziałów — pokrywa `testing-rest-assured` ("important").
+CELOWO krótszy (5 lekcji), buduje NA JUŻ istniejącej wiedzy testowej Z `_25_unit_testing`,
+`_26_integration_testing`, `_27_spring_test`. Po dokończeniu zaktualizowano wpis
+`testing-rest-assured`: wskazuje teraz na `_40_rest_assured_testing/
+05_RestAssuredWithSpringBootCapstone`, `note` wyczyszczone na `null`.
+
+5 lekcji: PO CO REST Assured ISTNIEJE OBOK `TestRestTemplate`/`WebTestClient` (`_27/Lesson12`) —
+`given/when/then`, biblioteka NIEZALEŻNA OD Springa, DLA zespołów QA/testów E2E W CI/CD (1),
+PODŁĄCZENIE DO `@SpringBootTest`+`RANDOM_PORT` PRZEZ `@LocalServerPort`+`RestAssured.port`,
+pułapka HARDKODOWANEGO portu `8080` (2), `RequestSpecification`/`RequestSpecBuilder` DLA
+WSPÓLNEJ konfiguracji (ZASADA DRY) + autoryzacja (`.auth().oauth2(...)`, nawiązanie DO
+`_19_security_basics`/`_24_spring_security` — JWT) (3), walidacja odpowiedzi PRZEZ `JsonPath` I
+MATCHERY Hamcrest, `extract().as(Klasa.class)`, pułapka PORÓWNANIA liczb zmiennoprzecinkowych
+`equalTo()` BEZ tolerancji (4), kapston: PEŁNY cykl CRUD zadania (POST→GET→PUT→DELETE→GET 404)
+ŁĄCZĄCY WSZYSTKIE 4 poprzednie lekcje Z `Testcontainers` (`_26/Lesson4-6`, PRAWDZIWY PostgreSQL
+ZAMIAST H2) (5). Lekcja 1 ŚWIADOMIE BEZ `API_REFERENCE` (14 bloków, czyste porównanie/
+uzasadnienie), lekcje 2-5 Z `API_REFERENCE` (15 bloków, KONKRETNE API biblioteki Z WIELOMA
+metodami).
+
+**DECYZJA OPERACYJNA (nauczka Z `_29_spring_reactive/13_R2dbcIntro`, patrz wyżej): `fix_http_
+method_case.js` ŚWIADOMIE NIE URUCHOMIONY na tym rozdziale** — SPRAWDZONO explicite (grep NA
+exercises/quiz), że JEDYNE dopasowania słowa "get" W polach narracyjnych TO PRAWDZIWE wywołania
+metody Javy `.get("/sciezka")` (REST Assured `when().get(...)`), NIE czasownik HTTP — URUCHOMIENIE
+skryptu USZKODZIŁOBY JE dokładnie tak, jak `ConnectionFactories.get()` W `_29`. Wszystkie 5 plików
+napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak cyrylicy/znaków
+zastępczych) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`. Zweryfikowane live
+przez API po `mvnw.cmd resources:resources` + restarcie backendu (WSZYSTKIE 5 lekcji, poprawna
+liczba bloków 14/15/15/15/15 teoria, 3 exercises, 5 quiz) + regresja na `_01_fundamentals/
+06_StringsAndBuilder`, `_38_redis_and_caching/01_WhyDistributedCache`,
+`_39_observability_prometheus_grafana/07_ObservabilityCapstone` i endpoint `critical-topics` —
+bez zmian.
 
 ## `_39_observability_prometheus_grafana` (7/7 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 
