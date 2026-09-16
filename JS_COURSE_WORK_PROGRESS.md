@@ -277,16 +277,47 @@ bloków teorii/ćwiczeń/quizu (14/9/6, 14/8/6, 14/8/6, 14/7/6, 14/7/6, 14/8/6, 
 pierwsze lekcje rozdziałów 1-6 → bez zmian. Backend zatrzymany po weryfikacji (potwierdzony brak
 procesów `java`).
 
+## `_js_08_klasy` (7/7 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+7 lekcji: konstruktor i metody instancji (`class`/`new`, niezależny stan instancji), pola klasy
+(wartości domyślne, arrow function jako pole — automatyczne wiązanie `this`), gettery/settery
+(`get`/`set`, konwencja `_pole` żeby uniknąć nieskończonego cyklu), pola i metody statyczne
+(`static`, `NazwaKlasy.pole`, licznik instancji), dziedziczenie (`extends`/`super`, nadpisywanie
+metod, `instanceof` w łańcuchu dziedziczenia), prywatne pola/metody (`#pole`, prawdziwa
+enkapsulacja vs konwencja `_pole`), class kontra funkcja fabrykująca (closure jako alternatywa dla
+`#`, kiedy wybrać które podejście). Wszystkie 7 lekcji BEZ `API_REFERENCE` (14 bloków każda —
+mechanika języka, nie katalogi metod).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_ClassConstructorAndMethods` | 8/30 | 6/100 |
+| `02_ClassFields` | 8/30 | 6/100 |
+| `03_GettersAndSetters` | 8/30 | 6/100 |
+| `04_StaticFieldsAndMethods` | 8/30 | 6/100 |
+| `05_InheritanceExtendsSuper` | 8/30 | 6/100 |
+| `06_PrivateFieldsAndMethods` | 8/30 | 6/100 |
+| `07_ClassVsFactoryFunction` | 8/30 | 6/100 |
+
+Wszystkie 7 plików zweryfikowane: poprawny JSON, brak cyrylicy, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie backendu:
+wszystkie 7 lekcji zwraca poprawną liczbę bloków teorii/ćwiczeń/quizu (14/8/6 dla każdej z 7
+lekcji). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-7 → bez zmian.
+Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_08_klasy` jako następny w naturalnej
-kolejności 01→14 — konstruktor/metody, pola klas, gettery/settery, pola/metody statyczne,
-dziedziczenie `extends`/`super`, prywatne pola/metody `#`, klasa vs factory function, 7 lekcji per
-scaffold w `ChapterSeedData.java`) — zgodnie z ustaloną strategią: najpierw przejechać Fazą 1 przez
-wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO
-POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100
-pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w tabelach w tym pliku,
-żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_09_kolekcje` jako następny w naturalnej
+kolejności 01→14 — `Map`, `Set`, `WeakMap`/`WeakSet`, iteratory, prawdopodobnie pod-tematy
+związane z bardziej zaawansowanymi strukturami danych; dokładna lista lekcji do sprawdzenia w
+`ChapterSeedData.java` na początku pracy nad tym rozdziałem) — zgodnie z ustaloną strategią:
+najpierw przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria + solidny start
+ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać
+każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej lekcji jest i
+będzie zapisywany w tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
 
 **Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
 w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
