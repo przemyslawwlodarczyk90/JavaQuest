@@ -1,8 +1,6 @@
 package com.example.javaquest.platform.chapter;
 
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.annotation.Order;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 /**
@@ -10,13 +8,19 @@ import org.springframework.stereotype.Component;
  * pierwszym starcie aplikacji (jesli tabela "chapters" jest pusta). Faza 1 - tylko
  * metadane nawigacyjne, bez tresci lekcji (patrz EDU_PLATFORM_PLAN.md).
  *
- * <p>{@code @Order(1)} - MUSI wystartowac PRZED
- * {@link com.example.javaquest.platform.content.LessonContentLoader} ({@code @Order(2)}),
- * ktory zaklada, ze rozdzialy/lekcje juz istnieja w bazie.
+ * <p>Celowo {@code @PostConstruct}, NIE {@code ApplicationRunner} - ApplicationRunner uruchamia
+ * sie PO starcie wbudowanego serwera (Tomcat zaczyna przyjmowac polaczenia w
+ * {@code finishRefresh()}, ApplicationRunnery dopiero PO nim), co dawalo realne, widoczne dla
+ * uzytkownika opoznienie ("lekcja w przygotowaniu") tuz po starcie backendu. @PostConstruct
+ * wykonuje sie podczas inicjalizacji beanow (PRZED uruchomieniem serwera), wiec baza jest w pelni
+ * zasilona, zanim ktokolwiek moze wyslac pierwsze zapytanie.
+ *
+ * <p>MUSI wystartowac PRZED {@link com.example.javaquest.platform.content.LessonContentLoader},
+ * ktory zaklada, ze rozdzialy/lekcje juz istnieja w bazie - wymuszone przez
+ * {@code @DependsOn("contentSeeder")} na tamtej klasie.
  */
 @Component
-@Order(1)
-class ContentSeeder implements ApplicationRunner {
+class ContentSeeder {
 
     private final ChapterRepository chapterRepository;
     private final LessonRepository lessonRepository;
@@ -26,8 +30,8 @@ class ContentSeeder implements ApplicationRunner {
         this.lessonRepository = lessonRepository;
     }
 
-    @Override
-    public void run(ApplicationArguments args) {
+    @PostConstruct
+    void seed() {
         if (chapterRepository.count() > 0) {
             return;
         }

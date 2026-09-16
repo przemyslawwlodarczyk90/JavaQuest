@@ -5,9 +5,6 @@ import java.io.IOException;
 import com.example.javaquest.platform.chapter.Lesson;
 import com.example.javaquest.platform.chapter.LessonRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.annotation.Order;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,16 +13,19 @@ import org.springframework.transaction.annotation.Transactional;
  * Wczytuje tresc lekcji (teoria/zadania/quiz) z plikow JSON pod
  * {@code src/main/resources/content/<rozdzial>/<lekcja>.json} - patrz {@link LessonContentFile}
  * dla ksztaltu pliku. Dziala dla KAZDEJ lekcji juz zasilonej przez
- * {@link com.example.javaquest.platform.chapter.ContentSeeder} (kolejnosc wymuszona przez
- * {@code @Order} - ten runner MUSI wystartowac PO seederze rozdzialow/lekcji).
+ * {@link com.example.javaquest.platform.chapter.ContentSeeder}.
  *
- * <p>Lekcje BEZ odpowiadajacego pliku JSON zostaja z Fazy 1 - tylko nawigacyjne metadane, bez
- * tresci (frontend pokazuje wtedy "tresc w przygotowaniu"). To CELOWE - pelna tresc jest
- * pisana rozdzial po rozdziale (patrz EDU_PLATFORM_PLAN.md, Faza 2/3).
+ * <p>Wywolywana przez {@link ContentBootstrap} ({@code @PostConstruct}), NIE uruchamiana tutaj
+ * bezposrednio jako {@code @PostConstruct}/{@code ApplicationRunner} - {@code @Transactional}
+ * ponizej dziala TYLKO, gdy ta metoda jest wywolywana Z ZEWNATRZ, przez proxy AOP wygenerowany
+ * dla tego beana. Samo-wywolanie {@code @PostConstruct} na tym samym obiekcie omija proxy (Spring
+ * tworzy proxy transakcyjne DOPIERO po zakonczeniu inicjalizacji beana, wiec {@code @PostConstruct}
+ * wykonywalby sie na "surowym" obiekcie, bez transakcji) - stad osobny, malutki
+ * {@code ContentBootstrap}, ktory wstrzykuje TEN bean (dostaje juz gotowy proxy) i wywoluje
+ * {@link #load()} z zewnatrz.
  */
 @Component
-@Order(2)
-class LessonContentLoader implements ApplicationRunner {
+class LessonContentLoader {
 
     private final LessonRepository lessonRepository;
     private final ContentBlockRepository contentBlockRepository;
@@ -47,9 +47,8 @@ class LessonContentLoader implements ApplicationRunner {
     // lesson.getChapter().getSlug() (LAZY) rzucalby LazyInitializationException, bo
     // sesja z lessonRepository.findAll() zamyka sie zaraz po zwroceniu wyniku (dokladnie
     // ta sama pulapka co udokumentowana w CLAUDE.md dla _23_spring_data_jpa/Lesson09).
-    @Override
     @Transactional
-    public void run(ApplicationArguments args) throws IOException {
+    void load() throws IOException {
         for (Lesson lesson : lessonRepository.findAll()) {
             if (contentBlockRepository.existsByLessonId(lesson.getId())) {
                 continue;
