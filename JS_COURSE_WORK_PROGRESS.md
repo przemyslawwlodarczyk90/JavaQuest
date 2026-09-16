@@ -375,17 +375,55 @@ zwraca poprawną liczbę bloków teorii/ćwiczeń/quizu (14/7/6, 14/8/6, 14/7/6,
 /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-9 → bez zmian.
 Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
 
+## `_js_11_dom` (7/7 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+7 lekcji ("Część 3, środowisko przeglądarkowe"): czym jest DOM (drzewiasta reprezentacja HTML,
+`document` jako korzeń), selekcja elementów (`getElementById`/`querySelector`/`querySelectorAll`,
+nawigacja `.children`/`.parentElement`/`.nextElementSibling`), manipulacja treścią
+(`textContent`/`innerHTML`/`value`, ryzyko XSS), tworzenie/usuwanie elementów
+(`createElement`/`appendChild`/`insertAdjacentHTML`/`remove`/`cloneNode`), atrybuty i data-atrybuty
+(`getAttribute`/`setAttribute`/`dataset`, wartości zawsze jako string), `classList`
+(`add`/`remove`/`toggle`/`contains`), zmiana stylów CSS przez JS (`element.style`,
+`getComputedStyle`, CSS Custom Properties, `requestAnimationFrame`). Lekcje 2 (selekcja) i 6
+(classList) mają pełny `API_REFERENCE` (15 bloków — katalogi metod), pozostałe 5 BEZ (14 bloków).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_WhatIsTheDom` | 7/30 | 6/100 |
+| `02_SelectingDomElements` | 8/30 | 6/100 |
+| `03_ManipulatingElementContent` | 7/30 | 6/100 |
+| `04_CreatingAndRemovingElements` | 8/30 | 6/100 |
+| `05_AttributesAndDataAttributes` | 8/30 | 6/100 |
+| `06_ClassListDynamicClasses` | 8/30 | 6/100 |
+| `07_ChangingCssStylesViaJs` | 8/30 | 6/100 |
+
+Wszystkie 7 plików zweryfikowane: poprawny JSON, brak cyrylicy, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie backendu
+(znaleziono i zamknięto kolejne dwa osierocone procesy `java` sprzed restartu — WZORZEC
+POWTARZAJĄCY SIĘ W TEJ SESJI, warto zawsze sprawdzać `Get-Process java` PRZED każdym startem):
+wszystkie 7 lekcji zwraca poprawną liczbę bloków teorii/ćwiczeń/quizu (14/7/6, 15/8/6, 14/7/6,
+14/8/6, 14/8/6, 15/8/6, 14/8/6). Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-10 → bez zmian.
+Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_11_dom` jako następny w naturalnej kolejności
-01→14 — "Część 3, środowisko przeglądarkowe": czym jest DOM, selekcja elementów, manipulacja
-treścią, tworzenie/usuwanie elementów, atrybuty i data-atrybuty, classList, zmiana stylów CSS przez
-JS, 7 lekcji per scaffold w `ChapterSeedData.java`) — zgodnie z ustaloną strategią: najpierw
-przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria + solidny start ćwiczeń/quizu w
-każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać i uzupełniać każdą lekcję do
-pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej lekcji jest i będzie zapisywany w
-tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_12_zdarzenia` jako następny w naturalnej
+kolejności 01→14 — zdarzenia: `addEventListener`, obiekt zdarzenia (`target`/`preventDefault`/
+`stopPropagation`), zdarzenia myszy, zdarzenia klawiatury i formularza, propagacja i delegacja
+zdarzeń, wyrażenia regularne, 6 lekcji per scaffold w `ChapterSeedData.java`) — zgodnie z
+ustaloną strategią: najpierw przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria +
+solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać
+i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej
+lekcji jest i będzie zapisywany w tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać,
+gdzie kontynuować.
 
 **Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
 w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
 "$env:USERPROFILE\.jdks\openjdk-25.0.2"` (JDK zarządzany przez IntelliJ, potwierdzony działający).
+ZAWSZE sprawdzaj `Get-Process java` PRZED startem nowego backendu i zabijaj osierocone procesy z
+poprzednich sesji (Stop-Process -Force) — w tej sesji wielokrotnie pozostawały uruchomione po
+wcześniejszym `spring-boot:run`.
