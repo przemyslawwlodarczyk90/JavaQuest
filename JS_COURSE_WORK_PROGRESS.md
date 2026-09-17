@@ -547,21 +547,22 @@ sprawdzone programowo, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residua
 live przez API — patrz niżej / do uzupełnienia po zakończeniu tej sesji]. Rozdział CAŁKOWICIE
 GOTOWY (Faza 1 + Faza 2) — jedyny w calym kursie JS na ten moment osiągający pełny target 30/100.
 
-## `_js_02_typy_danych` — Faza 2 W TOKU (4/7 lekcji ukończone w tej sesji)
+## `_js_02_typy_danych` — Faza 2 W TOKU (5/7 lekcji ukończone w tej sesji)
 
 `01_StringBasics`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
 `02_StringMethods`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
 `03_NumberAndArithmetic`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
 `04_BigInt`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-Wszystkie cztery zweryfikowane live przez API, regresja czysta. Pozostałe 3 lekcje rozdziału
-(`05_BooleanUndefinedNull` do `07_ValueVsReferenceTypes`) WCIĄŻ na poziomie Fazy 1 — patrz tabela
-historyczna wyżej w tym pliku.
+`05_BooleanUndefinedNull`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
+Wszystkie pięć zweryfikowane live przez API, regresja czysta. Pozostałe 2 lekcje rozdziału
+(`06_Symbol`, `07_ValueVsReferenceTypes`) WCIĄŻ na poziomie Fazy 1 — patrz tabela historyczna
+wyżej w tym pliku.
 
 ## Następny krok
 
-**Faza 2 dla `_js_01_zmienne` UKOŃCZONA, `_js_02_typy_danych` w toku (4/7).** Kontynuuj od
-`_js_02_typy_danych/05_BooleanUndefinedNull` (Faza 1: 10/30 ćwiczeń, 8/100 quiz), tą samą metodą.
-Rozdziały `_js_02` (pozostałe 3 lekcje) do `_js_14` WCIĄŻ na poziomie Fazy 1
+**Faza 2 dla `_js_01_zmienne` UKOŃCZONA, `_js_02_typy_danych` w toku (5/7).** Kontynuuj od
+`_js_02_typy_danych/06_Symbol` (Faza 1: 7/30 ćwiczeń, 6/100 quiz), tą samą metodą.
+Rozdziały `_js_02` (pozostałe 2 lekcje) do `_js_14` WCIĄŻ na poziomie Fazy 1
 (patrz tabele historyczne wyżej w tym pliku — każda lekcja ma zapisaną dokładną liczbę
 ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli WCIĄŻ daleko od celu
 30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_02_typy_danych` w dół, TĄ SAMĄ
