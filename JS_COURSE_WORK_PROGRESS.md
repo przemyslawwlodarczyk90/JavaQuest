@@ -556,21 +556,71 @@ Zweryfikowane live przez API (theory/exercises/quiz dla każdej), regresja czyst
 Rozdział 2 CAŁKOWICIE GOTOWY (Faza 1 + Faza 2), drugi (po `_js_01_zmienne`) w pełni ukończony
 rozdział kursu JS.
 
+## `_js_03_funkcje` (5/5 lekcji) — Faza 2 UKOŃCZONA w tej sesji (30/100 KAŻDA lekcja)
+
+Wszystkie 5 lekcji rozdziału 3 uzupełnione od stanu Fazy 1 do pełnych **30 ćwiczeń / 100 pytań
+quizowych** — TRZECI w pełni ukończony rozdział kursu JS (po `_js_01`, `_js_02`). Sesja
+rozpoczęta komendą użytkownika "kontynuuj prace wychodze z domu nie pytaj o zgode" — kontynuacja
+Fazy 2 zgodnie z ustaloną w poprzedniej sesji dyrektywą (bez pytania o zgodę między lekcjami/
+rozdziałami). Zdecydowana większość nowych pytań quizowych to pytania z kodem
+(`"Co wypisze poniższy kod?"`), zgodnie z dyrektywą z 2026-09-17.
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_FunctionDeclarationVsExpression` | 30/30 | 100/100 |
+| `02_ArrowFunctions` | 30/30 | 100/100 |
+| `03_AnonymousFunctions` | 30/30 | 100/100 |
+| `04_CallbackAndPredicateFunctions` | 30/30 | 100/100 |
+| `05_Closures` | 30/30 | 100/100 |
+
+**Znaleziony i naprawiony błąd merytoryczny z Fazy 1 przy okazji tej sesji:**
+`01_FunctionDeclarationVsExpression.json` (blok `CODE_WRONG`, jedno `exercise` i jedno `quiz`)
+błędnie twierdził, że wywołanie function expression zadeklarowanej przez `const` PRZED linią jej
+przypisania rzuca `TypeError` ("policzRabat is not a function") — w rzeczywistości `const`/`let` są
+w Temporal Dead Zone do momentu wykonania linii deklaracji, więc taka próba rzuca
+`ReferenceError: Cannot access '...' before initialization`. `TypeError` pojawia się TYLKO przy
+`var` (zmienna ma wartość `undefined` przed przypisaniem, więc próba jej WYWOŁANIA jako funkcji
+rzuca `TypeError`). Naprawiono wszystkie trzy miejsca PRZED dopisaniem nowych pytań quizowych
+dotykających tego samego rozróżnienia (żeby nie powielić błędu w nowej treści).
+
+**Decyzje o zakresie tematycznym pytań (żeby uniknąć testowania pojęć z PÓŹNIEJSZYCH rozdziałów
+kursu JS, zanim zostaną formalnie wprowadzone):** unikano w tym rozdziale pytań opartych na
+rest/spread operatorze (`...`, rozdział 4 lekcja 8 / rozdział 5 lekcja 5), pętli `for` (rozdział 6),
+`Set`/`Map` (rozdział 9) oraz mechanizmu `this` (rozdział 7) — mimo że `.filter()`/`.map()`/
+`.sort()`/`.forEach()`/`.push()`/`.slice()` (formalnie rozdział 4) są używane celowo i świadomie w
+lekcjach 3-4 tego rozdziału, bo sama teoria Fazy 1 tych lekcji już je wprowadza jako przykłady
+funkcji wyższego rzędu/callbacków (`.filter()`, `.map()` wymienione wprost w `DEFINITION`
+`04_CallbackAndPredicateFunctions.json`) — TA decyzja została podjęta świadomie przez autora
+Fazy 1, nie w tej sesji, więc kontynuowano ten sam wzorzec w Fazie 2.
+
+Wszystkie 5 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, brak cyrylicy,
+struktura quizu (4 opcje A-D, `correct` w A-D, `explanation` obecne) i ćwiczeń (prompt/hint/
+solution obecne) sprawdzone programowo dla każdego pliku, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). [Weryfikacja live przez API w toku pod koniec tej sesji — patrz "Następny krok" po dokładny
+status.]
+
 ## Następny krok
 
-**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6) i `_js_02_typy_danych` (7/7) — DWA PIERWSZE
-rozdziały kursu JS w pełni gotowe.** Kontynuuj Fazę 2 od `_js_03_funkcje/01_FunctionDeclarationVsExpression`
-(Faza 1: 8/30 ćwiczeń, 7/100 quiz), tą samą metodą co dotychczas. Rozdziały `_js_03` do `_js_14`
-WCIĄŻ na poziomie Fazy 1
-(patrz tabele historyczne wyżej w tym pliku — każda lekcja ma zapisaną dokładną liczbę
-ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli WCIĄŻ daleko od celu
-30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_02_typy_danych` w dół, TĄ SAMĄ
-metodą co zastosowana dla `_js_01` w tej sesji — czytać istniejący plik lekcji, dopisywać
-brakujące ćwiczenia/quiz (Edit, nie Write — nie nadpisywać już napisanej teorii), z NACISKIEM na
-pytania quizowe z kodem (`"Co wypisze poniższy kod?"`), ręcznie weryfikując poprawność każdej
-odpowiedzi przed zapisaniem. Po każdym rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i
-fix_http_method_case.js WYŁĄCZNIE dla `_js_13_asynchronicznosc`), weryfikacja JSON/struktury,
-weryfikacja live przez API z regresją na obu torach, dopiero potem commit.
+**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6), `_js_02_typy_danych` (7/7) i `_js_03_funkcje` (5/5)
+— TRZY PIERWSZE rozdziały kursu JS w pełni gotowe.** Kontynuuj Fazę 2 od
+`_js_04_tablice/01_ArrayBasicsAndMutatingMethods` (Faza 1: 24/30 ćwiczeń, 8/100 quiz — patrz
+tabela historyczna wyżej w tym pliku przy `_js_04_tablice`), tą samą metodą co dotychczas.
+Rozdziały `_js_04` do `_js_14` WCIĄŻ na poziomie Fazy 1 (patrz tabele historyczne wyżej w tym
+pliku — każda lekcja ma zapisaną dokładną liczbę ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i
+6-20 pytań quizowych, czyli WCIĄŻ daleko od celu 30/100). Następny krok: kontynuować Fazę 2
+chronologicznie od `_js_04_tablice` w dół, TĄ SAMĄ metodą co zastosowana dla `_js_01`-`_js_03` w
+poprzednich sesjach — czytać istniejący plik lekcji, dopisywać brakujące ćwiczenia/quiz (Edit, nie
+Write — nie nadpisywać już napisanej teorii), z NACISKIEM na pytania quizowe z kodem
+(`"Co wypisze poniższy kod?"`), ręcznie weryfikując poprawność każdej odpowiedzi przed zapisaniem
+(patrz błąd znaleziony w tej sesji dot. TypeError/ReferenceError — zawsze prześledź kod krok po
+kroku, szczególnie przy TDZ/hoistingu/typach błędów). **UWAGA dla `_js_04_tablice`:** rozdział o
+tablicach jest formalnym miejscem wprowadzenia metod `.filter()/.map()/.sort()/.forEach()` itd. —
+przy pisaniu Fazy 2 tego rozdziału NIE trzeba już ograniczać się co do metod tablicowych (w
+przeciwieństwie do `_js_03_funkcje`, gdzie były używane tylko jako PRZYKŁAD funkcji wyższego
+rzędu). Po każdym rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i fix_http_method_case.js
+WYŁĄCZNIE dla `_js_13_asynchronicznosc`), weryfikacja JSON/struktury, weryfikacja live przez API z
+regresją na obu torach, dopiero potem commit.
 
 **Uwaga o skali**: uzupełnienie WSZYSTKICH 90 lekcji do 30/100 to bardzo duża ilość pracy
 (orientacyjnie: każda lekcja wymaga dopisania ok. 10-20 ćwiczeń i 80-95 pytań quizowych) —
