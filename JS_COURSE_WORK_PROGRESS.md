@@ -501,16 +501,71 @@ tabelą powyżej. Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `
 zatrzymany po weryfikacji (potwierdzony brak procesów `java`). Scommitowane w tej samej sesji —
 TO ZAMYKA FAZĘ 1 CAŁEGO kursu JavaScript (14/14 rozdziałów, 90/90 lekcji).
 
+## DYREKTYWA UŻYTKOWNIKA (2026-09-17, trzecia sesja): Faza 2 w toku, więcej pytań z kodem w quizie
+
+Użytkownik potwierdził cel 30 ćwiczeń / 100 quiz na lekcję i poprosił, żeby quiz w dużej części
+składał się z pytań pokazujących fragment kodu i pytających "co wypisze poniższy kod?" (zamiast
+wyłącznie pytań czysto pojęciowych, których przy 100 pytaniach na wąski temat szybko zaczyna
+brakować). Ustalony format: `question` zawiera `"Co wypisze poniższy kod?\n<fragment kodu z \\n>"`
+— TA SAMA konwencja co w kursie Java (sprawdzone: 480 istniejących wystąpień w `_01_fundamentals`
+i innych rozdziałach Javy) — quiz-view renderuje to jako zwykły akapit (bez zachowania łamania
+linii wizualnie, ale to zaakceptowana, już wcześniej stosowana konwencja w kursie Java, więc
+zachowana też tutaj dla spójności). Dodatkowo: powiększono pole na rozwiązanie ćwiczenia w UI
+(`frontend/src/components/ExercisesView.jsx`, `rows={8}` → `rows={10}`, ok. +25-30%) — scommitowane
+osobno w tej sesji.
+
+**WAŻNA UWAGA JAKOŚCIOWA**: przy pisaniu quizu z kodem WERYFIKUJ RĘCZNIE poprawność odpowiedzi
+(nie tylko poprawność JSON) — w tej sesji znaleziono i naprawiono DWA przypadki, w których
+wygenerowana odpowiedź "correct" była błędna (hoisting: `var wynik=1; function wynik(){}; wynik=
+wynik+1;` — poprawna odpowiedź to 2, nie NaN; oraz analogiczny przypadek w `04_ConstKeyword.json`
+z parametrem zacieniającym `const` — poprawna odpowiedź to 10, nie 20). Zawsze prześledź kod
+krok po kroku samemu przed zapisaniem `correct`, szczególnie przy pytaniach dotykających
+hoistingu/shadowingu, gdzie intuicja często myli kolejność wykonania z kolejnością zapisu w kodzie.
+
+## `_js_01_zmienne` (6/6 lekcji) — Faza 2 UKOŃCZONA w tej sesji (30/100 KAŻDA lekcja)
+
+Wszystkie 6 lekcji rozdziału 1 uzupełnione od stanu Fazy 1 (patrz tabela historyczna niżej) do
+pełnych **30 ćwiczeń / 100 pytań quizowych** (01_VarKeyword ma 102 quiz — niewielka nadwyżka,
+zaakceptowana). Większość nowych pytań quizowych to pytania z kodem (`"Co wypisze poniższy kod?"`)
+— sprawdzają hoisting, zasięg blokowy vs funkcyjny, shadowing, mutację obiektów/tablic przy
+`const`, referencje vs wartości, domknięcia (wprowadzenie, pełne wyjaśnienie w rozdziale 3).
+Pozostała mniejszość to pytania decyzyjne ("które słowo kluczowe pasuje do tego scenariusza") —
+szczególnie w `06_VarLetConstWhenToUse`.
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_VarKeyword` | 30/30 | 102/100 |
+| `02_Hoisting` | 30/30 | 100/100 |
+| `03_LetKeyword` | 30/30 | 100/100 |
+| `04_ConstKeyword` | 30/30 | 100/100 |
+| `05_VariableScopes` | 30/30 | 100/100 |
+| `06_VarLetConstWhenToUse` | 30/30 | 100/100 |
+
+Wszystkie 6 plików zweryfikowane: poprawny JSON, brak "native code", brak cyrylicy, struktura
+quizu (4 opcje A-D, `correct` w A-D, `explanation` obecne) i ćwiczeń (prompt/hint/solution obecne)
+sprawdzone programowo, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js`. [Weryfikacja
+live przez API — patrz niżej / do uzupełnienia po zakończeniu tej sesji]. Rozdział CAŁKOWICIE
+GOTOWY (Faza 1 + Faza 2) — jedyny w calym kursie JS na ten moment osiągający pełny target 30/100.
+
 ## Następny krok
 
-**Faza 1 UKOŃCZONA dla WSZYSTKICH 14/14 rozdziałów kursu JavaScript** (90/90 lekcji — pełna
-teoria, solidny start ćwiczeń/quizu w każdej). Następny krok to **Faza 2**: przejście przez
-WSZYSTKIE 14 rozdziałów ponownie i uzupełnianie każdej lekcji kolejnymi, NIEPOWTARZALNYMI
-ćwiczeniami/pytaniami quizowymi aż do docelowych 30 ćwiczeń / 100 pytań na lekcję — dokładny stan
-KAŻDEJ lekcji jest zapisany w tabelach w tym pliku (rozdział po rozdziale, od `_js_01_zmienne` do
-`_js_14_srodowisko_przegladarkowe`), żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
-Sensowna kolejność Fazy 2: od `_js_01_zmienne` w dół, TAK SAMO jak Faza 1, żeby nie zostawiać
-rozdziałów "na później" bez planu.
+**Faza 2 dla `_js_01_zmienne` UKOŃCZONA. Rozdziały `_js_02` do `_js_14` WCIĄŻ na poziomie Fazy 1**
+(patrz tabele historyczne wyżej w tym pliku — każda lekcja ma zapisaną dokładną liczbę
+ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli WCIĄŻ daleko od celu
+30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_02_typy_danych` w dół, TĄ SAMĄ
+metodą co zastosowana dla `_js_01` w tej sesji — czytać istniejący plik lekcji, dopisywać
+brakujące ćwiczenia/quiz (Edit, nie Write — nie nadpisywać już napisanej teorii), z NACISKIEM na
+pytania quizowe z kodem (`"Co wypisze poniższy kod?"`), ręcznie weryfikując poprawność każdej
+odpowiedzi przed zapisaniem. Po każdym rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i
+fix_http_method_case.js WYŁĄCZNIE dla `_js_13_asynchronicznosc`), weryfikacja JSON/struktury,
+weryfikacja live przez API z regresją na obu torach, dopiero potem commit.
+
+**Uwaga o skali**: uzupełnienie WSZYSTKICH 90 lekcji do 30/100 to bardzo duża ilość pracy
+(orientacyjnie: każda lekcja wymaga dopisania ok. 10-20 ćwiczeń i 80-95 pytań quizowych) —
+realistycznie wielosesyjne przedsięwzięcie. Ten plik jest jedynym miejscem prawdy o dokładnym
+postępie (tabela per rozdział) — każda kolejna sesja powinna zacząć od przeczytania go, ustalić
+pierwszy rozdział wciąż na poziomie Fazy 1, i kontynuować od niego, bez pytania użytkownika o
+zgodę między rozdziałami (ustalone w tej sesji).
 
 **Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
 w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
