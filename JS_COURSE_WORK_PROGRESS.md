@@ -547,24 +547,21 @@ sprawdzone programowo, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residua
 live przez API — patrz niżej / do uzupełnienia po zakończeniu tej sesji]. Rozdział CAŁKOWICIE
 GOTOWY (Faza 1 + Faza 2) — jedyny w calym kursie JS na ten moment osiągający pełny target 30/100.
 
-## `_js_02_typy_danych` — Faza 2 W TOKU (6/7 lekcji ukończone w tej sesji)
+## `_js_02_typy_danych` (7/7 lekcji) — Faza 2 UKOŃCZONA w tej sesji
 
-`01_StringBasics`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-`02_StringMethods`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-`03_NumberAndArithmetic`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-`04_BigInt`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-`05_BooleanUndefinedNull`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-`06_Symbol`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA.**
-Wszystkie sześć zweryfikowane live przez API, regresja czysta. Zostaje TYLKO
-`07_ValueVsReferenceTypes` na poziomie Fazy 1, ostatnia lekcja tego rozdziału.
+Wszystkie 7 lekcji rozdziału 2 uzupełnione do pełnych **30 ćwiczeń / 100 pytań quizowych**:
+`01_StringBasics`, `02_StringMethods`, `03_NumberAndArithmetic`, `04_BigInt`,
+`05_BooleanUndefinedNull`, `06_Symbol`, `07_ValueVsReferenceTypes` — WSZYSTKIE 30/100.
+Zweryfikowane live przez API (theory/exercises/quiz dla każdej), regresja czysta na obu torach.
+Rozdział 2 CAŁKOWICIE GOTOWY (Faza 1 + Faza 2), drugi (po `_js_01_zmienne`) w pełni ukończony
+rozdział kursu JS.
 
 ## Następny krok
 
-**Faza 2 dla `_js_01_zmienne` UKOŃCZONA, `_js_02_typy_danych` w toku (6/7, TYLKO JEDNA lekcja
-zostaje do zamknięcia całego rozdziału 2).** Kontynuuj od
-`_js_02_typy_danych/07_ValueVsReferenceTypes` (Faza 1: 9/30 ćwiczeń, 8/100 quiz), tą samą metodą —
-po jej ukończeniu rozdział 2 będzie w pełni gotowy (Faza 1 + Faza 2), analogicznie do rozdziału 1.
-Rozdziały `_js_03` do `_js_14` WCIĄŻ na poziomie Fazy 1
+**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6) i `_js_02_typy_danych` (7/7) — DWA PIERWSZE
+rozdziały kursu JS w pełni gotowe.** Kontynuuj Fazę 2 od `_js_03_funkcje/01_FunctionDeclarationVsExpression`
+(Faza 1: 8/30 ćwiczeń, 7/100 quiz), tą samą metodą co dotychczas. Rozdziały `_js_03` do `_js_14`
+WCIĄŻ na poziomie Fazy 1
 (patrz tabele historyczne wyżej w tym pliku — każda lekcja ma zapisaną dokładną liczbę
 ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli WCIĄŻ daleko od celu
 30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_02_typy_danych` w dół, TĄ SAMĄ
