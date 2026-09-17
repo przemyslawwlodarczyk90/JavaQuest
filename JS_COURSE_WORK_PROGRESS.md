@@ -547,9 +547,18 @@ sprawdzone programowo, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residua
 live przez API — patrz niżej / do uzupełnienia po zakończeniu tej sesji]. Rozdział CAŁKOWICIE
 GOTOWY (Faza 1 + Faza 2) — jedyny w calym kursie JS na ten moment osiągający pełny target 30/100.
 
+## `_js_02_typy_danych` — Faza 2 W TOKU (1/7 lekcji ukończona w tej sesji)
+
+`01_StringBasics`: **30/30 ćwiczeń, 100/100 quiz — UKOŃCZONA**. Zweryfikowana live przez API
+(theory=14, exercises=30, quiz=100), regresja czysta (`_js_01_zmienne/01_VarKeyword` nadal
+102 quiz, oba tory bez zmian). Pozostałe 6 lekcji rozdziału (`02_StringMethods` do
+`07_ValueVsReferenceTypes`) WCIĄŻ na poziomie Fazy 1 — patrz tabela historyczna wyżej w tym pliku.
+
 ## Następny krok
 
-**Faza 2 dla `_js_01_zmienne` UKOŃCZONA. Rozdziały `_js_02` do `_js_14` WCIĄŻ na poziomie Fazy 1**
+**Faza 2 dla `_js_01_zmienne` UKOŃCZONA, `_js_02_typy_danych` w toku (1/7).** Kontynuuj od
+`_js_02_typy_danych/02_StringMethods` (Faza 1: 20/30 ćwiczeń, 8/100 quiz), tą samą metodą.
+Rozdziały `_js_02` (pozostałe 6 lekcji) do `_js_14` WCIĄŻ na poziomie Fazy 1
 (patrz tabele historyczne wyżej w tym pliku — każda lekcja ma zapisaną dokładną liczbę
 ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli WCIĄŻ daleko od celu
 30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_02_typy_danych` w dół, TĄ SAMĄ
