@@ -32,7 +32,7 @@ export default function ExercisesView({ exercises }) {
         placeholder="Twoje rozwiązanie..."
         value={answer}
         onChange={(e) => setAnswer(e.target.value)}
-        rows={8}
+        rows={10}
       />
 
       <div className="exercise-view__actions">
