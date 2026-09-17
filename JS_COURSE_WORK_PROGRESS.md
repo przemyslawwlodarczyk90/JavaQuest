@@ -6,7 +6,9 @@
 
 ## Aktualny etap
 
-**Projektowanie zakończone, scaffold zaimplementowany. Pisanie treści — NIE rozpoczęte.**
+**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji) — pełna teoria, częściowe
+ćwiczenia/quiz w każdej lekcji. Faza 2 (uzupełnianie do 30 ćwiczeń/100 quiz na lekcję) —
+NIE rozpoczęta, patrz "Następny krok" na końcu tego pliku.**
 
 Sesja 2026-09-16: użytkownik poprosił o drugi blok platformy — równoległy kurs JavaScript,
 zbudowany na bazie gotowego materiału źródłowego w `dodatkowe materiały/kurs js/js-course/`
@@ -409,17 +411,106 @@ wszystkie 7 lekcji zwraca poprawną liczbę bloków teorii/ćwiczeń/quizu (14/7
 /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), pierwsze lekcje rozdziałów 1-10 → bez zmian.
 Backend zatrzymany po weryfikacji (potwierdzony brak procesów `java`).
 
+## `_js_12_zdarzenia` (6/6 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+6 lekcji: `addEventListener`/`removeEventListener` (+ opcja `once`, pułapka anonimowej arrow
+function przy usuwaniu handlera), obiekt zdarzenia (`target`/`preventDefault`/`stopPropagation`),
+zdarzenia myszy, zdarzenia klawiatury i formularza, propagacja i delegacja zdarzeń, wyrażenia
+regularne. Wszystkie 6 lekcji BEZ `API_REFERENCE` (14 bloków każda).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_AddEventListener` | 8/30 | 6/100 |
+| `02_EventObjectTargetPreventDefaultStopPropagation` | 7/30 | 6/100 |
+| `03_MouseEvents` | 8/30 | 6/100 |
+| `04_KeyboardAndFormEvents` | 8/30 | 6/100 |
+| `05_EventPropagationAndDelegation` | 7/30 | 6/100 |
+| `06_RegularExpressions` | 8/30 | 6/100 |
+
+Wszystkie 6 plików zweryfikowane: poprawny JSON, brak "native code", brak cyrylicy,
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` +
+restarcie backendu: wszystkie 6 lekcji zwraca 14 bloków teorii. Regresja: `GET
+/api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian),
+`_js_11_dom/01_WhatIsTheDom` bez zmian. Backend zatrzymany po weryfikacji. Scommitowane w tej
+samej sesji.
+
+## `_js_13_asynchronicznosc` (6/6 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji
+
+6 lekcji: `setTimeout`/`setInterval` (+ `clearTimeout`/`clearInterval`), `Promise` (`then`/
+`catch`/`finally`/`all`), `async`/`await` (+ sekwencyjny `await` kontra `Promise.all`), `fetch()`
+(`response.ok`/`response.status`, rozróżnienie `TypeError` sieciowego od błędu HTTP), `FormData` +
+wysyłanie danych (JSON kontra `multipart/form-data`, submit formularza), wzorce REST API
+(konwencje `GET`/`POST`/`PUT`/`PATCH`/`DELETE`, klient API wielokrotnego użytku przez funkcję
+fabrykującą). Wszystkie 6 lekcji BEZ `API_REFERENCE` (14 bloków każda).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_SetTimeoutAndSetInterval` | 8/30 | 6/100 |
+| `02_Promises` | 8/30 | 6/100 |
+| `03_AsyncAwait` | 8/30 | 6/100 |
+| `04_FetchApi` | 8/30 | 6/100 |
+| `05_FormDataAndSendingData` | 8/30 | 6/100 |
+| `06_RestApiPatterns` | 8/30 | 6/100 |
+
+Wszystkie 6 plików zweryfikowane: poprawny JSON, brak cyrylicy, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` ORAZ `fix_http_method_case.js` (jedyny rozdział
+dotyczący HTTP) — po uruchomieniu tego drugiego skryptu znalezione i ręcznie naprawione DWA
+fałszywe trafienia (`formData.get(...)`/`api.get(...)`/`post.title` omyłkowo zamienione na
+`.GET(...)`/`POST.title` w `05_FormDataAndSendingData.json` i `06_RestApiPatterns.json` — DOKŁADNIE
+ten typ pułapki, przed którym ostrzega `JS_COURSE_STAGE_PROMPT.md`), poprawione ręcznie i
+zweryfikowane ponownym `grep -nE '\.(GET|POST|PUT|PATCH|DELETE)\('` → brak wyników. Zweryfikowane
+live przez API: wszystkie 6 lekcji zwraca 14/8/6 (teoria/ćwiczenia/quiz). Regresja: oba tory bez
+zmian, `_01_fundamentals/06_StringsAndBuilder` (15 bloków) bez zmian. Backend zatrzymany po
+weryfikacji. Scommitowane w tej samej sesji.
+
+## `_js_14_srodowisko_przegladarkowe` (6/6 lekcji) — Faza 1 UKOŃCZONA w tej samej sesji, OSTATNI rozdział kursu
+
+6 lekcji, ZAMYKAJĄCE CAŁY kurs JavaScript: obiekt `window` (wymiary, scroll, zdarzenia `resize`/
+`load`/`DOMContentLoaded`/`beforeunload`), `localStorage`/`sessionStorage` (+ bezpieczne funkcje
+pomocnicze `storageGet`/`storageSet`, zdarzenie `storage` do synchronizacji między kartami),
+`window.location` (+ `URLSearchParams`, konstruktor `URL`, `location.href`/`assign`/`replace`),
+`window.history`/History API (`pushState`/`replaceState`/`popstate` — nawigacja bez przeładowania,
+wzorzec pod React Router), standardy ECMAScript (historia ES5→ES2024, `caniuse.com`, wzorzec
+sprawdzania dostępności metody z fallbackiem), debugowanie (breakpointy, `debugger;`, skróty VS
+Code F5/F9/F10/F11/Shift+F11, `console.table`/`console.time`). Wszystkie 6 lekcji BEZ
+`API_REFERENCE` (14 bloków każda).
+
+Aktualny stan ćwiczeń/quizu (Faza 1, cel docelowy: 30/100 na lekcję):
+
+| Lekcja | Ćwiczenia | Quiz |
+|---|---|---|
+| `01_WindowObject` | 7/30 | 6/100 |
+| `02_LocalStorageAndSessionStorage` | 8/30 | 6/100 |
+| `03_WindowLocation` | 8/30 | 6/100 |
+| `04_WindowHistoryAndHistoryApi` | 8/30 | 6/100 |
+| `05_EcmaScriptStandards` | 8/30 | 6/100 |
+| `06_DebuggingInVsCode` | 8/30 | 6/100 |
+
+Wszystkie 6 plików zweryfikowane: poprawny JSON, brak "native code", brak cyrylicy, przepuszczone
+przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie
+dotyczy HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie
+backendu: wszystkie 6 lekcji zwraca 14/7-8/6 (teoria/ćwiczenia/quiz) — dokładnie zgodnie z
+tabelą powyżej. Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET
+/api/chapters?track=JAVASCRIPT` → 14 (bez zmian), `_js_13_asynchronicznosc/06_RestApiPatterns`
+(14 bloków) i `_01_fundamentals/06_StringsAndBuilder` (15 bloków) — oba bez zmian. Backend
+zatrzymany po weryfikacji (potwierdzony brak procesów `java`). Scommitowane w tej samej sesji —
+TO ZAMYKA FAZĘ 1 CAŁEGO kursu JavaScript (14/14 rozdziałów, 90/90 lekcji).
+
 ## Następny krok
 
-**Kontynuacja Fazy 1 przez kolejne rozdziały** (`_js_12_zdarzenia` jako następny w naturalnej
-kolejności 01→14 — zdarzenia: `addEventListener`, obiekt zdarzenia (`target`/`preventDefault`/
-`stopPropagation`), zdarzenia myszy, zdarzenia klawiatury i formularza, propagacja i delegacja
-zdarzeń, wyrażenia regularne, 6 lekcji per scaffold w `ChapterSeedData.java`) — zgodnie z
-ustaloną strategią: najpierw przejechać Fazą 1 przez wszystkie 14 rozdziałów (pełna teoria +
-solidny start ćwiczeń/quizu w każdej lekcji), a DOPIERO POTEM (Faza 2, osobna tura pracy) wracać
-i uzupełniać każdą lekcję do pełnych 30 ćwiczeń / 100 pytań quizowych — dokładny stan każdej
-lekcji jest i będzie zapisywany w tabelach w tym pliku, żeby żadna sesja nie musiała zgadywać,
-gdzie kontynuować.
+**Faza 1 UKOŃCZONA dla WSZYSTKICH 14/14 rozdziałów kursu JavaScript** (90/90 lekcji — pełna
+teoria, solidny start ćwiczeń/quizu w każdej). Następny krok to **Faza 2**: przejście przez
+WSZYSTKIE 14 rozdziałów ponownie i uzupełnianie każdej lekcji kolejnymi, NIEPOWTARZALNYMI
+ćwiczeniami/pytaniami quizowymi aż do docelowych 30 ćwiczeń / 100 pytań na lekcję — dokładny stan
+KAŻDEJ lekcji jest zapisany w tabelach w tym pliku (rozdział po rozdziale, od `_js_01_zmienne` do
+`_js_14_srodowisko_przegladarkowe`), żeby żadna sesja nie musiała zgadywać, gdzie kontynuować.
+Sensowna kolejność Fazy 2: od `_js_01_zmienne` w dół, TAK SAMO jak Faza 1, żeby nie zostawiać
+rozdziałów "na później" bez planu.
 
 **Uwaga techniczna dla kolejnych sesji**: w tym środowisku `JAVA_HOME` NIE jest ustawiony domyślnie
 w PowerShell/Bash — przed `mvnw.cmd` trzeba ręcznie ustawić `$env:JAVA_HOME =
