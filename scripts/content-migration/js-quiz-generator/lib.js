@@ -4,7 +4,14 @@ const ROOT = require('path').resolve(__dirname, '../../../src/main/resources/con
 
 function fmt(v) {
   if (typeof v === 'string') return JSON.stringify(v);
-  if (Array.isArray(v)) return '[' + v.map(fmt).join(', ') + ']';
+  if (Array.isArray(v)) {
+    const out = [];
+    for (let i = 0; i < v.length; i++) {
+      if (!(i in v)) { let n = 0; while (i < v.length && !(i in v)) { n++; i++; } i--; out.push('<' + n + ' empty item' + (n > 1 ? 's' : '') + '>'); }
+      else out.push(fmt(v[i]));
+    }
+    return '[' + out.join(', ') + ']';
+  }
   if (v === null) return 'null';
   if (typeof v === 'object') {
     const ks = Object.keys(v);
