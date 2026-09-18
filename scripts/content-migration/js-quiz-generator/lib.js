@@ -68,7 +68,7 @@ function candidates(code, res, correct) {
         (code.match(/'([^'\\\n]*)'/g) || []).forEach(l => sp(JSON.stringify(l.slice(1, -1))));
         if (v.endsWith('undefined') && v.length > 9) sp(JSON.stringify(v.slice(0, -9)));
         if (v.includes(': ')) { v.split(': ').forEach(p => sp(JSON.stringify(p))); }
-        if (v.includes(' ')) { v.split(' ').forEach(p => sp(JSON.stringify(p))); }
+        if (v.includes(' ') && !v.startsWith('[object')) { v.split(' ').forEach(p => sp(JSON.stringify(p))); }
       }
     } else if (Array.isArray(v)) {
       if (v.length > 1) { sp(fmt(v.slice().reverse())); sp(fmt(v.slice(1))); sp(fmt(v.slice(0, -1))); }
