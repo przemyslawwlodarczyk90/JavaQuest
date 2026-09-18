@@ -20,9 +20,22 @@ const POLY = `globalThis.structuredClone = function sc(v, seen) { seen = seen ||
 function run(code) {
   const logs = [];
   const con = { log: (...a) => logs.push(a), error: (...a) => logs.push(a) };
+  // wirtualny zegar: setTimeout/clearTimeout wykonuja sie PO glownym kodzie, w kolejnosci (opoznienie, kolejnosc dodania)
+  const timers = []; let now = 0;
+  const sandbox = {
+    console: con,
+    setTimeout: (fn, ms, ...a) => { timers.push({ fn, a, due: now + (Number(ms) || 0), id: timers.length + 1 }); return timers.length; },
+    clearTimeout: id => { const t = timers.find(x => x.id === id); if (t) t.cancelled = true; },
+  };
   try {
     const strict = /^\s*["']use strict["']/.test(code) ? '"use strict";\n' : '';
-    vm.runInNewContext(strict + POLY + '\n' + code, { console: con }, { timeout: 1500 });
+    vm.runInNewContext(strict + POLY + '\n' + code, sandbox, { timeout: 1500 });
+    for (let guard = 0; guard < 1000; guard++) {
+      const pend = timers.filter(t => !t.done && !t.cancelled).sort((x, y) => x.due - y.due || x.id - y.id);
+      if (!pend.length) break;
+      const t = pend[0]; t.done = true; now = t.due;
+      const f = t.fn; f(...t.a);
+    }
     return { logs };
   } catch (e) { return { err: e.name || 'Error', logs }; }
 }
@@ -51,7 +64,7 @@ function candidates(code, res, correct) {
       if (/Error$/.test(v)) ERRS.forEach(e => sp(JSON.stringify(e)));
       else if (TYPES.includes(v)) TYPES.forEach(e => sp(JSON.stringify(e)));
       else {
-        (code.match(/"([^"\\\n]*)"/g) || []).forEach(l => sp(l));
+        (code.match(/"([^"\\\n]*)"/g) || []).filter(l => l !== '"use strict"').forEach(l => sp(l));
         (code.match(/'([^'\\\n]*)'/g) || []).forEach(l => sp(JSON.stringify(l.slice(1, -1))));
         if (v.endsWith('undefined') && v.length > 9) sp(JSON.stringify(v.slice(0, -9)));
         if (v.includes(': ')) { v.split(': ').forEach(p => sp(JSON.stringify(p))); }
