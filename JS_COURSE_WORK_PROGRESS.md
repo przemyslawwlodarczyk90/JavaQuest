@@ -597,29 +597,63 @@ Wszystkie 5 plików zweryfikowane: poprawny JSON, `grep -c "native code"` = 0, b
 struktura quizu (4 opcje A-D, `correct` w A-D, `explanation` obecne) i ćwiczeń (prompt/hint/
 solution obecne) sprawdzone programowo dla każdego pliku, przepuszczone przez
 `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
-HTTP). [Weryfikacja live przez API w toku pod koniec tej sesji — patrz "Następny krok" po dokładny
-status.]
+HTTP).
+
+## `_js_04_tablice` (8/8 lekcji) — Faza 2 UKOŃCZONA w kolejnej sesji (2026-09-18, komenda
+użytkownika "kontynuuj prace wychodze z domu nie pytaj o zgode")
+
+Wszystkie 8 lekcji rozdziału 4 uzupełnione do pełnych **30 ćwiczeń / 100 pytań quizowych**:
+`01_ArrayBasicsAndMutatingMethods`, `02_FilterMethod`, `03_MapMethod`, `04_ForEachMethod`,
+`05_SortMethodInDepth`, `06_FlatMapAndFlat`, `07_ArrayDestructuring`, `08_ArraySpreadOperator` —
+WSZYSTKIE 30/100. CZWARTY w pełni ukończony rozdział kursu JS (po `_js_01`, `_js_02`, `_js_03`).
+Zdecydowana większość nowych pytań quizowych to pytania z kodem (`"Co wypisze poniższy kod?"`),
+zgodnie z dyrektywą z 2026-09-17.
+
+**Błąd narzędziowy znaleziony i naprawiony w tej sesji**: `fix_allcaps.js`/`fix_allcaps_residual.js`
+NIE odróżniają emfazy WIELKIMI LITERAMI (do naprawienia) od LITERALNEGO wyniku wykonania kodu typu
+`.toUpperCase()` pokazanego w opcji quizu (np. `"PIES"` jako poprawny wynik `"pies".toUpperCase()`)
+— skrypt bezmyślnie zamienia WSZYSTKIE wielkie słowa na Title Case, co przy takich pytaniach
+TWORZY DUPLIKATY opcji (dwie identyczne, "poprawione" wersje) i psuje poprawność merytoryczną.
+ROZWIĄZANIE zastosowane w tej sesji: unikać w nowych pytaniach quizowych multi-literowych WIELKICH
+SŁÓW jako dosłownego wyniku `.toUpperCase()` w opcjach odpowiedzi — zamiast tego testować efekt
+`.toUpperCase()` pośrednio (np. `wynik[0] === wynik[0].toUpperCase()` zwracające boolean, albo
+`.join()` łączący sformatowany string, gdzie tylko PIERWSZA litera jest wielka, co nie koliduje z
+whitelistą skryptu). PO KAŻDYM URUCHOMIENIU `fix_allcaps.js` na nowym pliku: ZAWSZE ponownie
+sprawdzić duplikaty opcji quizu (`new Set(Object.values(q.options)).size !== 4` dla każdego pytania)
+— w tej sesji znaleziono i naprawiono 2 takie przypadki w `03_MapMethod.json` PRZED commitem.
+
+Wszystkie 8 plików zweryfikowane: poprawny JSON, brak cyrylicy, brak duplikatów opcji quizu
+(sprawdzone programowo), struktura quizu/ćwiczeń kompletna, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP). Zweryfikowane live przez API po `mvnw.cmd resources:resources` + restarcie backendu
+(backend w tej sesji startował NIETYPOWO DŁUGO — ok. 76 sekund do `Tomcat started`, prawdopodobnie
+narastający koszt seedowania coraz większej ilości treści JSON obu kursów — uwzględnić w
+przyszłych sesjach przy szacowaniu czasu oczekiwania, NIE traktować jako zawieszenie procesu):
+wszystkie 8 lekcji zwraca 30/100 (i poprawną liczbę bloków teorii 14 lub 15). Regresja: `GET
+/api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian),
+`_01_fundamentals/06_StringsAndBuilder` (15 bloków) i `_js_03_funkcje/05_Closures` (14 bloków) —
+oba bez zmian. Backend zatrzymany po weryfikacji. Scommitowane w DWÓCH commitach w tej samej
+sesji (lekcje 1-6, potem lekcje 7-8) — CAŁY rozdział `_js_04_tablice` w pełni gotowy.
 
 ## Następny krok
 
-**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6), `_js_02_typy_danych` (7/7) i `_js_03_funkcje` (5/5)
-— TRZY PIERWSZE rozdziały kursu JS w pełni gotowe.** Kontynuuj Fazę 2 od
-`_js_04_tablice/01_ArrayBasicsAndMutatingMethods` (Faza 1: 24/30 ćwiczeń, 8/100 quiz — patrz
-tabela historyczna wyżej w tym pliku przy `_js_04_tablice`), tą samą metodą co dotychczas.
-Rozdziały `_js_04` do `_js_14` WCIĄŻ na poziomie Fazy 1 (patrz tabele historyczne wyżej w tym
-pliku — każda lekcja ma zapisaną dokładną liczbę ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i
-6-20 pytań quizowych, czyli WCIĄŻ daleko od celu 30/100). Następny krok: kontynuować Fazę 2
-chronologicznie od `_js_04_tablice` w dół, TĄ SAMĄ metodą co zastosowana dla `_js_01`-`_js_03` w
-poprzednich sesjach — czytać istniejący plik lekcji, dopisywać brakujące ćwiczenia/quiz (Edit, nie
-Write — nie nadpisywać już napisanej teorii), z NACISKIEM na pytania quizowe z kodem
-(`"Co wypisze poniższy kod?"`), ręcznie weryfikując poprawność każdej odpowiedzi przed zapisaniem
-(patrz błąd znaleziony w tej sesji dot. TypeError/ReferenceError — zawsze prześledź kod krok po
-kroku, szczególnie przy TDZ/hoistingu/typach błędów). **UWAGA dla `_js_04_tablice`:** rozdział o
-tablicach jest formalnym miejscem wprowadzenia metod `.filter()/.map()/.sort()/.forEach()` itd. —
-przy pisaniu Fazy 2 tego rozdziału NIE trzeba już ograniczać się co do metod tablicowych (w
-przeciwieństwie do `_js_03_funkcje`, gdzie były używane tylko jako PRZYKŁAD funkcji wyższego
-rzędu). Po każdym rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i fix_http_method_case.js
-WYŁĄCZNIE dla `_js_13_asynchronicznosc`), weryfikacja JSON/struktury, weryfikacja live przez API z
+**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6), `_js_02_typy_danych` (7/7), `_js_03_funkcje` (5/5)
+i `_js_04_tablice` (8/8) — CZTERY PIERWSZE rozdziały kursu JS w pełni gotowe.** Kontynuuj Fazę 2 od
+`_js_05_obiekty/01_ObjectBasics` (Faza 1: 12/30 ćwiczeń, 7/100 quiz — patrz tabela historyczna
+wyżej w tym pliku przy `_js_05_obiekty`), tą samą metodą co dotychczas. Rozdziały `_js_05` do
+`_js_14` WCIĄŻ na poziomie Fazy 1 (patrz tabele historyczne wyżej w tym pliku — każda lekcja ma
+zapisaną dokładną liczbę ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli
+WCIĄŻ daleko od celu 30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_05_obiekty`
+w dół, TĄ SAMĄ metodą co zastosowana dla `_js_01`-`_js_04` w poprzednich sesjach — czytać istniejący
+plik lekcji, dopisywać brakujące ćwiczenia/quiz (Edit, nie Write — nie nadpisywać już napisanej
+teorii), z NACISKIEM na pytania quizowe z kodem (`"Co wypisze poniższy kod?"`), ręcznie weryfikując
+poprawność każdej odpowiedzi przed zapisaniem (patrz błędy znalezione w poprzednich sesjach dot.
+TypeError/ReferenceError przy TDZ/hoistingu — zawsze prześledź kod krok po kroku), a przy pytaniach
+o `.toUpperCase()`/`.toLowerCase()` w opcjach quizu PATRZ WYŻEJ na sekcję o pułapce
+`fix_allcaps.js` — unikaj multi-literowych WIELKICH SŁÓW jako dosłownych opcji odpowiedzi, testuj
+efekt pośrednio, i ZAWSZE sprawdź duplikaty opcji PO uruchomieniu skryptu, przed commitem. Po
+każdym rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i fix_http_method_case.js WYŁĄCZNIE dla
+`_js_13_asynchronicznosc`), weryfikacja JSON/struktury/duplikatów, weryfikacja live przez API z
 regresją na obu torach, dopiero potem commit.
 
 **Uwaga o skali**: uzupełnienie WSZYSTKICH 90 lekcji do 30/100 to bardzo duża ilość pracy
