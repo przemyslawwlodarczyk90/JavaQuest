@@ -635,24 +635,56 @@ wszystkie 8 lekcji zwraca 30/100 (i poprawną liczbę bloków teorii 14 lub 15).
 oba bez zmian. Backend zatrzymany po weryfikacji. Scommitowane w DWÓCH commitach w tej samej
 sesji (lekcje 1-6, potem lekcje 7-8) — CAŁY rozdział `_js_04_tablice` w pełni gotowy.
 
+## `_js_05_obiekty` (7/7 lekcji) — Faza 2 UKOŃCZONA w kolejnej sesji (2026-09-18, ten sam
+autonomiczny ciąg pracy co `_js_04_tablice`, komenda "kontynuuj prace... nie pytaj o zgode")
+
+Wszystkie 7 lekcji rozdziału 5 uzupełnione do pełnych **30 ćwiczeń / 100 pytań quizowych**:
+`01_ObjectBasics`, `02_ObjectStaticMethods`, `03_ObjectDestructuring`,
+`04_OptionalChainingAndNullishCoalescing`, `05_ObjectSpreadOperator`, `06_JsonStringifyAndParse`,
+`07_DateObject` — WSZYSTKIE 30/100. PIĄTY w pełni ukończony rozdział kursu JS (po `_js_01`-`_js_04`).
+
+**Błąd narzędziowy dodatkowo potwierdzony w tej sesji**: przy pisaniu dużej liczby pytań quizowych
+pod rząd zdarzyło się KILKAKROTNIE wpisać przypadkowy, nieprawidłowy klucz JSON (np.
+`"astonished: false"`) zamiast `"correct": "A"` — najpewniej artefakt autouzupełniania przy
+szybkim, powtarzalnym wzorcu edycji. Każdy taki przypadek został wykryty NATYCHMIAST przez
+`node -e "JSON.parse(...)"` (plik przestaje się parsować) i naprawiony przed kontynuacją. Wniosek
+dla kolejnych sesji: PO KAŻDYM większym bloku dopisanych pytań (nie tylko na końcu pliku) uruchom
+szybki `JSON.parse` — nie czekać do końca całej lekcji.
+
+Wszystkie 7 plików zweryfikowane: poprawny JSON, brak cyrylicy, brak duplikatów opcji quizu
+(sprawdzone programowo), struktura quizu/ćwiczeń kompletna, przepuszczone przez
+`fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy
+HTTP; ZAWSZE re-sprawdzano duplikaty PO uruchomieniu fix_allcaps.js, zgodnie z pułapką opisaną
+wyżej — w tej sesji naprawiono kolejne 2-3 takie przypadki w różnych plikach). Zweryfikowane live
+przez API po `mvnw.cmd resources:resources` + restarcie backendu (backend nadal startuje ok. 80-90
+sekund — potwierdzone kilkukrotnie w tej sesji, NIE traktować jako zawieszenie): wszystkie 7 lekcji
+zwraca 30/100 (i poprawną liczbę bloków teorii 14 lub 15, w zależności od obecności API_REFERENCE).
+Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT` →
+14 (bez zmian), `_01_fundamentals/06_StringsAndBuilder` i `_js_04_tablice/08_ArraySpreadOperator` —
+oba bez zmian. Backend zatrzymany po każdej weryfikacji. Scommitowane w CZTERECH commitach w tej
+samej sesji (lekcje 1-3, potem 4-5, potem 6-7) — CAŁY rozdział `_js_05_obiekty` w pełni gotowy.
+
 ## Następny krok
 
-**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6), `_js_02_typy_danych` (7/7), `_js_03_funkcje` (5/5)
-i `_js_04_tablice` (8/8) — CZTERY PIERWSZE rozdziały kursu JS w pełni gotowe.** Kontynuuj Fazę 2 od
-`_js_05_obiekty/01_ObjectBasics` (Faza 1: 12/30 ćwiczeń, 7/100 quiz — patrz tabela historyczna
-wyżej w tym pliku przy `_js_05_obiekty`), tą samą metodą co dotychczas. Rozdziały `_js_05` do
-`_js_14` WCIĄŻ na poziomie Fazy 1 (patrz tabele historyczne wyżej w tym pliku — każda lekcja ma
-zapisaną dokładną liczbę ćwiczeń/quizu z Fazy 1, zwykle 7-24 ćwiczeń i 6-20 pytań quizowych, czyli
-WCIĄŻ daleko od celu 30/100). Następny krok: kontynuować Fazę 2 chronologicznie od `_js_05_obiekty`
-w dół, TĄ SAMĄ metodą co zastosowana dla `_js_01`-`_js_04` w poprzednich sesjach — czytać istniejący
-plik lekcji, dopisywać brakujące ćwiczenia/quiz (Edit, nie Write — nie nadpisywać już napisanej
-teorii), z NACISKIEM na pytania quizowe z kodem (`"Co wypisze poniższy kod?"`), ręcznie weryfikując
-poprawność każdej odpowiedzi przed zapisaniem (patrz błędy znalezione w poprzednich sesjach dot.
+**Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6), `_js_02_typy_danych` (7/7), `_js_03_funkcje` (5/5),
+`_js_04_tablice` (8/8) i `_js_05_obiekty` (7/7) — PIĘĆ PIERWSZYCH rozdziałów kursu JS w pełni
+gotowe.** Kontynuuj Fazę 2 od `_js_06_kontrola_przeplywu/01_IfElseAndTernary` (Faza 1: 10/30
+ćwiczeń, 6/100 quiz — patrz tabela historyczna wyżej w tym pliku przy `_js_06_kontrola_przeplywu`),
+tą samą metodą co dotychczas. Rozdziały `_js_06` do `_js_14` WCIĄŻ na poziomie Fazy 1 (patrz tabele
+historyczne wyżej w tym pliku — każda lekcja ma zapisaną dokładną liczbę ćwiczeń/quizu z Fazy 1,
+zwykle 7-16 ćwiczeń i 6-8 pytań quizowych, czyli WCIĄŻ daleko od celu 30/100). Następny krok:
+kontynuować Fazę 2 chronologicznie od `_js_06_kontrola_przeplywu` w dół, TĄ SAMĄ metodą co
+zastosowana dla `_js_01`-`_js_05` w poprzednich sesjach — czytać istniejący plik lekcji, dopisywać
+brakujące ćwiczenia/quiz (Edit, nie Write — nie nadpisywać już napisanej teorii), z NACISKIEM na
+pytania quizowe z kodem (`"Co wypisze poniższy kod?"`), ręcznie weryfikując poprawność każdej
+odpowiedzi przed zapisaniem (patrz błędy znalezione w poprzednich sesjach dot.
 TypeError/ReferenceError przy TDZ/hoistingu — zawsze prześledź kod krok po kroku), a przy pytaniach
 o `.toUpperCase()`/`.toLowerCase()` w opcjach quizu PATRZ WYŻEJ na sekcję o pułapce
 `fix_allcaps.js` — unikaj multi-literowych WIELKICH SŁÓW jako dosłownych opcji odpowiedzi, testuj
-efekt pośrednio, i ZAWSZE sprawdź duplikaty opcji PO uruchomieniu skryptu, przed commitem. Po
-każdym rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i fix_http_method_case.js WYŁĄCZNIE dla
+efekt pośrednio, i ZAWSZE sprawdź duplikaty opcji PO uruchomieniu skryptu, przed commitem. RÓWNIEŻ
+sprawdzaj `node -e "JSON.parse(...)"` PO KAŻDYM większym bloku dopisanych pytań (nie tylko na
+końcu pliku) — patrz sekcja wyżej o przypadkowych nieprawidłowych kluczach JSON. Po każdym
+rozdziale: fix_allcaps.js+fix_allcaps_residual.js (i fix_http_method_case.js WYŁĄCZNIE dla
 `_js_13_asynchronicznosc`), weryfikacja JSON/struktury/duplikatów, weryfikacja live przez API z
 regresją na obu torach, dopiero potem commit.
 
