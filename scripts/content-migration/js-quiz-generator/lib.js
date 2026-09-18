@@ -14,6 +14,15 @@ function fmt(v) {
   }
   if (v === null) return 'null';
   if (typeof v === 'object') {
+    const tag = Object.prototype.toString.call(v);
+    if (tag === '[object Map]' || tag === '[object Set]') {
+      const isMap = tag === '[object Map]';
+      const items = [];
+      // obiekty z piaskownicy sa z innego "realm" - metody prototypu hosta dzialaja dzieki wewnetrznym slotom
+      (isMap ? Map : Set).prototype.forEach.call(v, (x, k) => items.push(isMap ? fmt(k) + ' => ' + fmt(x) : fmt(x)));
+      const size = items.length;
+      return (isMap ? 'Map(' : 'Set(') + size + ') ' + (size ? '{ ' + items.join(', ') + ' }' : '{}');
+    }
     const ks = Object.keys(v);
     if (!ks.length) return '{}';
     return '{ ' + ks.map(k => (/^[A-Za-z_$][\w$]*$|^\d+$/.test(k) ? k : JSON.stringify(k)) + ': ' + fmt(v[k])).join(', ') + ' }';
