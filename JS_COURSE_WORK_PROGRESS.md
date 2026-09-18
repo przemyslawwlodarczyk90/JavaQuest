@@ -664,7 +664,53 @@ Regresja: `GET /api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?
 oba bez zmian. Backend zatrzymany po każdej weryfikacji. Scommitowane w CZTERECH commitach w tej
 samej sesji (lekcje 1-3, potem 4-5, potem 6-7) — CAŁY rozdział `_js_05_obiekty` w pełni gotowy.
 
-## Następny krok
+## `_js_06_kontrola_przeplywu` (5/5 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-18, ten sam autonomiczny ciąg)
+
+Wszystkie 5 lekcji rozdziału 6 mają **30 ćwiczeń / 100 quiz**: `01_IfElseAndTernary`,
+`02_SwitchAndObjectAsMap`, `03_ForForOfForIn`, `04_TryCatchFinally`, `05_LooseVsStrictEquality`.
+SZÓSTY w pełni ukończony rozdział kursu JS. Zweryfikowane live przez API (14/30/100 każda lekcja),
+regresja czysta (`JAVA` 41 rozdziałów, `JAVASCRIPT` 14, `_01_fundamentals/06_StringsAndBuilder` 15
+bloków, `_js_05_obiekty/07_DateObject` 100 quiz). Uwaga operacyjna: proces `java` z
+`IntelliJ IDEA ...` (JPS build server, `-Xmx700m`) to NIE osierocony backend — nie zabijać;
+backend platformy startuje jako `mvnw.cmd -q spring-boot:run
+-Dspring-boot.run.main-class=com.example.javaquest.web.JavaQuestApplication` (ok. 60 s do gotowości),
+a zatrzymuje się po `Get-NetTCPConnection -LocalPort 8082` → `Stop-Process`.
+
+### NOWA METODA PISANIA QUIZU (od `_js_06`): odpowiedzi WYLICZANE wykonaniem kodu
+
+Narzędzia są w repo: **`scripts/content-migration/js-quiz-generator/`** (`README.md` opisuje
+użycie i wszystkie pułapki). Zamiast pisać `correct` ręcznie, pytanie z kodem `C(code, wyjaśnienie)`
+jest WYKONYWANE w `vm` Node, a poprawna opcja i dystraktory generowane automatycznie — klucz
+odpowiedzi nie może się już mylić. `verify.js` ponownie wykonuje kod każdego pytania i porównuje z
+kluczem (wykrywa też uszkodzenia od `fix_allcaps`). **Ta metoda ZASTĘPUJE ręczne pisanie
+pytań opisane wyżej w tym pliku — używać jej dla wszystkich kolejnych lekcji (`_js_07`-`_js_14`).**
+
+### Znalezione i naprawione błędy w rozdziałach 1-5 (commit "poprawki blednych odpowiedzi quizu")
+
+Uruchomienie `verify` na całym ukończonym materiale wykazało ~40 błędnych/uszkodzonych pytań:
+(1) `fix_allcaps.js` niszczył WIELKIE LITERY W KODZIE i opcjach pytań (`Number.MAX_SAFE_INTEGER` →
+`Number.Max_safe_integer`, `"KOT"` → `"kot"`, `"ABC"` → `"Abc"`, `DANE`, `IMIE, WIEK` itd.) → klucz
+odpowiedzi przestawał się zgadzać z kodem, część opcji zduplikowana; (2) błędy autora
+(`01_VarKeyword` #25: wynik 3 nie 2; `03_LetKeyword` #19: `typeof` nieistniejącego `let` daje
+`"undefined"`, nie ReferenceError; `02_FilterMethod` #9/#80; `02_StringMethods` #13/#78/#55;
+`01_StringBasics` #99; `07_DateObject` #11); (3) pytania o daty zależne od strefy czasowej
+(`07_DateObject` #10, #83 — teraz `Math.round` / data ISO z `Z`). Wszystkie poprawione. **NIE
+uruchamiać `fix_allcaps.js` ponownie na plikach rozdziałów 1-5** (zniszczy te poprawki); dla NOWYCH
+plików generator sam blokuje wielkie słowa w kodzie/opcjach.
+
+## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
+
+`_js_07_this_i_konteksty`: lekcja `01_ThisBasics` ma już 30/100 (scommitowana). **Kontynuuj od
+`02_ThisLosingContext`** (Faza 1: 8/30, 6/100), potem `03`-`07` tego rozdziału, potem `_js_08`..
+`_js_14` (wszystkie wciąż na poziomie Fazy 1 — patrz tabele historyczne wyżej). Dla każdej lekcji:
+przeczytaj istniejący plik (teoria, dotychczasowe ćwiczenia/quiz), napisz dane w stylu
+`example-lesson-data.js` (14-21 nowych ćwiczeń, ~78 pytań z kodem + ~16 pojęciowych, docelowo
+30/100), uruchom generator, `fix_allcaps*.js`, `verify.js`, przejrzyj `review.js`, commit. Po
+rozdziale: `mvnw.cmd resources:resources`, backend, curl API (teoria/ćwiczenia/quiz), regresja,
+zatrzymanie backendu, commit. Pytania o `this` bez obiektu przed kropką ZAWSZE zaczynaj od
+`"use strict";`. Bez pytania użytkownika o zgodę między lekcjami/rozdziałami.
+
+## Następny krok (STARSZY opis z sesji 2026-09-17/18, zachowany dla kontekstu)
 
 **Faza 2 UKOŃCZONA dla `_js_01_zmienne` (6/6), `_js_02_typy_danych` (7/7), `_js_03_funkcje` (5/5),
 `_js_04_tablice` (8/8) i `_js_05_obiekty` (7/7) — PIĘĆ PIERWSZYCH rozdziałów kursu JS w pełni
