@@ -14,6 +14,7 @@ function fmt(v) {
   }
   if (v === null) return 'null';
   if (typeof v === 'object') {
+    if (v.__opaque !== undefined && Object.keys(v).length === 1) return v.__opaque;
     const tag = Object.prototype.toString.call(v);
     if (tag === '[object Map]' || tag === '[object Set]') {
       const isMap = tag === '[object Map]';
@@ -33,7 +34,32 @@ function fmt(v) {
 function fmtLoose(v) { return typeof v === 'string' ? v : fmt(v); }
 
 const POLY = `globalThis.structuredClone = function sc(v, seen) { seen = seen || new Map(); if (v === null || typeof v !== 'object') { if (typeof v === 'function' || typeof v === 'symbol') { const e = new Error('cannot clone'); e.name = 'DataCloneError'; throw e; } return v; } if (seen.has(v)) return seen.get(v); if (v instanceof Date) return new Date(v.getTime()); let r; if (v instanceof Map) { r = new Map(); seen.set(v, r); v.forEach((x, k) => r.set(sc(k, seen), sc(x, seen))); return r; } if (v instanceof Set) { r = new Set(); seen.set(v, r); v.forEach(x => r.add(sc(x, seen))); return r; } r = Array.isArray(v) ? [] : {}; seen.set(v, r); for (const k of Object.keys(v)) { if (typeof v[k] === 'function') { const e = new Error('cannot clone'); e.name = 'DataCloneError'; throw e; } r[k] = sc(v[k], seen); } return r; };`;
+// Kod wieloplikowy / z import-export uruchamiany jest jako moduly ES w procesie potomnym (modrun.mjs).
+// Konwencja: pliki oddzielone naglowkami `// nazwa.js`; wejscie = main.js albo ostatni plik.
+function isModuleCode(code) {
+  return /^\s*(import|export)\b/m.test(code) || /\bimport\s*\(/.test(code) || /\bimport\.meta\b/.test(code) || /^\/\/ [\w.\/-]+\.m?js\s*$/m.test(code);
+}
+function reviveArg(a) {
+  switch (a.t) {
+    case 's': return a.v;
+    case 'n': return Number(a.v);
+    case 'b': return a.v;
+    case 'u': return undefined;
+    case 'nl': return null;
+    case 'bi': return BigInt(a.v);
+    default: return { __opaque: a.v };
+  }
+}
+function runModule(code) {
+  const r = require('child_process').spawnSync(process.execPath, ['--experimental-vm-modules', '--no-warnings', require('path').join(__dirname, 'modrun.mjs')], { input: code, encoding: 'utf8', timeout: 15000 });
+  let out;
+  try { out = JSON.parse(r.stdout); } catch (e) { return { err: 'Error', logs: [], raw: (r.stdout || '') + (r.stderr || '') }; }
+  const logs = out.logs.map(a => a.map(reviveArg));
+  return out.err ? { err: out.err, logs } : { logs };
+}
+
 function run(code) {
+  if (isModuleCode(code)) return runModule(code);
   const logs = [];
   const con = { log: (...a) => logs.push(a), error: (...a) => logs.push(a) };
   // wirtualny zegar: setTimeout/clearTimeout wykonuja sie PO glownym kodzie, w kolejnosci (opoznienie, kolejnosc dodania)
@@ -80,8 +106,9 @@ function candidates(code, res, correct) {
       if (/Error$/.test(v)) ERRS.forEach(e => sp(JSON.stringify(e)));
       else if (TYPES.includes(v)) TYPES.forEach(e => sp(JSON.stringify(e)));
       else {
-        (code.match(/"([^"\\\n]*)"/g) || []).filter(l => l !== '"use strict"').forEach(l => sp(l));
-        (code.match(/'([^'\\\n]*)'/g) || []).forEach(l => sp(JSON.stringify(l.slice(1, -1))));
+        const isPath = l => /^["']\.{1,2}\//.test(l);
+        (code.match(/"([^"\\\n]*)"/g) || []).filter(l => l !== '"use strict"' && !isPath(l)).forEach(l => sp(l));
+        (code.match(/'([^'\\\n]*)'/g) || []).filter(l => !isPath(l)).forEach(l => sp(JSON.stringify(l.slice(1, -1))));
         if (v.endsWith('undefined') && v.length > 9) sp(JSON.stringify(v.slice(0, -9)));
         if (v.includes(': ')) { v.split(': ').forEach(p => sp(JSON.stringify(p))); }
         if (v.includes(' ') && !v.startsWith('[object')) { v.split(' ').forEach(p => sp(JSON.stringify(p))); }
@@ -90,7 +117,7 @@ function candidates(code, res, correct) {
       if (v.length > 1) { sp(fmt(v.slice().reverse())); sp(fmt(v.slice(1))); sp(fmt(v.slice(0, -1))); }
       if (v.length && typeof v[0] === 'number') sp(fmt(v.map(x => x + 1)));
       sp(fmt(v.concat(v.length ? [v[v.length - 1]] : [1]))); sp('[]');
-    } else if (v && typeof v === 'object') {
+    } else if (v && typeof v === 'object' && v.__opaque === undefined) {
       const ks = Object.keys(v);
       const num = ks.every(k => typeof v[k] === 'number');
       if (num) { sp(fmt(Object.fromEntries(ks.map(k => [k, v[k] + 1])))); sp(fmt(Object.fromEntries(ks.map(k => [k, v[k] * 2])))); sp(fmt(Object.fromEntries(ks.map(k => [k, v[k] - 1])))); }
@@ -181,4 +208,4 @@ function apply(file, data, targetEx, targetQ) {
   fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
   console.log(file, 'ex', j.exercises.length, 'quiz', j.quiz.length);
 }
-module.exports = { apply, run, fmt };
+module.exports = { apply, run, fmt, POLY };
