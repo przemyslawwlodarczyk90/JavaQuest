@@ -698,11 +698,29 @@ odpowiedzi przestawał się zgadzać z kodem, część opcji zduplikowana; (2) b
 uruchamiać `fix_allcaps.js` ponownie na plikach rozdziałów 1-5** (zniszczy te poprawki); dla NOWYCH
 plików generator sam blokuje wielkie słowa w kodzie/opcjach.
 
+## `_js_07_this_i_konteksty` (7/7 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-18, ten sam ciąg)
+
+Wszystkie 7 lekcji mają **30 ćwiczeń / 100 quiz**: `01_ThisBasics`, `02_ThisLosingContext`,
+`03_ArrowFunctionsAndThis`, `04_CallMethod`, `05_ApplyMethod`, `06_BindMethod`,
+`07_ThisInClassesAndEventHandlers`. SIÓDMY w pełni ukończony rozdział kursu JS. Napisane nową
+metodą (generator w `scripts/content-migration/js-quiz-generator/`, odpowiedzi wyliczane
+wykonaniem kodu, `verify.js` zielony dla wszystkich 7 plików). Zweryfikowane live przez API (14/30/100
+każda lekcja), regresja czysta (JAVA 41, JS 14, `_01_fundamentals/06_StringsAndBuilder` 15 bloków,
+`_js_06/05` i `_js_05/07` quiz 100). Backend zatrzymany po weryfikacji.
+
+Ustalenia z pisania rozdziału 7 (dopisane do generatora): wirtualny zegar `setTimeout`/`clearTimeout`
+w piaskownicy (callbacki wykonują się po kodzie głównym, w kolejności opóźnień); NIE pisać pytań o
+`this` wewnątrz zwykłych callbacków `setTimeout` (Node ustawia tam `this` = obiekt Timeout, przeglądarka
+undefined/window — środowiska się różnią) ani o `this`/`arguments` na najwyższym poziomie pliku (CJS/ESM/
+przeglądarka dają różne wyniki); symulację zdarzeń DOM robić klasą z `fn.call(this, zdarzenie)`.
+`Number.EPSILON`, `Date.UTC`, `"IT"` i inne słowa pisane WIELKIMI LITERAMI w kodzie pytań psuje
+`fix_allcaps.js` — generator rzuca wyjątek, trzeba użyć innej formy.
+
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-`_js_07_this_i_konteksty`: lekcja `01_ThisBasics` ma już 30/100 (scommitowana). **Kontynuuj od
-`02_ThisLosingContext`** (Faza 1: 8/30, 6/100), potem `03`-`07` tego rozdziału, potem `_js_08`..
-`_js_14` (wszystkie wciąż na poziomie Fazy 1 — patrz tabele historyczne wyżej). Dla każdej lekcji:
+`_js_08_klasy`: **kontynuuj od `01_ClassConstructorAndMethods`** (Faza 1: 8/30, 6/100), potem `02`-`07`
+tego rozdziału, potem `_js_09`..`_js_14` (wszystkie wciąż na poziomie Fazy 1 — patrz tabele
+historyczne wyżej). Rozdziały `_js_01`..`_js_07` są w pełni gotowe (30/100 każda lekcja). Dla każdej lekcji:
 przeczytaj istniejący plik (teoria, dotychczasowe ćwiczenia/quiz), napisz dane w stylu
 `example-lesson-data.js` (14-21 nowych ćwiczeń, ~78 pytań z kodem + ~16 pojęciowych, docelowo
 30/100), uruchom generator, `fix_allcaps*.js`, `verify.js`, przejrzyj `review.js`, commit. Po
