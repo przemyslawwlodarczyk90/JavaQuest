@@ -716,11 +716,29 @@ przeglądarka dają różne wyniki); symulację zdarzeń DOM robić klasą z `fn
 `Number.EPSILON`, `Date.UTC`, `"IT"` i inne słowa pisane WIELKIMI LITERAMI w kodzie pytań psuje
 `fix_allcaps.js` — generator rzuca wyjątek, trzeba użyć innej formy.
 
+## `_js_08_klasy` (7/7 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-18, ten sam ciąg)
+
+Wszystkie 7 lekcji mają **30 ćwiczeń / 100 quiz**: `01_ClassConstructorAndMethods`, `02_ClassFields`,
+`03_GettersAndSetters`, `04_StaticFieldsAndMethods`, `05_InheritanceExtendsSuper`,
+`06_PrivateFieldsAndMethods`, `07_ClassVsFactoryFunction`. ÓSMY w pełni ukończony rozdział kursu JS.
+Generator + `verify.js` zielone dla wszystkich 7 plików; live przez API 14/30/100 każda lekcja, regresja
+czysta (JAVA 41, JS 14). Pytania o prywatne pola: dostęp `obiekt.#x` spoza klasy to SyntaxError na etapie
+parsowania — w pytaniach pokazywany przez `eval("obiekt.#x")` w `try/catch`.
+
+Technika przy pisaniu (nie wpisywać wszystkiego w jednym pliku): dane lekcji w `lNN_MM.js`, brakujące
+ćwiczenia/pytania dopisywane osobnym plikiem `extraNN.js` (eksportuje `extraEx`, `extraC`, `extraT`) —
+edycje przez narzędzie Edit/Write, NIE przez `sed`/heredoc z `\n` (psuje pliki). Ćwiczenia/pytania
+Fazy 1 nie są nadpisywane — `apply()` dopisuje do nich, więc przed KAŻDYM ponownym uruchomieniem
+generatora `git checkout -- <plik.json>`. Uwaga: pytania pojęciowe `T()` nie mogą duplikować pytań
+z Fazy 1 (generator wykrywa identyczne `question` i rzuca wyjątek).
+
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-`_js_08_klasy`: **kontynuuj od `01_ClassConstructorAndMethods`** (Faza 1: 8/30, 6/100), potem `02`-`07`
-tego rozdziału, potem `_js_09`..`_js_14` (wszystkie wciąż na poziomie Fazy 1 — patrz tabele
-historyczne wyżej). Rozdziały `_js_01`..`_js_07` są w pełni gotowe (30/100 każda lekcja). Dla każdej lekcji:
+`_js_09_kolekcje`: **kontynuuj od `01_SetUniqueValues`** (Faza 1: 8/30, 6/100; lekcje 1-3 mają
+API_REFERENCE), potem `02`-`06` tego rozdziału, potem `_js_10`..`_js_14` (wszystkie wciąż na poziomie
+Fazy 1 — patrz tabele historyczne wyżej). Rozdziały `_js_01`..`_js_08` są w pełni gotowe (30/100 każda
+lekcja). Dane `l09_01.js` mogą być już napisane w scratchpadzie poprzedniej sesji, ale scratchpad jest
+tymczasowy — pisać od nowa wg wzoru `scripts/content-migration/js-quiz-generator/example-lesson-data.js`. Dla każdej lekcji:
 przeczytaj istniejący plik (teoria, dotychczasowe ćwiczenia/quiz), napisz dane w stylu
 `example-lesson-data.js` (14-21 nowych ćwiczeń, ~78 pytań z kodem + ~16 pojęciowych, docelowo
 30/100), uruchom generator, `fix_allcaps*.js`, `verify.js`, przejrzyj `review.js`, commit. Po
