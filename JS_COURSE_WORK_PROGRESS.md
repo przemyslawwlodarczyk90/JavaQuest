@@ -732,13 +732,33 @@ Fazy 1 nie są nadpisywane — `apply()` dopisuje do nich, więc przed KAŻDYM p
 generatora `git checkout -- <plik.json>`. Uwaga: pytania pojęciowe `T()` nie mogą duplikować pytań
 z Fazy 1 (generator wykrywa identyczne `question` i rzuca wyjątek).
 
+## `_js_09_kolekcje` (6/6 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-18, ten sam ciąg)
+
+Wszystkie 6 lekcji mają **30 ćwiczeń / 100 quiz**: `01_SetUniqueValues`, `02_MapKeyValueWithAnyKeyType`,
+`03_IteratingOverMap`, `04_MapObjectSetArrayConversions`, `05_WhenToUseMapSetVsObjectArray`,
+`06_WeakMapAndWeakSet`. DZIEWIĄTY w pełni ukończony rozdział kursu JS. Generator + `verify.js` zielone
+dla 6 plików; live przez API 15/30/100 (lekcje 1-3) i 14/30/100 (lekcje 4-6), regresja czysta (JAVA 41,
+JS 14). Backend na tej maszynie wymaga `JAVA_HOME=C:\Users\kapit\.jdks\openjdk-25.0.2` (ms-17 daje
+`UnsupportedClassVersionError`); po weryfikacji zatrzymywać tylko procesy `mvnw`/`spring-boot:run`, NIE
+proces IntelliJ JPS (długo żyjący `java` z `-Xmx700m`).
+
+WAŻNA POPRAWKA GENERATORA: `fmt()` w `lib.js` nie formatował `Map`/`Set` (wypisywał `{}`), więc w lekcjach
+`01`-`03` cztery klucze odpowiedzi były błędne (`{}` zamiast `Set(2) { 2, 4 }` itd.) — poprawione, `fmt` zna
+teraz format Node: `Map(2) { "a" => 1, "b" => 2 }`, `Set(3) { 1, 2, 3 }`. `verify.js` re-wykonuje kod tym
+samym `fmt`, więc PRZED tą poprawką nie wykryłby błędu — przy nowych typach wypisywanych wartości
+(`WeakMap`, `Date`, klasy z polami, `Symbol`) sprawdzić wzrokowo `review.js`, czy poprawne odpowiedzi nie są
+puste (`{}`). Piaskownica `vm` nie ma `URLSearchParams`, `document`, `window`, `fetch` (rozdziały 11-14
+wymagają ich stubów albo pytań bez wykonywania kodu). `WeakMap` na kluczach symbolowych działa w Node 24.
+
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-`_js_09_kolekcje`: **kontynuuj od `01_SetUniqueValues`** (Faza 1: 8/30, 6/100; lekcje 1-3 mają
-API_REFERENCE), potem `02`-`06` tego rozdziału, potem `_js_10`..`_js_14` (wszystkie wciąż na poziomie
-Fazy 1 — patrz tabele historyczne wyżej). Rozdziały `_js_01`..`_js_08` są w pełni gotowe (30/100 każda
-lekcja). Dane `l09_01.js` mogą być już napisane w scratchpadzie poprzedniej sesji, ale scratchpad jest
-tymczasowy — pisać od nowa wg wzoru `scripts/content-migration/js-quiz-generator/example-lesson-data.js`. Dla każdej lekcji:
+`_js_10_moduly` (7 lekcji, Faza 1: 7-8/30, 6/100; wszystkie BEZ API_REFERENCE, 14 bloków), potem
+`_js_11_dom` (7), `_js_12_zdarzenia` (6), `_js_13_asynchronicznosc` (6), `_js_14_srodowisko_przegladarkowe`
+(6) — wszystkie wciąż na poziomie Fazy 1 (patrz tabele historyczne wyżej). Rozdziały `_js_01`..`_js_09`
+są w pełni gotowe (30/100 każda lekcja). Uwaga: moduły ES (`import`/`export`) nie działają w `vm.runInNewContext`
+— pytania z kodem trzeba pisać jako pojedyncze pliki bez `import` albo symulować moduły obiektami/funkcjami
+(wzorzec IIFE), a `import()` dynamiczny pokazywać przez `Promise.resolve(...)` w `setTimeout`. Wzór danych:
+`scripts/content-migration/js-quiz-generator/example-lesson-data.js`. Dla każdej lekcji:
 przeczytaj istniejący plik (teoria, dotychczasowe ćwiczenia/quiz), napisz dane w stylu
 `example-lesson-data.js` (14-21 nowych ćwiczeń, ~78 pytań z kodem + ~16 pojęciowych, docelowo
 30/100), uruchom generator, `fix_allcaps*.js`, `verify.js`, przejrzyj `review.js`, commit. Po
