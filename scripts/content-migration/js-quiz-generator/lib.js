@@ -9,7 +9,7 @@ function fmt(v) {
   if (typeof v === 'object') {
     const ks = Object.keys(v);
     if (!ks.length) return '{}';
-    return '{ ' + ks.map(k => k + ': ' + fmt(v[k])).join(', ') + ' }';
+    return '{ ' + ks.map(k => (/^[A-Za-z_$][\w$]*$|^\d+$/.test(k) ? k : JSON.stringify(k)) + ': ' + fmt(v[k])).join(', ') + ' }';
   }
   if (typeof v === 'function') return '[Function]';
   return String(v);
