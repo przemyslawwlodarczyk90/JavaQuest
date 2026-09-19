@@ -1,0 +1,226 @@
+{
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Masowy import bez round trip na każde polecenie",
+      "body": "Dla setek tysięcy operacji pojedyncze wywołania `redis-cli` są wolne i trudne do zweryfikowania. Redis CLI ma tryb `--pipe`, który przyjmuje strumień poleceń zakodowanych w RESP, wysyła je potokowo i raportuje błędy. Najważniejsza jest jednak poprawność generatora, limit obciążenia i możliwość wznowienia.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "RESP jest binarnie bezpiecznym formatem poleceń",
+      "body": "W RESP array zaczyna się od `*liczba_argumentów`, każdy bulk string od `$liczba_bajtów`, potem CRLF, dokładne bajty argumentu i CRLF. Długość liczy bajty UTF-8, nie znaki. Dzięki temu spacje, przecinki i nowe linie w danych nie zmieniają granic argumentów.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Manifest kontenerów zamiast luźnych paczek",
+      "body": "RESP opisuje liczbę paczek i dokładny rozmiar każdej. Odbiorca nie zgaduje, gdzie kończy się nazwisko z odstępem ani tekst z nową linią. `--pipe` jest taśmą transportową, ale kontrola jakości nadal musi policzyć błędy i sprawdzić wynik.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Polecenie SET w RESP",
+      "body": "Długości odnoszą się do bajtów. CRLF jest częścią protokołu, ale nie wartości.",
+      "code": "SET user:42 \"Zażółć\"\n\n*3\\r\\n\n$3\\r\\nSET\\r\\n\n$7\\r\\nuser:42\\r\\n\n$10\\r\\nZażółć\\r\\n\n# \"Zażółć\" ma 7 znaków, ale 10 bajtów UTF-8."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Generator argumentów, nie sklejacz tekstu",
+      "body": "Generator bierze listę bajtowych argumentów i oblicza długości po zakodowaniu UTF-8. Plik wynikowy powinien być tworzony binarnie, bez automatycznej zamiany LF/CRLF przez edytor.",
+      "code": "byte[] resp(List<String> args) {\n    ByteArrayOutputStream out = new ByteArrayOutputStream();\n    writeAscii(out, \"*\" + args.size() + \"\\r\\n\");\n    for (String arg : args) {\n        byte[] bytes = arg.getBytes(StandardCharsets.UTF_8);\n        writeAscii(out, \"$\" + bytes.length + \"\\r\\n\");\n        out.writeBytes(bytes);\n        writeAscii(out, \"\\r\\n\");\n    }\n    return out.toByteArray();\n}"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Uruchomienie pipe mode",
+      "body": "Najpierw uruchom generator w dry run i test na lokalnym Redisie. W produkcji użyj TLS/ACL jak w lekcji 8 i zachowaj pełne podsumowanie `--pipe`. Nie łącz `--askpass` z `--pipe`: obie opcje potrzebują standardowego wejścia. Redis zaleca `REDISCLI_AUTH` zamiast hasła w argumentach procesu; pobierz sekret kontrolowanym mechanizmem, ogranicz środowisko procesu i usuń zmienną po imporcie. Opcja `-e` pomaga sygnalizować błąd procesu.",
+      "code": "csv-to-resp users.csv --namespace import:CHG-1234:v1 > import.resp\nread -rsp 'Redis password: ' REDISCLI_AUTH && export REDISCLI_AUTH\nprintf '\\n'\nredis-cli -h host -p 6380 --tls --cacert ca.pem \\\n  --user importer -e --pipe < import.resp\nunset REDISCLI_AUTH\n\n# Oczekuj podsumowania z liczbą replies i errors; sam exit 0 nie zastępuje walidacji danych."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Bezpieczny przebieg bulk load",
+      "body": "1. Zweryfikuj sumę kontrolną i liczbę wierszy wejścia.\n2. Wygeneruj RESP do nowego namespace oraz manifest oczekiwanych kluczy.\n3. Sprawdź generator testami dla Unicode, CRLF, pustych wartości i bardzo długich pól.\n4. Załaduj mały canary i zweryfikuj typ/TTL/wartość.\n5. Oszacuj przyrost pamięci i sprawdź `maxmemory`/politykę eviction z operatorem.\n6. Uruchom pełny import w zatwierdzonym oknie, obserwując błędy i latencję.\n7. Zachowaj raport `replies/errors` i kod procesu.\n8. Wykonaj niezależną walidację liczności, próbek i invariants.\n9. Nie przełączaj ruchu, dopóki raport nie zostanie zaakceptowany.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "--pipe nie zapewnia transakcji całego pliku",
+      "body": "Polecenia są wykonywane strumieniowo. Błąd w środku nie cofa wcześniejszych zapisów. Dlatego namespace musi być izolowany, operacje idempotentne, a importer zdolny do wznowienia. Jedna gigantyczna transakcja MULTI nie jest rozwiązaniem: zwiększa ryzyko pamięciowe i opóźnienie.",
+      "code": null
+    },
+    {
+      "type": "USAGE",
+      "heading": "Chunking, checkpoint i throttling",
+      "body": "Dla bardzo dużego CSV podziel pracę deterministycznie, np. po numerze wiersza lub hash ID. Każda partia ma checksum, liczbę rekordów, zakres i status. Po sukcesie zapisuj checkpoint poza importowanym keyspace. Jeśli platforma wymaga ograniczenia obciążenia, kontroluj tempo po stronie generatora/job runnera; `--pipe` celowo maksymalizuje przepustowość.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Eviction podczas importu",
+      "body": "Gdy Redis ma `maxmemory` i politykę usuwania, import może usuwać istniejące dane lub własne wcześniejsze rekordy, mimo że klient nie widzi oczywistego błędu. Przed pracą sprawdź uzgodniony zapas pamięci i politykę, a podczas importu obserwuj `evicted_keys`, pamięć i latencję. Nie zmieniaj CONFIG samodzielnie na produkcji.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Milion procesów redis-cli",
+      "body": "Każdy wiersz tworzy proces i round trip; quoting jest kruchy, a błędy łatwo giną.",
+      "code": "for row in csv:\n  system(\"redis-cli HSET user:\" + row.id + \" name \" + row.name)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Jeden generator RESP i kontrolowany strumień",
+      "body": "Generator parsuje CSV biblioteką, waliduje rekord, koduje listę argumentów i zapisuje checkpointy. `--pipe` obsługuje transmisję, a osobny etap waliduje stan.",
+      "code": "CSV → parser → validator → RedisOperation[] → RESP bytes → redis-cli --pipe\n                          └→ manifest/checksum      └→ replies/errors\nPo imporcie: SCAN namespace + TYPE/cardinality/TTL + próbki biznesowe"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Narzędzia masowego ładowania",
+      "body": "`redis-cli --pipe` — potok RESP czytany ze stdin; `-e` — kod błędu; `--tls`/`--cacert`/`--user` — parametry bezpiecznego połączenia; `REDISCLI_AUTH` — zalecany sposób przekazania hasła bez argumentu procesu. `--askpass` nadaje się do sesji interaktywnej, ale nie do jednoczesnego `--pipe`, bo także czyta stdin. RESP2 dla polecenia: array `*N`, bulk string `$len`, CRLF i bajty. Alternatywą jest pipelining klienta Redis z ograniczonymi batchami i sprawdzaniem każdej odpowiedzi.",
+      "code": null
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "--pipe, biblioteka klienta czy narzędzie zarządzane",
+      "body": "`--pipe` jest świetne dla jednorazowego, powtarzalnego importu komend. Biblioteka klienta ułatwia retry, metryki i logikę per rekord. Usługa zarządzana może oferować oficjalny import snapshotu, ale to inny przypadek niż transformacja CSV. Wybierz mechanizm zgodny z audytem, ograniczeniami klastra i wsparciem operatora.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Szybkość nie zastępuje kontroli",
+      "body": "RESP chroni granice danych, `--pipe` usuwa koszt pojedynczych round tripów, lecz import pozostaje częściowy przy błędzie. Staging, idempotencja, checkpointy, obserwacja pamięci i niezależna walidacja są obowiązkową częścią bulk load.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zakoduj resp dla `hset user:42 name Anna`.",
+      "hint": "Policz argumenty i bajty.",
+      "solution": "Array ma 4 argumenty; każdy bulk string ma dokładną długość bajtową i CRLF."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę długości znaków i bajtów dla Unicode.",
+      "hint": "Resp liczy bajty.",
+      "solution": "UTF-8 polskich znaków używa wielu bajtów; `String.length()` nie jest poprawną długością payloadu RESP."
+    },
+    {
+      "prompt": "Zaprojektuj testy generatora resp.",
+      "hint": "Uwzględnij crlf i puste wartości.",
+      "solution": "Test round-trip dla ASCII, Unicode, przecinka, quote, newline, pustego stringa, długiego tekstu i dokładnych bajtów."
+    },
+    {
+      "prompt": "Dlaczego --pipe nie daje all-or-nothing?",
+      "hint": "Polecenia wykonują się strumieniowo.",
+      "solution": "Błąd nie cofa wcześniejszych odpowiedzi; potrzebny staging i retry."
+    },
+    {
+      "prompt": "Zaprojektuj checkpoint dla partii.",
+      "hint": "Zapisuj poza target.",
+      "solution": "Partia ma ID, zakres/hash, checksum wejścia, liczbę commands/replies/errors i stan verified."
+    },
+    {
+      "prompt": "Jak wykryć eviction podczas importu?",
+      "hint": "Metryki przed/w trakcie/po.",
+      "solution": "Obserwuj used_memory, maxmemory, policy, evicted_keys i rozmiar namespace z operatorem."
+    },
+    {
+      "prompt": "Porównaj --pipe z pętlą redis-cli.",
+      "hint": "Round trips i procesy.",
+      "solution": "Pipe wykorzystuje jedno połączenie i pipelining; pętla płaci proces/RTT i jest krucha quotingowo."
+    },
+    {
+      "prompt": "Zaprojektuj wznowienie po błędzie partii 37.",
+      "hint": "Idempotentne komendy.",
+      "solution": "Napraw źródło, ponownie wygeneruj tę samą partię i wykonaj HSET/SADD/ZADD ustawiające stan; nie powtarzaj INCRBY/LPUSH bez deduplikacji."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co liczy `$len` w resp?",
+      "options": {
+        "A": "Znaki Java",
+        "B": "Bajty argumentu",
+        "C": "Wiersze csv",
+        "D": "Polecenia"
+      },
+      "correct": "B",
+      "explanation": "Resp jest binarnie bezpieczny i używa liczby bajtów."
+    },
+    {
+      "question": "Czy --pipe cofa wcześniejsze komendy po błędzie?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko w TLS",
+        "D": "Tylko z -e"
+      },
+      "correct": "B",
+      "explanation": "Pipe nie jest transakcją."
+    },
+    {
+      "question": "Główna zaleta --pipe to:",
+      "options": {
+        "A": "Brak acl",
+        "B": "Mniej round tripów",
+        "C": "Automatyczny schemat",
+        "D": "Rollback"
+      },
+      "correct": "B",
+      "explanation": "Pipelining zwiększa przepustowość."
+    },
+    {
+      "question": "Co grozi przy maxmemory podczas importu?",
+      "options": {
+        "A": "Automatyczny rollback",
+        "B": "Eviction danych",
+        "C": "Zmiana DB",
+        "D": "Wyłączenie TLS"
+      },
+      "correct": "B",
+      "explanation": "Polityka może usuwać klucze."
+    },
+    {
+      "question": "Czy plik resp można bezpiecznie edytować narzędziem zmieniającym końce linii?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko na Windows",
+        "D": "Tylko dla ASCII"
+      },
+      "correct": "B",
+      "explanation": "Zmiana crlf/długości uszkadza protokół."
+    },
+    {
+      "question": "Gdzie przechowywać checkpoint?",
+      "options": {
+        "A": "W losowym importowanym kluczu",
+        "B": "W kontrolowanym metastore/jobie poza targetem",
+        "C": "W monitor",
+        "D": "W haśle"
+      },
+      "correct": "B",
+      "explanation": "Checkpoint nie powinien zniknąć przy cleanup targetu."
+    },
+    {
+      "question": "Który zestaw operacji ułatwia retry?",
+      "options": {
+        "A": "Incrby/lpush",
+        "B": "Hset/sadd/zadd z wartościami docelowymi",
+        "C": "Flushall",
+        "D": "Randomkey"
+      },
+      "correct": "B",
+      "explanation": "Operacje ustawiają stan idempotentnie."
+    },
+    {
+      "question": "Czy podsumowanie --pipe wystarcza do akceptacji?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie, potrzebna jest walidacja stanu",
+        "C": "Tylko w DB 0",
+        "D": "Tylko dla string"
+      },
+      "correct": "B",
+      "explanation": "Odpowiedzi transportowe nie dowodzą zgodności biznesowej."
+    }
+  ]
+}

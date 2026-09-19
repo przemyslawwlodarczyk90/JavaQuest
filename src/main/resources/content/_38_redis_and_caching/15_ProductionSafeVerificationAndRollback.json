@@ -1,0 +1,226 @@
+{
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Import kończy się dopiero po walidacji i planie odwrotu",
+      "body": "Brak błędów w kliencie nie oznacza poprawnych danych. Produkcyjna procedura musi potwierdzić liczność, typy, TTL, relacje i zapytania biznesowe, a także określać sposób zatrzymania, usunięcia stagingu lub powrotu do poprzedniej wersji.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Invariants zamiast losowego patrzenia",
+      "body": "Invariant to własność, która musi być prawdziwa po imporcie: liczba hashy równa liczbie unikalnych ID, każdy członek rankingu ma profil, score mieści się w zakresie, klucze cache mają TTL, a staging nie koliduje z aktywnym namespace. To mierzalne kryteria akceptacji.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Odbiór budynku przed przeprowadzką",
+      "body": "Nie wystarczy, że ekipa mówi „wszystkie kartony wniesione”. Liczysz pomieszczenia, sprawdzasz instalacje, porównujesz plan i dopiero wtedy przekazujesz klucze użytkownikom. Jeśli odbiór nie przejdzie, wracasz do starego budynku bez niszczenia go.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Trzy poziomy walidacji",
+      "body": "Kontrola techniczna wykrywa błędy protokołu, strukturalna — błędny model, biznesowa — niespójny sens danych.",
+      "code": "transport: replies == commands, errors == 0\nstructure: TYPE/fields/TTL/cardinality zgodne z manifestem\nbusiness: user 42 istnieje w kraju PL i ma score 1500\noperational: latency/error rate/evicted_keys bez regresji"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Liczenie namespace przez SCAN",
+      "body": "Nie używaj `DBSIZE` jako liczby importu, bo obejmuje całą bazę. Przejdź pełny SCAN danego prefiksu, deduplikuj i porównaj ze spodziewaną liczbą. W klastrze wykonaj procedurę na wszystkich primary.",
+      "code": "redis-cli --scan --pattern 'import:CHG-1234:v1:user:*' --count 1000 \\\n  | sort -u | wc -l\n# Wynik porównaj z liczbą unikalnych user_id w zaakceptowanym CSV."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Walidacja spójności relacji",
+      "body": "Próbka powinna być deterministyczna, np. hash ID modulo 100, by można ją powtórzyć. Dla każdego wybranego użytkownika sprawdź hash, membership i score. Dodatkowo wykonaj kontrolę agregatów po całym zbiorze, jeśli jest bezpieczna.",
+      "code": "TYPE import:v1:user:42\nHMGET import:v1:user:42 name country\nSISMEMBER import:v1:users:country:PL 42\nZSCORE import:v1:leaderboard 42\nTTL import:v1:user:42"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Go/no-go po imporcie",
+      "body": "1. Zapisz wynik pipe/pipeline i checksum źródła.\n2. Porównaj liczbę kluczy/memberów z oczekiwaniami.\n3. Sprawdź rozkład TYPE i TTL; zero kluczy cache bez TTL, jeśli tak mówi kontrakt.\n4. Wykonaj deterministyczną próbkę wartości i relacji.\n5. Uruchom zapytania aplikacyjne na stagingu.\n6. Porównaj pamięć, latency, errors, rejected connections i eviction z baseline.\n7. Właściciel danych zatwierdza raport.\n8. Przełącz ruch stopniowo i obserwuj.\n9. Przy naruszeniu progów wykonaj wcześniej uzgodniony rollback.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Rollback danych to projekt, nie komenda",
+      "body": "Najbezpieczniejszy rollback to przełączenie wskaźnika/configu z wersji v2 na v1, gdy oba zbiory istnieją. Nadpisanie aktywnych kluczy wymaga backupu lub dziennika starych wartości i jest trudniejsze. `FLUSHDB`/`FLUSHALL` nie są rollbackiem; to destrukcyjne polecenia o zbyt szerokim zakresie.",
+      "code": null
+    },
+    {
+      "type": "USAGE",
+      "heading": "Usuwanie stagingu bez blokowania",
+      "body": "Po okresie retencji usuń wyłącznie klucze z manifestu importu. Dla dużych wartości `UNLINK` może odłączyć klucz, a pamięć zwolnić asynchronicznie, ograniczając blokowanie względem `DEL`. W klastrze grupuj polecenia zgodnie z węzłami/slotami. Cleanup także wymaga limitów, metryk i raportu.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "SCAN + xargs DEL bez manifestu",
+      "body": "Zmiana wzorca lub pustej zmiennej może rozszerzyć zakres. Keyspace może zmieniać się podczas skanu, a masowe DEL może powodować opóźnienia. Nie konstruuj destrukcyjnego cleanupu na żywo z ogólnego patternu; użyj zatwierdzonego manifestu dokładnych kluczy i dry run.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Rollback przez szerokie czyszczenie",
+      "body": "Komenda usuwa wszystkie dane logical DB, także niezwiązane z importem.",
+      "code": "redis-cli -h production FLUSHDB"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Przełączenie wersji i opóźniony cleanup",
+      "body": "Aktywna wersja jest małym, kontrolowanym wskaźnikiem. Po rollbacku v2 pozostaje do analizy, a cleanup następuje później z manifestu.",
+      "code": "GET dataset:users:active-version\nSET dataset:users:active-version v2\n# przy regresji:\nSET dataset:users:active-version v1\n# po retencji: UNLINK tylko klucze v2 z zatwierdzonego manifestu"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Diagnostyka produkcyjna z rozwagą",
+      "body": "`INFO memory`, `INFO stats`, `INFO clients`, `LATENCY LATEST` (jeśli monitor latency jest włączony), `SLOWLOG GET n`, `CLIENT LIST` — zależnie od ACL i polityki. `--bigkeys`, `--memkeys`, `--keystats` skanują cały keyspace i generują pracę; uruchamiaj tylko po uzgodnieniu, z pattern/count/interval jeśli dostępne. `MONITOR` jest szczególnie inwazyjny.",
+      "code": null
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Progi zatrzymania",
+      "body": "Przed importem ustal: maksymalny error rate, wzrost p99, spadek hit rate, wzrost used_memory, liczbę evictions i czas repliki. Job powinien automatycznie zatrzymać kolejne partie po przekroczeniu progów, ale decyzja o zmianie konfiguracji/rollbacku należy do procedury incident/change management.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Waliduj transport, strukturę, biznes i operacje",
+      "body": "Raport akceptacyjny łączy checksum źródła, liczbę poleceń, key counts, type/TTL, relacje, próbki i metryki serwera. Wersjonowany namespace daje prosty rollback przez przełączenie wskaźnika. Cleanup jest osobną, kontrolowaną zmianą.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zdefiniuj 8 invariants dla importu użytkowników.",
+      "hint": "Połącz strukturę i biznes.",
+      "solution": "Np. liczba profili, pola wymagane, TTL, membership kraju, score, zakres wartości, brak kluczy poza namespace, zgodność wersji."
+    },
+    {
+      "prompt": "Zaprojektuj deterministyczną próbkę 1%.",
+      "hint": "Użyj hash ID.",
+      "solution": "Wybierz rekord, gdy stabilny hash ID modulo 100 == 0; próbka jest powtarzalna między uruchomieniami."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego dbsize nie waliduje importu.",
+      "hint": "Obejmuje całą DB.",
+      "solution": "Inne aplikacje i poprzednie wersje zawyżają wynik; potrzebny SCAN namespace i cardinality struktur."
+    },
+    {
+      "prompt": "Porównaj del i unlink.",
+      "hint": "Moment zwalniania pamięci.",
+      "solution": "DEL może zwalniać synchronicznie; UNLINK odłącza klucz i zwalnia pamięć asynchronicznie."
+    },
+    {
+      "prompt": "Zaprojektuj rollback wersji v2.",
+      "hint": "Nie usuwaj od razu v2.",
+      "solution": "Przełącz aktywny wskaźnik na v1, zatrzymaj import/ruch v2, zachowaj v2 do analizy, potem cleanup z manifestu."
+    },
+    {
+      "prompt": "Zdefiniuj progi stop dla importu.",
+      "hint": "Uwzględnij latency, błędy, pamięć i eviction.",
+      "solution": "Przykładowo p99 +20%, errors >0.1%, evicted_keys >0, used_memory >85% budżetu — wartości zatwierdza operator."
+    },
+    {
+      "prompt": "Dlaczego slowlog nie jest pełnym profilem aplikacji?",
+      "hint": "Pokazuje wykonanie polecenia po stronie serwera.",
+      "solution": "Nie obejmuje czasu sieci/kolejki klienta i może wymagać konfiguracji progu; koreluj z metrykami aplikacji."
+    },
+    {
+      "prompt": "Zaprojektuj raport końcowy.",
+      "hint": "Ma umożliwiać audyt.",
+      "solution": "Checksum CSV/generatora, środowisko, czas, namespace, commands/replies/errors, invariants, próbki, metryki, decyzja i podpis właściciela."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co jest najlepszym rollbackiem wersjonowanego datasetu?",
+      "options": {
+        "A": "Flushall",
+        "B": "Przełączenie wskaźnika na poprzednią wersję",
+        "C": "Keys * del",
+        "D": "Restart Redis"
+      },
+      "correct": "B",
+      "explanation": "Stara wersja pozostaje dostępna."
+    },
+    {
+      "question": "Dlaczego dbsize jest niewystarczające?",
+      "options": {
+        "A": "Jest wolne zawsze",
+        "B": "Liczy wszystkie klucze DB",
+        "C": "Nie działa z acl",
+        "D": "Nie liczy string"
+      },
+      "correct": "B",
+      "explanation": "Nie izoluje namespace importu."
+    },
+    {
+      "question": "Co jest invariantem?",
+      "options": {
+        "A": "Hasło",
+        "B": "Mierzalna własność wymagana po imporcie",
+        "C": "Losowy klucz",
+        "D": "Komenda admin"
+      },
+      "correct": "B",
+      "explanation": "Invariant daje kryterium akceptacji."
+    },
+    {
+      "question": "Co robi unlink?",
+      "options": {
+        "A": "Zmienia TTL",
+        "B": "Odłącza klucz i zwalnia pamięć asynchronicznie",
+        "C": "Tworzy kopię",
+        "D": "Skanuje klaster"
+      },
+      "correct": "B",
+      "explanation": "Może zmniejszyć blokowanie przy dużych wartościach."
+    },
+    {
+      "question": "Czy brak błędów --pipe dowodzi poprawności biznesowej?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko dla hash",
+        "D": "Tylko z TLS"
+      },
+      "correct": "B",
+      "explanation": "Potrzebna jest niezależna walidacja."
+    },
+    {
+      "question": "Dlaczego próbka deterministyczna?",
+      "options": {
+        "A": "Jest mniejsza",
+        "B": "Można ją powtórzyć i porównać",
+        "C": "Omija acl",
+        "D": "Nie potrzebuje manifestu"
+      },
+      "correct": "B",
+      "explanation": "Stabilny wybór ułatwia regresję."
+    },
+    {
+      "question": "Czy monitor jest standardowym narzędziem walidacji?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie, jest inwazyjny i może ujawnić dane",
+        "C": "Tylko na replice",
+        "D": "Tylko w klastrze"
+      },
+      "correct": "B",
+      "explanation": "Użycie wymaga szczególnej procedury."
+    },
+    {
+      "question": "Kiedy wykonać cleanup v2 po rollbacku?",
+      "options": {
+        "A": "Natychmiast flushdb",
+        "B": "Po analizie i okresie retencji, z manifestu",
+        "C": "Przed rollbackiem",
+        "D": "Nigdy"
+      },
+      "correct": "B",
+      "explanation": "Zachowanie danych wspiera diagnozę i bezpieczny powrót."
+    }
+  ]
+}

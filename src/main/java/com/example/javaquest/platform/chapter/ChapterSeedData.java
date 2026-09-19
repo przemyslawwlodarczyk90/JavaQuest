@@ -468,7 +468,11 @@ public final class ChapterSeedData {
                     "01_WhyDistributedCache", "02_RedisDataStructures",
                     "03_RunningRedisAndBasicCommands", "04_SpringDataRedisIntegration",
                     "05_CacheInvalidationStrategies", "06_RedisPubSubAwareness",
-                    "07_RedisCachingCapstone"
+                    "07_RedisCachingCapstone", "08_ConnectingSafelyWithRedisCli",
+                    "09_KeyspaceDiscoveryAndLogicalSchema", "10_InspectingValuesTypesTtlAndMemory",
+                    "11_DesigningCsvToRedisMapping", "12_ImportingCsvAsStringsAndHashes",
+                    "13_ModelingRelationshipsWithSetsAndSortedSets", "14_BulkLoadingWithRespAndPipe",
+                    "15_ProductionSafeVerificationAndRollback", "16_CsvToRedisMigrationCapstone"
             )),
 
             // Pokrywa "observability-prometheus-grafana" (important, "Actuator/Micrometer sa

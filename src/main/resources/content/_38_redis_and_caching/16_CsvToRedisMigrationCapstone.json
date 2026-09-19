@@ -1,0 +1,258 @@
+{
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Projekt końcowy: od produkcyjnego schematu do zweryfikowanego importu",
+      "body": "Kapszton odtwarza pełną pracę data migration engineer: logujesz się kontem read-only, rekonstruujesz logiczny model istniejących kluczy, projektujesz CSV, generujesz import do wersjonowanego namespace, wykonujesz canary i bulk load, a następnie przygotowujesz raport go/no-go oraz rollback.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Artefakty, które muszą pozostać po pracy",
+      "body": "Rezultatem nie jest tylko stan Redis. Powinny powstać: karta połączenia bez sekretów, raport discovery, kontrakt schematu, manifest kolumn, raport dry-run, checksum źródła, wersja generatora, plik/strumień RESP, manifest kluczy, wyniki importu, raport walidacji i runbook rollback/cleanup.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Migracja jak operacja lotnicza",
+      "body": "Discovery to rozpoznanie lotniska, manifest to plan lotu, canary to lot próbny, bulk load to właściwa operacja, monitoring to wieża kontroli, a rollback to lotnisko zapasowe. Brak jednego elementu może nie przeszkodzić w starcie, ale zwiększa ryzyko incydentu.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Przepływ end-to-end",
+      "body": "Każda strzałka ma artefakt i punkt akceptacji.",
+      "code": "read-only CLI\n  → SCAN/TYPE/TTL/sample\n  → schema-contract.md\n  → mapping.yaml + validated.csv + reject.csv\n  → dry-run report\n  → RESP batches + checksums\n  → canary namespace\n  → validation\n  → full import v2\n  → go/no-go\n  → switch active-version\n  → observe / rollback / cleanup"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Przykładowy kontrakt docelowy",
+      "body": "Załóż CSV `user_id,name,email,country,points,expires_at`. Profil jest hashem, kraj setem, ranking zsetem. Wszystkie klucze mają identyfikator wersji; globalny wskaźnik wybiera wersję czytaną przez aplikację.",
+      "code": "dataset:users:active-version = v1\nusers:v2:user:{42}              hash\nusers:v2:country:PL:members     set\nusers:v2:leaderboard:global     zset\n# Import buduje v2; aktywna aplikacja nadal czyta v1."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Polecenia dla jednego rekordu",
+      "body": "Profil i TTL można objąć transakcją, ponieważ oba polecenia dotyczą jednego klucza. Indeksy zapisujemy osobno i idempotentnie: pokazane klucze należą do różnych slotów Redis Cluster, więc wspólne MULTI zakończyłoby się błędem CROSSSLOT. Nie dodawaj sztucznie tego samego hash taga do globalnych indeksów, bo utworzysz gorący slot; zaakceptuj kontrolowaną spójność ostateczną albo przeprojektuj model i procedurę naprawczą.",
+      "code": "MULTI\nHSET users:v2:user:{42} name Anna email a@example.test country PL\nEXPIREAT users:v2:user:{42} 1798675200\nEXEC\n\n# Osobne, idempotentne aktualizacje indeksów:\nSADD users:v2:country:PL:members 42\nZADD users:v2:leaderboard:global 1500 42\n# Walidacja końcowa wykrywa brakujące wpisy i pozwala je ponowić."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Wykonanie zadania od zera",
+      "body": "1. Uzyskaj read-only dostęp i potwierdź środowisko/topologię.\n2. Zeskanuj uzgodnione prefiksy do kursora 0, zdeduplikuj i sklasyfikuj typy.\n3. Zbadaj wiele próbek: pola, TTL, rozmiar, serializację i relacje.\n4. Spisz kontrakt i uzyskaj akceptację właściciela.\n5. Dopasuj/oczyść CSV, zachowując surowe źródło i checksum.\n6. Dry run generuje błędy i plan poleceń bez Redis.\n7. Import canary do v2, walidacja i cleanup testowy.\n8. Bulk load partiami z checkpointami i progami stop.\n9. Walidacja transportowa, strukturalna, biznesowa i operacyjna.\n10. Go/no-go oraz stopniowe przełączenie active-version.\n11. Obserwacja, ewentualny rollback do v1.\n12. Cleanup v2 lub v1 dopiero po retencji i osobnej zgodzie.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Przykład trzeba dopasować do odkrytego modelu",
+      "body": "Jeśli produkcja przechowuje profile jako JSON string, nie zmieniaj ich na hash podczas importu bez osobnej migracji aplikacji. Jeśli klucze mają prefiks cache i TTL, zachowaj politykę expiry. Jeśli istnieje RedisJSON/Streams/Cluster, uwzględnij ich kontrakty. Celem discovery jest uniknięcie narzucenia modelu z podręcznika.",
+      "code": null
+    },
+    {
+      "type": "USAGE",
+      "heading": "Minimalny zestaw plików projektu",
+      "body": "`connection-context.md` bez sekretów; `schema-contract.md`; `mapping.yaml`; `source.sha256`; `validated.csv`; `rejects.csv` bez PII lub z kontrolowaną ochroną; `generator.jar`/commit SHA; `batch-*.resp` i checksums; `key-manifest.txt`; `import-report.json`; `validation-report.md`; `rollback.md`. Sekrety i pełne dane produkcyjne nie trafiają do Git.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Ukryte założenia są większym ryzykiem niż składnia",
+      "body": "Najgroźniejsze pomyłki: zły DB/cluster node, inna serializacja, TTL pominięty, snapshot potraktowany jak delta, score naliczony przez ZINCRBY, ID pozbawione zer, CSV źle sparsowany, import na aktywny namespace, eviction i brak rollbacku. Checklista powinna wykrywać właśnie te klasy błędów.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Jednorazowy skrypt bez śladu",
+      "body": "Nie ma dry run, wersji, stagingu, checkpointów ani raportu; powtórzenie może zmienić wynik.",
+      "code": "read users.csv\nfor row:\n  redis-cli HSET user:<id> ...\nprint \"done\""
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Powtarzalny pipeline migracyjny",
+      "body": "Każdy etap ma wejście, wyjście, checksum i kryterium sukcesu. Ten sam zestaw artefaktów można przetestować lokalnie i wykonać w zatwierdzonym środowisku.",
+      "code": "discover --read-only > schema-evidence.json\nvalidate source.csv --mapping mapping.yaml > dry-run.json\ngenerate-resp validated.csv --namespace users:v2 --batches 10000\nimport --canary batch-00000.resp\nverify --contract schema-contract.yaml --namespace users:v2\nimport --resume-from checkpoint.json\nverify --full\nswitch --from v1 --to v2   # osobna, zatwierdzona operacja"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Ściąga całej ścieżki",
+      "body": "Połączenie: TLS/ACL/`--askpass`/`-c`. Discovery: `SCAN`, `TYPE`, `TTL`, `HSCAN`/`SSCAN`/`ZSCAN`, rozmiary. Mapping: `SET`, `HSET`, `SADD`, `ZADD`, expiry. Bulk: RESP + `redis-cli --pipe -e`. Walidacja: SCAN namespace, cardinality, membership, score, TTL, pamięć/stats. Rollback: wersja aktywna i manifest; cleanup przez dokładne klucze/`UNLINK`.",
+      "code": null
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy nie wykonywać importu samodzielnie",
+      "body": "Zatrzymaj się, jeśli nie masz właściciela danych, read-only discovery jest zabronione, nie znasz serializera, brak zapasu pamięci, nie istnieje rollback, dataset obejmuje sekrety bez procedury, klaster/topologia są niejasne albo import wymaga zmiany modelu aplikacji. Eskalacja jest poprawnym wynikiem technicznym.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Umiejętność docelowa",
+      "body": "Potrafisz wejść do Redis CLI bez ujawniania sekretów, odkryć logiczny schemat bez blokujących poleceń, przełożyć go na walidowany CSV, wygenerować binarnie bezpieczny i idempotentny import, wykonać canary oraz bulk load, a następnie udowodnić poprawność i bezpiecznie wrócić do poprzedniej wersji.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Przygotuj kompletny `schema-contract.md` dla przykładowych trzech typów kluczy.",
+      "hint": "Uwzględnij serializację, TTL i zapytania.",
+      "solution": "Dokument musi pozwalać niezależnej osobie odtworzyć TYPE, pola/member/score i reguły expiry."
+    },
+    {
+      "prompt": "Zaprojektuj mapping.yaml dla sześciu kolumn csv.",
+      "hint": "Dodaj null, conflict i normalization.",
+      "solution": "Każda kolumna ma typ, required, transform, target, error policy i przykłady."
+    },
+    {
+      "prompt": "Zaprojektuj dry run i reject report.",
+      "hint": "Bez pii w logach.",
+      "solution": "Raport zawiera liczby/kody błędów, numery wierszy i zanonimizowane ID."
+    },
+    {
+      "prompt": "Przygotuj canary i kryteria akceptacji.",
+      "hint": "Minimum pięć rekordów brzegowych.",
+      "solution": "TYPE, pola, TTL, relacje, score, expected counts i cleanup manifest."
+    },
+    {
+      "prompt": "Podziel milion wierszy na partie z możliwością wznowienia.",
+      "hint": "Deterministyczne zakresy i checksum.",
+      "solution": "Każda partia ma 10k wierszy, checksum, count commands, status imported/verified i niezmienny namespace."
+    },
+    {
+      "prompt": "Zdefiniuj go/no-go i rollback.",
+      "hint": "Progi przed startem.",
+      "solution": "Wymień błędy, latency, pamięć, eviction, invariants, właściciela decyzji i przełączenie v2→v1."
+    },
+    {
+      "prompt": "Przeprowadź tabletop incident: import wywołuje evictions.",
+      "hint": "Nie zmieniaj config ad hoc.",
+      "solution": "Stop kolejnych batchy, nie przełączaj ruchu, zbierz metryki, powiadom operatora, rollback active version jeśli przełączona, zachowaj artefakty."
+    },
+    {
+      "prompt": "Zrób review listy ukrytych założeń.",
+      "hint": "Wskaż co najmniej 12.",
+      "solution": "Host/DB/topologia, typ, serializer, TTL, null, ID, locale, snapshot/delta, conflict, idempotencja, pamięć, ACL, rollback."
+    },
+    {
+      "prompt": "Zaprojektuj test odczytu aplikacyjnego przeciw v2.",
+      "hint": "Nie tylko redis-cli.",
+      "solution": "Uruchom wersję klienta/serwisu wskazującą staging i porównaj odpowiedzi biznesowe z oczekiwaniami."
+    },
+    {
+      "prompt": "Napisz końcowy raport migracji.",
+      "hint": "Ma wystarczyć do audytu.",
+      "solution": "Źródło/checksum, wersje narzędzi, zakres, czas, wyniki batchy, invariants, metryki, odstępstwa, decyzja i dalszy cleanup."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki jest pierwszy etap kapsztonu?",
+      "options": {
+        "A": "Bulk load",
+        "B": "Bezpieczne read-only discovery",
+        "C": "Flushdb",
+        "D": "Przełączenie v2"
+      },
+      "correct": "B",
+      "explanation": "Najpierw poznajesz istniejący kontrakt."
+    },
+    {
+      "question": "Dlaczego zachować checksum źródła?",
+      "options": {
+        "A": "Dla TTL",
+        "B": "Aby udowodnić dokładne wejście migracji",
+        "C": "Dla klastra",
+        "D": "Aby ominąć acl"
+      },
+      "correct": "B",
+      "explanation": "Checksum wiąże raport z konkretnym plikiem."
+    },
+    {
+      "question": "Kiedy zmienić hash na JSON podczas importu?",
+      "options": {
+        "A": "Zawsze",
+        "B": "Tylko jako osobna, uzgodniona migracja aplikacji",
+        "C": "Gdy csv ma dużo kolumn",
+        "D": "Po scan"
+      },
+      "correct": "B",
+      "explanation": "Importer powinien zachować odkryty kontrakt."
+    },
+    {
+      "question": "Co oznacza canary?",
+      "options": {
+        "A": "Pełny import",
+        "B": "Mała reprezentatywna partia przed skalowaniem",
+        "C": "Replica",
+        "D": "Backup rdb"
+      },
+      "correct": "B",
+      "explanation": "Canary ogranicza blast radius."
+    },
+    {
+      "question": "Który artefakt służy do cleanupu?",
+      "options": {
+        "A": "Historia shell",
+        "B": "Manifest dokładnych kluczy",
+        "C": "Dbsize",
+        "D": "Monitor"
+      },
+      "correct": "B",
+      "explanation": "Manifest określa precyzyjny zakres."
+    },
+    {
+      "question": "Kiedy wykonać go/no-go?",
+      "options": {
+        "A": "Przed discovery",
+        "B": "Po pełnej walidacji, przed przełączeniem ruchu",
+        "C": "Po cleanupie",
+        "D": "Tylko po błędzie"
+      },
+      "correct": "B",
+      "explanation": "Aktywacja wymaga dowodów poprawności."
+    },
+    {
+      "question": "Co zrobić przy niejasnym serializerze?",
+      "options": {
+        "A": "Zgadywać po prefiksie",
+        "B": "Zatrzymać import i potwierdzić kod/ownerem",
+        "C": "Użyć GET",
+        "D": "Zmienić na hash"
+      },
+      "correct": "B",
+      "explanation": "Niejawna serializacja grozi nieczytelnymi danymi."
+    },
+    {
+      "question": "Czy sekrety i pełne dane produkcyjne powinny trafić do Git?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko csv",
+        "D": "Tylko hasła acl"
+      },
+      "correct": "B",
+      "explanation": "Repozytorium nie jest magazynem sekretów ani pii."
+    },
+    {
+      "question": "Co daje wersjonowany namespace?",
+      "options": {
+        "A": "Automatyczny TLS",
+        "B": "Izolację, walidację i prostszy rollback",
+        "C": "Więcej logical DB",
+        "D": "Brak TTL"
+      },
+      "correct": "B",
+      "explanation": "v1 pozostaje dostępna podczas budowy v2."
+    },
+    {
+      "question": "Kiedy zadanie jest ukończone?",
+      "options": {
+        "A": "Gdy redis-cli nie zwróci błędu",
+        "B": "Po zweryfikowanym stanie, raporcie, decyzji i gotowym rollbacku",
+        "C": "Po wygenerowaniu csv",
+        "D": "Po dbsize"
+      },
+      "correct": "B",
+      "explanation": "Migracja obejmuje cały kontrolowany cykl."
+    }
+  ]
+}
