@@ -6,9 +6,9 @@
 
 ## Aktualny etap
 
-**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji) — pełna teoria, częściowe
-ćwiczenia/quiz w każdej lekcji. Faza 2 (uzupełnianie do 30 ćwiczeń/100 quiz na lekcję) —
-NIE rozpoczęta, patrz "Następny krok" na końcu tego pliku.**
+**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji). Faza 2: rozdziały 1-9
+ukończone w całości, a w `_js_10_moduly` ukończone lekcje 1-3. Każda ukończona lekcja ma
+30 ćwiczeń i 100 pytań quizowych. Aktualny następny krok znajduje się na końcu pliku.**
 
 Sesja 2026-09-16: użytkownik poprosił o drugi blok platformy — równoległy kurs JavaScript,
 zbudowany na bazie gotowego materiału źródłowego w `dodatkowe materiały/kurs js/js-course/`
@@ -742,6 +742,19 @@ JS 14). Backend na tej maszynie wymaga `JAVA_HOME=C:\Users\kapit\.jdks\openjdk-2
 `UnsupportedClassVersionError`); po weryfikacji zatrzymywać tylko procesy `mvnw`/`spring-boot:run`, NIE
 proces IntelliJ JPS (długo żyjący `java` z `-Xmx700m`).
 
+## `_js_10_moduly` — Faza 2 W TOKU (3/7 lekcji ukończone)
+
+Ukończone lekcje: `01_WhatAreEsModules`, `02_NamedImport`, `03_DefaultImport` — każda ma dokładnie
+30 ćwiczeń i 100 pytań quizowych. Lekcja 3 została przejęta ze stanu 29/78 i domknięta o praktykę
+re-eksportu domyślnego przez plik zbiorczy oraz 22 pytania. Nowe pytania obejmują m.in. wyrażenia
+jako default, mutowalne obiekty przy niemutowalnym wiązaniu importu, hoisting deklaracji funkcji,
+niedozwolone `export default const`, fakt że `export *` pomija default, jawny re-eksport,
+`import domyslny, * as namespace`, Promise, klasy i jednokrotne wykonanie modułu.
+
+`verify.js` ponownie wykonał prawdziwe, wieloplikowe moduły ES przez `vm.SourceTextModule`:
+`03_DefaultImport.json` ma 14 bloków teorii, 30 ćwiczeń, 100 quizów, w tym 76 pytań z kodem;
+brak błędnych kluczy odpowiedzi, duplikatów opcji, cyrylicy i frazy `native code`.
+
 WAŻNA POPRAWKA GENERATORA: `fmt()` w `lib.js` nie formatował `Map`/`Set` (wypisywał `{}`), więc w lekcjach
 `01`-`03` cztery klucze odpowiedzi były błędne (`{}` zamiast `Set(2) { 2, 4 }` itd.) — poprawione, `fmt` zna
 teraz format Node: `Map(2) { "a" => 1, "b" => 2 }`, `Set(3) { 1, 2, 3 }`. `verify.js` re-wykonuje kod tym
@@ -752,7 +765,8 @@ wymagają ich stubów albo pytań bez wykonywania kodu). `WeakMap` na kluczach s
 
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-`_js_10_moduly` (7 lekcji, Faza 1: 7-8/30, 6/100; wszystkie BEZ API_REFERENCE, 14 bloków), potem
+Kontynuować od `_js_10_moduly/04_CombiningNamedAndDefaultImport` (Faza 1: 7/30 ćwiczeń,
+6/100 quiz), potem lekcje 5-7 tego rozdziału oraz
 `_js_11_dom` (7), `_js_12_zdarzenia` (6), `_js_13_asynchronicznosc` (6), `_js_14_srodowisko_przegladarkowe`
 (6) — wszystkie wciąż na poziomie Fazy 1 (patrz tabele historyczne wyżej). Rozdziały `_js_01`..`_js_09`
 są w pełni gotowe (30/100 każda lekcja). Uwaga: moduły ES (`import`/`export`) nie działają w `vm.runInNewContext`
