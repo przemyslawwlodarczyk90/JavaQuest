@@ -1,0 +1,226 @@
+{
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Najpierw mała, odwracalna partia",
+      "body": "Pierwszy import wykonaj do izolowanego namespace na lokalnym/staging Redisie, potem na produkcji jako canary obejmujący kilka rekordów. Nauczysz się generować stringi i hashe, ustawiać TTL oraz sprawdzać wynik bez ręcznego przepisywania danych.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Importer ma cztery fazy",
+      "body": "Parse → validate → map → execute. Parser rozumie CSV, walidator tworzy typowany rekord, mapper wybiera dokładne polecenia, executor wysyła je z kontrolą błędów. Rozdzielenie faz umożliwia dry run i testy bez połączenia z Redis.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Linia montażowa z bramką jakości",
+      "body": "Nie wrzucasz surowego CSV prosto do magazynu. Każda linia przechodzi kontrolę wymiarów, dostaje etykiety i dopiero potem jest pakowana w konkretny typ Redis. Wadliwy rekord trafia do raportu, nie do połowy utworzonego klucza.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "String kontra hash",
+      "body": "String JSON zachowuje dokument jako całość, hash pozwala odczytywać i aktualizować pola. Wybór musi pasować do istniejącego kontraktu.",
+      "code": "CSV row\n ├─ string JSON: SET import:v1:user:42 '{\"name\":\"Anna\",...}'\n └─ hash:        HSET import:v1:user:42 name Anna country PL\n                    + EXPIREAT import:v1:user:42 1798675200"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Import pojedynczego stringa z warunkiem",
+      "body": "`SET NX` tworzy tylko brakujący klucz; `XX` aktualizuje tylko istniejący. `EXAT` przyjmuje czas w sekundach Unix. Połączenie wartości i expiry w jednym SET jest atomowe dla stringa.",
+      "code": "SET import:chg-1234:user:42 '{\"name\":\"Anna\",\"country\":\"PL\"}' \\\n  NX EXAT 1798675200\nGET import:chg-1234:user:42\nTTL import:chg-1234:user:42"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Hash i TTL jako jednostka",
+      "body": "`HSET` plus `EXPIREAT` to dwa polecenia; przerwanie między nimi może zostawić klucz bez TTL. Dla małej partii można użyć `MULTI`/`EXEC` per rekord albo skryptu/funkcji. Transakcja Redis kolejkuje polecenia i wykonuje je bez przeplatania, ale nie zapewnia rollbacku po błędzie runtime.",
+      "code": "MULTI\nHSET import:chg-1234:user:42 name Anna country PL email a@example.test\nEXPIREAT import:chg-1234:user:42 1798675200\nEXEC"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Canary import pięciu rekordów",
+      "body": "1. Wybierz pięć rekordów pokrywających przypadki brzegowe.\n2. Wygeneruj plan poleceń i oczekiwane wartości kontrolne.\n3. Użyj nowego namespace i konta ograniczonego ACL.\n4. Wykonaj import z `redis-cli -e`, aby błąd dał kod zakończenia.\n5. Sprawdź liczbę utworzonych kluczy przez SCAN namespace.\n6. Dla każdego canary sprawdź TYPE, pola/wartość i TTL.\n7. Porównaj z manifestem; usuń canary przez listę dokładnych kluczy, nie wzorzec.\n8. Dopiero po review zwiększ partię.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "MULTI nie jest transakcją SQL",
+      "body": "Po `EXEC` Redis wykona zakolejkowane polecenia; nie cofa automatycznie wcześniejszego HSET, gdy późniejsze polecenie zwróci błąd typu. Walidacja i poprawność typów przed EXEC są kluczowe. Dla złożonej atomowej logiki użyj skryptu Lua lub Redis Functions po review.",
+      "code": null
+    },
+    {
+      "type": "USAGE",
+      "heading": "Pipelining przy średniej skali",
+      "body": "Pipeline wysyła wiele poleceń bez oczekiwania na każdą odpowiedź, zmniejszając round trips. Nadal musisz przeczytać i sprawdzić każdą odpowiedź oraz ograniczać rozmiar partii, aby nie zużyć nadmiernie pamięci klienta/serwera. `redis-cli --pipe` będzie tematem osobnej lekcji.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Powłoka nie jest parserem CSV",
+      "body": "Pętla `while IFS=, read ...` nie obsłuży poprawnie wszystkich legalnych CSV, binarnych bajtów, CRLF i nowych linii w cudzysłowie. Generuj polecenia biblioteką CSV i koduj argumenty protokołem RESP; nie sklejaj tekstu z danymi użytkownika.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Interpolacja danych do polecenia inline",
+      "body": "Spacje, znaki nowej linii i cudzysłowy zmienią argumenty; dane mogą stać się poleceniem lub zostać uszkodzone.",
+      "code": "while IFS=, read id name email; do\n  redis-cli HSET \"user:$id\" name $name email $email\ndone < users.csv"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Typowany rekord i binarnie bezpieczne argumenty",
+      "body": "Biblioteka klienta lub generator RESP przekazuje każdy argument z długością, więc treść nie wpływa na granice polecenia. Executor zapisuje status każdego rekordu i może wznowić import.",
+      "code": "ValidatedUser u = validate(csvRecord);\nredis.hset(key(u.id()), Map.of(\"name\", u.name(), \"email\", u.email()));\nredis.expireAt(key(u.id()), u.expiresAt());\n// Produkcyjnie: pipeline z kontrolą wszystkich odpowiedzi lub atomowy skrypt per rekord."
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Stringi, hashe i warunki",
+      "body": "String: `SET key value NX|XX EX|PX|EXAT|PXAT`, `GET`, `MGET`. Hash: `HSET`, `HSETNX`, `HGET`, `HMGET`, `HSCAN`, `HDEL`. Czas: `EXPIRE [NX|XX|GT|LT]`, `EXPIREAT`, `TTL`, `PERSIST`. Sterowanie: `MULTI`, `EXEC`, `DISCARD`, `WATCH` (optymistyczna kontrola zmian).",
+      "code": null
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "String JSON czy hash",
+      "body": "Użyj istniejącego typu. Przy nowym modelu string JSON jest wygodny do odczytu całego dokumentu, ale częściowa aktualizacja wymaga ponownego zapisu lub RedisJSON. Hash sprawdza się dla płaskich pól i częściowych odczytów, lecz każde pole jest stringiem bajtowym i nie ma zagnieżdżonego schematu. Nie mieszaj typów pod tym samym wzorcem.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Mały import ma udowodnić kontrakt",
+      "body": "Importer rozdziela parser, walidację, mapowanie i wykonanie. Canary trafia do staging namespace, używa warunków konfliktu, poprawnego TTL i binarnie bezpiecznych argumentów. Sukces oznacza zgodność danych oraz możliwość bezpiecznego usunięcia, nie tylko brak błędu klienta.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zaprojektuj canary obejmujący 5 przypadków.",
+      "hint": "Uwzględnij unicode, pustą opcję, długi tekst, TTL i duplikat.",
+      "solution": "Canary powinien świadomie pokryć granice, a oczekiwane TYPE/pola/TTL być zapisane przed wykonaniem."
+    },
+    {
+      "prompt": "Napisz atomowy set JSON z NX i exat.",
+      "hint": "Użyj staging key.",
+      "solution": "Np. `SET import:v1:user:42 '{...}' NX EXAT 1798675200`."
+    },
+    {
+      "prompt": "Wyjaśnij lukę między hset i expireat.",
+      "hint": "Awaria może nastąpić po pierwszym poleceniu.",
+      "solution": "Klucz zostanie bez TTL; rozwiązaniem jest MULTI/EXEC lub zatwierdzony skrypt/funkcja."
+    },
+    {
+      "prompt": "Opisz ograniczenia multi/exec.",
+      "hint": "Brak rollbacku jak w SQL.",
+      "solution": "Błędy walidacji poleceń mogą przerwać EXEC, lecz błędy wykonania poszczególnych poleceń nie cofają wcześniejszych wyników."
+    },
+    {
+      "prompt": "Zaprojektuj raport odpowiedzi pipeline.",
+      "hint": "Każde polecenie ma odpowiedź.",
+      "solution": "Raport wiąże indeks rekordu/polecenia z OK, liczbą zmian lub błędem i nie uznaje importu za udany po samym wysłaniu."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego redis-cli -e jest użyteczne w automatyzacji.",
+      "hint": "Kod procesu ma sygnalizować błąd.",
+      "solution": "Opcja powoduje niezerowy exit code po błędzie polecenia, co pozwala zatrzymać job."
+    },
+    {
+      "prompt": "Porównaj set NX i XX.",
+      "hint": "Create-only vs update-only.",
+      "solution": "NX zapisuje tylko nieistniejący klucz; XX tylko istniejący."
+    },
+    {
+      "prompt": "Zaprojektuj cleanup canary.",
+      "hint": "Nie używaj keys+del.",
+      "solution": "Importer zapisuje manifest dokładnych utworzonych kluczy; cleanup usuwa wyłącznie tę listę po weryfikacji."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co robi set NX?",
+      "options": {
+        "A": "Zapisuje tylko istniejący",
+        "B": "Zapisuje tylko nieistniejący",
+        "C": "Usuwa TTL",
+        "D": "Tworzy hash"
+      },
+      "correct": "B",
+      "explanation": "NX egzekwuje create-only dla stringa."
+    },
+    {
+      "question": "Czy hset i expireat są jednym atomowym poleceniem?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko w klastrze",
+        "D": "Tylko przez --pipe"
+      },
+      "correct": "B",
+      "explanation": "Potrzebny jest multi/skrypt, jeśli atomowość jest wymagana."
+    },
+    {
+      "question": "Czy multi cofa hset po późniejszym błędzie runtime?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko z watch",
+        "D": "Tylko na replice"
+      },
+      "correct": "B",
+      "explanation": "Redis transactions nie zapewniają rollbacku w stylu SQL."
+    },
+    {
+      "question": "Po co `redis-cli -e`?",
+      "options": {
+        "A": "Szyfruje",
+        "B": "Zwraca błąd procesu przy błędzie polecenia",
+        "C": "Włącza resp3",
+        "D": "Wybiera DB"
+      },
+      "correct": "B",
+      "explanation": "Automatyzacja może przerwać job."
+    },
+    {
+      "question": "Co jest złe w ifs=, read dla ogólnego csv?",
+      "options": {
+        "A": "Jest za szybkie",
+        "B": "Nie obsługuje pełnej składni csv",
+        "C": "Nie działa z Redis",
+        "D": "Usuwa TTL"
+      },
+      "correct": "B",
+      "explanation": "Quoted fields i newline wymagają parsera csv."
+    },
+    {
+      "question": "Co powinien zrobić executor pipeline?",
+      "options": {
+        "A": "Tylko wysłać",
+        "B": "Sprawdzić każdą odpowiedź",
+        "C": "Uruchomić monitor",
+        "D": "Wyłączyć acl"
+      },
+      "correct": "B",
+      "explanation": "Błąd może dotyczyć części poleceń."
+    },
+    {
+      "question": "Jak bezpiecznie usunąć canary?",
+      "options": {
+        "A": "Flushdb",
+        "B": "Keys import:* | del",
+        "C": "Lista dokładnych kluczy z manifestu",
+        "D": "Nie usuwać nigdy"
+      },
+      "correct": "C",
+      "explanation": "Dokładny manifest ogranicza blast radius."
+    },
+    {
+      "question": "Kiedy wybrać hash zamiast JSON string?",
+      "options": {
+        "A": "Zawsze",
+        "B": "Gdy kontrakt wymaga płaskich pól i częściowych operacji",
+        "C": "Gdy potrzebny lpush",
+        "D": "Tylko bez TTL"
+      },
+      "correct": "B",
+      "explanation": "Typ wynika z istniejącego modelu i wzorców dostępu."
+    }
+  ]
+}

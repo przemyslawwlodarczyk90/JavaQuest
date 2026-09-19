@@ -524,7 +524,8 @@ pokazuje się w nawigacji jako "treść w przygotowaniu", zweryfikowane live prz
   (important); raport rynkowy WPROST odradza głębsze wejście na tym etapie kariery.
 - **`_37_cloud_aws_fundamentals`** (9 lekcji) — pokrywa `cloud-aws` (important); AWS wybrany
   jako "jeden dostawca" zgodnie z rekomendacją raportu.
-- **`_38_redis_and_caching`** (7 lekcji) — pokrywa `other-redis` (important).
+- **`_38_redis_and_caching`** (16 lekcji) — pokrywa `other-redis` (important), w tym praktyczne
+  discovery schematu, przygotowanie CSV, import przez CLI/RESP i bezpieczną pracę z produkcją.
 - **`_39_observability_prometheus_grafana`** (7 lekcji) — pokrywa
   `observability-prometheus-grafana` (important).
 - **`_40_rest_assured_testing`** (5 lekcji, celowo krótszy — buduje na `_25`/`_26`/`_27`) —
@@ -688,15 +689,15 @@ weryfikacji `_37`). Rozwiązanie ZADZIAŁAŁO za DRUGIM podejściem (ponowne uru
 polecenia w tle) — WARTO potraktować to jako ZNANY, przejściowy problem środowiskowy, NIE błąd
 w logice polecenia — przy kolejnym wystąpieniu, PO PROSTU ponowić TĘ SAMĄ komendę w tle.**
 
-## `_38_redis_and_caching` (7/7 lekcji) — KOMPLETNE, napisany od zera w tej sesji
+## `_38_redis_and_caching` (16/16 lekcji) — KOMPLETNE, rozszerzone o praktyczną migrację CSV
 
 Siódmy rozdział dopisany PO zamknięciu `_37_cloud_aws_fundamentals`, czwarty z siedmiu
 rozdziałów zaplanowanych jako PUSTE scaffoldy — pokrywa `other-redis` ("important"). Po
 dokończeniu zaktualizowano wpis `other-redis`: wskazuje teraz na `_38_redis_and_caching/
 07_RedisCachingCapstone`, `note` wyczyszczone na `null`.
 
-Ten sam lekki format co `_35`-`_37` (15 bloków teorii, 3 unikalne ćwiczenia / 5 unikalnych quizów
-na lekcję). 7 lekcji, KAŻDA świadomie zakotwiczona w cache'owaniu LOKALNYM z `_13_libraries` i
+Pierwsze 7 lekcji zachowuje lekki format (15 bloków teorii, 3 unikalne ćwiczenia / 5 unikalnych
+quizów na lekcję). Są świadomie zakotwiczone w cache'owaniu LOKALNYM z `_13_libraries` i
 architekturze wielu-kopii z `_36`/`_37`: po co WSPÓLNY cache istnieje — problem niespójności
 cache'y LOKALNYCH między wieloma kopiami aplikacji, Redis jako cache PRZED bazą danych, NIE jej
 zastępstwo (1), cztery struktury danych (List/Set/Hash/Sorted Set) + zasada "jakie pytanie zadam
@@ -712,18 +713,40 @@ od Kafki (`_30_spring_messaging_and_async`) dla krytycznych przepływów (6), ka
 (leaderboard), z przykładem Sorted Set jako właściwej struktury zamiast ręcznego sortowania w
 Javie (7).
 
-Wszystkie 7 plików napisane, zwalidowane (JSON poprawny, `grep -c "native code"` = 0, brak
+Lekcje 8-16 tworzą osobną, produkcyjną ścieżkę praktyczną odpowiadającą zadaniu: wejść do
+istniejącego Redis przez `redis-cli`, odnaleźć odpowiedniki danych, odtworzyć ich logiczny schemat,
+dopasować CSV i wykonać kontrolowany import albo zaprojektować nowy, wersjonowany namespace.
+Obejmują: bezpieczne połączenie TLS/ACL bez ujawniania hasła (8), nieblokujące discovery keyspace
+przez `SCAN` i skany typów (9), badanie wartości/TTL/pamięci/serializacji (10), jawny kontrakt
+mapowania CSV→Redis z nullami, typami i idempotencją (11), import Strings/Hashes i canary (12),
+relacje w Set/Sorted Set/List oraz konsekwencje Redis Cluster (13), szybki import przez RESP i
+`redis-cli --pipe` z checkpointami (14), wielowarstwową walidację, progi stop, rollback i cleanup
+(15) oraz pełny capstone end-to-end z artefaktami audytowymi i decyzją go/no-go (16).
+
+Nowe lekcje mają po 15 celowo dobranych bloków teorii oraz po 8 ćwiczeń i 8 quizów; capstone ma
+10 ćwiczeń i 10 quizów. Materiał akcentuje read-only discovery, zakaz `KEYS *`/pełnych odczytów na
+produkcji, ochronę PII i sekretów, zachowanie serializerów i TTL, dry run, namespace wersjonowany,
+idempotentne operacje, ograniczenia transakcji CROSSSLOT, monitoring zasobów i usuwanie wyłącznie
+kluczy z dokładnego manifestu.
+
+Wszystkie 16 plików napisane, a lekcje 8-16 zwalidowane (JSON poprawny, komplet i kolejność typów,
+unikalne ćwiczenia/quizy, `grep -c "native code"` = 0, brak
 cyrylicy/znaków zastępczych) i przepuszczone przez `fix_allcaps.js`/`fix_allcaps_residual.js`
-(BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP) w tej samej sesji co napisanie. Kilka
+(oraz `fix_http_method_case.js` dla nowych plików) w tej samej sesji co napisanie. Kilka
 literówek ("techNIcznie"→"technicznie" w kilku lekcjach, "PROZNIEJ"→"POZNIEJ" w lekcji 6)
 znalezionych i naprawionych ręcznie PRZED walidacją.
 
-Zweryfikowane live przez API po restarcie backendu (`./mvnw spring-boot:run`, `JAVA_HOME=/c/Users/
-kapit/.jdks/openjdk-25.0.2`): wszystkie 7 lekcji rozdziału zwracają poprawną liczbę bloków (15
-teoria / 3 exercises / 5 quiz) PO odczekaniu na ustąpienie znanego wyścigu startowego + regresja na
+Pierwsze 7 lekcji zweryfikowano live przez API po restarcie backendu (`./mvnw spring-boot:run`,
+`JAVA_HOME=/c/Users/kapit/.jdks/openjdk-25.0.2`): zwracają poprawną liczbę bloków (15 teoria / 3
+exercises / 5 quiz) PO odczekaniu na ustąpienie znanego wyścigu startowego + regresja na
 `_37_cloud_aws_fundamentals/01_WhyCloudAndWhyAws` i endpoint `critical-topics` — bez zmian.
 Orphaned `java.exe` sprawdzone (brak) PRZED startem, zgodnie ze standardowym krokiem. Scommitowane
 7 komitami WIP (jeden na lekcję).
+
+Rozszerzenie 8-16 przechodzi `mvnw.cmd -DskipTests compile` na JDK 25.0.2 oraz kontrolę zgodności
+16 nazw seedów z 16 plikami JSON. Pełne `mvnw.cmd test` dochodzi do startu kontekstu Spring, ale
+znany, niezależny od rozdziału test `JavaQuestApplicationTests.contextLoads` kończy się na braku
+tabeli H2 `CHAPTERS` (Flyway tworzy tylko `users`), zanim `ContentSeeder` może zakończyć start.
 
 ## `_37_cloud_aws_fundamentals` (9/9 lekcji) — KOMPLETNE, napisany od zera w tej sesji
 

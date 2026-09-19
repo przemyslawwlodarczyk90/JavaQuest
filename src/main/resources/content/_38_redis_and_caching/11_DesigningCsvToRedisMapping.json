@@ -1,0 +1,226 @@
+{
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "CSV jest formatem wejścia, nie modelem Redis",
+      "body": "Jedna linia CSV nie musi odpowiadać jednemu kluczowi. Rekord może tworzyć hash profilu, wpis w set relacji i score w zset rankingu. Zanim napiszesz importer, przygotuj jawny dokument mapowania, reguły walidacji i politykę konfliktów.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Specyfikacja mapowania",
+      "body": "Dla każdej kolumny określ: nazwę i typ, obowiązkowość, normalizację, walidację, docelowy wzorzec klucza, typ Redis, field/member/score, TTL oraz reakcję na duplikat. Dokument powinien umożliwić drugiej osobie odtworzenie dokładnie tych samych poleceń.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Plan załadunku przed ciężarówką",
+      "body": "CSV to lista pudeł, Redis to magazyn o różnych regałach. Bez planu nie wiadomo, które pole jest etykietą klucza, które zawartością, a które terminem ważności. Dobry manifest mapowania jest ważniejszy niż szybki skrypt.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jedna linia, trzy struktury",
+      "body": "Rekord użytkownika może zasilić kilka indeksów. Operacje powinny być idempotentne lub mieć jawny mechanizm wersji.",
+      "code": "CSV: user_id,name,email,country,points,expires_at\n42,Anna,a@example.test,PL,1500,2026-12-31T00:00:00Z\n\nHSET user:42 name Anna email a@example.test country PL\nZADD leaderboard:global 1500 42\nSADD users:country:PL 42\nEXPIREAT user:42 <epoch>   # tylko jeśli kontrakt tego wymaga"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Manifest kolumn",
+      "body": "Nie polegaj na kolejności pól w głowie. Zapisz manifest możliwy do code review.",
+      "code": "column       required  transform          target\nuser_id      yes       trim,long          key user:{user_id}\nname         yes       trim,NFC           hash field name\nemail        yes       trim,lowercase      hash field email\ncountry      yes       uppercase,ISO-2     set users:country:{country}\npoints       yes       decimal,>=0         zset leaderboard:global score\nexpires_at   no        ISO-8601 UTC        EXPIREAT user:{user_id}"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Walidacja CSV przed kontaktem z Redis",
+      "body": "Importer najpierw powinien wykonać dry run: sprawdzić nagłówki, kodowanie UTF-8, separator/cudzysłowy, liczbę kolumn, typy, unikalność ID, wartości puste, zakres score i daty. Wynik to raport: liczba poprawnych, odrzuconych, duplikatów i przykłady błędów bez wrażliwych danych.",
+      "code": "input_rows=100000\nvalid_rows=99842\ninvalid_rows=158\nduplicate_ids=12\ncommands_planned=299526\nexpired_rows=37\noutput_namespace=import:chg-1234:*"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Projektowanie transformacji",
+      "body": "1. Pobierz zatwierdzony kontrakt istniejących kluczy.\n2. Zdefiniuj docelowy namespace staging, np. `import:CHG-1234:*`.\n3. Mapuj kolumny na klucze, pola, członków i score.\n4. Określ normalizację znaków, liczb i czasu w UTC.\n5. Ustal zachowanie null/empty oraz rekordów przeterminowanych.\n6. Ustal konflikt: reject, create-only, update, merge lub versioned key.\n7. Oszacuj liczbę kluczy, poleceń i pamięć.\n8. Wykonaj dry run i code review manifestu.\n9. Dopiero potem generuj polecenia Redis.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Puste pole i brak pola nie są tym samym",
+      "body": "W hash `HSET key email \"\"` tworzy pole o pustej wartości; pominięcie `email` zostawia stare pole przy aktualizacji. `HDEL` usuwa pole. Manifest musi rozstrzygnąć trzy stany: brak w źródle, jawna pusta wartość oraz wartość niepusta.",
+      "code": null
+    },
+    {
+      "type": "USAGE",
+      "heading": "Idempotencja i polityka konfliktu",
+      "body": "`HSET` i `SADD` są naturalnie powtarzalne dla tych samych wartości, ale `INCRBY` oraz `LPUSH` nie są. `ZADD` z tym samym member ustawia nowy score, a nie dodaje duplikatu. Create-only można egzekwować przez `SET NX` dla stringów lub atomowy skrypt/funkcję dla wielostrukturalnego rekordu. Najprościej importować do nowego, wersjonowanego namespace.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "CSV injection, locale i utrata zer wiodących",
+      "body": "Parser CSV musi obsługiwać cudzysłowy, przecinki i nowe linie w polach; nie dziel linii przez zwykłe `split(\",\")`. Identyfikator `00123` nie może stać się liczbą 123, jeśli zera są częścią klucza. `1,25` w polskim arkuszu może kolidować z separatorem; score Redis oczekuje formatu liczbowego niezależnego od locale.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Improwizowany import bez parsera",
+      "body": "Kod gubi przecinki w cudzysłowach, nie waliduje ID i tworzy klucze w produkcyjnym namespace.",
+      "code": "for line in file:\n  parts = line.split(',')\n  send('HSET user:' + parts[0] + ' name ' + parts[1])"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Najpierw model pośredni i dry run",
+      "body": "Parser tworzy typowany rekord, walidator zbiera błędy, mapper generuje deklaratywną listę operacji. Ten sam mapper może wygenerować raport, staging import i testowe oczekiwania.",
+      "code": "CsvRow raw = csvParser.parse(record);\nValidatedUser user = validator.validate(raw);\nList<RedisOperation> ops = mapper.toOperations(user, \"import:CHG-1234\");\n// dry-run: raportuj ops; execute: koduj każde pole binarnie bezpiecznie"
+    },
+    {
+      "type": "API_REFERENCE",
+      "heading": "Semantyka poleceń ważna dla mapowania",
+      "body": "`SET [NX|XX] [EX|PX|EXAT|PXAT]` — string i warunki; `HSET` — pola hash; `HDEL` — usunięcie pola; `SADD` — unikalne członkostwo; `ZADD [NX|XX|GT|LT]` — member i score; `LPUSH/RPUSH` — kolejność, ale powtórzenie duplikuje; `XADD` — stream z ID. Dobieraj polecenie do semantyki, nie do wygody CSV.",
+      "code": null
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Staging namespace zamiast zapisu w miejscu",
+      "body": "Nowy namespace pozwala porównać liczbę i próbki bez nadpisywania danych. Po walidacji aplikacja może przełączyć wersję konfiguracją lub atomowym wskaźnikiem, jeśli model to wspiera. Nie zawsze da się przemianować wiele kluczy atomowo, szczególnie w klastrze; plan przełączenia zaprojektuj przed importem.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Manifest jest kontraktem migracji",
+      "body": "Mapowanie określa więcej niż kolumny: typy, klucze, TTL, null, konflikty, idempotencję i staging. Dry run musi odrzucić wadliwe rekordy przed Redisem oraz oszacować skalę. Dopiero zatwierdzony manifest staje się wejściem do importera.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zaprojektuj manifest dla csv użytkowników tworzącego hash, set kraju i zset rankingu.",
+      "hint": "Uwzględnij transformacje i TTL.",
+      "solution": "Manifest powinien mapować ID do klucza, pola do HSET, country do SADD, points do ZADD i jawnie opisać expiry."
+    },
+    {
+      "prompt": "Rozróżnij brak emaila, pusty email i usunięcie emaila.",
+      "hint": "Opisz hset/hdel/pominięcie.",
+      "solution": "Pominięcie zachowuje stan przy merge, pusty string ustawia pole, a HDEL usuwa; CSV potrzebuje osobnej reguły lub znacznika."
+    },
+    {
+      "prompt": "Wypisz raport dry-run dla 10 błędów walidacji.",
+      "hint": "Nie pokazuj pii.",
+      "solution": "Podaj numery rekordów, kody błędów, liczby kategorii i zanonimizowany identyfikator."
+    },
+    {
+      "prompt": "Wyjaśnij idempotencję hset, sadd, zadd, lpush i incrby.",
+      "hint": "Które można powtórzyć?",
+      "solution": "Stałe HSET/SADD/ZADD są zwykle idempotentne; LPUSH i INCRBY zmieniają stan przy każdym powtórzeniu."
+    },
+    {
+      "prompt": "Zaprojektuj politykę duplikatów ID w csv.",
+      "hint": "Wybierz deterministyczną regułę.",
+      "solution": "Najbezpieczniej odrzucić plik lub duplikaty; ewentualne last-wins musi być jawne i raportowane."
+    },
+    {
+      "prompt": "Oszacuj liczbę poleceń dla 100 tys. wierszy i 3 operacji na wiersz.",
+      "hint": "Uwzględnij TTL.",
+      "solution": "300 tys. operacji, plus do 100 tys. expiry, jeśli TTL wymaga osobnego polecenia."
+    },
+    {
+      "prompt": "Wyjaśnij ryzyko identyfikatora 00123.",
+      "hint": "Traktuj ID jako string.",
+      "solution": "Konwersja do liczby zmieni nazwę klucza i może spowodować kolizję z 123."
+    },
+    {
+      "prompt": "Zaprojektuj wersjonowany staging namespace.",
+      "hint": "Dodaj ticket/import ID.",
+      "solution": "Np. `import:CHG-1234:v1:user:{id}` oraz oddzielne indeksy o tym samym identyfikatorze wersji."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co powinno powstać przed importerem?",
+      "options": {
+        "A": "Manifest mapowania i dry run",
+        "B": "Flushall",
+        "C": "Keys *",
+        "D": "Monitor"
+      },
+      "correct": "A",
+      "explanation": "Manifest definiuje semantykę transformacji."
+    },
+    {
+      "question": "Czy brak kolumny i pusty string są równoważne?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie",
+        "C": "Tylko w set",
+        "D": "Tylko dla TTL"
+      },
+      "correct": "B",
+      "explanation": "Mogą oznaczać zachowanie, wyczyszczenie lub błąd."
+    },
+    {
+      "question": "Która operacja nie jest idempotentna przy powtórzeniu?",
+      "options": {
+        "A": "Sadd tego samego member",
+        "B": "Hset tej samej wartości",
+        "C": "Incrby",
+        "D": "Zadd tego samego score"
+      },
+      "correct": "C",
+      "explanation": "Incrby ponownie zwiększy wartość."
+    },
+    {
+      "question": "Jak traktować ID 00123?",
+      "options": {
+        "A": "Zawsze jako int",
+        "B": "Zgodnie z kontraktem, zwykle jako string",
+        "C": "Usunąć zera",
+        "D": "Jako score"
+      },
+      "correct": "B",
+      "explanation": "Zera mogą być częścią tożsamości."
+    },
+    {
+      "question": "Po co staging namespace?",
+      "options": {
+        "A": "Aby ominąć acl",
+        "B": "Aby walidować bez nadpisania aktywnych danych",
+        "C": "Aby wyłączyć TTL",
+        "D": "Aby użyć keys"
+      },
+      "correct": "B",
+      "explanation": "Izoluje import od danych aktywnych."
+    },
+    {
+      "question": "Co robi zadd dla istniejącego member?",
+      "options": {
+        "A": "Tworzy duplikat",
+        "B": "Aktualizuje score",
+        "C": "Usuwa member",
+        "D": "Zwraca wrongtype"
+      },
+      "correct": "B",
+      "explanation": "Member w zset jest unikalny."
+    },
+    {
+      "question": "Czy split(',') jest poprawnym parserem csv?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie, nie obsługuje quoting i newline",
+        "C": "Tylko dla UTF-8",
+        "D": "Tylko w Redis 8"
+      },
+      "correct": "B",
+      "explanation": "Csv ma reguły cudzysłowów i znaków specjalnych."
+    },
+    {
+      "question": "Co powinien zawierać dry run?",
+      "options": {
+        "A": "Tylko pierwszą linię",
+        "B": "Liczby rekordów, błędy, duplikaty i planowaną skalę",
+        "C": "Hasło Redis",
+        "D": "Pełne pii"
+      },
+      "correct": "B",
+      "explanation": "Raport pozwala zatwierdzić jakość przed zapisem."
+    }
+  ]
+}
