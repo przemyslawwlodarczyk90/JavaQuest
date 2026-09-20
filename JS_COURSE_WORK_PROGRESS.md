@@ -933,25 +933,64 @@ lekcji 1 znaleziono i naprawiono 2 literówki cyrylickie: `woла`→`wola`, `dz
 `_js_11`, przed napisaniem lekcji 1-2 tego rozdziału) — **zweryfikuj obie lekcje przy najbliższej
 okazji restartu backendu, razem z kolejnymi lekcjami tego rozdziału**.
 
+## `_js_13_asynchronicznosc` (6/6 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-20, ten sam ciąg)
+
+Wszystkie 6 lekcji rozdziału 13 ukończone do **30/100+ każda**: `01_SetTimeoutAndSetInterval`
+(30/101), `02_Promises` (30/101), `03_AsyncAwait` (30/100), `04_FetchApi` (30/100),
+`05_FormDataAndSendingData` (30/100), `06_RestApiPatterns` (30/100). **TRZYNASTY w pełni
+ukończony rozdział kursu JS (po `_js_01`-`_js_12`).**
+
+**Dodatkowe odkrycia techniczne (uzupełnienie sekcji wyżej), ważne dla `_js_14`:**
+1. **`fetch`/`FormData` NIE istnieją w piaskownicy, ale (w przeciwieństwie do `document`/
+   `window`) są realnie dostępne w większości środowisk (przeglądarka + Node 18+)** — więc
+   zamiast triku `ReferenceError`, każde pytanie/ćwiczenie definiuje WŁASNĄ, lokalną funkcję
+   `fetch(url, opcje)` (mock zwracający `Promise<{ok,status,json,text}>` albo `TypeError` dla
+   symulacji błędu sieci) — w pełni wykonywalne i zweryfikowane. Dla `FormData` dodano
+   PRAWDZIWY, współdzielony polyfill do `POLY` w `lib.js` (append/get/getAll/has/delete/set/
+   entries/keys/values/forEach) — działa identycznie jak prawdziwa klasa dla wartości
+   tekstowych. **Zasada ogólna do zastosowania w `_js_14`:** jeśli obiekt (np. `localStorage`,
+   `URLSearchParams`, `history`) jest real w wielu środowiskach (nie tylko przeglądarce), NIE
+   używaj triku `ReferenceError` — albo dopisz współdzielony polyfill do `POLY`, albo mockuj go
+   lokalnie per-pytanie. Trik `ReferenceError` zostaw wyłącznie dla rzeczy naprawdę
+   przeglądarkowych (`document`, prawdziwy `window` jako globalny obiekt itp., jak w `_js_11`).
+2. **Białą listę ALLCAPS w `build()` (`lib.js`) rozszerzono o `GET|POST|PUT|PATCH|DELETE|HEAD`**
+   — potrzebne wszędzie, gdzie kod pytania/opcji zawiera nazwę metody HTTP jako literał string.
+3. **Dwa razy w tej sesji nowo napisane pytanie `T()` kolidowało z ISTNIEJĄCYM pytaniem z Fazy
+   1** (duplikat dokładnego tekstu) — zdarza się, gdy oryginalne polskie zdanie akurat nie
+   zawiera żadnych znaków diakrytycznych (ą/ę/ł/ń/ó/ś/ź/ż), więc mój bezdiakrytyczny zapis
+   przypadkiem pokrywa się 1:1 z oryginałem. `apply()` rzuca błąd PRZED zapisem pliku (bezpieczne
+   — nic nie ginie), więc wystarczy zmienić/przeformułować kolidujące pytanie i uruchomić
+   ponownie.
+4. **Dwa razy w tej sesji znaleziono ćwiczenie z Fazy 1, które odwoływało się do zmiennej/funkcji
+   zdefiniowanej w "poprzednim" ćwiczeniu** (pedagogicznie ciągłe, ale niewykonywalne w izolacji
+   przez `run()`, które wykonuje każde `ex.solution` osobno) — objawia się jako `exerr` w
+   `verify.js`, ale NIE blokuje `apply()` (który tylko sprawdza execution error, nie porównuje z
+   kluczem) — więc pojawia się dopiero przy `verify.js`, PO zapisaniu pliku. Naprawka: dopisz
+   brakującą definicję (funkcję/zmienną) na początku `solution`, żeby ćwiczenie było w pełni
+   samodzielne. **Sprawdzaj `verify.js` na KAŻDYM ukończonym pliku, nie tylko `apply()`.**
+5. Ważna zasada z SQL-owego odruchu: NIGDY nie escapuj apostrofu wewnątrz stringa JS podwojeniem
+   (`'Don''t'`) — to składnia SQL, nie JavaScript, i powoduje błąd składniowy. Użyj innego
+   sformułowania bez apostrofu, albo `\'` w stringu, albo zmień na podwójne cudzysłowy.
+
+Wszystkie 6 plików zweryfikowane: `verify.js` czyste, brak duplikatów opcji, brak cyrylicy, brak
+`native code`, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js`.
+
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-**Rozdziały `_js_01`..`_js_11` i `_js_12_zdarzenia` są w PEŁNI gotowe (30/100 każda lekcja,
-83/83 lekcji).** `_js_13_asynchronicznosc` W TRAKCIE: lekcje 1-2 gotowe (patrz sekcja wyżej).
-Kontynuować od `03_AsyncAwait` (Faza 1: stan sprzed tej sesji — sprawdź plik, prawdopodobnie
-nadal niski poziom), potem `04_FetchApi`, `05_FormDataAndSendingData`, `06_RestApiPatterns` — w
-tej kolejności, tą samą metodą co lekcje 1-2. **PRZECZYTAJ SEKCJĘ WYŻEJ „WAŻNE ODKRYCIA
-TECHNICZNE" PRZED PISANIEM KODU QUIZOWEGO** — kod z `Promise`/`async`/`await`/`fetch` wymaga
-nagłówka `// main.js` (helper `m()`) żeby mikrotaski się wykonały; `setInterval`/`clearInterval`
-tylko w `ex`/`T()`, nigdy w `C()`; nigdy nie twórz w `ex` faktycznie nieobsłużonego
-`Promise.reject()` (wywala generator na końcu skryptu). `04_FetchApi` prawdopodobnie potrzebuje
-podobnego traktowania jak `document`/`window` w `_js_11` — `fetch`/`Response`/`FormData` NIE
-istnieją w piaskownicy `lib.js`/`modrun.mjs`, więc pytania o nie prawdopodobnie muszą być
-pojęciowe (`T()`) albo korzystać z ręcznie napisanych, zasymulowanych obiektów (nie prawdziwego
-`fetch`) — sprawdź na początku pracy nad tą lekcją, zanim zaczniesz pisać kod zakładający ich
-istnienie. Po ukończeniu całego rozdziału `_js_13`: zweryfikuj live przez API wszystkie 6 lekcji
-tego rozdziału naraz (żadna jeszcze nie była zweryfikowana live — backend zatrzymany przed
-napisaniem lekcji 1-2), potem przejdź do `_js_14_srodowisko_przegladarkowe` (6 lekcji, wciąż
-Faza 1) jako ostatniego rozdziału kursu JS.
+**Rozdziały `_js_01`..`_js_13` są w PEŁNI gotowe (30/100+ każda lekcja, 89/89 lekcji).**
+Pozostaje WYŁĄCZNIE `_js_14_srodowisko_przegladarkowe` (6 lekcji, ostatni rozdział całego kursu
+JS) — wciąż na poziomie Fazy 1 (sprawdź dokładne liczby w tabeli historycznej wyżej w tym pliku,
+sekcja `_js_14_srodowisko_przegladarkowe`). Tematy: `window` (wymiary/scroll/zdarzenia),
+`localStorage`/`sessionStorage`, `window.location`/`URLSearchParams`, `window.history`/History
+API, standardy ECMAScript, debugowanie w VS Code. **Zastosuj zasadę z punktu 1 wyżej: `window`
+jako obiekt globalny i jego zdarzenia (`resize`/`load`) to PRAWDZIWY fakt językowy (nie istnieją
+poza przeglądarką) — trik `ReferenceError`/`typeof` z `_js_11` nadaje się tu świetnie.
+`localStorage`/`sessionStorage`/`URLSearchParams`/`history` NIE są jednak przeglądarkowo-
+wyłączne w tym samym sensie (Node ma pewne odpowiedniki lub polyfille w praktyce) — rozważ
+osobno dla każdego, czy lepszy jest trik ReferenceError, współdzielony polyfill w `POLY`, czy
+lokalny mock per-pytanie, zanim zaczniesz pisać kod quizowy.** Po ukończeniu `_js_14` (i całego
+kursu JS): zweryfikuj live przez API cały rozdział, zaktualizuj ten plik z finalnym podsumowaniem
+90/90 lekcji ukończonych.
 
 **KOREKTA WAŻNEJ NIEŚCISŁOŚCI z poprzedniej wersji tej sekcji**: moduły ES (`import`/`export`)
 **DZIAŁAJĄ** w generatorze — `lib.js` ma funkcję `isModuleCode()` + `runModule()`/`modrun.mjs`
