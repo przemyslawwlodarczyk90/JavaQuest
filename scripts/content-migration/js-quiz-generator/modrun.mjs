@@ -35,7 +35,7 @@ const enc = v => {
 const timers = [];
 let now = 0;
 const sandbox = {
-  console: { log: (...a) => logs.push(a.map(enc)), error: (...a) => logs.push(a.map(enc)) },
+  console: { log: (...a) => logs.push(a.map(enc)), error: (...a) => logs.push(a.map(enc)), warn: (...a) => logs.push(a.map(enc)), info: (...a) => logs.push(a.map(enc)) },
   setTimeout: (fn, ms, ...a) => { timers.push({ fn, a, due: now + (Number(ms) || 0), id: timers.length + 1 }); return timers.length; },
   clearTimeout: id => { const t = timers.find(x => x.id === id); if (t) t.cancelled = true; },
 };

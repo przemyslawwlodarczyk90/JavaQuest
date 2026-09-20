@@ -62,7 +62,7 @@ function runModule(code) {
 function run(code) {
   if (isModuleCode(code)) return runModule(code);
   const logs = [];
-  const con = { log: (...a) => logs.push(a), error: (...a) => logs.push(a) };
+  const con = { log: (...a) => logs.push(a), error: (...a) => logs.push(a), warn: (...a) => logs.push(a), info: (...a) => logs.push(a) };
   // wirtualny zegar: setTimeout/clearTimeout wykonuja sie PO glownym kodzie, w kolejnosci (opoznienie, kolejnosc dodania)
   const timers = []; let now = 0;
   const sandbox = {
@@ -194,7 +194,7 @@ function apply(file, data, targetEx, targetQ) {
   // weryfikacja rozwiazan cwiczen (wykonanie)
   data.ex.forEach(([prompt, hint, sol], i) => {
     const r = run(sol);
-    if (r.err && !/DOM|document|window|fetch|setInterval|clearInterval/.test(sol)) throw new Error('Cwiczenie ' + i + ' rzuca ' + r.err + ': ' + prompt);
+    if (r.err && !/DOM|document|window|fetch|setInterval|clearInterval|localStorage|sessionStorage/.test(sol)) throw new Error('Cwiczenie ' + i + ' rzuca ' + r.err + ': ' + prompt);
     j.exercises.push({ prompt, hint, solution: sol });
   });
   const base = j.quiz.length;
