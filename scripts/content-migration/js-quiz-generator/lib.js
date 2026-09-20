@@ -69,6 +69,7 @@ function run(code) {
     console: con,
     setTimeout: (fn, ms, ...a) => { timers.push({ fn, a, due: now + (Number(ms) || 0), id: timers.length + 1 }); return timers.length; },
     clearTimeout: id => { const t = timers.find(x => x.id === id); if (t) t.cancelled = true; },
+    URL, URLSearchParams,
   };
   try {
     const strict = /^\s*["']use strict["']/.test(code) ? '"use strict";\n' : '';
@@ -194,7 +195,7 @@ function apply(file, data, targetEx, targetQ) {
   // weryfikacja rozwiazan cwiczen (wykonanie)
   data.ex.forEach(([prompt, hint, sol], i) => {
     const r = run(sol);
-    if (r.err && !/DOM|document|window|fetch|setInterval|clearInterval|localStorage|sessionStorage/.test(sol)) throw new Error('Cwiczenie ' + i + ' rzuca ' + r.err + ': ' + prompt);
+    if (r.err && !/DOM|document|window|fetch|setInterval|clearInterval|localStorage|sessionStorage|location\./.test(sol)) throw new Error('Cwiczenie ' + i + ' rzuca ' + r.err + ': ' + prompt);
     j.exercises.push({ prompt, hint, solution: sol });
   });
   const base = j.quiz.length;
