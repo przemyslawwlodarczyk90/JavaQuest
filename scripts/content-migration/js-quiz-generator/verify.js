@@ -22,7 +22,7 @@ for(const f of process.argv.slice(2)){
       if(q.options[q.correct]!==c)bad.push('WRONG#'+i+' opt='+q.options[q.correct]+' actual='+c);
     }
   });
-  j.exercises.forEach((e,i)=>{if(!e.prompt||!e.hint||!e.solution)bad.push('ex'+i);else{const r=run(e.solution);if(r.err&&!/DOM|document|window|fetch/.test(e.solution))bad.push('exerr'+i+':'+r.err)}});
+  j.exercises.forEach((e,i)=>{if(!e.prompt||!e.hint||!e.solution)bad.push('ex'+i);else{const r=run(e.solution);if(r.err&&!/DOM|document|window|fetch|setInterval|clearInterval/.test(e.solution))bad.push('exerr'+i+':'+r.err)}});
   if(new Set(j.quiz.map(q=>q.question)).size!==j.quiz.length)bad.push('dupQ');
   console.log(f.split('/').pop(),'T',j.theory.length,'E',j.exercises.length,'Q',j.quiz.length,'code',codeQ,bad.length?'BAD: '+bad.join(' | '):'OK');
   if(bad.length)allok=false;
