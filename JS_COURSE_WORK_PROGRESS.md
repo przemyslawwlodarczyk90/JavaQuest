@@ -863,18 +863,95 @@ istniejące pliki) — **ZALECANE: przy następnej okazji, gdy backend użytkown
 restartowany, zweryfikować `_js_11_dom` przez API razem z kolejnym rozdziałem**, dokładnie jak
 opisano w sekcji "Weryfikacja live i commity" w `JS_COURSE_STAGE_PROMPT.md`.
 
+## `_js_12_zdarzenia` (6/6 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-20, kontynuacja)
+
+Lekcja 5 (`05_EventPropagationAndDelegation`, 30/100) i lekcja 6 (`06_RegularExpressions`, 30/100)
+dokończone w tej sesji (lekcje 1-4 były już gotowe z poprzedniej sesji, niescommitowane resztki
+w working tree — dokończone, zweryfikowane, scommitowane). **DWUNASTY w pełni ukończony rozdział
+kursu JS (po `_js_01`-`_js_11`).** Znaleziony i naprawiony 1 literowka cyrylicka w lekcji 5
+(`propagujа` z cyrylickim „а” zamiast łacińskiego „a”) przed commitem.
+
+Zweryfikowane live przez API (backend na porcie 8082): wszystkie 6 lekcji 14/30/100, `GET
+/api/chapters?track=JAVA` → 41 (bez zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian).
+**PRZY OKAZJI zweryfikowano też `_js_11_dom` (pominięty w poprzedniej sesji z powodu braku RAM)**
+— wszystkie 7 lekcji 14-15/30/100, czysto.
+
+## `_js_13_asynchronicznosc` — W TRAKCIE (sesja 2026-09-20, ten sam ciąg)
+
+Lekcja 1 (`01_SetTimeoutAndSetInterval`, 30/101) i lekcja 2 (`02_Promises`, 30/101) UKOŃCZONE.
+Pozostałe: `03_AsyncAwait`, `04_FetchApi`, `05_FormDataAndSendingData`, `06_RestApiPatterns` —
+wciąż na poziomie Fazy 1 (8/30, 6/100 każda, patrz tabela historyczna wyżej w tym pliku).
+
+**WAŻNE ODKRYCIA TECHNICZNE tej sesji (kluczowe dla `03_AsyncAwait`, `04_FetchApi`,
+`05_FormDataAndSendingData`, `06_RestApiPatterns` — cały rozdział intensywnie używa Promise):**
+
+1. **`setInterval`/`clearInterval` NIE ISTNIEJĄ w piaskownicy `run()` w `lib.js`** (tylko
+   `setTimeout`/`clearTimeout` są zasymulowane) — użycie ich w kodzie QUIZU („Co wypisze") dałoby
+   FAŁSZYWY `ReferenceError` (w przeciwieństwie do `document`/`window` w `_js_11`, gdzie brak w
+   piaskownicy odzwierciedla PRAWDZIWY fakt językowy — `setInterval` istnieje naprawdę wszędzie,
+   więc pokazywanie go jako niedostępny to dezinformacja). **Zasada: `setInterval`/`clearInterval`
+   TYLKO w ćwiczeniach (`ex`) i pytaniach pojęciowych (`T()`), NIGDY w kodzie quizowym (`C()`).**
+   Dodano wyjątek `setInterval|clearInterval` do regexów w `apply()` (`lib.js`) i `verify.js`
+   (analogicznie do istniejącego `DOM|document|window|fetch`), żeby ćwiczenia z `setInterval` w
+   `solution` nie wywalały generatora przy weryfikacji wykonania — commit scommitowany razem z
+   lekcją 1.
+2. **Kod z `Promise` NIGDY nie wykona swoich callbacków `.then()` w zwykłej, synchronicznej
+   piaskownicy `run()` z `lib.js`** — `vm.runInNewContext(...)` jest w pełni synchroniczne i
+   funkcja `run()` zwraca wynik natychmiast po nim, BEZ NIGDY drenowania kolejki mikrotasków (w
+   przeciwieństwie do `modrun.mjs`, który ma prawdziwą pętlę `await flush()` z `setImmediate`).
+   Zweryfikowane empirycznie: `run('Promise.resolve(5).then(n=>console.log(n))')` → `{logs: []}`
+   (PUSTE, mimo że w prawdziwym JS wypisałoby `5`). **ROZWIĄZANIE: dopisz `// main.js\n` jako
+   PIERWSZĄ linię kodu przed wywołaniem `run()`/`build()`** — `isModuleCode()` w `lib.js` wykrywa
+   nagłówek pliku (`/^\/\/ [\w.\/-]+\.m?js\s*$/m`) i przekierowuje wykonanie przez `modrun.mjs`
+   (osobny proces Node z `--experimental-vm-modules`, PRAWDZIWA pętla zdarzeń) — tam `Promise`,
+   `Promise.all/allSettled/race/any`, kolejność mikrotask-przed-makrotask, `finally()`,
+   propagacja błędu przez `throw`/`catch()` — WSZYSTKO działa poprawnie i jest w pełni
+   zweryfikowane wykonaniem. Nagłówek `// main.js` zostaje WIDOCZNY w pytaniu pokazywanym
+   studentowi jako pierwsza linia kodu (kosmetyczny, niegroźny artefakt — wygląda jak nazwa
+   pliku, nie przeszkadza w zrozumieniu pytania). W `l13_02.js` zdefiniowano helper `const m =
+   (code) => '// main.js\n' + code;` używany jako `C(m(c\`...\`), wyjaśnienie)`.
+3. **Kod tworzący PRAWDZIWIE nieobsłużone odrzucenie Promise (`Promise.reject(...)` bez
+   `.catch()`) w ĆWICZENIU (`ex`, wykonywane przez zwykłe `run()`, BEZ nagłówka `// main.js`)
+   WYWALA CAŁY SKRYPT GENERATORA pod koniec jego działania** (Node.js domyślnie traktuje
+   nieobsłużone odrzucenie Promise jako błąd krytyczny procesu, nawet jeśli powstało głęboko
+   wewnątrz `vm.runInNewContext`) — objawia się jako `Error` rzucony PO tym, jak `apply()` już
+   zakończyło zapis pliku (mylące, wygląda jakby się udało). **Zasada: NIGDY nie pisz ćwiczenia,
+   które tworzy faktycznie nieobsłużony `Promise.reject()` w wykonywanym kodzie — pokazuj
+   koncept "unhandled rejection" WYŁĄCZNIE przez komentarz w `solution` (bez uruchamiania
+   prawdziwego, nieobsłużonego reject), tak jak naprawiono w tej sesji.**
+4. Przy liczeniu docelowej liczby nowych `ex`/`q` PRZED uruchomieniem generatora: licz programowo
+   (`require` pliku z podmienionym `apply(...)` na `module.exports`), NIE ręcznie ani przez grep
+   po wzorcu `^\s*\['` (fałszywie łapie linie tablicy `wrong` wewnątrz wieloliniowych wywołań
+   `T(...)`) — w tej sesji dwa razy pomylono się w liczeniu i trzeba było dopisywać brakujące
+   pozycje w drugiej turze (`git checkout -- <plik.json>` przed ponownym uruchomieniem, żeby nie
+   zduplikować już zaaplikowanych wpisów).
+
+Wszystkie 2 pliki zweryfikowane: `verify.js` czyste, brak duplikatów opcji, brak cyrylicy (w
+lekcji 1 znaleziono i naprawiono 2 literówki cyrylickie: `woла`→`wola`, `dzwiека`→`dzwieku`), brak
+`native code`, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js`. Live przez API:
+`_js_13_asynchronicznosc` jeszcze NIE zweryfikowany (backend zatrzymany po weryfikacji `_js_12` i
+`_js_11`, przed napisaniem lekcji 1-2 tego rozdziału) — **zweryfikuj obie lekcje przy najbliższej
+okazji restartu backendu, razem z kolejnymi lekcjami tego rozdziału**.
+
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-**Rozdziały `_js_01`..`_js_11` są w PEŁNI gotowe (30/100 każda lekcja, 77/77 lekcji).** Kontynuować
-Fazę 2 od `_js_12_zdarzenia` (6 lekcji), potem `_js_13_asynchronicznosc` (6),
-`_js_14_srodowisko_przegladarkowe` (6) — wszystkie wciąż na poziomie Fazy 1 (patrz tabele
-historyczne wyżej w tym pliku dla dokładnych liczb ćwiczeń/quiz aktualnie w każdej lekcji).
-`_js_12_zdarzenia` prawdopodobnie ma TEN SAM problem braku `document`/`window`/zdarzeń w piaskownicy
-generatora, co `_js_11_dom` — zastosuj te same trzy techniki opisane w sekcji `_js_11_dom` wyżej
-(trik ReferenceError/typeof, symulacja przez czysty JS, pytania pojęciowe), i pamiętaj o poprawce
-`apply()` w `lib.js` (już scommitowanej, nie trzeba jej powtarzać). PRZY OKAZJI tego rozdziału (albo
-najbliższej, gdy backend użytkownika będzie i tak restartowany) zweryfikuj live przez API również
-`_js_11_dom`, pominięty w tej sesji z powodu braku pamięci RAM w systemie.
+**Rozdziały `_js_01`..`_js_11` i `_js_12_zdarzenia` są w PEŁNI gotowe (30/100 każda lekcja,
+83/83 lekcji).** `_js_13_asynchronicznosc` W TRAKCIE: lekcje 1-2 gotowe (patrz sekcja wyżej).
+Kontynuować od `03_AsyncAwait` (Faza 1: stan sprzed tej sesji — sprawdź plik, prawdopodobnie
+nadal niski poziom), potem `04_FetchApi`, `05_FormDataAndSendingData`, `06_RestApiPatterns` — w
+tej kolejności, tą samą metodą co lekcje 1-2. **PRZECZYTAJ SEKCJĘ WYŻEJ „WAŻNE ODKRYCIA
+TECHNICZNE" PRZED PISANIEM KODU QUIZOWEGO** — kod z `Promise`/`async`/`await`/`fetch` wymaga
+nagłówka `// main.js` (helper `m()`) żeby mikrotaski się wykonały; `setInterval`/`clearInterval`
+tylko w `ex`/`T()`, nigdy w `C()`; nigdy nie twórz w `ex` faktycznie nieobsłużonego
+`Promise.reject()` (wywala generator na końcu skryptu). `04_FetchApi` prawdopodobnie potrzebuje
+podobnego traktowania jak `document`/`window` w `_js_11` — `fetch`/`Response`/`FormData` NIE
+istnieją w piaskownicy `lib.js`/`modrun.mjs`, więc pytania o nie prawdopodobnie muszą być
+pojęciowe (`T()`) albo korzystać z ręcznie napisanych, zasymulowanych obiektów (nie prawdziwego
+`fetch`) — sprawdź na początku pracy nad tą lekcją, zanim zaczniesz pisać kod zakładający ich
+istnienie. Po ukończeniu całego rozdziału `_js_13`: zweryfikuj live przez API wszystkie 6 lekcji
+tego rozdziału naraz (żadna jeszcze nie była zweryfikowana live — backend zatrzymany przed
+napisaniem lekcji 1-2), potem przejdź do `_js_14_srodowisko_przegladarkowe` (6 lekcji, wciąż
+Faza 1) jako ostatniego rozdziału kursu JS.
 
 **KOREKTA WAŻNEJ NIEŚCISŁOŚCI z poprzedniej wersji tej sekcji**: moduły ES (`import`/`export`)
 **DZIAŁAJĄ** w generatorze — `lib.js` ma funkcję `isModuleCode()` + `runModule()`/`modrun.mjs`
