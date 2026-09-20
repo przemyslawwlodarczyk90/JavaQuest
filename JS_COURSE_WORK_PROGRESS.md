@@ -6,8 +6,8 @@
 
 ## Aktualny etap
 
-**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji). Faza 2: rozdziały 1-10
-ukończone w całości (10 z 14). Każda ukończona lekcja ma 30 ćwiczeń i 100 pytań quizowych.
+**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji). Faza 2: rozdziały 1-11
+ukończone w całości (11 z 14). Każda ukończona lekcja ma 30 ćwiczeń i 100 pytań quizowych.
 Aktualny następny krok znajduje się na końcu pliku.**
 
 Sesja 2026-09-16: użytkownik poprosił o drugi blok platformy — równoległy kurs JavaScript,
@@ -801,12 +801,80 @@ zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), `_js_09_kolekcj
 (100 quiz) i `_01_fundamentals/06_StringsAndBuilder` (15 bloków teorii) — oba bez zmian. Tymczasowy
 backend zatrzymany po weryfikacji. Scommitowane w jednym commicie.
 
+## `_js_11_dom` (7/7 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-20)
+
+Wszystkie 7 lekcji rozdziału 11 uzupełnione do pełnych **30 ćwiczeń / 100 pytań quizowych**:
+`01_WhatIsTheDom`, `02_SelectingDomElements`, `03_ManipulatingElementContent`,
+`04_CreatingAndRemovingElements`, `05_AttributesAndDataAttributes`, `06_ClassListDynamicClasses`,
+`07_ChangingCssStylesViaJs` — WSZYSTKIE 30/100. JEDENASTY w pełni ukończony rozdział kursu JS
+(po `_js_01`-`_js_10`). Trzy commity w tej sesji (lekcje 1-3, potem 4-5, potem 6-7).
+
+**ROZWIĄZANIE problemu braku `document`/`window` w piaskownicy generatora (opisanego jako otwarty
+problem w poprzedniej wersji tej sekcji, patrz niżej)** — NIE trzeba było dopisywać stubów DOM do
+`lib.js`/`modrun.mjs`. Zastosowano trzy techniki, w tej kolejności ważności:
+1. **Trik ReferenceError/typeof** (większość pytań z kodem, ok. 3-6 na lekcję): SKORO `document`/
+   `window` NIE ISTNIEJĄ w piaskownicy `vm`, każde ich użycie (`document.title`, `document.
+   querySelector(...)` itd.) rzuca PRAWDZIWY `ReferenceError` — DOKŁADNIE to, czego uczy PITFALL
+   każdej lekcji tego rozdziału ("document nie istnieje poza przeglądarką"). `typeof document`
+   (bez rzucania błędu, bo `typeof` na gołym identyfikatorze nigdy nie rzuca) zwraca `"undefined"` —
+   też legalny, odrębny typ pytania. Generator liczy `correct` automatycznie (`ReferenceError`/
+   `"undefined"`), więc te pytania są w 100% wiarygodne i nie wymagają ręcznej weryfikacji.
+2. **Symulacja przez czysty JS** (spora część pozostałych pytań z kodem): `NodeList`/tablica →
+   zwykła tablica lub obiekt `{0:..,1:..,length:N}` + `Array.from()`; `classList` → `Set` (ma
+   `add`/`delete`/`has`, identyczne działanie do `add`/`remove`/`contains`, `toggle` pisane jako
+   mała funkcja pomocnicza); `cloneNode(true)` (głęboki klon) → `structuredClone` (DOSTĘPNY w
+   piaskownicy przez polyfill `POLY` w `lib.js` — prawdziwe, wykonywalne demo niezależności kopii);
+   `cloneNode()`/`cloneNode(false)` (płytki klon) → spread `{ ...obiekt, dzieci: [] }`; `dataset`
+   → zwykły obiekt JS ze stringami (dataset TO w praktyce zwykły obiekt, więc symulacja jest
+   dokładna, nie przybliżona); `element.style` → zwykły obiekt JS z kluczami camelCase.
+3. **Pytania POJĘCIOWE (`T()`, większość pytań ogółem w tym rozdziale)** dla faktów, których nie
+   da się ani wykonać, ani sensownie zasymulować (np. "co robi `getComputedStyle`", "czym różni się
+   `classList` od `className`").
+
+**WAŻNA POPRAWKA NARZĘDZIA w tej sesji**: `apply()` w `lib.js` (funkcja dopisująca ćwiczenia do
+JSON) rzucała błędem przy KAŻDYM ćwiczeniu, którego `solution` odwołuje się do `document`/`window`
+(bo `run(sol)` w piaskownicy rzuca `ReferenceError`) — `verify.js` miał już wyjątek na to
+(`/DOM|document|window|fetch/.test(...)`), ale `apply()` nie. Dodano IDENTYCZNY wyjątek do `apply()`
+(`scripts/content-migration/js-quiz-generator/lib.js`), inaczej NIE dałoby się dopisać żadnego
+nowego ćwiczenia stylu Fazy 1 tego rozdziału (`document.getElementById(...)...`) przez generator —
+trzeba było je dopisywać ręcznie/przez Edit. Ta poprawka jest częścią commitu lekcji 1-3 i dotyczy
+też `_js_12`-`_js_14` (ten sam problem wystąpi tam ponownie).
+
+Wszystkie 7 plików zweryfikowane: `verify.js` czyste (T14-15/E30/Q100, brak `BAD:`), brak duplikatów
+opcji quizu (sprawdzone programowo), brak duplikatów tekstu pytań (w tym względem JUŻ ISTNIEJĄCYCH
+pytań Fazy 1 — kilkukrotnie złapane przez `apply()` i poprawione przed sukcesem, patrz uwaga niżej),
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` —
+rozdział nie dotyczy HTTP). **Uwaga praktyczna dla `_js_12`-`_js_14`**: `fix_allcaps.js` lowercase'uje
+"DOM" (nie jest na białej liście akronimów) do "dom" w tekście pytań — jeśli piszesz WARIANTY
+pytania Fazy 1 zawierającego "DOM"/"dom" w treści, sprawdź PO uruchomieniu `fix_allcaps.js`, czy
+nowy wariant nie kolabuje tekstowo z istniejącym pytaniem (złapane i poprawione 2x w lekcji 1 tego
+rozdziału).
+
+Weryfikacja live przez API POMINIĘTA w tej sesji — próba uruchomienia tymczasowego backendu na
+porcie 8091 napotkała krytyczny brak pamięci RAM w systemie (2,2 GB wolnego z 16 GB, prawdopodobnie
+przez równoległe działanie IntelliJ + backendu użytkownika na porcie 8082 + próby uruchomienia
+drugiego backendu), harness ubił dwa procesy monitorujące start backendu z komunikatem o niskiej
+pamięci — backend zatrzymany, PONOWNA próba NIE podjęta zgodnie z ostrzeżeniem harnessu. Zamiast
+tego poleganie na: `verify.js` (wykonuje KAŻDY kod pytania i porównuje z kluczem — to najsilniejsza
+dostępna weryfikacja poprawności), `node -e "JSON.parse(...)"` na wszystkich 7 plików, `git status`
+potwierdzający, że zmienione zostały WYŁĄCZNIE pliki treści tego rozdziału (żadnego kodu Java/
+config). Ryzyko regresji ocenione jako bardzo niskie (wyłącznie dane JSON, ten sam schemat co
+istniejące pliki) — **ZALECANE: przy następnej okazji, gdy backend użytkownika i tak będzie
+restartowany, zweryfikować `_js_11_dom` przez API razem z kolejnym rozdziałem**, dokładnie jak
+opisano w sekcji "Weryfikacja live i commity" w `JS_COURSE_STAGE_PROMPT.md`.
+
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-**Rozdziały `_js_01`..`_js_10` są w PEŁNI gotowe (30/100 każda lekcja, 70/70 lekcji).** Kontynuować
-Fazę 2 od `_js_11_dom` (7 lekcji), potem `_js_12_zdarzenia` (6), `_js_13_asynchronicznosc` (6),
+**Rozdziały `_js_01`..`_js_11` są w PEŁNI gotowe (30/100 każda lekcja, 77/77 lekcji).** Kontynuować
+Fazę 2 od `_js_12_zdarzenia` (6 lekcji), potem `_js_13_asynchronicznosc` (6),
 `_js_14_srodowisko_przegladarkowe` (6) — wszystkie wciąż na poziomie Fazy 1 (patrz tabele
 historyczne wyżej w tym pliku dla dokładnych liczb ćwiczeń/quiz aktualnie w każdej lekcji).
+`_js_12_zdarzenia` prawdopodobnie ma TEN SAM problem braku `document`/`window`/zdarzeń w piaskownicy
+generatora, co `_js_11_dom` — zastosuj te same trzy techniki opisane w sekcji `_js_11_dom` wyżej
+(trik ReferenceError/typeof, symulacja przez czysty JS, pytania pojęciowe), i pamiętaj o poprawce
+`apply()` w `lib.js` (już scommitowanej, nie trzeba jej powtarzać). PRZY OKAZJI tego rozdziału (albo
+najbliższej, gdy backend użytkownika będzie i tak restartowany) zweryfikuj live przez API również
+`_js_11_dom`, pominięty w tej sesji z powodu braku pamięci RAM w systemie.
 
 **KOREKTA WAŻNEJ NIEŚCISŁOŚCI z poprzedniej wersji tej sekcji**: moduły ES (`import`/`export`)
 **DZIAŁAJĄ** w generatorze — `lib.js` ma funkcję `isModuleCode()` + `runModule()`/`modrun.mjs`
