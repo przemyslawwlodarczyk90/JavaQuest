@@ -33,7 +33,8 @@ function fmt(v) {
 }
 function fmtLoose(v) { return typeof v === 'string' ? v : fmt(v); }
 
-const POLY = `globalThis.structuredClone = function sc(v, seen) { seen = seen || new Map(); if (v === null || typeof v !== 'object') { if (typeof v === 'function' || typeof v === 'symbol') { const e = new Error('cannot clone'); e.name = 'DataCloneError'; throw e; } return v; } if (seen.has(v)) return seen.get(v); if (v instanceof Date) return new Date(v.getTime()); let r; if (v instanceof Map) { r = new Map(); seen.set(v, r); v.forEach((x, k) => r.set(sc(k, seen), sc(x, seen))); return r; } if (v instanceof Set) { r = new Set(); seen.set(v, r); v.forEach(x => r.add(sc(x, seen))); return r; } r = Array.isArray(v) ? [] : {}; seen.set(v, r); for (const k of Object.keys(v)) { if (typeof v[k] === 'function') { const e = new Error('cannot clone'); e.name = 'DataCloneError'; throw e; } r[k] = sc(v[k], seen); } return r; };`;
+const POLY = `globalThis.structuredClone = function sc(v, seen) { seen = seen || new Map(); if (v === null || typeof v !== 'object') { if (typeof v === 'function' || typeof v === 'symbol') { const e = new Error('cannot clone'); e.name = 'DataCloneError'; throw e; } return v; } if (seen.has(v)) return seen.get(v); if (v instanceof Date) return new Date(v.getTime()); let r; if (v instanceof Map) { r = new Map(); seen.set(v, r); v.forEach((x, k) => r.set(sc(k, seen), sc(x, seen))); return r; } if (v instanceof Set) { r = new Set(); seen.set(v, r); v.forEach(x => r.add(sc(x, seen))); return r; } r = Array.isArray(v) ? [] : {}; seen.set(v, r); for (const k of Object.keys(v)) { if (typeof v[k] === 'function') { const e = new Error('cannot clone'); e.name = 'DataCloneError'; throw e; } r[k] = sc(v[k], seen); } return r; };
+globalThis.FormData = class FormData { constructor(){ this._e = []; } append(k,v){ this._e.push([k, typeof v === 'string' ? v : String(v)]); } get(k){ const e = this._e.find(p => p[0] === k); return e ? e[1] : null; } getAll(k){ return this._e.filter(p => p[0] === k).map(p => p[1]); } has(k){ return this._e.some(p => p[0] === k); } delete(k){ this._e = this._e.filter(p => p[0] !== k); } set(k,v){ this.delete(k); this.append(k,v); } entries(){ return this._e[Symbol.iterator](); } keys(){ return this._e.map(p => p[0])[Symbol.iterator](); } values(){ return this._e.map(p => p[1])[Symbol.iterator](); } forEach(fn){ this._e.forEach(p => fn(p[1], p[0])); } [Symbol.iterator](){ return this.entries(); } };`;
 // Kod wieloplikowy / z import-export uruchamiany jest jako moduly ES w procesie potomnym (modrun.mjs).
 // Konwencja: pliki oddzielone naglowkami `// nazwa.js`; wejscie = main.js albo ostatni plik.
 function isModuleCode(code) {
@@ -171,7 +172,7 @@ function build(code, wrong, expl, idx) {
   const pos = ((idx * 7 + 3) % 4);
   const arr = wr.slice(); arr.splice(pos, 0, correct);
   const options = {}; ['A', 'B', 'C', 'D'].forEach((k, i) => options[k] = arr[i]);
-  const WL = /\b(JSON|URL|API|HTTP|HTML|CSS|UTF|JVM)\b/g;
+  const WL = /\b(JSON|URL|API|HTTP|HTML|CSS|UTF|JVM|GET|POST|PUT|PATCH|DELETE)\b/g;
   for (const v of arr) if (/\b[A-Z]{2,}\b/.test(v.replace(WL, ''))) throw new Error('ALLCAPS w opcji: ' + v);
   if (/\b[A-Z][A-Z_]{2,}\b/.test(code.replace(WL, ''))) throw new Error('UPPERCASE identyfikator w kodzie: ' + code);
   if (new Set(arr).size !== 4) throw new Error('duplikaty opcji: ' + JSON.stringify(arr) + ' dla ' + code);
