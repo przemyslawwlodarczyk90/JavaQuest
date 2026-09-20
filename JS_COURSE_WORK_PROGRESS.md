@@ -6,9 +6,9 @@
 
 ## Aktualny etap
 
-**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji). Faza 2: rozdziały 1-9
-ukończone w całości, a w `_js_10_moduly` ukończone lekcje 1-3. Każda ukończona lekcja ma
-30 ćwiczeń i 100 pytań quizowych. Aktualny następny krok znajduje się na końcu pliku.**
+**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji). Faza 2: rozdziały 1-10
+ukończone w całości (10 z 14). Każda ukończona lekcja ma 30 ćwiczeń i 100 pytań quizowych.
+Aktualny następny krok znajduje się na końcu pliku.**
 
 Sesja 2026-09-16: użytkownik poprosił o drugi blok platformy — równoległy kurs JavaScript,
 zbudowany na bazie gotowego materiału źródłowego w `dodatkowe materiały/kurs js/js-course/`
@@ -742,42 +742,111 @@ JS 14). Backend na tej maszynie wymaga `JAVA_HOME=C:\Users\kapit\.jdks\openjdk-2
 `UnsupportedClassVersionError`); po weryfikacji zatrzymywać tylko procesy `mvnw`/`spring-boot:run`, NIE
 proces IntelliJ JPS (długo żyjący `java` z `-Xmx700m`).
 
-## `_js_10_moduly` — Faza 2 W TOKU (3/7 lekcji ukończone)
+## `_js_10_moduly` (7/7 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-20, fork kontynuujący pracę)
 
-Ukończone lekcje: `01_WhatAreEsModules`, `02_NamedImport`, `03_DefaultImport` — każda ma dokładnie
-30 ćwiczeń i 100 pytań quizowych. Lekcja 3 została przejęta ze stanu 29/78 i domknięta o praktykę
-re-eksportu domyślnego przez plik zbiorczy oraz 22 pytania. Nowe pytania obejmują m.in. wyrażenia
-jako default, mutowalne obiekty przy niemutowalnym wiązaniu importu, hoisting deklaracji funkcji,
-niedozwolone `export default const`, fakt że `export *` pomija default, jawny re-eksport,
-`import domyslny, * as namespace`, Promise, klasy i jednokrotne wykonanie modułu.
+Wszystkie 7 lekcji rozdziału 10 mają **30 ćwiczeń / 100 quiz**: `01_WhatAreEsModules`,
+`02_NamedImport`, `03_DefaultImport` (ukończone w poprzedniej sesji), oraz w TEJ sesji
+`04_CombiningNamedAndDefaultImport`, `05_NamespaceImport`, `06_DynamicImport`,
+`07_ModulesAndReactAnalogy`. DZIESIĄTY w pełni ukończony rozdział kursu JS (po `_js_01`-`_js_09`).
+Commit: "Kurs JavaScript: _js_10_moduly UKONCZONY (7/7, 30/100 kazda lekcja)".
 
-`verify.js` ponownie wykonał prawdziwe, wieloplikowe moduły ES przez `vm.SourceTextModule`:
-`03_DefaultImport.json` ma 14 bloków teorii, 30 ćwiczeń, 100 quizów, w tym 76 pytań z kodem;
-brak błędnych kluczy odpowiedzi, duplikatów opcji, cyrylicy i frazy `native code`.
+Lekcje 4-7 napisane NOWĄ METODĄ (generator w `scripts/content-migration/js-quiz-generator/`,
+odpowiedzi wyliczane wykonaniem prawdziwego, wieloplikowego kodu ES modules przez `modrun.mjs`/
+`vm.SourceTextModule` — WSZYSTKIE cztery lekcje intensywnie korzystają z rzeczywistych
+`import`/`export` w kodzie pytań, nie z symulacji). Tematy: łączenie importu domyślnego i
+nazwanego w jednej linii (+ alias, wspólny stan modułu, `export {x as default}` vs `export default
+x` czyli kopia kontra żywe wiązanie), namespace import (`import * as X`, klucz `.default`,
+read-only obiektu namespace ale MUTOWALNA zawartość wewnątrz, żywe wiązania dla zmiennych, cache
+modułu), import dynamiczny (`import()` jako `Promise`, `.then()`, `Promise.all` dla równoległego
+ładowania, cache przy wielokrotnym imporcie tej samej ścieżki, obsługa błędów przez try/catch,
+lazy loading warunkowe), i zamykająca lekcja z pełną analogią do komponentów React (barrel files/
+`export * from`, komponent importujący inny komponent, `React.lazy()` = `import()` pod spodem).
 
-WAŻNA POPRAWKA GENERATORA: `fmt()` w `lib.js` nie formatował `Map`/`Set` (wypisywał `{}`), więc w lekcjach
-`01`-`03` cztery klucze odpowiedzi były błędne (`{}` zamiast `Set(2) { 2, 4 }` itd.) — poprawione, `fmt` zna
-teraz format Node: `Map(2) { "a" => 1, "b" => 2 }`, `Set(3) { 1, 2, 3 }`. `verify.js` re-wykonuje kod tym
-samym `fmt`, więc PRZED tą poprawką nie wykryłby błędu — przy nowych typach wypisywanych wartości
-(`WeakMap`, `Date`, klasy z polami, `Symbol`) sprawdzić wzrokowo `review.js`, czy poprawne odpowiedzi nie są
-puste (`{}`). Piaskownica `vm` nie ma `URLSearchParams`, `document`, `window`, `fetch` (rozdziały 11-14
-wymagają ich stubów albo pytań bez wykonywania kodu). `WeakMap` na kluczach symbolowych działa w Node 24.
+**Ustalenia/pułapki znalezione w tej sesji (ważne dla `_js_11`-`_js_14`):**
+1. **`eval("import ...")` NIGDY nie działa** — `import`/`export` to deklaracje statyczne, niedozwolone
+   wewnątrz `eval()`, więc `eval('import x, {} from "./a.js"')` ZAWSZE rzuca `SyntaxError`,
+   NIEZALEŻNIE od tego, czy testowany import jest poprawny czy nie. Użycie tego triku do pytań
+   "czy to SyntaxError?" daje pozornie poprawną (bo execution-verified), ale MERYTORYCZNIE BŁĘDNĄ
+   odpowiedź (np. "puste klamry to błąd" — nieprawda, są poprawne). Do testowania błędów
+   modułowych (zła kolejność importu, brakujący `export default`, brakująca nazwana wartość) pisz
+   PRAWDZIWY, dosłowny (niepoprawny) `import` na najwyższym poziomie pliku `main.js` w wieloplikowym
+   bloku — `modrun.mjs` łapie prawdziwy `SyntaxError` z parsowania/linkowania modułu przez własny
+   `try/catch` i to jest wiarygodny wynik.
+2. **Generator odrzuca WIELKIE LITERY (3+ znaki, poza białą listą `JSON/URL/API/HTTP/HTML/CSS/UTF/
+   JVM`) WSZĘDZIE w kodzie pytania z kodem** — nie tylko w identyfikatorach (`KURS_EUR`, `MAX_WPISOW`),
+   ale też w STRINGACH i KOMENTARZACH (`"PLN"`, `"NAGLOWEK"`, `"ID-"`, `"PDF"`, `// POPRAWNIE`)
+   ORAZ osobno w gotowych OPCJACH quizu (próg 2+ znaki tam). Pisz stałe modułowe w kursie JS
+   CAMELCASE (`kursEur`, `maxWpisow`), nie `SCREAMING_SNAKE_CASE` — w exercises (`ex`) to ograniczenie
+   NIE obowiązuje (nie są sprawdzane przez `build()`), ale dla spójności warto stosować to samo.
+3. Dwie stare (Faza 1) lekcje w tym rozdziale miały ćwiczenia "napisz komentarz pokazujący import
+   komponentu X.jsx" z DOSŁOWNYM, nieskomentowanym `import ... from "./X.jsx"` wskazującym na
+   nieistniejący plik — `verify.js`/`run()` traktuje to jako prawdziwy kod i rzuca błędem
+   (`Cannot find module`). Naprawione w `04_CombiningNamedAndDefaultImport` (ćwiczenie 4, Card.jsx)
+   i `07_ModulesAndReactAnalogy` (ćwiczenie 1, Card.jsx) przez zakomentowanie linii `import` —
+   zgodnie z oryginalną intencją zadania ("napisz KOMENTARZ pokazujący..."). Sprawdź podobny wzorzec
+   przy pracy nad `_js_11`-`_js_14`, jeśli tam też występują analogiczne "ilustracyjne" ćwiczenia.
+4. `apply()` rzuca przy duplikacie DOKŁADNEGO tekstu pytania — łatwo przypadkowo skopiować ten sam
+   scenariusz dwa razy przy pisaniu wielu bloków tematycznych pod rząd (zdarzyło się w tej sesji
+   w `07_ModulesAndReactAnalogy` — 3 duplikaty wykryte i usunięte przed sukcesem generatora).
+
+Wszystkie 4 pliki zweryfikowane: `verify.js` czyste (T14/E30/Q100, brak `BAD:`), brak duplikatów
+opcji quizu, brak cyrylicy, brak `native code`, przepuszczone przez `fix_allcaps.js`+
+`fix_allcaps_residual.js` (BEZ `fix_http_method_case.js` — rozdział nie dotyczy HTTP), `ident.js`
+pokazuje wyłącznie fałszywe trafienia (nazwa komponentu/funkcji pisana wielką literą kontra jej
+zwracany string pisany małą, np. `Button`/`button`, `Alert`/`alert` — nie błędy). Zweryfikowane live
+przez API na TYMCZASOWYM backendzie na porcie 8091 (NIE na porcie 8082, gdzie już działał backend
+uruchomiony przez użytkownika z IntelliJ — CELOWO nie dotknięty, żeby nie przerwać sesji
+użytkownika): wszystkie 4 lekcje zwracają 14/30/100, `GET /api/chapters?track=JAVA` → 41 (bez
+zmian), `GET /api/chapters?track=JAVASCRIPT` → 14 (bez zmian), `_js_09_kolekcje/01_SetUniqueValues`
+(100 quiz) i `_01_fundamentals/06_StringsAndBuilder` (15 bloków teorii) — oba bez zmian. Tymczasowy
+backend zatrzymany po weryfikacji. Scommitowane w jednym commicie.
 
 ## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
 
-Kontynuować od `_js_10_moduly/04_CombiningNamedAndDefaultImport` (Faza 1: 7/30 ćwiczeń,
-6/100 quiz), potem lekcje 5-7 tego rozdziału oraz
-`_js_11_dom` (7), `_js_12_zdarzenia` (6), `_js_13_asynchronicznosc` (6), `_js_14_srodowisko_przegladarkowe`
-(6) — wszystkie wciąż na poziomie Fazy 1 (patrz tabele historyczne wyżej). Rozdziały `_js_01`..`_js_09`
-są w pełni gotowe (30/100 każda lekcja). Uwaga: moduły ES (`import`/`export`) nie działają w `vm.runInNewContext`
-— pytania z kodem trzeba pisać jako pojedyncze pliki bez `import` albo symulować moduły obiektami/funkcjami
-(wzorzec IIFE), a `import()` dynamiczny pokazywać przez `Promise.resolve(...)` w `setTimeout`. Wzór danych:
-`scripts/content-migration/js-quiz-generator/example-lesson-data.js`. Dla każdej lekcji:
-przeczytaj istniejący plik (teoria, dotychczasowe ćwiczenia/quiz), napisz dane w stylu
-`example-lesson-data.js` (14-21 nowych ćwiczeń, ~78 pytań z kodem + ~16 pojęciowych, docelowo
-30/100), uruchom generator, `fix_allcaps*.js`, `verify.js`, przejrzyj `review.js`, commit. Po
-rozdziale: `mvnw.cmd resources:resources`, backend, curl API (teoria/ćwiczenia/quiz), regresja,
-zatrzymanie backendu, commit. Pytania o `this` bez obiektu przed kropką ZAWSZE zaczynaj od
+**Rozdziały `_js_01`..`_js_10` są w PEŁNI gotowe (30/100 każda lekcja, 70/70 lekcji).** Kontynuować
+Fazę 2 od `_js_11_dom` (7 lekcji), potem `_js_12_zdarzenia` (6), `_js_13_asynchronicznosc` (6),
+`_js_14_srodowisko_przegladarkowe` (6) — wszystkie wciąż na poziomie Fazy 1 (patrz tabele
+historyczne wyżej w tym pliku dla dokładnych liczb ćwiczeń/quiz aktualnie w każdej lekcji).
+
+**KOREKTA WAŻNEJ NIEŚCISŁOŚCI z poprzedniej wersji tej sekcji**: moduły ES (`import`/`export`)
+**DZIAŁAJĄ** w generatorze — `lib.js` ma funkcję `isModuleCode()` + `runModule()`/`modrun.mjs`
+(`vm.SourceTextModule` w osobnym procesie Node z `--experimental-vm-modules`), która automatycznie
+przechwytuje kod zaczynający się od `import`/`export` albo zawierający nagłówki `// plik.js` i
+wykonuje go jako PRAWDZIWE, wieloplikowe moduły ES. Rozdział `_js_10_moduly` (w tym lekcje 4-7
+ukończone w tej sesji) intensywnie z tego korzysta — NIE trzeba symulować modułów przez IIFE. Ta
+sama technika NIE jest jednak potrzebna dla `_js_11`-`_js_14` (te rozdziały nie dotyczą już
+`import`/`export`), ale wymagają CZEGOŚ INNEGO: piaskownica `vm`/`modrun.mjs` NIE MA `document`,
+`window`, `fetch`, `URLSearchParams`, `localStorage` (przeglądarkowe API) — pytania z kodem
+wymagające tych obiektów albo trzeba pisać jako pytania POJĘCIOWE (`T()`, bez wykonania), albo
+dopisać do `lib.js`/`modrun.mjs` lekkie stuby tych API PRZED napisaniem pytań z kodem dla `_js_11`
+(DOM) i `_js_14` (środowisko przeglądarkowe/`window`) — sprawdź na początku pracy nad `_js_11`,
+czy taki stub już istnieje, zanim zaczniesz pisać pytania zakładające jego brak.
+
+**Pułapki z sesji ukończenia `_js_10` (pełny opis wyżej, sekcja `_js_10_moduly`), zastosuj też do
+`_js_11`-`_js_14`:**
+1. NIGDY nie testuj błędów składniowych przez `eval("...")` — `eval` nie obsługuje deklaracji
+   `import`/`export` (nie dotyczy to już `_js_11`+, ale zasada ogólna: nie używaj `eval` do
+   testowania SyntaxError, gdy błąd zależy od czegoś, czego `eval` sam z siebie nie obsługuje).
+2. Generator odrzuca WIELKIE LITERY (3+ znaki, poza białą listą) WSZĘDZIE w kodzie i OPCJACH
+   pytania z kodem — również w stringach/komentarzach, nie tylko identyfikatorach. Pisz stałe
+   camelCase.
+3. Sprawdź istniejące, stare (Faza 1) ćwiczenia typu "napisz komentarz pokazujący..." pod kątem
+   dosłownego, nieskomentowanego kodu odwołującego się do nieistniejących plików — `verify.js`
+   będzie to zgłaszał jako `exerr`.
+4. `apply()` rzuca przy duplikacie identycznego tekstu pytania — łatwo się powtórzyć przy pisaniu
+   wielu bloków tematycznych pod rząd, szczególnie gdy kopiuje się wzorce z wcześniejszych sekcji.
+
+Dla każdej lekcji: przeczytaj istniejący plik (teoria, dotychczasowe ćwiczenia/quiz), skopiuj
+`example-lesson-data.js` jako scratch `lNN_MM.js` w `scripts/content-migration/js-quiz-generator/`
+(NIE commituj scratchy — usuń je po zakończeniu pracy nad plikiem/rozdziałem), napisz dane (14-23
+nowych ćwiczeń, ~85-95 pytań z kodem + ~10-15 pojęciowych, docelowo dokładnie 30/100), uruchom
+generator, `fix_allcaps*.js`+`fix_allcaps_residual.js`, `verify.js` (musi być czyste), `ident.js`,
+przejrzyj `review.js`, commit. Po całym rozdziale: `mvnw.cmd resources:resources`, backend, curl API
+(teoria/ćwiczenia/quiz każdej lekcji), regresja na obu torach, zatrzymanie backendu, commit. **Jeśli
+backend już działa na porcie 8082 (np. uruchomiony przez użytkownika z IntelliJ) — NIE zatrzymuj go
+i NIE restartuj, tylko uruchom WŁASNY, tymczasowy backend na innym porcie (np. `--server.port=8091`
+przez `-Dspring-boot.run.arguments=--server.port=8091`) do weryfikacji, i zatrzymaj TYLKO ten
+tymczasowy proces po zakończeniu.** Pytania o `this` bez obiektu przed kropką ZAWSZE zaczynaj od
 `"use strict";`. Bez pytania użytkownika o zgodę między lekcjami/rozdziałami.
 
 ## Następny krok (STARSZY opis z sesji 2026-09-17/18, zachowany dla kontekstu)
