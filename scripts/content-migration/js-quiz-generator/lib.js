@@ -172,7 +172,7 @@ function build(code, wrong, expl, idx) {
   const pos = ((idx * 7 + 3) % 4);
   const arr = wr.slice(); arr.splice(pos, 0, correct);
   const options = {}; ['A', 'B', 'C', 'D'].forEach((k, i) => options[k] = arr[i]);
-  const WL = /\b(JSON|URL|API|HTTP|HTML|CSS|UTF|JVM|GET|POST|PUT|PATCH|DELETE)\b/g;
+  const WL = /\b(JSON|URL|API|HTTP|HTML|CSS|UTF|JVM|GET|POST|PUT|PATCH|DELETE|HEAD)\b/g;
   for (const v of arr) if (/\b[A-Z]{2,}\b/.test(v.replace(WL, ''))) throw new Error('ALLCAPS w opcji: ' + v);
   if (/\b[A-Z][A-Z_]{2,}\b/.test(code.replace(WL, ''))) throw new Error('UPPERCASE identyfikator w kodzie: ' + code);
   if (new Set(arr).size !== 4) throw new Error('duplikaty opcji: ' + JSON.stringify(arr) + ' dla ' + code);
