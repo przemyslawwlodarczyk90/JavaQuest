@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getChapters } from '../api'
+import { useProgress } from '../useProgress'
 
 export default function ChapterListPage({ track = 'JAVA' }) {
+  const { countInChapter } = useProgress()
   const [status, setStatus] = useState('loading')
   const [chapters, setChapters] = useState([])
   const [error, setError] = useState('')
@@ -34,7 +36,9 @@ export default function ChapterListPage({ track = 'JAVA' }) {
         <Link key={chapter.slug} to={`/rozdzial/${chapter.slug}`} className="chapter-card">
           <span className="chapter-card__slug">{chapter.slug}</span>
           <h2>{chapter.title}</h2>
-          <span className="chapter-card__count">{chapter.lessonCount} lekcji</span>
+          <span className="chapter-card__count">
+            {countInChapter(chapter.slug)} / {chapter.lessonCount} lekcji zrobionych
+          </span>
         </Link>
       ))}
     </div>

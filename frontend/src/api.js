@@ -114,8 +114,29 @@ export function getExercises(chapterSlug, lessonSlug) {
   return getJson(lessonPath(chapterSlug, lessonSlug, 'exercises'))
 }
 
-export function getQuiz(chapterSlug, lessonSlug) {
+// Postep uzytkownika (checkbox "lekcja zrobiona") - prywatny, per konto z tokenu.
+export function getProgress() {
+  return getJson('/api/progress')
+}
+
+export function setLessonCompleted(chapterSlug, lessonSlug, completed) {
+  return request(lessonPath(chapterSlug, lessonSlug, 'progress'), { method: 'PUT', body: { completed } })
+}
+
+// Quiz jest losowany i oceniany na serwerze: status -> start podejscia -> odpowiedzi pytanie po pytaniu.
+export function getQuizStatus(chapterSlug, lessonSlug) {
   return getJson(lessonPath(chapterSlug, lessonSlug, 'quiz'))
+}
+
+export function startQuizAttempt(chapterSlug, lessonSlug) {
+  return request(lessonPath(chapterSlug, lessonSlug, 'quiz/attempts'), { method: 'POST' })
+}
+
+export function answerQuizQuestion(chapterSlug, lessonSlug, attemptId, position, option) {
+  return request(lessonPath(chapterSlug, lessonSlug, `quiz/attempts/${attemptId}/answers`), {
+    method: 'POST',
+    body: { position, option },
+  })
 }
 
 export function getCriticalTopics() {
