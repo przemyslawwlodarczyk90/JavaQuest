@@ -36,7 +36,11 @@ Platforma (`com.example.javaquest.web.JavaQuestApplication`, port **8082**) wyma
 
 **Uruchomienie:** `mvnw.cmd spring-boot:run "-Dspring-boot.run.mainClass=com.example.javaquest.web.JavaQuestApplication"`; frontend: `cd frontend && npm run build` (wynik trafia do `src/main/resources/static`) lub `npm run dev`.
 
-Tabele treści kursu (rozdziały, lekcje, teoria, ćwiczenia, quizy) są przy każdym starcie czyszczone i zasiewane z plików JSON; tabele użytkowników (`app_user`, `confirmation_token`) są trwałe.
+Tabele treści kursu (rozdziały, lekcje, teoria, ćwiczenia, quizy) są przy każdym starcie czyszczone i zasiewane z plików JSON; tabele użytkowników (`app_user`, `confirmation_token`) oraz postępu (`lesson_progress`, `quiz_attempts`, `quiz_attempt_questions`) są trwałe. Dlatego dane użytkownika wskazują lekcje i pytania kluczami naturalnymi (slug rozdziału/lekcji, numer pytania), a nie kluczami obcymi do odtwarzanych tabel.
+
+**Postęp i quiz (per użytkownik):**
+- Checkbox „zrobione” przy lekcji: `GET /api/progress`, `PUT /api/chapters/{c}/lessons/{l}/progress` (`{"completed": true|false}`). Widoczny tylko dla właściciela konta.
+- Quiz losuje i ocenia serwer: `GET …/quiz` (stan), `POST …/quiz/attempts` (start albo wznowienie), `POST …/quiz/attempts/{id}/answers`. Z puli losowane jest max `platform.quiz.draw-size` (20) pytań, w losowej kolejności; w pierwszej kolejności te, których użytkownik jeszcze nie miał. Gdy pytań jest mniej niż 20, dostaje wszystkie, ale za każdym razem w innej kolejności. Zaliczenie: `ceil(80% · liczba pytań)` poprawnych (`platform.quiz.pass-percent`) — np. 20→16, 6→5, 5→4. Niezdany quiz = powtórka z nowym losowaniem.
 
 ---
 
