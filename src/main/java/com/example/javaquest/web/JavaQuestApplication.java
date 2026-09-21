@@ -87,27 +87,39 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @EnableJpaRepositories("com.example.javaquest.platform")
 public class JavaQuestApplication {
 
+    // Globalny application.properties WYKLUCZA auto-konfiguracje Spring Security dla calego repo
+    // (zeby lekcje kursu nie dostawaly 401 - patrz komentarze tamze). Platforma potrzebuje
+    // prawdziwego Spring Security (logowanie JWT, ochrona /api/**), wiec ta lista jest tu
+    // nadpisana System property (jedyny niezawodny sposob - patrz javadoc klasy) - IDENTYCZNA jak
+    // globalna, ale BEZ SecurityAutoConfiguration i SecurityFilterAutoConfiguration (ta druga
+    // rejestruje filtr springSecurityFilterChain w Tomcacie - bez niej nasz SecurityFilterChain
+    // istnialby, ale nie dostawalby zadnych zadan). Zostaja wykluczone: UserDetailsService
+    // (nie uzywamy - filtr JWT sam czyta uzytkownikow), Management*, reaktywne i pozostale
+    // (Rabbit/ActiveMQ/JMS/Zipkin). Dopisujac cos do globalnej listy, dopisz to takze tutaj.
+    private static final String PLATFORM_AUTOCONFIGURE_EXCLUDE = String.join(",",
+            "org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration",
+            "org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration",
+            "org.springframework.boot.autoconfigure.security.reactive.ReactiveSecurityAutoConfiguration",
+            "org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDetailsServiceAutoConfiguration",
+            "org.springframework.boot.actuate.autoconfigure.security.reactive.ReactiveManagementWebSecurityAutoConfiguration",
+            "org.springframework.boot.actuate.autoconfigure.amqp.RabbitHealthContributorAutoConfiguration",
+            "org.springframework.boot.autoconfigure.jms.activemq.ActiveMQAutoConfiguration",
+            "org.springframework.boot.actuate.autoconfigure.jms.JmsHealthContributorAutoConfiguration",
+            "org.springframework.boot.actuate.autoconfigure.tracing.zipkin.ZipkinAutoConfiguration");
+
     public static void main(String[] args) {
         // Patrz javadoc klasy - System property (nie .properties() ponizej, nie globalny
         // application.properties) to jedyny niezawodny sposob ustawienia domyslnego portu.
         System.setProperty("server.port", "8082");
+        System.setProperty("spring.autoconfigure.exclude", PLATFORM_AUTOCONFIGURE_EXCLUDE);
 
         new SpringApplicationBuilder(JavaQuestApplication.class)
                 // Flyway na classpath (uzywany przez inne rozdzialy kursu, np. _10_dao/_23_spring_data_jpa)
                 // wylaczylby domyslne tworzenie schematu przez Hibernate (ddl-auto=none) i probowalby
                 // zaaplikowac NIEZWIAZANE migracje z src/main/resources/db/migration na naszej bazie -
-                // ta platforma ma WLASNY, niezalezny schemat tworzony przez Hibernate (Faza 1: prosty
-                // model nawigacyjny, bez potrzeby migracji). Ustawione tu (nie w globalnym
-                // application.properties), zeby NIE wplynac na lekcje kursu, ktore faktycznie
-                // demonstruja Flyway we wlasnych, izolowanych kontekstach.
-                .properties(
-                        "spring.flyway.enabled=false",
-                        "spring.jpa.hibernate.ddl-auto=create-drop",
-                        "spring.datasource.url=jdbc:h2:mem:javaquest_platform;DB_CLOSE_DELAY=-1",
-                        "spring.datasource.driver-class-name=org.h2.Driver",
-                        "spring.datasource.username=sa",
-                        "spring.datasource.password="
-                )
+                // ta platforma ma WLASNY schemat tworzony przez Hibernate (ddl-auto=update).
+                // Baza, Hibernate, SMTP i JWT: javaquest-platform.properties (PlatformPropertiesConfig).
+                .properties("spring.flyway.enabled=false")
                 .run(args);
     }
 
