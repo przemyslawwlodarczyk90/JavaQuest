@@ -195,7 +195,7 @@ function apply(file, data, targetEx, targetQ) {
   // weryfikacja rozwiazan cwiczen (wykonanie)
   data.ex.forEach(([prompt, hint, sol], i) => {
     const r = run(sol);
-    if (r.err && !/DOM|document|window|fetch|setInterval|clearInterval|localStorage|sessionStorage|location\./.test(sol)) throw new Error('Cwiczenie ' + i + ' rzuca ' + r.err + ': ' + prompt);
+    if (r.err && !/DOM|document|window|fetch|setInterval|clearInterval|localStorage|sessionStorage|location\.|history\.|console\.(table|time|timeEnd|group|groupEnd|count|assert|trace)/.test(sol)) throw new Error('Cwiczenie ' + i + ' rzuca ' + r.err + ': ' + prompt);
     j.exercises.push({ prompt, hint, solution: sol });
   });
   const base = j.quiz.length;

@@ -6,9 +6,12 @@
 
 ## Aktualny etap
 
-**Faza 1 UKOŃCZONA dla wszystkich 14/14 rozdziałów (90/90 lekcji). Faza 2: rozdziały 1-11
-ukończone w całości (11 z 14). Każda ukończona lekcja ma 30 ćwiczeń i 100 pytań quizowych.
-Aktualny następny krok znajduje się na końcu pliku.**
+**KURS JAVASCRIPT UKOŃCZONY W CAŁOŚCI — Faza 1 i Faza 2 dla wszystkich 14/14 rozdziałów
+(90/90 lekcji). Każda lekcja ma docelowe 30 ćwiczeń i co najmniej 100 pytań quizowych
+(kilka lekcji z niewielką nadwyżką, np. 101/107/109 — zaakceptowane, jak w kursie Java).
+Sesja 2026-09-21 dokończyła ostatni rozdział, `_js_14_srodowisko_przegladarkowe`
+(lekcje 04-06) — patrz sekcja niżej po szczegóły. Brak dalszych kroków dla tego kursu,
+chyba że użytkownik zleci nowe rozdziały/materiał.**
 
 Sesja 2026-09-16: użytkownik poprosił o drugi blok platformy — równoległy kurs JavaScript,
 zbudowany na bazie gotowego materiału źródłowego w `dodatkowe materiały/kurs js/js-course/`
@@ -975,22 +978,77 @@ ukończony rozdział kursu JS (po `_js_01`-`_js_12`).**
 Wszystkie 6 plików zweryfikowane: `verify.js` czyste, brak duplikatów opcji, brak cyrylicy, brak
 `native code`, przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js`.
 
-## Następny krok (AKTUALNY — nadpisuje starszy opis poniżej)
+## `_js_14_srodowisko_przegladarkowe` (6/6 lekcji) — Faza 2 UKOŃCZONA (sesja 2026-09-21) — ZAMYKA CAŁY KURS JS
 
-**Rozdziały `_js_01`..`_js_13` są w PEŁNI gotowe (30/100+ każda lekcja, 89/89 lekcji).**
-Pozostaje WYŁĄCZNIE `_js_14_srodowisko_przegladarkowe` (6 lekcji, ostatni rozdział całego kursu
-JS) — wciąż na poziomie Fazy 1 (sprawdź dokładne liczby w tabeli historycznej wyżej w tym pliku,
-sekcja `_js_14_srodowisko_przegladarkowe`). Tematy: `window` (wymiary/scroll/zdarzenia),
-`localStorage`/`sessionStorage`, `window.location`/`URLSearchParams`, `window.history`/History
-API, standardy ECMAScript, debugowanie w VS Code. **Zastosuj zasadę z punktu 1 wyżej: `window`
-jako obiekt globalny i jego zdarzenia (`resize`/`load`) to PRAWDZIWY fakt językowy (nie istnieją
-poza przeglądarką) — trik `ReferenceError`/`typeof` z `_js_11` nadaje się tu świetnie.
-`localStorage`/`sessionStorage`/`URLSearchParams`/`history` NIE są jednak przeglądarkowo-
-wyłączne w tym samym sensie (Node ma pewne odpowiedniki lub polyfille w praktyce) — rozważ
-osobno dla każdego, czy lepszy jest trik ReferenceError, współdzielony polyfill w `POLY`, czy
-lokalny mock per-pytanie, zanim zaczniesz pisać kod quizowy.** Po ukończeniu `_js_14` (i całego
-kursu JS): zweryfikuj live przez API cały rozdział, zaktualizuj ten plik z finalnym podsumowaniem
-90/90 lekcji ukończonych.
+Lekcje `01_WindowObject`, `02_LocalStorageAndSessionStorage`, `03_WindowLocation` były już
+ukończone (30/100+) z poprzedniej sesji. W tej sesji dokończono pozostałe trzy:
+
+- `04_WindowHistoryAndHistoryApi` — 30 ćwiczeń / 109 quiz. Kod z kodem wykonywalnym korzysta
+  z lokalnych klas `MockHistory`/`MiniEventTarget` (ten sam wzorzec co `_js_11`/`_js_12`) zamiast
+  prawdziwego `history`/`window`, bo `history` jest przeglądarkowo-wyłączny (nie istnieje w
+  piaskownicy `vm`). Odkryto i naprawiono PRZY OKAZJI dwa **pre-istniejące** błędy sprzed tej
+  sesji: (1) dwa duplikaty pytań quizowych z Fazy 1 kolidujące z nowymi (`Co robi
+  history.pushState...`, `Co zawiera e.state...`) — przeformułowane; (2) dwa ćwiczenia Fazy 1
+  (`exerr3`, `exerr5`) używające gołego `history.xxx` (bez `window.`/`location.`) rzucały
+  `ReferenceError` w `verify.js`, bo `history` nie był na białej liście wyjątków w
+  `lib.js`/`verify.js` (był tam tylko `document|window|fetch|...|location\.`) — DODANO
+  `history\.` do obu regexów (trwała poprawka, przyda się każdemu kolejnemu rozdziałowi
+  używającemu `history`).
+- `05_EcmaScriptStandards` — 30 ćwiczeń / 107 quiz. Lekcja jest w większości KONCEPCYJNA
+  (historia wersji ES/TC39/caniuse.com), więc quiz to głównie pytania `T()` (pojęciowe) plus
+  mniejsza pula pytań z kodem opartych o REALNIE wykonywalne, nowoczesne metody ES2019-ES2023
+  (`toSorted`/`toReversed`/`toSpliced`/`with`/`at`/`Object.hasOwn`/`replaceAll`/`flat`/
+  `flatMap`/`Object.fromEntries`) — wszystkie te metody DZIAŁAJĄ naprawdę w piaskownicy (silnik
+  V8 w tym Node.js je wspiera), więc dały się w pełni zweryfikować wykonaniem, bez żadnych
+  sztuczek/mocków.
+- `06_DebuggingInVsCode` — 30 ćwiczeń / 100 quiz. **WAŻNE ODKRYCIE TECHNICZNE**: `console.table`,
+  `console.time`, `console.timeEnd` NIE są zaimplementowane w obiekcie `con` piaskownicy
+  `lib.js` (tylko `log`/`error`/`warn`/`info`) — każde ich użycie rzuca `TypeError`, więc (a) NIE
+  można ich użyć w pytaniach quizowych z kodem (`C()`, bo `build()` też by rzucił), (b) ćwiczenia
+  Fazy 1 z tej lekcji używające ich (`exerr` w `verify.js`) wymagały DODANIA
+  `console\.(table|time|timeEnd|group|groupEnd|count|assert|trace)` do białej listy wyjątków w
+  `lib.js`/`verify.js` (analogicznie do poprawki `history\.` wyżej — trwała, przyda się w
+  przyszłości). Sam `debugger;` jest za to bezpieczny do wykonania — w piaskownicy bez
+  aktywnego inspektora jest cichym no-opem (zweryfikowane empirycznie), więc pytania z kodem
+  zawierające `debugger;` obok zwykłej logiki działają normalnie. Quiz tej lekcji, z uwagi na
+  temat (narzędzia, nie mechanika języka), jest w większości pojęciowy (`T()`), z mniejszością
+  pytań `C()` opartych o klasyczne, W PEŁNI wykonywalne "błędy do znalezienia debuggerem"
+  (off-by-one, brak `return`, `==` vs `===`, `var` kontra `let` w pętli z `setTimeout`, mutacja
+  obiektu przez referencję, `this` gubione w zwykłej funkcji, shadowing, `typeof null`,
+  `NaN === NaN`, kolejność `setTimeout` kontra kod synchroniczny).
+
+Wszystkie 3 pliki zweryfikowane: poprawny JSON, `grep`/test na cyrylicę i `native code` (brak),
+przepuszczone przez `fix_allcaps.js`+`fix_allcaps_residual.js`, `verify.js` czyste (`OK`) dla
+wszystkich trzech po poprawkach regexów opisanych wyżej, `ident.js` bez rzeczywistych problemów
+(tylko oczekiwane false-positive przy wielkiej literze na początku zdania/cudzysłowie).
+
+Zweryfikowane live przez tymczasowy backend na porcie 8091 (`JAVA_HOME` ustawiony ręcznie na
+`~/.jdks/openjdk-25.0.2`, `mvnw.cmd resources:resources` przed startem): `GET
+/api/chapters?track=JAVA` → 41 rozdziałów (bez zmian), `GET /api/chapters?track=JAVASCRIPT` →
+14 rozdziałów, suma `lessonCount` = 90 (bez zmian). Wszystkie 6 lekcji `_js_14` zwraca przez API
+dokładnie 14 bloków teorii / 30 ćwiczeń / quiz zgodny z liczbami wyżej (100, 100, 101, 109, 107,
+100). Regresja Javy bez zmian: `_01_fundamentals/06_StringsAndBuilder` → 15 bloków teorii,
+`_js_13_asynchronicznosc/06_RestApiPatterns` → 14 bloków. Backend zatrzymany po weryfikacji
+(potwierdzony brak procesów `java`). Scratch pliki generatora (`l14_04.js`/`l14_05.js`/
+`l14_06.js`) usunięte po zakończeniu pracy, zgodnie z konwencją.
+
+## KURS JAVASCRIPT UKOŃCZONY W CAŁOŚCI (2026-09-21)
+
+**Wszystkie 14/14 rozdziałów, 90/90 lekcji — Faza 1 (pełna teoria, 11 sekcji standardu) i Faza 2
+(30 ćwiczeń / 100+ pytań quizowych na lekcję) UKOŃCZONE.** Nie ma dalszego "następnego kroku" dla
+istniejącego zakresu tego kursu — kolejna praca nad kursem JS to już nowy zakres zlecony przez
+użytkownika (np. nowy rozdział spoza materiału źródłowego `dodatkowe materiały/kurs js/js-course/`,
+albo przegląd jakościowy istniejących 90 lekcji), a nie kontynuacja obecnego planu.
+
+**Dwie trwałe poprawki narzędziowe z tej sesji, ważne dla KAŻDEJ przyszłej pracy nad generatorem
+`scripts/content-migration/js-quiz-generator/`:** biała lista wyjątków od błędu `ReferenceError`/
+`TypeError` przy weryfikacji ćwiczeń (`lib.js` `apply()` i `verify.js`) obejmuje teraz również
+`history\.` oraz `console\.(table|time|timeEnd|group|groupEnd|count|assert|trace)` — oba
+dodano, bo to REALNE, przeglądarkowe/hostowe API niezaimplementowane w minimalnej piaskownicy
+`vm`, analogicznie do wcześniej istniejących `document`/`window`/`fetch`/`location\.`. Jeśli
+przyszła praca (Java lub JS) natrafi na podobny `TypeError`/`ReferenceError` dla INNEGO,
+realnego, ale niezaimplementowanego w piaskownicy API — rozszerz ten sam regex, zamiast obchodzić
+problem inaczej.
 
 **KOREKTA WAŻNEJ NIEŚCISŁOŚCI z poprzedniej wersji tej sekcji**: moduły ES (`import`/`export`)
 **DZIAŁAJĄ** w generatorze — `lib.js` ma funkcję `isModuleCode()` + `runModule()`/`modrun.mjs`
