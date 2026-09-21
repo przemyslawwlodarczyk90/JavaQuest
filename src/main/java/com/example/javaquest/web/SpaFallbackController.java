@@ -12,12 +12,13 @@ import org.springframework.web.bind.annotation.GetMapping;
  *
  * <p>Mapowania SA jawnie wypisane (nie ogolny "/**") - zeby nigdy przypadkiem nie
  * przeslonic "/api/**" (REST API platformy) ani "/actuator/**". Dopisuj tu KAZDA nowa
- * trase najwyzszego poziomu dodawana w "frontend/src/App.jsx".
+ * trase najwyzszego poziomu dodawana w "frontend/src/App.jsx" (tez ekrany logowania:
+ * /logowanie, /rejestracja i /potwierdz - ta ostatnia to cel linku z maila powitalnego).
  */
 @Controller
 class SpaFallbackController {
 
-    @GetMapping("/rozdzial/**")
+    @GetMapping({"/rozdzial/**", "/logowanie", "/rejestracja", "/potwierdz"})
     String forwardToIndex() {
         return "forward:/index.html";
     }

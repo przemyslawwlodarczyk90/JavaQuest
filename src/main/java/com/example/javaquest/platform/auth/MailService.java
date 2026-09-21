@@ -44,8 +44,8 @@ class MailService {
 
     void sendWelcomeEmail(String to, String firstName, String confirmationLink) {
         String html = template
-                .replace("{{firstName}}", HtmlUtils.htmlEscape(firstName))
-                .replace("{{confirmationLink}}", HtmlUtils.htmlEscape(confirmationLink));
+                .replace("{{firstName}}", HtmlUtils.htmlEscape(firstName, "UTF-8"))
+                .replace("{{confirmationLink}}", HtmlUtils.htmlEscape(confirmationLink, "UTF-8"));
         try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, "UTF-8");
