@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getExercises, getQuiz, getTheory } from '../api'
+import { getExercises, getQuizStatus, getTheory } from '../api'
+import { useProgress } from '../useProgress'
 import TheoryView from '../components/TheoryView'
 import ExercisesView from '../components/ExercisesView'
 import QuizView from '../components/QuizView'
@@ -8,11 +9,12 @@ import QuizView from '../components/QuizView'
 const TABS = [
   { key: 'theory', label: 'Teoria', loader: getTheory },
   { key: 'exercises', label: 'Zadania', loader: getExercises },
-  { key: 'quiz', label: 'Quiz', loader: getQuiz },
+  { key: 'quiz', label: 'Quiz', loader: getQuizStatus },
 ]
 
 export default function LessonDetailPage() {
   const { chapterSlug, lessonSlug } = useParams()
+  const { isCompleted, setLessonCompleted } = useProgress()
   const [activeTab, setActiveTab] = useState('theory')
   const [status, setStatus] = useState('loading')
   const [data, setData] = useState([])
@@ -53,6 +55,15 @@ export default function LessonDetailPage() {
       </Link>
       <h2>{lessonSlug}</h2>
 
+      <label className="lesson-complete">
+        <input
+          type="checkbox"
+          checked={isCompleted(chapterSlug, lessonSlug)}
+          onChange={(event) => setLessonCompleted(chapterSlug, lessonSlug, event.target.checked)}
+        />
+        Zrobiłem tę lekcję
+      </label>
+
       <nav className="lesson-detail__tabs">
         {TABS.map((tab) => (
           <button
@@ -84,7 +95,9 @@ export default function LessonDetailPage() {
         {status === 'error' && <p className="error">Błąd: {error}</p>}
         {status === 'ok' && activeTab === 'theory' && <TheoryView blocks={data} />}
         {status === 'ok' && activeTab === 'exercises' && <ExercisesView exercises={data} />}
-        {status === 'ok' && activeTab === 'quiz' && <QuizView questions={data} />}
+        {status === 'ok' && activeTab === 'quiz' && (
+          <QuizView key={`${chapterSlug}/${lessonSlug}`} chapterSlug={chapterSlug} lessonSlug={lessonSlug} status={data} />
+        )}
       </div>
     </div>
   )
