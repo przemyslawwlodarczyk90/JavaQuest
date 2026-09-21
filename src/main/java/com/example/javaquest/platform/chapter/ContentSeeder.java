@@ -1,11 +1,12 @@
 package com.example.javaquest.platform.chapter;
 
 import jakarta.annotation.PostConstruct;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
 
 /**
  * Zasila baze danych platformy lista rozdzialow/lekcji z {@link ChapterSeedData} przy
- * pierwszym starcie aplikacji (jesli tabela "chapters" jest pusta). Faza 1 - tylko
+ * kazdym starcie aplikacji (tabele tresci sa przed tym czyszczone przez ContentReset). Faza 1 - tylko
  * metadane nawigacyjne, bez tresci lekcji (patrz EDU_PLATFORM_PLAN.md).
  *
  * <p>Celowo {@code @PostConstruct}, NIE {@code ApplicationRunner} - ApplicationRunner uruchamia
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
  * {@code @DependsOn("contentSeeder")} na tamtej klasie.
  */
 @Component
+@DependsOn("contentReset")
 class ContentSeeder {
 
     private final ChapterRepository chapterRepository;
