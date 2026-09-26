@@ -24,7 +24,7 @@ for (const file of files) {
   const gitPath = file.replace(/\\/g, '/');
   let origCount;
   try {
-    origCount = JSON.parse(execSync(`git show ${baseRef}:${gitPath}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).quiz.length;
+    origCount = JSON.parse(execSync(`git show ${baseRef}:./${gitPath}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).quiz.length;
   } catch {
     console.error(`POMINIĘTO ${file}: brak pliku w ${baseRef}`);
     continue;

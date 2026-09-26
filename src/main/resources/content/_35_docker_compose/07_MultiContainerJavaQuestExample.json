@@ -106,6 +106,41 @@
       "prompt": "Napisz (jako String) polecenie, ktore po zmianie kodu 'tasks-api' przebuduje tylko jego obraz i wystartuje caly stos w tle, nie ruszajac juz dzialajacej 'baza' ani jej danych w wolumenie.",
       "hint": "Polacz flagi '-d' i '--build' z podaniem konkretnej nazwy serwisu na koncu polecenia (lekcja 6) - to ogranicza przebudowe tylko do wskazanego serwisu.",
       "solution": "`docker compose up -d --build tasks-api` - flaga '--build' wymusza przebudowe obrazu PRZED startem, a podanie nazwy 'tasks-api' na koncu ogranicza dzialanie WYLACZNIE do tego serwisu - 'baza' oraz jej wolumen 'pgdata' pozostaja NIETKNIETE, kontynuujac dzialanie z juz zapisanymi danymi."
+    },
+    {
+      "prompt": "Rozbuduj (jako String) plik z lekcji o serwis `redis` (obraz `redis:7`) dostępny tylko dla `tasks-api`, z healthcheckiem, oraz dodaj do `tasks-api` konfigurację połączenia z Redisem przez zmienne Spring Boot. `tasks-api` ma czekać na zdrowego Redisa.",
+      "hint": "redis w sieci wewnetrzna, healthcheck redis-cli ping, SPRING_DATA_REDIS_HOST, depends_on z service_healthy.",
+      "solution": "  tasks-api:\n    ...\n    environment:\n      SPRING_DATASOURCE_URL: jdbc:postgresql://baza:5432/javaquest\n      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}\n      SPRING_DATA_REDIS_HOST: redis\n      SPRING_DATA_REDIS_PORT: 6379\n    depends_on:\n      baza: {condition: service_healthy}\n      redis: {condition: service_healthy}\n  redis:\n    image: redis:7\n    networks: [wewnetrzna]\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 2s\n      retries: 5\n\nRedis jest tylko w sieci wewnetrzna, więc proxy go nie widzi, i nie ma publikowanego portu. Nowy serwis nie wymaga nowych pojęć - to te same klocki: sieć, healthcheck, depends_on, zmienne."
+    },
+    {
+      "prompt": "Napisz (jako String) minimalną konfigurację Nginx (`nginx/conf.d/default.conf`) dla serwisu `proxy`, która przekazuje ruch z portu 80 do `tasks-api:8080`, oraz fragment compose.yaml montujący ją tylko do odczytu. Wyjaśnij, skąd Nginx wie, czym jest `tasks-api`.",
+      "hint": "proxy_pass http://tasks-api:8080; nagłówki X-Forwarded-*. Rozwiązywanie nazwy przez DNS sieci projektu.",
+      "solution": "# nginx/conf.d/default.conf\nserver {\n    listen 80;\n    location / {\n        proxy_pass http://tasks-api:8080;\n        proxy_set_header Host $host;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }\n}\n\n# compose.yaml\n  proxy:\n    image: nginx:1.27\n    ports: [\"80:80\"]\n    networks: [publiczna]\n    volumes:\n      - ./nginx/conf.d:/etc/nginx/conf.d:ro\n    depends_on: [tasks-api]\n\nNginx i tasks-api są we wspólnej sieci publiczna, więc wbudowany DNS Dockera rozwiązuje nazwę serwisu tasks-api. Aplikacja Spring Boot powinna ufać nagłówkom z proxy (server.forward-headers-strategy=framework), żeby poprawnie budować adresy."
+    },
+    {
+      "prompt": "Proxy zwraca `502 Bad Gateway` przez pierwsze kilkanaście sekund po `docker compose up`, potem działa. Wyjaśnij (jako String) przyczynę na podstawie pliku z lekcji (`proxy` ma zwykłe `depends_on: [tasks-api]`) i zaproponuj dwie poprawki.",
+      "hint": "Kontener tasks-api jest 'Up', ale Spring Boot jeszcze startuje. 502 = proxy nie może połączyć się z upstreamem.",
+      "solution": "Zwykłe depends_on gwarantuje tylko, że kontener tasks-api wystartował przed proxy. Spring Boot potrzebuje kilkunastu sekund na start - w tym czasie port 8080 nie przyjmuje połączeń i Nginx zwraca 502. Poprawki: (1) healthcheck dla tasks-api (np. curl/wget na /actuator/health, jeśli narzędzie jest w obrazie) i depends_on: {tasks-api: {condition: service_healthy}} w proxy; (2) zaakceptować krótki okres 502 przy starcie (proxy i tak zadziała, gdy aplikacja wstanie) - dla lokalnego środowiska bywa to wystarczające, ale w testach automatycznych lepsza jest opcja 1."
+    },
+    {
+      "prompt": "Opisz (jako String) procedurę sprawdzenia, że cały stos z lekcji działa poprawnie: stan serwisów i healthcheków, dostępność API przez proxy, brak dostępu z proxy do bazy, obecność danych w wolumenie po `down` i ponownym `up`.",
+      "hint": "compose ps, curl przez port 80, test segmentacji kontenerem pomocniczym, zapis danych -> down -> up -> odczyt.",
+      "solution": "1) docker compose up -d --build && docker compose ps (baza: healthy, tasks-api i proxy: running).\n2) curl -i http://localhost/api/zadania - 200 przez proxy.\n3) docker compose exec proxy getent hosts baza (brak wyniku) albo docker run --rm --network sklep_publiczna alpine nc -zv -w2 baza 5432 (błąd) - segmentacja działa.\n4) curl -X POST http://localhost/api/zadania ... (utwórz rekord), docker compose down, docker compose up -d, curl http://localhost/api/zadania - rekord nadal jest (wolumen pgdata przetrwał down).\n5) docker compose logs --tail 50 tasks-api - brak błędów połączenia z bazą."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), jak zmienić plik z lekcji, żeby na serwerze aplikacja nie była budowana z kodu (`build: .`), tylko pobierana z rejestru jako `ghcr.io/firma/tasks-api:${TAG}`, a lokalnie deweloper nadal budował ją z kodu. Użyj plików override.",
+      "hint": "Wspólny plik z image:, override deweloperski z build:.",
+      "solution": "# compose.yaml (wspólny, na serwerze)\n  tasks-api:\n    image: ghcr.io/firma/tasks-api:${TAG:?Ustaw TAG}\n    ...\n# compose.override.yaml (tylko u dewelopera, wczytywany automatycznie)\n  tasks-api:\n    build: .\n    image: tasks-api:dev\n\nNa serwerze: TAG=1.4.0 docker compose -f compose.yaml pull && docker compose -f compose.yaml up -d - wdrażany jest dokładnie ten obraz, który zbudowało i przetestowało CI. Lokalnie: docker compose up -d --build buduje z kodu (override dokłada build i nadpisuje nazwę obrazu)."
+    },
+    {
+      "prompt": "Wypisz (jako String) trzy ograniczenia tego stosu Compose na produkcji (jeden host) i przy każdym wskaż, jaki mechanizm Kubernetesa (następny rozdział) je rozwiązuje.",
+      "hint": "Pojedynczy punkt awarii, brak rolling update, brak automatycznej wymiany niezdrowych instancji, skalowanie na wiele maszyn.",
+      "solution": "1) Jeden host = pojedynczy punkt awarii: awaria maszyny zatrzymuje wszystko -> Kubernetes rozkłada Pody na wiele węzłów i przenosi je po awarii węzła.\n2) Aktualizacja aplikacji to krótka przerwa (odtworzenie kontenera) -> Deployment z rolling update i readinessProbe uruchamia nową wersję obok starej.\n3) Kontener 'unhealthy' nie jest automatycznie wymieniany -> livenessProbe restartuje niedziałające kontenery.\n(4) Skalowanie tylko w obrębie jednego hosta -> repliki na wielu węzłach + Service jako load balancer.)"
+    },
+    {
+      "prompt": "Oceń (jako String) poniższy fragment pod kątem praktyk z rozdziału i wypisz co najmniej 5 problemów:\n```\nservices:\n  proxy:\n    image: nginx:latest\n    ports: [\"80:80\"]\n  tasks-api:\n    build: .\n    ports: [\"8080:8080\"]\n    environment:\n      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/javaquest\n      SPRING_DATASOURCE_PASSWORD: admin123\n    depends_on: [baza]\n  baza:\n    image: postgres\n    ports: [\"5432:5432\"]\n    environment:\n      POSTGRES_PASSWORD: admin123\n```",
+      "hint": "Tagi, localhost, sekrety, zbędne porty, brak wolumenu, brak healthchecku, brak segmentacji.",
+      "solution": "1) nginx:latest i postgres bez tagu - niepowtarzalne wersje -> przypiąć (nginx:1.27, postgres:16).\n2) localhost w URL - aplikacja nie połączy się z bazą -> baza:5432.\n3) Hasło wprost w pliku (i w repozytorium) -> ${DB_PASSWORD:?} z .env lub sekret.\n4) Brak wolumenu dla bazy - dane giną przy down/odtworzeniu -> pgdata:/var/lib/postgresql/data.\n5) depends_on bez warunku i bez healthchecku -> healthcheck + service_healthy.\n6) Porty 8080 i 5432 publikowane mimo proxy - API i baza dostępne z sieci z pominięciem proxy -> usunąć (dla dewelopera ewentualnie 127.0.0.1 w override).\n7) Jedna płaska sieć -> segmentacja publiczna/wewnetrzna."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Codzienne uruchomienie działa niezależnie od tych praktyk - ich brak to ukryte ryzyko (wyciek sekretu do repozytorium, brak izolacji sieciowej), które ujawnia się dopiero w konkretnych, późniejszych okolicznościach, nie jako błąd startu."
+    },
+    {
+      "question": "Dlaczego proxy nie może połączyć się z bazą w pliku z lekcji?",
+      "code": "proxy:     networks: [publiczna]\ntasks-api: networks: [publiczna, wewnetrzna]\nbaza:      networks: [wewnetrzna]",
+      "options": {
+        "A": "Bo baza nie ma portów",
+        "B": "Bo brakuje depends_on",
+        "C": "Bo proxy to Nginx",
+        "D": "Bo proxy i baza nie mają wspólnej sieci"
+      },
+      "correct": "D",
+      "explanation": "Tylko tasks-api jest w obu sieciach. Przejęcie proxy nie daje drogi sieciowej do bazy."
+    },
+    {
+      "question": "Co zobaczy przeglądarka, jeśli proxy wystartuje, a Spring Boot jeszcze nie przyjmuje połączeń?",
+      "code": "proxy:\n  depends_on: [tasks-api]     # bez warunku",
+      "options": {
+        "A": "502 Bad Gateway - Nginx nie może połączyć się z upstreamem",
+        "B": "200 OK",
+        "C": "404",
+        "D": "Pustą stronę z 204"
+      },
+      "correct": "A",
+      "explanation": "Zwykłe depends_on czeka tylko na start kontenera. Aby proxy startowało po gotowości aplikacji, tasks-api potrzebuje healthchecku, a proxy - condition: service_healthy."
+    },
+    {
+      "question": "Które adresy są poprawne w konfiguracji Nginx w tym stosie?",
+      "code": "location / {\n    proxy_pass http://???:8080;\n}",
+      "options": {
+        "A": "localhost",
+        "B": "127.0.0.1",
+        "C": "tasks-api",
+        "D": "proxy"
+      },
+      "correct": "C",
+      "explanation": "Nginx działa w osobnym kontenerze - localhost to on sam. Nazwa serwisu jest rozwiązywana przez DNS sieci publiczna."
+    },
+    {
+      "question": "Co się stanie z danymi zadań po docker compose down i ponownym up -d?",
+      "code": "baza:\n  volumes: [pgdata:/var/lib/postgresql/data]\nvolumes:\n  pgdata:",
+      "options": {
+        "A": "Znikną",
+        "B": "Zostaną skopiowane do obrazu",
+        "C": "Zostaną tylko przy restart",
+        "D": "Zostaną - wolumen pgdata przetrwa down (usuwa go dopiero down -v)"
+      },
+      "correct": "D",
+      "explanation": "To właśnie sprawdza się w teście 'down -> up -> odczyt'. Brak wolumenu oznaczałby utratę danych przy każdym odtworzeniu kontenera bazy."
+    },
+    {
+      "question": "Który port należy opublikować na hoście w tym stosie?",
+      "code": "proxy -> tasks-api -> baza",
+      "options": {
+        "A": "Tylko 80 (proxy) - pozostałe usługi są dostępne przez sieci projektu",
+        "B": "Wszystkie: 80, 8080, 5432",
+        "C": "Tylko 5432",
+        "D": "Żaden"
+      },
+      "correct": "A",
+      "explanation": "Każdy dodatkowy opublikowany port to droga obejścia proxy. Deweloperowi można dodać port bazy tylko na 127.0.0.1 w compose.override.yaml."
+    },
+    {
+      "question": "Skąd pochodzi wartość hasła w tej linii i gdzie jest trzymana?",
+      "code": "SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}",
+      "options": {
+        "A": "Z obrazu tasks-api",
+        "B": "Z bazy danych",
+        "C": "Z podstawienia Compose - ze zmiennej powłoki albo pliku .env obok compose.yaml (poza repozytorium)",
+        "D": "Z Docker Hub"
+      },
+      "correct": "C",
+      "explanation": "Ta sama zmienna zasila POSTGRES_PASSWORD bazy i hasło aplikacji - jedna wartość, brak rozjazdu. W repozytorium jest tylko .env.example."
+    },
+    {
+      "question": "Jak dodać Redis dostępny tylko dla tasks-api?",
+      "code": "redis:\n  image: redis:7\n  networks: ???",
+      "options": {
+        "A": "[publiczna]",
+        "B": "host",
+        "C": "[publiczna, wewnetrzna]",
+        "D": "[wewnetrzna]"
+      },
+      "correct": "D",
+      "explanation": "Sieć wewnetrzna dzielą tylko tasks-api i usługi zaplecza. Nowy serwis w stosie to te same klocki co wcześniej."
+    },
+    {
+      "question": "Jak Spring Boot dostanie adres Redisa z tego stosu?",
+      "code": "tasks-api:\n  environment:\n    ???: redis",
+      "options": {
+        "A": "SPRING_DATA_REDIS_HOST",
+        "B": "REDIS_URL_HOST",
+        "C": "spring.redis",
+        "D": "REDIS"
+      },
+      "correct": "A",
+      "explanation": "Relaxed binding: spring.data.redis.host -> SPRING_DATA_REDIS_HOST. Wartość 'redis' to nazwa serwisu."
+    },
+    {
+      "question": "Co oznacza ta linia w konfiguracji tasks-api?",
+      "code": "depends_on:\n  baza:\n    condition: service_healthy",
+      "options": {
+        "A": "tasks-api nie wystartuje nigdy",
+        "B": "tasks-api zrestartuje bazę",
+        "C": "Kontener tasks-api wystartuje dopiero, gdy healthcheck bazy zgłosi healthy",
+        "D": "Baza zależy od tasks-api"
+      },
+      "correct": "C",
+      "explanation": "Healthcheck bazy (pg_isready) decyduje, kiedy aplikacja rusza. Dzięki temu nie pada przy pierwszym starcie z błędem połączenia."
+    },
+    {
+      "question": "Jak w tym stosie najszybciej sprawdzić, czy aplikacja połączyła się z bazą?",
+      "code": "$ docker compose ???",
+      "options": {
+        "A": "logs --tail 50 tasks-api",
+        "B": "ps --images",
+        "C": "config --services",
+        "D": "pull"
+      },
+      "correct": "A",
+      "explanation": "Logi startowe Spring Boot pokazują inicjalizację puli połączeń (HikariPool - Start completed) albo wyjątek połączenia. docker compose ps pokaże tylko, że proces działa."
+    },
+    {
+      "question": "Dlaczego adres Nginxa na porcie 80 nie wymaga zmiany konfiguracji aplikacji przy dodaniu drugiej instancji tasks-api (--scale)?",
+      "code": "$ docker compose up -d --scale tasks-api=2",
+      "options": {
+        "A": "Bo Nginx jest wyłączany",
+        "B": "Bo Nginx łączy się z bazą",
+        "C": "Bo --scale nie działa",
+        "D": "Bo nazwa tasks-api w DNS sieci zwraca adresy obu instancji (choć Nginx rozwiązuje ją domyślnie przy starcie, więc do równego rozkładu potrzeba dodatkowej konfiguracji resolvera/upstream)"
+      },
+      "correct": "D",
+      "explanation": "DNS Dockera zwraca wszystkie instancje. Nginx domyślnie rozwiązuje nazwę raz przy starcie - dlatego do dynamicznego skalowania używa się resolver 127.0.0.11 albo dedykowanych mechanizmów (np. Traefik)."
+    },
+    {
+      "question": "Co należy zmienić w tym stosie, żeby na serwerze wdrażać obraz zbudowany przez CI, a nie budować kodu?",
+      "code": "tasks-api:\n  build: .",
+      "options": {
+        "A": "Użyć image: ghcr.io/firma/tasks-api:${TAG} w pliku serwerowym, a build: zostawić w compose.override.yaml dewelopera",
+        "B": "Nic",
+        "C": "Dodać --build na serwerze",
+        "D": "Skopiować kod na serwer"
+      },
+      "correct": "A",
+      "explanation": "Wdrażanie przetestowanego artefaktu (obrazu z konkretnym tagiem) zamiast budowania na serwerze daje powtarzalność i szybkie wycofanie."
+    },
+    {
+      "question": "Która linia w tym fragmencie jest błędem bezpieczeństwa?",
+      "code": "baza:\n  image: postgres:16\n  ports: [\"5432:5432\"]\n  networks: [wewnetrzna]",
+      "options": {
+        "A": "image",
+        "B": "networks",
+        "C": "ports - publikuje bazę na wszystkich interfejsach hosta, omijając segmentację",
+        "D": "Żadna"
+      },
+      "correct": "C",
+      "explanation": "Segmentacja sieci Dockera nie chroni przed ruchem z zewnątrz, jeśli port jest opublikowany na hoście. Baza powinna być dostępna tylko z sieci wewnetrzna."
+    },
+    {
+      "question": "Ile sieci Dockera utworzy Compose dla tego stosu (projekt sklep)?",
+      "code": "networks:\n  publiczna:\n  wewnetrzna:\n# każdy serwis ma jawne networks:",
+      "options": {
+        "A": "1",
+        "B": "0",
+        "C": "3",
+        "D": "2: sklep_publiczna i sklep_wewnetrzna (sieć default nie jest potrzebna, bo żaden serwis z niej nie korzysta)"
+      },
+      "correct": "D",
+      "explanation": "Compose tworzy default tylko wtedy, gdy jakiś serwis do niej należy. Pełne nazwy z prefiksem przydają się przy podpinaniu kontenerów diagnostycznych."
+    },
+    {
+      "question": "Jaki problem może wystąpić, jeśli zmienisz hasło w .env po pierwszym uruchomieniu stosu?",
+      "code": "# .env: DB_PASSWORD=stare  ->  DB_PASSWORD=nowe\n$ docker compose up -d",
+      "options": {
+        "A": "Aplikacja dostanie nowe hasło, ale baza (z danymi w wolumenie) nadal ma stare - POSTGRES_PASSWORD działa tylko przy inicjalizacji pustej bazy; błąd 'password authentication failed'",
+        "B": "Żaden",
+        "C": "Baza się usunie",
+        "D": "Compose odmówi uruchomienia"
+      },
+      "correct": "A",
+      "explanation": "Zmianę hasła w istniejącej bazie trzeba wykonać w samej bazie (ALTER USER), a dopiero potem w .env."
+    },
+    {
+      "question": "Który zestaw poleceń testuje, że dane przetrwały odtworzenie stosu?",
+      "code": "# utwórz rekord przez API, potem ...",
+      "options": {
+        "A": "docker compose down -v && docker compose up -d",
+        "B": "docker compose restart",
+        "C": "docker compose down && docker compose up -d && curl http://localhost/api/zadania",
+        "D": "docker compose pull"
+      },
+      "correct": "C",
+      "explanation": "down usuwa kontenery (więc test jest prawdziwy), ale zostawia wolumen. down -v usunęłoby dane, a restart w ogóle nie odtwarza kontenerów."
+    },
+    {
+      "question": "Dlaczego obraz tasks-api w tym stosie nie potrzebuje opublikowanego portu 8080?",
+      "code": "tasks-api:\n  networks: [publiczna, wewnetrzna]\n  # brak ports",
+      "options": {
+        "A": "Bo Spring Boot nie używa portów",
+        "B": "To błąd - aplikacja jest niedostępna",
+        "C": "Bo port 8080 jest zawsze publiczny",
+        "D": "Bo ruch przychodzi przez proxy w sieci publiczna - port kontenera 8080 jest osiągalny w tej sieci bez publikacji na hoście"
+      },
+      "correct": "D",
+      "explanation": "Publikacja jest potrzebna tylko dla ruchu spoza Dockera. Wewnątrz sieci kontenery rozmawiają bezpośrednio."
+    },
+    {
+      "question": "Czego NIE zapewnia ten stos Compose na pojedynczym serwerze?",
+      "code": "# proxy + tasks-api + baza na jednym hoście",
+      "options": {
+        "A": "Izolacji sieciowej",
+        "B": "Trwałości danych",
+        "C": "Odporności na awarię całego hosta i aktualizacji bez przerwy (rolling update)",
+        "D": "Kolejności startu"
+      },
+      "correct": "C",
+      "explanation": "To obszar orkiestratorów: Kubernetes rozkłada instancje na wiele węzłów i wymienia wersje stopniowo. Compose świetnie sprawdza się lokalnie, w testach i przy prostych wdrożeniach."
+    },
+    {
+      "question": "Jak Spring Boot za Nginxem poprawnie rozpozna oryginalny schemat (https) i host klienta?",
+      "code": "# nginx: proxy_set_header X-Forwarded-Proto $scheme;\n# application.properties: ???",
+      "options": {
+        "A": "server.forward-headers-strategy=framework (albo native) - aplikacja uwzględni nagłówki X-Forwarded-*",
+        "B": "server.port=80",
+        "C": "spring.proxy=true",
+        "D": "Nie da się"
+      },
+      "correct": "A",
+      "explanation": "Bez tego aplikacja widzi żądania jako http od proxy i może generować błędne adresy przekierowań (np. po logowaniu)."
+    },
+    {
+      "question": "Który plik powinien zostać zacommitowany w tym przykładzie?",
+      "code": "compose.yaml | .env | .env.example | nginx/conf.d/default.conf",
+      "options": {
+        "A": "Wszystkie",
+        "B": "compose.yaml, .env.example i nginx/conf.d/default.conf - bez .env z hasłem",
+        "C": "Tylko .env",
+        "D": "Tylko compose.yaml"
+      },
+      "correct": "B",
+      "explanation": "Konfiguracja (bez sekretów) jest częścią projektu i powinna być wersjonowana. Sekrety żyją lokalnie lub w menedżerze sekretów."
     }
   ]
 }
