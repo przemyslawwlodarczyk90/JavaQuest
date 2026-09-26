@@ -34,7 +34,7 @@
       "type": "CODE_PRACTICAL",
       "heading": "Rozwiązanie zadania 1 Z bloku EXERCISES (NIE zaglądaj TU PRZED próbą WŁASNĄ!)",
       "body": "Pełne rozwiązanie scenariusza Z bloku VISUAL_EXAMPLE — PORÓWNAJ JE Z WŁASNĄ próbą PO tym, JAK JĄ napiszesz, NIE zamiast niej.",
-      "code": "// 1. Wlasna metryka (_39/Lesson3) - tag 'status' ma OGRANICZONA liczbe wartosci\n// (udana/nieudana), NIE eksplozja kardynalnosci\nmeterRegistry.counter(\"platnosci\", \"status\", \"udana\").increment();\nmeterRegistry.counter(\"platnosci\", \"status\", \"nieudana\").increment();\n\n// 2. Panel biznesowy (_39/Lesson5) - PromQL:\n// sum(increase(platnosci_total{status=\"udana\"}[1d]))\n\n// 3. Alert - procent nieudanych platnosci (_39/Lesson6):\n// Condition: rate(platnosci_total{status=\"nieudana\"}[5m])\n//            / rate(platnosci_total[5m]) > 0.02\n// For: 5m, severity: warning\n\n// 4. Alert - CALKOWITY brak platnosci (_39/Lesson6):\n// Condition: rate(platnosci_total[10m]) == 0\n// For: 10m, severity: critical (MOZLIWA calkowita awaria integracji)"
+      "code": "// 1. Wlasna metryka (_39/Lesson3) - tag 'status' ma OGRANICZONA liczbe wartosci\n// (udana/nieudana), NIE eksplozja kardynalnosci\nmeterRegistry.counter(\"platnosci\", \"status\", \"udana\").increment();\nmeterRegistry.counter(\"platnosci\", \"status\", \"nieudana\").increment();\n\n// 2. Panel biznesowy (_39/Lesson5) - PromQL:\n// sum(increase(platnosci_total{status=\"udana\"}[1d]))\n\n// 3. Alert - procent nieudanych platnosci (_39/Lesson6):\n// Condition: sum(rate(platnosci_total{status=\"nieudana\"}[5m]))\n//            / sum(rate(platnosci_total[5m])) > 0.02\n// For: 5m, severity: warning\n\n// 4. Alert - CALKOWITY brak platnosci (_39/Lesson6):\n// Condition: sum(rate(platnosci_total[10m])) == 0\n//   (tuz po restarcie aplikacji licznika moze jeszcze nie byc - wtedy pomaga absent(platnosci_total))\n// For: 10m, severity: critical (MOZLIWA calkowita awaria integracji)"
     },
     {
       "type": "STEP_BY_STEP",
@@ -106,6 +106,41 @@
       "prompt": "Wyjasnij (jako String), dlaczego alert 'calkowity brak platnosci przez 10 minut' jest szczegolnie wartosciowy, mimo ze na pierwszy rzut oka 'brak zadnych bledow' moze wygladac jak pozytywny sygnal.",
       "hint": "Przypomnij sobie scenariusz z bloku pitfall/visual_example - calkowita awaria integracji moze oznaczac zero prob platnosci, nie zero bledow przy probach.",
       "solution": "Gdyby integracja z bramka platnicza ulegla CALKOWITEJ awarii (np. przez blad w konfiguracji sieciowej, ktory uniemozliwia WYSYLANIE zadan do bramki w ogole), aplikacja MOGLABY w OGOLE nie generowac zadnych bledow HTTP, poniewaz zadne zadania NIE SA nawet PROBOWANE - z perspektywy standardowych metryk technicznych (http_server_requests, bledy 5xx), WSZYSTKO wygladaloby CALKOWICIE normalnie, bo po prostu NIE MA zadnego ruchu do zmierzenia. Alert monitorujacy WLASNIE BRAK oczekiwanego ruchu (rate(platnosci_total[10m]) == 0) wykrywa TEN SZCZEGOLNY typ awarii - sytuacje, w ktorej PROBLEM objawia sie NIEOBECNOSCIA oczekiwanej aktywnosci, a nie JEJ obecnoscia w formie bledow - typ problemu calkowicie niewidoczny dla alertow opartych WYLACZNIE na wykrywaniu bledow."
+    },
+    {
+      "prompt": "Zaimplementuj metrykę biznesową płatności w serwisie Spring Boot: licznik `platnosci` z tagiem `status` (udana/nieudana/blad_integracji) ustawiany na podstawie wyniku bramki, oraz timer `platnosci.czas` z histogramem. Pokaż kod i przykładowy fragment `/actuator/prometheus` po jednej udanej i jednej nieudanej płatności.",
+      "hint": "Wyjątek komunikacji z bramką to osobny status (nie 'nieudana' decyzja banku).",
+      "solution": "@Service\npublic class PlatnosciService {\n    private final MeterRegistry reg;\n    private final BramkaClient bramka;\n    private final Timer czas;\n\n    public PlatnosciService(MeterRegistry reg, BramkaClient bramka) {\n        this.reg = reg;\n        this.bramka = bramka;\n        this.czas = Timer.builder(\"platnosci.czas\").publishPercentileHistogram().register(reg);\n    }\n\n    public WynikPlatnosci zaplac(Platnosc p) {\n        return czas.record(() -> {\n            try {\n                OdpowiedzBramki o = bramka.obciaz(p);\n                reg.counter(\"platnosci\", \"status\", o.czyZaakceptowana() ? \"udana\" : \"nieudana\").increment();\n                return WynikPlatnosci.z(o);\n            } catch (BramkaNiedostepnaException e) {\n                reg.counter(\"platnosci\", \"status\", \"blad_integracji\").increment();\n                throw e;\n            }\n        });\n    }\n}\n/actuator/prometheus (fragment, format sprawdzony na Spring Boot 3.4):\n# TYPE platnosci_total counter\nplatnosci_total{application=\"tasks-api\",status=\"nieudana\"} 1.0\nplatnosci_total{application=\"tasks-api\",status=\"udana\"} 1.0\n# TYPE platnosci_czas_seconds histogram\nplatnosci_czas_seconds_bucket{application=\"tasks-api\",le=\"...\"} ...\nRozróżnienie 'nieudana' (decyzja banku, np. brak środków) i 'blad_integracji' (nasz problem techniczny) pozwala ustawić różne alerty."
+    },
+    {
+      "prompt": "Napisz (jako String) zestaw reguł alertów Prometheusa dla płatności: (1) udział nieudanych > 2% przez 5 min (warning), (2) błędy integracji > 0,5/s przez 2 min (critical), (3) brak jakichkolwiek płatności przez 10 min w godzinach 8-22 (critical), (4) p95 czasu płatności > 3 s przez 10 min (warning). Pamiętaj o sum().",
+      "hint": "Brak płatności: sum(increase(...[10m])) == 0 lub absent; ograniczenie godzin: and on() hour() >= 6 ... (UTC!).",
+      "solution": "groups:\n  - name: platnosci\n    rules:\n      - alert: DuzoNieudanychPlatnosci\n        expr: sum(rate(platnosci_total{status=\"nieudana\"}[5m])) / sum(rate(platnosci_total[5m])) > 0.02\n        for: 5m\n        labels: {severity: warning}\n      - alert: BledyIntegracjiBramki\n        expr: sum(rate(platnosci_total{status=\"blad_integracji\"}[2m])) > 0.5\n        for: 2m\n        labels: {severity: critical}\n      - alert: BrakPlatnosci\n        expr: (sum(increase(platnosci_total[10m])) == 0 or absent(platnosci_total)) and on() (hour() >= 6 and hour() < 20)\n        for: 10m\n        labels: {severity: critical}\n      - alert: WolnePlatnosci\n        expr: histogram_quantile(0.95, sum by (le) (rate(platnosci_czas_seconds_bucket[5m]))) > 3\n        for: 10m\n        labels: {severity: warning}\nhour() zwraca godzinę w UTC - 8-22 czasu polskiego (CEST, UTC+2) to 6-20 UTC; przy zmianie czasu okno przesuwa się o godzinę (alternatywa: okna czasowe w Alertmanagerze). absent obsługuje sytuację po restarcie, gdy licznika jeszcze nie ma. Reguły waliduje się promtool check rules i testami promtool test rules."
+    },
+    {
+      "prompt": "Przeprowadź (jako String) przegląd istniejącego systemu obserwowalności według metody z lekcji: pulpit ma 30 paneli JVM, jedyny alert to `process_cpu_usage > 0.8`, metryki mają tag `orderId`, a Actuator jest wystawiony publicznie na porcie 8080. Wypisz problemy i plan poprawy w kolejności ważności.",
+      "hint": "Bezpieczeństwo, kardynalność, alerty na objawy, metryki biznesowe, struktura pulpitów.",
+      "solution": "1) Bezpieczeństwo (najpilniejsze): publiczny /actuator/prometheus ujawnia endpointy i dane biznesowe - osobny management.server.port dostępny tylko dla Prometheusa, brak trasy na publicznym load balancerze.\n2) Kardynalność: tag orderId tworzy serię na każde zamówienie - usunąć (MeterFilter.ignoreTags(\"orderId\") od razu, potem poprawić kod); szczegóły zamówień do logów/bazy.\n3) Alerty: CPU nie mówi o doświadczeniu użytkownika - dodać up == 0, udział 5xx (z sum()), p95 opóźnienia, brak ruchu biznesowego; CPU najwyżej jako warning z długim for.\n4) Metryki biznesowe: zamówienia/płatności ze statusem wyniku.\n5) Pulpity: główny przegląd z czterema złotymi sygnałami + panel biznesowy; 30 paneli JVM na osobny pulpit szczegółów.\n6) Konfiguracja jako kod: reguły i pulpity w repozytorium, promtool w CI."
+    },
+    {
+      "prompt": "Uruchom kompletny łańcuch lokalnie: aplikacja Spring Boot z Actuatorem i metryką biznesową, Prometheus z regułą alertu, Grafana z provisioningiem. Wygeneruj ruch z błędami i zapisz (jako String) listę kontrolną weryfikacji każdego ogniwa z konkretnymi poleceniami i oczekiwanymi wynikami.",
+      "hint": "curl /actuator/prometheus, /api/v1/targets, /api/v1/query, /api/v1/alerts, Grafana /api/datasources/uid/.../health.",
+      "solution": "1) Aplikacja: curl -s localhost:8080/actuator/prometheus | grep platnosci_total -> serie ze statusem udana/nieudana.\n2) Scrape: curl -s localhost:9090/api/v1/targets -> job tasks-api: health \"up\" (przy złym metrics_path: down, HTTP 404).\n3) Zapytanie: curl -s --data-urlencode 'query=sum(rate(platnosci_total{status=\"nieudana\"}[2m])) / sum(rate(platnosci_total[2m]))' localhost:9090/api/v1/query -> jedna wartość, np. 0.17.\n4) Reguły: promtool check rules alerts.yml -> SUCCESS; po wygenerowaniu błędów curl -s localhost:9090/api/v1/alerts -> pending, a po czasie for -> firing.\n5) Grafana: curl -s -u admin:<haslo> localhost:3000/api/datasources/uid/<uid>/health -> 'Successfully queried the Prometheus API.'; pulpit z provisioningu widoczny w folderze.\n6) Awaria: zatrzymanie aplikacji -> up == 0, alert niedostępności firing po for; alert udziału błędów znika (brak danych).\nKażdy krok sprawdza jedno ogniwo, więc przy problemie od razu wiadomo, gdzie szukać (ten przebieg wykonano na Spring Boot 3.4, Prometheus 3.15 i Grafanie 13.2)."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) panel biznesowy 'Płatności' w Grafanie: liczba udanych płatności dziś (Stat), udział nieudanych w czasie (Time series), płatności na minutę według statusu (Time series, stacked), p95 czasu płatności. Podaj zapytania i ustawienia paneli.",
+      "hint": "increase z oknem $__range dla 'w wybranym zakresie'; sum by (status).",
+      "solution": "1) Stat 'Udane płatności (zakres)': sum(increase(platnosci_total{status=\"udana\"}[$__range])), tryb Instant, jednostka short, bez miejsc po przecinku (increase ekstrapoluje - wynik bywa ułamkowy).\n2) Time series 'Udział nieudanych': sum(rate(platnosci_total{status=\"nieudana\"}[$__rate_interval])) / sum(rate(platnosci_total[$__rate_interval])), jednostka Percent (0.0-1.0), linia progu 0.02 (Thresholds style: line).\n3) Time series 'Płatności/min wg statusu': sum by (status) (rate(platnosci_total[$__rate_interval])) * 60, legenda {{status}}, Stack series: Normal, kolory: udana zielony, nieudana pomarańczowy, blad_integracji czerwony.\n4) 'p95 czasu': histogram_quantile(0.95, sum by (le) (rate(platnosci_czas_seconds_bucket[$__rate_interval]))), jednostka seconds.\nPanel biznesowy zrozumie też osoba spoza zespołu technicznego - to częsty pierwszy ekran podczas incydentu."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String) jak połączyć metryki, logi i ślady podczas analizy incydentu 'wolne płatności': od alertu WolnePlatnosci, przez exemplars/traceId, do logów konkretnego żądania. Co musi być skonfigurowane w aplikacji Spring Boot (Micrometer Tracing, logowanie traceId)?",
+      "hint": "Micrometer Tracing (rozdział _31) dodaje traceId do MDC; exemplars łączą punkt histogramu z traceId.",
+      "solution": "Konfiguracja: Micrometer Tracing z mostem (np. micrometer-tracing-bridge-brave, jak w _31) i eksporterem śladów (Zipkin/Tempo); logi zawierają traceId i spanId z MDC (Spring Boot 3 domyślnie dodaje je do wzorca logów przy aktywnym tracingu, logging.pattern.correlation); dla exemplars - metryki histogramu z włączonymi exemplarami i Prometheus z --enable-feature=exemplar-storage (format OpenMetrics). Analiza: 1) alert WolnePlatnosci (p95 > 3 s) wskazuje 'co i od kiedy'; 2) na wykresie p95 w Grafanie exemplar (punkt) przy najwolniejszych żądaniach zawiera traceId -> przejście do śladu w Tempo/Zipkin: widać, że 2,7 s trwa wywołanie bramki; 3) po traceId wyszukanie logów (np. Loki) tego żądania: 'timeout po 2500 ms, ponowienie'. Bez wspólnego traceId każdy sygnał trzeba by kojarzyć ręcznie po czasie."
+    },
+    {
+      "prompt": "Napisz (jako String) listę kontrolną 'gotowe do produkcji' dla obserwowalności nowej usługi Spring Boot (co najmniej 10 punktów), obejmującą metryki, bezpieczeństwo, pulpity, alerty, procedury i testy.",
+      "hint": "Połącz wnioski z lekcji 1-6.",
+      "solution": "1) Actuator + micrometer-registry-prometheus, wspólny tag application. 2) Endpoint metryk na osobnym porcie, dostępny tylko dla Prometheusa. 3) Prometheus odpytuje usługę (up == 1), metrics_path poprawny. 4) Metryki biznesowe z tagami o ograniczonej kardynalności (brak id użytkowników/zamówień). 5) Histogramy dla kluczowych czasów (percentyle). 6) Główny pulpit z czterema złotymi sygnałami + panel biznesowy; pulpity w repozytorium (provisioning). 7) Alerty: up == 0/absent, udział 5xx (z sum), p95, brak ruchu biznesowego; severity i for dobrane do pilności. 8) Routing powiadomień: critical do dyżurnego, warning na kanał; grupowanie. 9) Reguły walidowane promtool check rules i testowane promtool test rules w CI. 10) Runbook dla każdego alertu critical (adnotacja runbook_url). 11) Logi z traceId, ślady powiązane z metrykami. 12) Przećwiczony scenariusz awarii (zatrzymanie aplikacji, wzrost błędów) potwierdzający, że alerty docierają."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "To pełny, wieloetapowy łańcuch poznany w całym rozdziale - od generowania metryk w kodzie aplikacji, przez ich zbieranie i analizę, aż po wizualizację i automatyczne powiadamianie zespołu."
+    },
+    {
+      "question": "Dlaczego alert 'udział nieudanych płatności' w tej postaci jest błędny?",
+      "code": "expr: rate(platnosci_total{status=\"nieudana\"}[5m]) / rate(platnosci_total[5m]) > 0.02",
+      "options": {
+        "A": "Bo 0.02 to za mało",
+        "B": "Bo brakuje histogram_quantile",
+        "C": "Bo bez sum() seria 'nieudana' dzieli się tylko przez samą siebie - wynik 1 przy każdej nieudanej płatności, niezależnie od faktycznego udziału",
+        "D": "Jest poprawny"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Prometheusie 3.15: bez sum wynik 1, z sum - 0.17 przy tych samych danych."
+    },
+    {
+      "question": "Dlaczego metryka płatności jest ustawiana na podstawie odpowiedzi bramki, a nie kodu HTTP?",
+      "code": "if (odpowiedzBramki.czyPlatnoscZaakceptowana()) {\n    meterRegistry.counter(\"platnosci\", \"status\", \"udana\").increment();\n} else {\n    meterRegistry.counter(\"platnosci\", \"status\", \"nieudana\").increment();\n}",
+      "options": {
+        "A": "Bo kod HTTP jest niedostępny",
+        "B": "Bez powodu",
+        "C": "Bo tak jest szybciej",
+        "D": "Bo bramka może odpowiedzieć HTTP 200 z odrzuceniem płatności - metryki HTTP wyglądają dobrze, a biznes traci pieniądze"
+      },
+      "correct": "D",
+      "explanation": "Metryki biznesowe wykrywają problemy niewidoczne w metrykach technicznych."
+    },
+    {
+      "question": "Który zapis alertu 'brak płatności' zadziała także tuż po restarcie aplikacji?",
+      "code": "# licznik platnosci_total pojawia się dopiero po pierwszej płatności",
+      "options": {
+        "A": "sum(increase(platnosci_total[10m])) == 0 or absent(platnosci_total)",
+        "B": "rate(platnosci_total[10m]) == 0",
+        "C": "platnosci_total == 0",
+        "D": "up == 0"
+      },
+      "correct": "A",
+      "explanation": "Gdy licznika jeszcze nie ma, rate() zwraca pusty wynik - warunek jest 'niespełniony', choć płatności nie ma."
+    },
+    {
+      "question": "Ile serii utworzy ten licznik przy 2 instancjach?",
+      "code": "reg.counter(\"platnosci\", \"status\", status).increment();\n// status: udana, nieudana, blad_integracji",
+      "options": {
+        "A": "3",
+        "B": "2",
+        "C": "6",
+        "D": "Tyle, ile płatności"
+      },
+      "correct": "C",
+      "explanation": "3 wartości tagu * 2 instancje - kardynalność niezależna od liczby płatności."
+    },
+    {
+      "question": "Co zwróci hour() w tym wyrażeniu i dlaczego to ważne?",
+      "code": "expr: sum(increase(platnosci_total[10m])) == 0 and on() (hour() >= 8 and hour() < 22)",
+      "options": {
+        "A": "Godzinę czasu lokalnego serwera",
+        "B": "Błąd",
+        "C": "Liczbę godzin od startu",
+        "D": "Godzinę w UTC - dla okna 8-22 czasu polskiego (CEST) trzeba użyć 6-20, inaczej alert działa w przesuniętych godzinach"
+      },
+      "correct": "D",
+      "explanation": "Funkcje czasu w PromQL działają w UTC. Alternatywą są okna czasowe (time intervals) w Alertmanagerze lub Grafanie."
+    },
+    {
+      "question": "Który status płatności wymaga najpilniejszej reakcji zespołu technicznego?",
+      "code": "platnosci_total{status=\"udana\"}\nplatnosci_total{status=\"nieudana\"}          # decyzja banku, np. brak środków\nplatnosci_total{status=\"blad_integracji\"}   # timeout, 5xx bramki",
+      "options": {
+        "A": "udana",
+        "B": "nieudana",
+        "C": "blad_integracji - to problem techniczny po naszej stronie lub u dostawcy",
+        "D": "Wszystkie jednakowo"
+      },
+      "correct": "C",
+      "explanation": "Pewien poziom odmów banku jest normalny; błędy integracji oznaczają, że płatności w ogóle nie są przetwarzane."
+    },
+    {
+      "question": "Które zapytanie pokaże liczbę udanych płatności w wybranym zakresie czasu pulpitu?",
+      "code": "# panel Stat, tryb Instant",
+      "options": {
+        "A": "sum(increase(platnosci_total{status=\"udana\"}[$__range]))",
+        "B": "platnosci_total{status=\"udana\"}",
+        "C": "rate(platnosci_total[5m])",
+        "D": "count(platnosci_total)"
+      },
+      "correct": "A",
+      "explanation": "Surowy licznik to suma od startu aplikacji i resetuje się przy restarcie; increase z $__range liczy przyrost w zakresie."
+    },
+    {
+      "question": "Jak pokazać płatności na minutę rozbite na statusy?",
+      "code": "# Time series, stacked",
+      "options": {
+        "A": "sum(platnosci_total) by (instance)",
+        "B": "platnosci_total * 60",
+        "C": "sum by (status) (rate(platnosci_total[$__rate_interval])) * 60",
+        "D": "rate(platnosci_total)"
+      },
+      "correct": "C",
+      "explanation": "rate daje zdarzenia na sekundę - mnożenie przez 60 daje na minutę; sum by (status) usuwa podział na instancje."
+    },
+    {
+      "question": "Jak policzyć p95 czasu płatności?",
+      "code": "# Timer platnosci.czas z publishPercentileHistogram",
+      "options": {
+        "A": "histogram_quantile(0.95, sum by (le) (rate(platnosci_czas_seconds_bucket[5m])))",
+        "B": "max(platnosci_czas_seconds_max) * 0.95",
+        "C": "avg(platnosci_czas_seconds_sum)",
+        "D": "quantile(0.95, platnosci_czas_seconds_count)"
+      },
+      "correct": "A",
+      "explanation": "Wymaga kubełków histogramu (_bucket) z zachowaną etykietą le."
+    },
+    {
+      "question": "Który element łańcucha obserwowalności jest tu brakujący?",
+      "code": "Metryka biznesowa -> Prometheus (scrape) -> Grafana (pulpit) -> ???",
+      "options": {
+        "A": "Alert z routingiem powiadomień - pulpit trzeba oglądać, alert przychodzi sam",
+        "B": "Kolejna metryka",
+        "C": "Druga Grafana",
+        "D": "Nic nie brakuje"
+      },
+      "correct": "A",
+      "explanation": "Pełny łańcuch: kod -> Micrometer -> /actuator/prometheus -> Prometheus -> Grafana + alerty -> powiadomienie."
+    },
+    {
+      "question": "Co jest najpilniejszym problemem w tym systemie?",
+      "code": "# 1) pulpit z 30 panelami JVM\n# 2) jedyny alert: process_cpu_usage > 0.8\n# 3) tag orderId w metrykach\n# 4) /actuator/prometheus publicznie na 8080",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "4 - publiczne ujawnienie informacji wewnętrznych to problem bezpieczeństwa"
+      },
+      "correct": "D",
+      "explanation": "Kolejne kroki: kardynalność (3), alerty na objawy (2), struktura pulpitów (1)."
+    },
+    {
+      "question": "Po co adnotacja runbook_url w regule alertu?",
+      "code": "annotations:\n  summary: \"Bledy integracji bramki platnosci\"\n  runbook_url: \"https://wiki.firma.pl/runbooki/bramka-platnosci\"",
+      "options": {
+        "A": "Dla ozdoby",
+        "B": "Do testów",
+        "C": "Grafana jej wymaga",
+        "D": "Dyżurny od razu dostaje link do procedury: jak zdiagnozować i co zrobić - szybsza i spójna reakcja, także w nocy"
+      },
+      "correct": "D",
+      "explanation": "Alert bez instrukcji zmusza do improwizacji w stresie."
+    },
+    {
+      "question": "Dlaczego alert 'brak płatności przez 10 minut' jest wartościowy, skoro nie ma błędów?",
+      "code": "sum(increase(platnosci_total[10m])) == 0",
+      "options": {
+        "A": "Bo całkowita awaria (np. zepsuty przycisk płatności, błąd konfiguracji) często nie generuje błędów - generuje ciszę",
+        "B": "Nie jest",
+        "C": "Bo liczy błędy",
+        "D": "Bo sprawdza CPU"
+      },
+      "correct": "A",
+      "explanation": "Brak oczekiwanego ruchu to objaw, który alerty na błędy przeoczą."
+    },
+    {
+      "question": "Co pozwala przejść z punktu na wykresie opóźnień do konkretnego wolnego żądania?",
+      "code": "# Grafana: wykres p95 czasu płatności",
+      "options": {
+        "A": "Nic",
+        "B": "Legenda",
+        "C": "Exemplars - punkty histogramu powiązane z traceId, prowadzące do śladu w systemie tracingu, a stamtąd do logów",
+        "D": "Zmienna $instance"
+      },
+      "correct": "C",
+      "explanation": "Wymaga Micrometer Tracing w aplikacji i obsługi exemplars w Prometheusie."
+    },
+    {
+      "question": "Jak ustalić, czy łańcuch monitorowania działa, zanim wydarzy się prawdziwa awaria?",
+      "code": "# nowa usługa przed produkcją",
+      "options": {
+        "A": "Założyć, że działa",
+        "B": "Poczekać na incydent",
+        "C": "Sprawdzić tylko pulpit",
+        "D": "Przećwiczyć awarie: zatrzymać aplikację (alert up == 0), wygenerować błędy (alert 5xx) i sprawdzić, czy powiadomienia docierają właściwym kanałem"
+      },
+      "correct": "D",
+      "explanation": "W teście lokalnym oba alerty przeszły pending -> firing - taki przebieg daje pewność przed produkcją."
+    },
+    {
+      "question": "Który wybór tagów dla metryki zamówień jest właściwy?",
+      "code": "meterRegistry.counter(\"zamowienia\", ???).increment();",
+      "options": {
+        "A": "\"status\", status, \"kanal\", kanal",
+        "B": "\"orderId\", id",
+        "C": "\"email\", email",
+        "D": "\"kwota\", kwota.toString()"
+      },
+      "correct": "A",
+      "explanation": "Status i kanał mają kilka wartości. Identyfikatory i kwoty tworzyłyby nową serię dla każdego zamówienia."
+    },
+    {
+      "question": "Czym różni się status 'nieudana' od 'blad_integracji' w projekcie alertów?",
+      "code": "# nieudana: 3% (typowo 2-4%)\n# blad_integracji: nagle 40/min",
+      "options": {
+        "A": "Niczym",
+        "B": "Oba są critical",
+        "C": "'nieudana' to decyzja banku (warning przy odchyleniu od normy), 'blad_integracji' - nasz problem techniczny (critical, szybka reakcja)",
+        "D": "Oba ignorujemy"
+      },
+      "correct": "C",
+      "explanation": "Rozdzielenie statusów pozwala dobrać pilność alertu do przyczyny."
+    },
+    {
+      "question": "Co powinno trafić do repozytorium projektu obserwowalności?",
+      "code": "# prometheus.yml, alerts.yml, testy reguł, pulpity JSON, provisioning Grafany, hasło admina Grafany",
+      "options": {
+        "A": "Wszystko, łącznie z hasłem",
+        "B": "Nic",
+        "C": "Tylko pulpity",
+        "D": "Konfiguracja, reguły, testy i pulpity - bez sekretów (hasła, webhooki w menedżerze sekretów)"
+      },
+      "correct": "D",
+      "explanation": "Konfiguracja jako kod, sekrety poza repozytorium - ta sama zasada co w rozdziałach o Dockerze i AWS."
+    },
+    {
+      "question": "Dlaczego warto testować reguły alertów w CI?",
+      "code": "$ promtool check rules alerts.yml\n$ promtool test rules testy-alertow.yml",
+      "options": {
+        "A": "Wyłapuje błędne wyrażenia (np. brak sum, zła nazwa metryki, brak okna w rate) przed wdrożeniem, zamiast odkrywać je podczas awarii",
+        "B": "Nie warto",
+        "C": "Bo Prometheus nie działa bez testów",
+        "D": "Dla szybkości"
+      },
+      "correct": "A",
+      "explanation": "Reguła z błędem składni zostałaby odrzucona przy przeładowaniu; reguła poprawna składniowo, ale błędna logicznie - tylko test ją wykryje."
+    },
+    {
+      "question": "Który zestaw alertów kompletnie pokrywa płatności?",
+      "code": "# platnosci",
+      "options": {
+        "A": "Tylko udział nieudanych",
+        "B": "Udział nieudanych (warning), błędy integracji (critical), brak płatności w godzinach aktywności (critical), p95 czasu (warning) + up == 0 usługi",
+        "C": "Tylko CPU",
+        "D": "Tylko p95"
+      },
+      "correct": "B",
+      "explanation": "Różne alerty pokrywają różne rodzaje awarii: błędy, ciszę, spowolnienie i niedostępność."
     }
   ]
 }

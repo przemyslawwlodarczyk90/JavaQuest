@@ -106,6 +106,41 @@
       "prompt": "Wyjasnij (jako String), dlaczego w scenariuszu, gdzie aplikacja Spring Boot i Prometheus SA zdefiniowane w tym samym pliku docker-compose.yml, problem z adresem 'host.docker.internal' W ogole nie wystepuje.",
       "hint": "Przypomnij sobie blok usage i wiedze z _35/Lesson8 - kontenery w tym samym Compose dziela wspolna siec i moga odnalezc sie po nazwie serwisu.",
       "solution": "Gdy oba kontenery (aplikacja Spring Boot i Prometheus) sa zdefiniowane w TYM SAMYM pliku docker-compose.yml, Compose automatycznie tworzy dla nich WSPOLNA siec wirtualna z wbudowanym DNS (_35/Lesson8) - kazdy serwis MOZE odnalezc INNY serwis PO JEGO NAZWIE, bez potrzeby znajomosci adresu IP czy specjalnych adresow jak 'host.docker.internal'. W TAKIM scenariuszu, konfiguracja scrape_configs w prometheus.yml wskazywalaby PO PROSTU na 'tasks-api:8082' (nazwa serwisu z pliku Compose), dokladnie tak samo, jak aplikacja laczyla sie z baza danych przez 'baza:5432' we wczesniejszych lekcjach - caly problem z 'host.docker.internal' dotyczy WYLACZNIE sytuacji, gdy jeden z elementow dziala POZA Dockerem, bezposrednio na hoscie."
+    },
+    {
+      "prompt": "Napisz `compose.yaml` z trzema serwisami: `tasks-api` (obraz aplikacji, Actuator na 8081), `prometheus` (z zamontowanym `prometheus.yml` i nazwanym wolumenem na dane) oraz `grafana` (z provisioningiem źródła danych Prometheus). Podaj też `prometheus.yml` i plik provisioningu Grafany.",
+      "hint": "W sieci Compose cele to nazwy serwisów: tasks-api:8081, http://prometheus:9090. Provisioning: /etc/grafana/provisioning/datasources/*.yml.",
+      "solution": "compose.yaml:\nservices:\n  tasks-api:\n    image: tasks-api:1.4.0\n    ports: [\"8080:8080\"]\n  prometheus:\n    image: prom/prometheus\n    volumes:\n      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro\n      - prom-dane:/prometheus\n    ports: [\"127.0.0.1:9090:9090\"]\n  grafana:\n    image: grafana/grafana\n    volumes:\n      - ./grafana/provisioning:/etc/grafana/provisioning:ro\n    ports: [\"127.0.0.1:3000:3000\"]\nvolumes:\n  prom-dane:\n\nprometheus.yml:\nglobal:\n  scrape_interval: 15s\nscrape_configs:\n  - job_name: 'tasks-api'\n    metrics_path: '/actuator/prometheus'\n    static_configs:\n      - targets: ['tasks-api:8081']\n\ngrafana/provisioning/datasources/prometheus.yml:\napiVersion: 1\ndatasources:\n  - name: Prometheus\n    type: prometheus\n    access: proxy\n    url: http://prometheus:9090\n    isDefault: true\n(Provisioning sprawdzony na Grafanie 13.2: źródło pojawia się automatycznie jako tylko do odczytu, test połączenia zwraca 'Successfully queried the Prometheus API'.) Port 8081 aplikacji nie jest publikowany na hoście - Prometheus łączy się przez sieć Compose."
+    },
+    {
+      "prompt": "Uruchom Prometheusa z dwoma jobami: poprawnym (`metrics_path: /actuator/prometheus`) i bez `metrics_path`, wobec tej samej aplikacji. Zapisz (jako String) co pokazuje strona /targets (lub API /api/v1/targets) dla każdego joba i jak zweryfikować konfigurację przed uruchomieniem poleceniem `promtool`.",
+      "hint": "Domyślna ścieżka to /metrics - w Spring Boot zwraca 404. promtool check config.",
+      "solution": "Wynik (Prometheus 3.15, aplikacja Spring Boot 3.4):\ntasks-api     up\nbez-sciezki   down   server returned HTTP status 404\nup{job=\"bez-sciezki\"} = 0, up{job=\"tasks-api\"} = 1.\nWalidacja przed uruchomieniem (obraz prom/prometheus zawiera promtool):\ndocker run --rm --entrypoint promtool -v \"$PWD:/w\" prom/prometheus check config /w/prometheus.yml\n-> SUCCESS: /w/prometheus.yml is valid prometheus config file syntax\npromtool sprawdza składnię i pliki reguł, ale nie wykryje złej ścieżki - to widać dopiero na /targets. Po zmianie konfiguracji Prometheus wymaga przeładowania (restart kontenera, sygnał SIGHUP albo POST /-/reload przy --web.enable-lifecycle)."
+    },
+    {
+      "prompt": "Opisz (jako String) jak z kontenera Prometheusa odpytywać aplikację działającą bezpośrednio na hoście na trzech systemach: Docker Desktop (Windows/macOS), Linux z Docker Engine i gdy obie rzeczy są w jednym Compose. Dlaczego `localhost` w `targets` nie działa?",
+      "hint": "host.docker.internal jest dostępny w Docker Desktop; na Linuxie trzeba --add-host=host.docker.internal:host-gateway.",
+      "solution": "localhost wewnątrz kontenera to sam kontener Prometheusa - nie ma tam aplikacji, więc scrape kończy się 'connection refused'. Docker Desktop (Windows/macOS): targets: ['host.docker.internal:8082'] - nazwa jest dostępna domyślnie (sprawdzone na Docker Desktop: nazwa wskazywała adres 192.168.65.254). Linux (Docker Engine): nazwa nie istnieje domyślnie - dodaje się ją: docker run --add-host=host.docker.internal:host-gateway ... albo w Compose extra_hosts: [\"host.docker.internal:host-gateway\"]; aplikacja musi też nasłuchiwać na interfejsie osiągalnym z sieci Dockera (nie tylko 127.0.0.1). Wspólny Compose: targets: ['tasks-api:8081'] - nazwa serwisu jako DNS, bez host.docker.internal."
+    },
+    {
+      "prompt": "Skonfiguruj (jako String) przechowywanie danych Prometheusa: nazwany wolumen dla `/prometheus`, czas retencji 15 dni i limit rozmiaru 5 GB. Co się stanie z historią metryk po `docker compose down` bez i z opcją `-v`?",
+      "hint": "Flagi --storage.tsdb.retention.time i --storage.tsdb.retention.size w command (trzeba powtórzyć --config.file).",
+      "solution": "prometheus:\n  image: prom/prometheus\n  command:\n    - --config.file=/etc/prometheus/prometheus.yml\n    - --storage.tsdb.path=/prometheus\n    - --storage.tsdb.retention.time=15d\n    - --storage.tsdb.retention.size=5GB\n  volumes:\n    - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro\n    - prom-dane:/prometheus\nvolumes:\n  prom-dane:\nNadpisanie command zastępuje domyślne argumenty obrazu, dlatego --config.file trzeba podać ponownie. Retencja: dane starsze niż 15 dni lub ponad 5 GB są usuwane (co nastąpi pierwsze). docker compose down - kontenery usunięte, wolumen prom-dane zostaje, historia przetrwa. docker compose down -v - wolumen usunięty, cała historia metryk znika (jak w rozdziale _35)."
+    },
+    {
+      "prompt": "Dodaj do `prometheus.yml` plik reguł alertów i zweryfikuj go `promtool check rules`. Napisz regułę 'aplikacja niedostępna' (up == 0 przez 1 minutę) i regułę 'udział błędów 5xx > 5% przez 5 minut'. Pokaż także, jaki błąd zgłosi promtool dla wyrażenia `rate(x) > 1`.",
+      "hint": "rule_files w prometheus.yml; groups -> rules -> alert, expr, for, labels, annotations.",
+      "solution": "prometheus.yml:\nrule_files:\n  - /etc/prometheus/alerts.yml\n\nalerts.yml:\ngroups:\n  - name: tasks-api\n    rules:\n      - alert: AplikacjaNiedostepna\n        expr: up{job=\"tasks-api\"} == 0\n        for: 1m\n        labels:\n          severity: critical\n      - alert: WysokiProcentBledow5xx\n        expr: sum(rate(http_server_requests_seconds_count{job=\"tasks-api\",status=~\"5..\"}[5m])) / sum(rate(http_server_requests_seconds_count{job=\"tasks-api\"}[5m])) > 0.05\n        for: 5m\n        labels:\n          severity: critical\n        annotations:\n          summary: \"Procent bledow 5xx: {{ $value | humanizePercentage }}\"\n\n$ promtool check rules alerts.yml   -> SUCCESS: 2 rules found\nDla expr: rate(http_server_requests_seconds_count) > 1:\nFAILED: ... could not parse expression: 1:6: parse error: expected type range vector in call to function \"rate\", got instant vector\n(Sprawdzone na Prometheus 3.15; obie reguły przeszły cykl pending -> firing w teście.)"
+    },
+    {
+      "prompt": "Zamiast `static_configs` z adresami opisz (jako String) dwa mechanizmy dynamicznego wykrywania celów: `file_sd_configs` (lista celów w pliku JSON/YAML aktualizowanym przez inny proces) i `kubernetes_sd_configs` (Pody z adnotacjami). Kiedy statyczna lista przestaje wystarczać?",
+      "hint": "Autoskalowanie, zmieniające się adresy, wiele usług.",
+      "solution": "static_configs wystarcza dla kilku stałych celów (lokalnie, mała instalacja). Przestaje wystarczać, gdy instancje pojawiają się i znikają (autoskalowanie, wdrożenia, Kubernetes) - ręczna edycja i przeładowanie nie nadążają. file_sd_configs:\n  - job_name: 'tasks-api'\n    metrics_path: '/actuator/prometheus'\n    file_sd_configs:\n      - files: ['/etc/prometheus/cele/*.json']\n        refresh_interval: 1m\nPlik [{\"targets\":[\"10.0.11.5:8081\",\"10.0.12.7:8081\"],\"labels\":{\"env\":\"prod\"}}] aktualizuje np. skrypt lub narzędzie wdrożeniowe - Prometheus sam wykrywa zmiany bez przeładowania. kubernetes_sd_configs: Prometheus pyta API Kubernetesa o Pody/Endpoints i przez relabel_configs wybiera te z określonymi etykietami lub adnotacjami (np. prometheus.io/scrape: \"true\", prometheus.io/path: /actuator/prometheus) - w praktyce często przez Prometheus Operator i obiekty ServiceMonitor/PodMonitor. Podobne mechanizmy istnieją dla EC2, Consul i innych."
+    },
+    {
+      "prompt": "Opisz (jako String) jak przeładować konfigurację Prometheusa bez restartu kontenera i jak sprawdzić, czy nowa konfiguracja została przyjęta. Co się stanie, jeśli nowy plik zawiera błąd składni?",
+      "hint": "--web.enable-lifecycle i POST /-/reload albo sygnał SIGHUP (docker kill -s HUP). Metryka prometheus_config_last_reload_successful.",
+      "solution": "Opcja 1: uruchomienie z --web.enable-lifecycle, potem curl -X POST http://localhost:9090/-/reload. Opcja 2: docker kill -s HUP prometheus (sygnał SIGHUP). Sprawdzenie: metryka prometheus_config_last_reload_successful (1 = sukces, 0 = błąd) oraz prometheus_config_last_reload_success_timestamp_seconds; strona Status -> Configuration pokazuje aktualnie używaną konfigurację; logi kontenera zawierają komunikat o błędzie. Przy błędzie składni Prometheus odrzuca nową konfigurację i działa dalej ze starą (nie zatrzymuje się) - dlatego warto alertować na prometheus_config_last_reload_successful == 0 i walidować plik promtool check config przed przeładowaniem. Endpoint /-/reload umożliwia każdemu z dostępem do portu zmianę stanu - nie powinien być publicznie dostępny."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Wbudowany interfejs Prometheus jest przydatny do szybkich testów zapytań, ale profesjonalne, wieloelementowe pulpity wymagają bogatszych możliwości wizualizacji oferowanych przez Grafanę."
+    },
+    {
+      "question": "Jaki status będzie miał ten cel dla aplikacji Spring Boot?",
+      "code": "scrape_configs:\n  - job_name: 'bez-sciezki'\n    static_configs:\n      - targets: ['host.docker.internal:8095']",
+      "options": {
+        "A": "up",
+        "B": "unknown",
+        "C": "down z błędem 'server returned HTTP status 404' - domyślna ścieżka /metrics nie istnieje w Spring Boot",
+        "D": "up, ale bez metryk"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Prometheusie 3.15. Poprawnie: metrics_path: '/actuator/prometheus'."
+    },
+    {
+      "question": "Dlaczego ten cel nie działa, gdy Prometheus jest w kontenerze, a aplikacja na hoście?",
+      "code": "static_configs:\n  - targets: ['localhost:8082']",
+      "options": {
+        "A": "Bo port 8082 jest zajęty",
+        "B": "Działa",
+        "C": "Bo brakuje http://",
+        "D": "Bo localhost w kontenerze oznacza sam kontener Prometheusa - należy użyć host.docker.internal (Docker Desktop) lub nazwy serwisu w Compose"
+      },
+      "correct": "D",
+      "explanation": "Na Linuxie host.docker.internal wymaga --add-host=host.docker.internal:host-gateway."
+    },
+    {
+      "question": "Jaki adres celu jest poprawny, gdy aplikacja i Prometheus są w jednym compose.yaml?",
+      "code": "services:\n  tasks-api: ...     # Actuator na 8081\n  prometheus: ...",
+      "options": {
+        "A": "localhost:8081",
+        "B": "host.docker.internal:8081",
+        "C": "tasks-api:8081",
+        "D": "127.0.0.1:8081"
+      },
+      "correct": "C",
+      "explanation": "W sieci Compose nazwa serwisu jest nazwą DNS - port nie musi być nawet publikowany na hoście."
+    },
+    {
+      "question": "Co sprawdza to polecenie?",
+      "code": "$ docker run --rm --entrypoint promtool -v \"$PWD:/w\" prom/prometheus check config /w/prometheus.yml\n SUCCESS: /w/prometheus.yml is valid prometheus config file syntax",
+      "options": {
+        "A": "Czy cele odpowiadają",
+        "B": "Czy Grafana działa",
+        "C": "Czy metryki mają poprawne nazwy",
+        "D": "Poprawność składni konfiguracji (i dołączonych plików reguł) bez uruchamiania Prometheusa"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Prometheusie 3.15. Zła ścieżka metrics_path jest składniowo poprawna - wyjdzie dopiero na /targets."
+    },
+    {
+      "question": "Co zgłosi promtool dla tej reguły?",
+      "code": "groups:\n  - name: x\n    rules:\n      - alert: Zly\n        expr: rate(http_server_requests_seconds_count) > 1",
+      "options": {
+        "A": "FAILED: could not parse expression: ... expected type range vector in call to function \"rate\", got instant vector",
+        "B": "SUCCESS",
+        "C": "Ostrzeżenie o braku for",
+        "D": "Błąd YAML"
+      },
+      "correct": "A",
+      "explanation": "Sprawdzone na Prometheusie 3.15. Walidacja reguł w CI zapobiega wdrożeniu niedziałających alertów."
+    },
+    {
+      "question": "Co się stanie z historią metryk po tym poleceniu?",
+      "code": "# prometheus: volumes: - prom-dane:/prometheus\n$ docker compose down -v",
+      "options": {
+        "A": "Zostanie zachowana",
+        "B": "Zostanie przeniesiona do Grafany",
+        "C": "Zostanie usunięta razem z nazwanym wolumenem prom-dane",
+        "D": "Zostanie zarchiwizowana"
+      },
+      "correct": "C",
+      "explanation": "Samo docker compose down (bez -v) zachowuje wolumeny."
+    },
+    {
+      "question": "Dlaczego w command trzeba powtórzyć --config.file?",
+      "code": "command:\n  - --config.file=/etc/prometheus/prometheus.yml\n  - --storage.tsdb.retention.time=15d",
+      "options": {
+        "A": "Nie trzeba",
+        "B": "Bo Compose tego wymaga",
+        "C": "Bo retencja wymaga dwóch plików",
+        "D": "Bo command zastępuje domyślne argumenty obrazu - bez ponownego podania Prometheus nie użyłby oczekiwanej konfiguracji i ścieżek"
+      },
+      "correct": "D",
+      "explanation": "Ta sama zasada co w rozdziale _34: CMD obrazu jest zastępowane w całości."
+    },
+    {
+      "question": "Jak przeładować konfigurację bez restartu kontenera?",
+      "code": "# Prometheus uruchomiony z --web.enable-lifecycle",
+      "options": {
+        "A": "curl -X POST http://localhost:9090/-/reload (albo sygnał SIGHUP: docker kill -s HUP prometheus)",
+        "B": "curl http://localhost:9090/reload",
+        "C": "docker restart grafana",
+        "D": "Nie da się"
+      },
+      "correct": "A",
+      "explanation": "Przy błędzie w nowym pliku Prometheus zostaje przy starej konfiguracji; wynik pokazuje metryka prometheus_config_last_reload_successful."
+    },
+    {
+      "question": "Co oznacza scrape_interval w tej konfiguracji?",
+      "code": "global:\n  scrape_interval: 15s",
+      "options": {
+        "A": "Czas przechowywania danych",
+        "B": "Czas odpowiedzi aplikacji",
+        "C": "Co ile Prometheus odpytuje każdy cel (można nadpisać per job)",
+        "D": "Interwał alertów"
+      },
+      "correct": "C",
+      "explanation": "Okno w rate() powinno obejmować kilka interwałów (np. [1m] lub więcej przy 15s)."
+    },
+    {
+      "question": "Która sekcja dołącza reguły alertów do Prometheusa?",
+      "code": "global: ...\n???:\n  - /etc/prometheus/alerts.yml\nscrape_configs: ...",
+      "options": {
+        "A": "alerting_rules",
+        "B": "include",
+        "C": "alerts",
+        "D": "rule_files"
+      },
+      "correct": "D",
+      "explanation": "Częstotliwość oceny reguł ustawia global.evaluation_interval."
+    },
+    {
+      "question": "Co należy dodać na Linuxie (Docker Engine), żeby host.docker.internal działał w kontenerze Prometheusa?",
+      "code": "docker run -d --name prometheus ??? prom/prometheus",
+      "options": {
+        "A": "--add-host=host.docker.internal:host-gateway",
+        "B": "--network host.docker.internal",
+        "C": "-e HOST=docker",
+        "D": "Nic - działa zawsze"
+      },
+      "correct": "A",
+      "explanation": "Docker Desktop dodaje tę nazwę automatycznie; na Linuxie trzeba ją zdefiniować (w Compose: extra_hosts)."
+    },
+    {
+      "question": "Co pokazuje wartość up dla celu?",
+      "code": "up{job=\"tasks-api\", instance=\"tasks-api:8081\"} 0",
+      "options": {
+        "A": "Że aplikacja ma 0 użytkowników",
+        "B": "Że metryki są puste",
+        "C": "Że ostatni scrape tego celu się nie powiódł (aplikacja nie działa, zły adres lub ścieżka, blokada sieci)",
+        "D": "Że Prometheus jest wyłączony"
+      },
+      "correct": "C",
+      "explanation": "Szczegóły błędu (np. connection refused, 404) widać na stronie /targets."
+    },
+    {
+      "question": "Jak ograniczyć rozmiar danych Prometheusa?",
+      "code": "prometheus:\n  command: [ ... ]",
+      "options": {
+        "A": "scrape_interval: 1h",
+        "B": "--max-metrics=1000",
+        "C": "Nie da się",
+        "D": "--storage.tsdb.retention.size=5GB (oraz --storage.tsdb.retention.time=15d)"
+      },
+      "correct": "D",
+      "explanation": "Po przekroczeniu limitu najstarsze bloki danych są usuwane. Do długiej historii używa się zewnętrznych magazynów (Thanos, Mimir)."
+    },
+    {
+      "question": "Dlaczego montuje się plik konfiguracyjny z opcją :ro?",
+      "code": "- ./prometheus.yml:/etc/prometheus/prometheus.yml:ro",
+      "options": {
+        "A": "Kontener może tylko czytać plik - nie zmieni ani nie uszkodzi konfiguracji z repozytorium",
+        "B": "Dla szybkości",
+        "C": "Bo Prometheus nie czyta innych plików",
+        "D": "Bez znaczenia"
+      },
+      "correct": "A",
+      "explanation": "Zasada najmniejszych uprawnień dotyczy też montowanych plików."
+    },
+    {
+      "question": "Co zwraca API Prometheusa pod tym adresem?",
+      "code": "$ curl -s localhost:9090/api/v1/targets",
+      "options": {
+        "A": "Listę celów scrape z ich stanem (health), ostatnim błędem i etykietami - to samo co strona Status -> Targets",
+        "B": "Metryki aplikacji",
+        "C": "Konfigurację Grafany",
+        "D": "Listę alertów"
+      },
+      "correct": "A",
+      "explanation": "Przydatne w skryptach diagnostycznych i testach środowiska."
+    },
+    {
+      "question": "Jak Prometheus może automatycznie wykrywać instancje aplikacji w Kubernetesie?",
+      "code": "scrape_configs:\n  - job_name: 'k8s-pody'\n    ???",
+      "options": {
+        "A": "static_configs z adresami Podów",
+        "B": "dns_sd_configs z localhost",
+        "C": "kubernetes_sd_configs (role: pod) z relabel_configs wybierającymi Pody po etykietach/adnotacjach (lub ServiceMonitor z Prometheus Operator)",
+        "D": "Nie da się"
+      },
+      "correct": "C",
+      "explanation": "Adresy Podów zmieniają się przy każdym wdrożeniu - statyczna lista by nie nadążała."
+    },
+    {
+      "question": "Co się stanie, gdy przeładujesz konfigurację zawierającą błąd składni?",
+      "code": "$ curl -X POST localhost:9090/-/reload\n# nowy prometheus.yml z błędem",
+      "options": {
+        "A": "Prometheus się zatrzyma",
+        "B": "Wczyta część pliku",
+        "C": "Usunie wszystkie joby",
+        "D": "Prometheus odrzuci nową konfigurację i będzie działał dalej ze starą; prometheus_config_last_reload_successful = 0"
+      },
+      "correct": "D",
+      "explanation": "Dlatego po zmianie trzeba sprawdzić wynik przeładowania, a najlepiej walidować plik promtool przed nim."
+    },
+    {
+      "question": "Co zwróci to żądanie, jeśli Prometheus uruchomiono bez --web.enable-lifecycle?",
+      "code": "$ curl -X POST localhost:9090/-/reload",
+      "options": {
+        "A": "403 z komunikatem 'Lifecycle API is not enabled.' - trzeba włączyć flagę albo użyć SIGHUP",
+        "B": "200 i przeładowanie",
+        "C": "404",
+        "D": "500"
+      },
+      "correct": "A",
+      "explanation": "Sprawdzone na Prometheusie 3.15. Domyślne wyłączenie chroni przed zdalnym przeładowaniem lub zamknięciem przez każdego z dostępem do portu."
+    },
+    {
+      "question": "Gdzie znajdziesz metrykę prometheus_config_last_reload_successful?",
+      "code": "prometheus_config_last_reload_successful 1",
+      "options": {
+        "A": "W /actuator/prometheus aplikacji",
+        "B": "Na własnym endpoincie /metrics Prometheusa - żeby odpytywać ją zapytaniami, Prometheus musi mieć job scrapujący samego siebie",
+        "C": "W Grafanie",
+        "D": "W logach aplikacji"
+      },
+      "correct": "B",
+      "explanation": "Sprawdzone na Prometheusie 3.15: bez joba dla samego siebie zapytanie o tę metrykę zwraca pusty wynik, choć /metrics ją zawiera. Typowy job: targets: [\"localhost:9090\"]."
+    },
+    {
+      "question": "Co mierzy metryka scrape_duration_seconds?",
+      "code": "scrape_duration_seconds{job=\"tasks-api\",instance=\"host.docker.internal:8095\"} 0.006",
+      "options": {
+        "A": "Czas odpowiedzi API dla użytkowników",
+        "B": "Czas, jaki zajęło Prometheusowi pobranie metryk z celu - rosnąca wartość może oznaczać przeciążenie aplikacji lub zbyt wiele serii",
+        "C": "Czas od startu aplikacji",
+        "D": "Interwał scrape"
+      },
+      "correct": "B",
+      "explanation": "Prometheus dodaje dla każdego celu metryki up, scrape_duration_seconds, scrape_samples_scraped i inne - bez udziału aplikacji."
     }
   ]
 }
