@@ -19,7 +19,7 @@ zawiera własnych instrukcji, żeby uniknąć sprzecznych poleceń:**
 - **`JS_COURSE_WORK_PROGRESS.md`** — aktualny stan prac nad kursem JavaScript, ostatnia czynność,
   następny krok. Osobny plik od `WORK_PROGRESS.md` (Java) — dwie niezależne inicjatywy.
 - **`LINUX_COURSE_STAGE_PROMPT.md`** — jedyne, obowiązujące źródło instrukcji dla pracy nad KURSEM
-  LINUX (trzeci blok platformy — struktura 20 rozdziałów/182 lekcji, mapowanie na notatki źródłowe z
+  LINUX (trzeci blok platformy — struktura 46 rozdziałów/437 lekcji w 4 częściach, mapowanie na notatki źródłowe z
   `dodatkowe materiały/LinuxMistery/`, plan pracy w trzech krokach).
 - **`LINUX_COURSE_WORK_PROGRESS.md`** — aktualny stan prac nad kursem Linux, następny krok.
 - `EDU_PLATFORM_PLAN.md` — historia Fazy 1 platformy (treść JSON wygenerowana z kursu) — archiwum,
