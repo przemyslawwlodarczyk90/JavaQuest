@@ -106,6 +106,41 @@
       "prompt": "Wyjasnij (jako String), dlaczego wystawienie instancji rds bezposrednio na internet (flaga '--publicly-accessible' bez ograniczen sieciowych) jest ryzykowna praktyka, mimo ze aplikacja korzystajaca z tej bazy moze dzialac zupelnie normalnie.",
       "hint": "Przypomnij sobie blok pitfall - to dokladnie ten sam blad co wystawienie bazy danych przez LoadBalancer w Kubernetesie (_36/Lesson3).",
       "solution": "Aplikacja korzystajaca z RDS znajduje sie ZAZWYCZAJ wewnatrz TEJ SAMEJ sieci VPC co sama baza danych (lekcja 6) - NIE POTRZEBUJE wiec ZADNEGO publicznego dostepu do bazy, zeby sie z nia polaczyc. Wystawienie instancji RDS bezposrednio na internet oznacza, ze KAZDY na swiecie moze PROBOWAC polaczyc sie z ta baza (np. przez atak brute-force na haslo) - NIEPOTRZEBNE, dodatkowe ryzyko bezpieczenstwa, ktore nie wnosi ZADNEJ realnej korzysci, skoro jedyny, uprawniony klient (Twoja aplikacja) i tak dziala WEWNATRZ tej samej, prywatnej sieci VPC. Dokladnie ta sama zasada minimalnego niezbednego dostepu, co przy segmentacji sieci w Kubernetesie."
+    },
+    {
+      "prompt": "Utwórz (jako String) instancję RDS PostgreSQL poleceniem CLI tak, żeby: hasło administratora było zarządzane przez RDS w Secrets Manager (bez podawania go w poleceniu), baza nie była publiczna, miała kopie zapasowe przechowywane 7 dni, szyfrowanie dysku i ochronę przed usunięciem. Wyjaśnij każdą opcję.",
+      "hint": "--manage-master-user-password, --no-publicly-accessible, --backup-retention-period, --storage-encrypted, --deletion-protection, --db-subnet-group-name, --vpc-security-group-ids.",
+      "solution": "aws rds create-db-instance \\\n  --db-instance-identifier tasks-api-baza \\\n  --engine postgres --engine-version 16 \\\n  --db-instance-class db.t4g.micro --allocated-storage 20 \\\n  --master-username postgres --manage-master-user-password \\\n  --no-publicly-accessible \\\n  --db-subnet-group-name tasks-api-prywatne \\\n  --vpc-security-group-ids sg-0baza0123 \\\n  --backup-retention-period 7 \\\n  --storage-encrypted --deletion-protection\n\n--manage-master-user-password: RDS generuje hasło i przechowuje je w Secrets Manager (z możliwością rotacji) - hasło nie pojawia się w historii powłoki. --no-publicly-accessible + podsieci prywatne + Security Group: dostęp tylko z VPC. --backup-retention-period 7: automatyczne kopie i odtwarzanie do punktu w czasie z 7 dni. --storage-encrypted: szyfrowanie wolumenów i kopii (tylko przy tworzeniu). --deletion-protection: delete-db-instance nie zadziała, dopóki ktoś świadomie tego nie wyłączy."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String) różnicę między Multi-AZ a Read Replica w RDS: co jest synchroniczne, co asynchroniczne, czy można czytać z każdej kopii, co dzieje się przy awarii. Dobierz rozwiązanie dla aplikacji, w której 90% ruchu to odczyty raportów, a wymagana jest wysoka dostępność.",
+      "hint": "Klasyczne Multi-AZ: rezerwa (standby) bez ruchu, failover przez DNS. Read Replica: asynchroniczna kopia do odczytu, możliwe opóźnienie.",
+      "solution": "Multi-AZ (instancja z rezerwą): synchroniczna replikacja do rezerwy w innej AZ; rezerwa nie obsługuje zapytań; przy awarii AWS przełącza endpoint DNS na rezerwę (zwykle 1-2 min) - to wysoka dostępność, nie skalowanie. Read Replica: asynchroniczna kopia z własnym endpointem, obsługująca odczyty (z możliwym opóźnieniem względem głównej); nie przejmuje ruchu automatycznie (można ją ręcznie awansować). Dla opisanej aplikacji: Multi-AZ dla głównej bazy (dostępność) + 1-2 Read Replicas dla raportów (odciążenie), a w aplikacji osobne źródło danych dla zapytań tylko do odczytu (np. routing po @Transactional(readOnly = true)). Nowszy wariant Multi-AZ z dwoma czytelnymi rezerwami (Multi-AZ DB cluster) łączy obie cechy."
+    },
+    {
+      "prompt": "Aplikacja Spring Boot po failoverze Multi-AZ przez kilka minut zgłasza błędy połączeń z bazą, choć nowa instancja działa. Wyjaśnij (jako String) dwie przyczyny po stronie aplikacji Java (pula połączeń, cache DNS JVM) i jak je naprawić.",
+      "hint": "Endpoint RDS to nazwa DNS przełączana na nowy adres. JVM może cache'ować wyniki DNS; pula trzyma zerwane połączenia.",
+      "solution": "1) Pula połączeń (HikariCP) trzyma połączenia do starej instancji - pierwsze zapytania na nich kończą się błędami, zanim pula je odrzuci i utworzy nowe. Pomaga: sensowne connectionTimeout/validationTimeout, keepaliveTime i maxLifetime, oraz ponawianie operacji w aplikacji. 2) JVM cache'uje wyniki DNS (networkaddress.cache.ttl) - przy długim lub nieskończonym TTL (np. włączony security manager lub ustawienia w java.security) aplikacja nadal łączy się ze starym adresem IP. Naprawa: ustawić networkaddress.cache.ttl na krótką wartość (np. 30-60 s) w java.security albo przez Security.setProperty przy starcie. AWS udostępnia też sterownik JDBC Wrapper przyspieszający failover."
+    },
+    {
+      "prompt": "Opisz (jako String) jak pobierać hasło bazy zarządzane przez RDS w Secrets Manager w aplikacji Spring Boot z użyciem Spring Cloud AWS, tak aby właściwości `spring.datasource.username/password` były wypełnione automatycznie. Jaki format ma sekret tworzony przez RDS?",
+      "hint": "spring.config.import=aws-secretsmanager:<nazwa>; sekret RDS to JSON z kluczami username i password.",
+      "solution": "Sekret tworzony przez --manage-master-user-password to JSON: {\"username\":\"postgres\",\"password\":\"...\"}. Ze Spring Cloud AWS (starter secrets-manager):\nspring.config.import=aws-secretsmanager:rds!db-1234abcd-...?prefix=spring.datasource.\nKlucze JSON sekretu stają się właściwościami z prefiksem: spring.datasource.username i spring.datasource.password. URL bazy podaje się osobno (spring.datasource.url z endpointem RDS). Rola aplikacji potrzebuje secretsmanager:GetSecretValue (i kms:Decrypt, jeśli sekret szyfrowany własnym kluczem). Przy rotacji hasła aplikacja musi odświeżyć połączenia (nowe połączenia po restarcie lub z użyciem mechanizmów odświeżania)."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String) różnicę między automatycznymi kopiami RDS (z odtwarzaniem do punktu w czasie) a ręcznymi snapshotami, i opisz procedurę odtworzenia bazy do stanu sprzed błędnego `DELETE` wykonanego 2 godziny temu. Dlaczego odtworzenie tworzy nową instancję?",
+      "hint": "restore-db-instance-to-point-in-time tworzy nową instancję z nowym endpointem.",
+      "solution": "Automatyczne kopie: codzienny snapshot + logi transakcyjne, retencja 1-35 dni, usuwane razem z instancją (chyba że je zachowasz) - pozwalają odtworzyć stan z dowolnej chwili w okresie retencji. Snapshoty ręczne: tworzone na żądanie, trwają do usunięcia (także po usunięciu instancji). Procedura: aws rds restore-db-instance-to-point-in-time --source-db-instance-identifier tasks-api-baza --target-db-instance-identifier tasks-api-baza-odtw --restore-time 2026-09-26T10:00:00Z (+ podsieci, Security Group). Powstaje NOWA instancja z nowym endpointem - produkcyjna baza się nie zmienia. Następnie: eksport usuniętych danych z odtworzonej bazy do produkcyjnej (albo przełączenie aplikacji na nową instancję) i usunięcie instancji pomocniczej."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) połączenie programisty z bazą RDS w podsieci prywatnej (bez publicznego dostępu) z jego laptopa, dla narzędzia typu DBeaver, bez otwierania portu 5432 na świat. Podaj dwa podejścia.",
+      "hint": "Przekierowanie portu przez Session Manager na instancję pośredniczącą albo VPN / Client VPN.",
+      "solution": "1) Session Manager z przekierowaniem portu przez instancję w VPC (bastion bez otwartych portów przychodzących):\naws ssm start-session --target i-bastion \\\n  --document-name AWS-StartPortForwardingSessionToRemoteHost \\\n  --parameters '{\"host\":[\"tasks-api-baza.xxxx.eu-central-1.rds.amazonaws.com\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"15432\"]}'\nDBeaver: localhost:15432. Security Group bazy dopuszcza ruch tylko z Security Group bastionu.\n2) AWS Client VPN / firmowy VPN do VPC - laptop dostaje adres w sieci firmy, a Security Group bazy dopuszcza zakres VPN.\nW obu przypadkach baza pozostaje niepubliczna, a dostęp jest kontrolowany przez IAM/VPN i logowany."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), dlaczego przy RDS nadal odpowiadasz za wydajność zapytań, i podaj trzy narzędzia/mechanizmy (w RDS lub w aplikacji), które pomogą znaleźć wolne zapytania wywołane przez Hibernate (np. problem N+1).",
+      "hint": "Performance Insights, logi wolnych zapytań (log_min_duration_statement), pg_stat_statements, statystyki Hibernate.",
+      "solution": "RDS zarządza silnikiem i infrastrukturą, ale nie schematem, indeksami ani zapytaniami - te są po stronie aplikacji. Narzędzia: 1) Performance Insights / Database Insights - pokazuje obciążenie bazy w podziale na zapytania i zdarzenia oczekiwania; 2) grupa parametrów z log_min_duration_statement (np. 500 ms) - wolne zapytania trafiają do logów (eksportowanych do CloudWatch Logs), a rozszerzenie pg_stat_statements agreguje statystyki zapytań; 3) po stronie aplikacji - spring.jpa.properties.hibernate.generate_statistics=true lub logowanie SQL w środowisku testowym, żeby wykryć N+1 (setki podobnych zapytań na jedno żądanie) i naprawić je przez JOIN FETCH / @EntityGraph. Zwiększanie klasy instancji bez analizy tylko maskuje problem."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Rds jest rozsądnym, domyślnym wyborem dla produkcji, gdy zespół preferuje przekazanie odpowiedzialności za infrastrukturę bazy danych aws, zamiast zarządzać nią samodzielnie."
+    },
+    {
+      "question": "Czym różni się Multi-AZ od Read Replica?",
+      "code": "# (1) --multi-az\n# (2) aws rds create-db-instance-read-replica ...",
+      "options": {
+        "A": "Niczym",
+        "B": "(1) służy do skalowania odczytów",
+        "C": "(1) to synchroniczna rezerwa w innej AZ do automatycznego przełączenia przy awarii (bez obsługi zapytań); (2) to asynchroniczna kopia z własnym endpointem do odciążenia odczytów",
+        "D": "(2) zapewnia automatyczny failover"
+      },
+      "correct": "C",
+      "explanation": "Multi-AZ = dostępność, Read Replica = skalowanie odczytów. Oba mechanizmy można łączyć."
+    },
+    {
+      "question": "Co wystarczy zmienić w aplikacji Spring Boot przy przejściu z lokalnego PostgreSQL na RDS?",
+      "code": "spring.datasource.url=jdbc:postgresql://localhost:5432/javaquest",
+      "options": {
+        "A": "Przepisać repozytoria JPA",
+        "B": "Dodać specjalny sterownik AWS",
+        "C": "Zmienić dialekt na RdsDialect",
+        "D": "Adres w URL (endpoint RDS) i poświadczenia - sterownik, JPA i kod pozostają bez zmian"
+      },
+      "correct": "D",
+      "explanation": "RDS dostarcza standardowy silnik PostgreSQL. To jedna z zalet usług zarządzanych opartych na otwartych silnikach."
+    },
+    {
+      "question": "Co robi opcja --manage-master-user-password?",
+      "code": "$ aws rds create-db-instance ... --master-username postgres --manage-master-user-password",
+      "options": {
+        "A": "Ustawia hasło 'postgres'",
+        "B": "Wyłącza hasło",
+        "C": "RDS sam generuje hasło administratora i przechowuje je w Secrets Manager (z możliwością rotacji) - hasło nie pojawia się w poleceniu",
+        "D": "Wysyła hasło e-mailem"
+      },
+      "correct": "C",
+      "explanation": "Podanie --master-user-password w poleceniu zostawia hasło w historii powłoki i logach skryptów wdrożeniowych."
+    },
+    {
+      "question": "Jak RDS przełącza ruch na rezerwę przy awarii w Multi-AZ?",
+      "code": "tasks-api-baza.abc123.eu-central-1.rds.amazonaws.com",
+      "options": {
+        "A": "Aplikacja musi zmienić adres",
+        "B": "Nie przełącza automatycznie",
+        "C": "Przez nowy adres IP w konfiguracji",
+        "D": "Endpoint DNS zaczyna wskazywać na rezerwę - aplikacja łączy się ponownie pod tą samą nazwą"
+      },
+      "correct": "D",
+      "explanation": "Dlatego aplikacja zawsze łączy się po nazwie endpointu i musi umieć odnowić połączenia (pula, krótki cache DNS w JVM)."
+    },
+    {
+      "question": "Dlaczego po failoverze aplikacja Java może jeszcze przez długi czas łączyć się ze starym adresem?",
+      "code": "# java.security: networkaddress.cache.ttl=-1",
+      "options": {
+        "A": "Bo JVM cache'uje wynik DNS - przy TTL -1 (na zawsze) nowy adres nie zostanie pobrany; ustawia się krótki TTL (np. 60 s)",
+        "B": "Bo RDS nie zmienia DNS",
+        "C": "Bo PostgreSQL blokuje nowe połączenia",
+        "D": "Bo Hibernate zapamiętuje IP"
+      },
+      "correct": "A",
+      "explanation": "Domyślny TTL cache DNS w JVM bywa różny w zależności od konfiguracji (np. nieskończony przy włączonym menedżerze bezpieczeństwa) - w chmurze warto go ustawić jawnie."
+    },
+    {
+      "question": "Który zestaw opcji tworzy bazę dostępną wyłącznie z VPC?",
+      "code": "$ aws rds create-db-instance ... ???",
+      "options": {
+        "A": "--publicly-accessible",
+        "B": "--open-port 5432",
+        "C": "--no-publicly-accessible --db-subnet-group-name tasks-api-prywatne --vpc-security-group-ids sg-baza",
+        "D": "--public-ip"
+      },
+      "correct": "C",
+      "explanation": "Brak publicznego adresu + podsieci prywatne + Security Group dopuszczająca tylko aplikację. Dostęp programisty - przez Session Manager lub VPN."
+    },
+    {
+      "question": "Co chroni przed przypadkowym usunięciem produkcyjnej instancji RDS?",
+      "code": "$ aws rds delete-db-instance --db-instance-identifier tasks-api-baza",
+      "options": {
+        "A": "Nic",
+        "B": "Read Replica",
+        "C": "Multi-AZ",
+        "D": "--deletion-protection - usunięcie wymaga najpierw świadomego wyłączenia ochrony"
+      },
+      "correct": "D",
+      "explanation": "Przy usuwaniu warto też pozostawić końcowy snapshot (--final-db-snapshot-identifier), zamiast --skip-final-snapshot."
+    },
+    {
+      "question": "Jak odtworzyć bazę do stanu sprzed błędnego DELETE sprzed 2 godzin?",
+      "code": "# automatyczne kopie włączone, retencja 7 dni",
+      "options": {
+        "A": "restore-db-instance-to-point-in-time - powstanie NOWA instancja ze stanem z wybranej chwili, z której odzyskuje się dane",
+        "B": "Cofnąć zmiany w konsoli jednym kliknięciem na tej samej instancji",
+        "C": "Nie da się",
+        "D": "Zrestartować instancję"
+      },
+      "correct": "A",
+      "explanation": "Odtworzenie nie nadpisuje bazy produkcyjnej - dzięki temu można spokojnie porównać dane i przenieść tylko to, co potrzebne."
+    },
+    {
+      "question": "Co się stanie z automatycznymi kopiami po usunięciu instancji RDS (bez dodatkowych opcji)?",
+      "code": "$ aws rds delete-db-instance --db-instance-identifier stara-baza --skip-final-snapshot",
+      "options": {
+        "A": "Zostaną na zawsze",
+        "B": "Przeniosą się do S3",
+        "C": "Zostaną usunięte razem z instancją (chyba że zdecydowano się je zachować) - trwałe są ręczne snapshoty",
+        "D": "Zostaną zamienione w Read Replica"
+      },
+      "correct": "C",
+      "explanation": "--skip-final-snapshot pomija też końcowy snapshot. Na produkcji to proszenie się o kłopoty."
+    },
+    {
+      "question": "Kiedy szyfrowanie wolumenu RDS trzeba włączyć?",
+      "code": "--storage-encrypted",
+      "options": {
+        "A": "W dowolnym momencie jedną komendą",
+        "B": "Tylko dla MySQL",
+        "C": "Nigdy - RDS nie szyfruje",
+        "D": "Przy tworzeniu instancji - istniejącą niezaszyfrowaną bazę szyfruje się przez snapshot, jego zaszyfrowaną kopię i odtworzenie"
+      },
+      "correct": "D",
+      "explanation": "Szyfrowanie obejmuje też kopie i repliki. Łatwiej zaplanować je od początku."
+    },
+    {
+      "question": "Który z poniższych obowiązków zostaje po Twojej stronie mimo używania RDS?",
+      "code": "# RDS: łatanie silnika, kopie, failover",
+      "options": {
+        "A": "Indeksy, schemat i wydajność zapytań (np. problem N+1 z Hibernate)",
+        "B": "Wymiana dysków",
+        "C": "Instalacja PostgreSQL",
+        "D": "Zasilanie serwerów"
+      },
+      "correct": "A",
+      "explanation": "Zarządzana baza nie naprawi złych zapytań. Performance Insights i logi wolnych zapytań pomagają je znaleźć."
+    },
+    {
+      "question": "Jak pobrać w Spring Boot login i hasło z sekretu RDS przez Spring Cloud AWS?",
+      "code": "spring.config.import=???",
+      "options": {
+        "A": "configtree:/rds",
+        "B": "classpath:rds.properties",
+        "C": "aws-secretsmanager:<nazwa-sekretu>?prefix=spring.datasource.",
+        "D": "env:RDS"
+      },
+      "correct": "C",
+      "explanation": "Sekret RDS to JSON z kluczami username i password - z prefiksem stają się spring.datasource.username i spring.datasource.password."
+    },
+    {
+      "question": "Jak podłączyć się z laptopa do niepublicznej bazy RDS bez otwierania portu 5432 na świat?",
+      "code": "# baza w podsieci prywatnej",
+      "options": {
+        "A": "Przekierowanie portu przez Session Manager na instancję w VPC (albo VPN do VPC)",
+        "B": "Zmienić na --publicly-accessible na czas pracy",
+        "C": "Dodać regułę 0.0.0.0/0 na 5432",
+        "D": "Nie da się"
+      },
+      "correct": "A",
+      "explanation": "Tymczasowe 'otwarcie' bazy na świat to częsta przyczyna incydentów - reguła zostaje, a o niej zapominamy."
+    },
+    {
+      "question": "Która klasa instancji oznacza małą instancję z procesorem Graviton?",
+      "code": "--db-instance-class ???",
+      "options": {
+        "A": "t3.micro",
+        "B": "db.r6i.4xlarge",
+        "C": "db.m5.large",
+        "D": "db.t4g.micro"
+      },
+      "correct": "D",
+      "explanation": "Instancje db.* to klasy RDS (inne niż EC2). Litera g oznacza Graviton - dla bazy zarządzanej architektura procesora nie wymaga zmian w aplikacji."
+    },
+    {
+      "question": "Do czego służy grupa parametrów RDS?",
+      "code": "log_min_duration_statement = 500",
+      "options": {
+        "A": "Do ustawiania parametrów silnika bazy (np. logowania wolnych zapytań), których nie da się zmienić przez dostęp do plików serwera",
+        "B": "Do zarządzania użytkownikami",
+        "C": "Do skalowania",
+        "D": "Do kopii zapasowych"
+      },
+      "correct": "A",
+      "explanation": "Przy RDS nie masz dostępu do systemu operacyjnego ani postgresql.conf - konfiguracja silnika odbywa się przez grupy parametrów."
+    },
+    {
+      "question": "Co pokazuje Performance Insights?",
+      "code": "# RDS -> Performance Insights",
+      "options": {
+        "A": "Obciążenie bazy w czasie z podziałem na zapytania SQL i zdarzenia oczekiwania - pomaga znaleźć najdroższe zapytania",
+        "B": "Rachunki",
+        "C": "Listę użytkowników IAM",
+        "D": "Logi aplikacji"
+      },
+      "correct": "A",
+      "explanation": "To pierwsze narzędzie, gdy baza jest przeciążona: widać, które zapytania generują obciążenie i na co czekają."
+    },
+    {
+      "question": "Jak skierować zapytania tylko do odczytu do Read Replica w aplikacji Spring?",
+      "code": "@Transactional(readOnly = true)\npublic List<Raport> raporty() { ... }",
+      "options": {
+        "A": "RDS robi to automatycznie przez jeden endpoint",
+        "B": "Wystarczy readOnly = true bez konfiguracji",
+        "C": "Aplikacja musi mieć dwa źródła danych (główne i repliki) i routing, np. AbstractRoutingDataSource wybierający replikę dla transakcji readOnly",
+        "D": "Nie da się"
+      },
+      "correct": "C",
+      "explanation": "Replika ma osobny endpoint. Trzeba też pamiętać o opóźnieniu replikacji - odczyt tuż po zapisie może nie zobaczyć zmiany."
+    },
+    {
+      "question": "Dlaczego nie warto używać RDS 'na zapas' z Multi-AZ w środowisku deweloperskim?",
+      "code": "--multi-az    # środowisko dev",
+      "options": {
+        "A": "Bo nie działa w dev",
+        "B": "Bo spowalnia zapytania wielokrotnie",
+        "C": "Bo Multi-AZ wyłącza kopie",
+        "D": "Bo w przybliżeniu podwaja koszt instancji, a dostępność środowiska deweloperskiego zwykle nie jest krytyczna"
+      },
+      "correct": "D",
+      "explanation": "Wymagania (dostępność, koszt) dobiera się do środowiska - ten sam wzorzec myślenia co w kapstonie rozdziału."
+    },
+    {
+      "question": "Jakich uprawnień potrzebuje rola aplikacji, żeby pobrać hasło bazy zarządzane przez RDS?",
+      "code": "# sekret: rds!db-1234abcd-...  (szyfrowany kluczem AWS managed)",
+      "options": {
+        "A": "secretsmanager:GetSecretValue dla tego sekretu (i kms:Decrypt przy własnym kluczu KMS)",
+        "B": "rds:DescribeDBInstances",
+        "C": "s3:GetObject",
+        "D": "Żadnych"
+      },
+      "correct": "A",
+      "explanation": "Uprawnienia do samej bazy (login/hasło) i do odczytu sekretu to dwie różne rzeczy - rola dostaje tylko drugą, na konkretny sekret."
+    },
+    {
+      "question": "Ile maksymalnie dni mogą być przechowywane automatyczne kopie RDS?",
+      "code": "--backup-retention-period ???",
+      "options": {
+        "A": "7",
+        "B": "35",
+        "C": "365",
+        "D": "Bez limitu"
+      },
+      "correct": "B",
+      "explanation": "Dłuższe przechowywanie realizuje się ręcznymi snapshotami albo AWS Backup z własnymi planami retencji."
     }
   ]
 }
