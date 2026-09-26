@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
  * {@code @DependsOn("contentSeeder")} na tamtej klasie.
  */
 @Component
-@DependsOn("contentReset")
+@DependsOn({"contentReset", "courseTrackConstraintSync"})
 class ContentSeeder {
 
     private final ChapterRepository chapterRepository;

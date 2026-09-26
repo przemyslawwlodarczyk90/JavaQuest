@@ -31,7 +31,7 @@ export default function LessonListPage() {
     return <p className="error">Nie udało się wczytać lekcji: {error}</p>
   }
 
-  const homePath = chapterSlug.startsWith('_js_') ? '/js' : '/'
+  const homePath = chapterSlug.startsWith('_js_') ? '/js' : chapterSlug.startsWith('_lx_') ? '/linux' : '/'
 
   return (
     <div>

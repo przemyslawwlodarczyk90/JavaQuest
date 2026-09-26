@@ -587,7 +587,142 @@ public final class ChapterSeedData {
             new ChapterSeed("_js_14_srodowisko_przegladarkowe", "JavaScript - środowisko przeglądarkowe", List.of(
                     "01_WindowObject", "02_LocalStorageAndSessionStorage", "03_WindowLocation",
                     "04_WindowHistoryAndHistoryApi", "05_EcmaScriptStandards", "06_DebuggingInVsCode"
-            ), CourseTrack.JAVASCRIPT)
+            ), CourseTrack.JAVASCRIPT),
+
+            // ===== TRZECI BLOK PLATFORMY: KURS LINUX (2026-09-26) =====
+            // Struktura ZAPROJEKTOWANA na podstawie notatek w "dodatkowe materialy/LinuxMistery/"
+            // (klasy LN01-LN31 w src/main/java/org/example/notes - kazda notatka to temat z
+            // ponumerowanymi sekcjami). Rozdzial = grupa tematycznie powiazanych notatek, lekcja =
+            // jedna sekcja lub kilka powiazanych sekcji notatki. Mapowanie lekcja -> sekcje zrodlowe
+            // jest w LINUX_COURSE_STAGE_PROMPT.md (katalog glowny repo). Pliki tresci JSON istnieja,
+            // ale sa PUSTE ({"theory": [], "exercises": [], "quiz": []}) - frontend pokazuje je jako
+            // "w przygotowaniu". Rozdzial _lx_20 i lekcja _lx_15/07 to UZUPELNIENIA spoza notatek.
+            new ChapterSeed("_lx_01_wirtualizacja", "Linux - wirtualizacja i maszyny wirtualne", List.of(
+                    "01_WhatIsVirtualization", "02_HypervisorTypes", "03_VmwareAndVirtualBox",
+                    "04_VirtualizationAndCpuArchitecture", "05_LinuxDistributionsAndLubuntu",
+                    "06_VirtualDiskFilesAndReadyMachines", "07_ResizingVirtualDisks",
+                    "08_VmResourcesRamAndCpu"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_02_systemy_plikow", "Linux - systemy plików i struktura katalogów", List.of(
+                    "01_WhatIsAFileSystem", "02_NtfsFatAndExt4", "03_PartitionEncryptionBitlockerAndLuks",
+                    "04_RootDirectoryAndHierarchy", "05_BinSbinLibAndUsr", "06_EtcHomeAndRoot",
+                    "07_BootDevAndProc", "08_VarTmpOptAndMnt"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_03_podstawowe_polecenia", "Linux - podstawowe polecenia", List.of(
+                    "01_ShellAndTerminal", "02_LsListingFiles", "03_CdAndPwdNavigation",
+                    "04_HiddenFilesAndDotfiles", "05_WildcardsAndGlobbing", "06_TouchAndCat",
+                    "07_MkdirCpAndMv", "08_RmDeletingSafely", "09_HeadTailWcAndSort"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_04_wejscie_wyjscie", "Linux - wejście, wyjście i potoki", List.of(
+                    "01_StdinStdoutStderr", "02_FileDescriptors", "03_OutputRedirection",
+                    "04_ErrorRedirection", "05_InputRedirection", "06_Pipes",
+                    "07_DevNullAndPracticalScenarios"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_05_uzytkownicy_i_uprawnienia", "Linux - użytkownicy i prawa dostępu", List.of(
+                    "01_ReadingPermissions", "02_ChmodNumeric", "03_ChmodSymbolic",
+                    "04_FileVsDirectoryPermissions", "05_UmaskDefaultPermissions", "06_ChownAndChgrp",
+                    "07_EtcPasswd", "08_EtcShadowAndLogin", "09_ShellsAndNologin", "10_CreatingUsersAndGroups",
+                    "11_SudoAndRoot"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_06_pakiety", "Linux - zarządzanie pakietami", List.of(
+                    "01_WhatIsApt", "02_ListingInstalledPackages", "03_UpdateVsUpgrade",
+                    "04_RepositoriesAndSourcesList", "05_SearchingAndInstallingPackages",
+                    "06_DependenciesExplained", "07_RemovePurgeAndAutoremove", "08_DebPackagesAndDpkg"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_07_vim", "Linux - edytor Vim", List.of(
+                    "01_StartingVimAndModes", "02_SavingAndQuitting", "03_MovingAroundTheDocument",
+                    "04_DeletingText", "05_YankAndPaste", "06_ReplacingText", "07_UndoRedoAndRepeat",
+                    "08_SearchingInVim", "09_AdvancedShortcutsAndWorkflow", "10_VimrcConfiguration",
+                    "11_PluginsWithPathogen", "12_NativePackagesAndPopularPlugins"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_08_archiwizacja", "Linux - archiwizacja, kompresja i pobieranie plików", List.of(
+                    "01_GzipAndGunzip", "02_TarArchives", "03_ListingAndExtractingTar", "04_TarGzCombined",
+                    "05_StreamingZcatAndTar", "06_Bzip2AndFormatComparison", "07_WgetDownloadingFiles"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_09_wyszukiwanie_plikow", "Linux - wyszukiwanie plików", List.of(
+                    "01_FindByName", "02_FindWithRegex", "03_FindByType", "04_FindBySize",
+                    "05_FindByModificationTime", "06_FindExec", "07_FindWithXargs", "08_LocateAndIndex",
+                    "09_FileCommand"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_10_grep_regex_awk", "Linux - grep, wyrażenia regularne i awk", List.of(
+                    "01_GrepBasics", "02_GrepOptions", "03_GrepRecursiveAndMultipleFiles",
+                    "04_GrepWithPipesAndLogs", "05_RegexLiteralsDotAndAnchors", "06_RegexCharacterClasses",
+                    "07_RegexQuantifiers", "08_RegexAlternationAndGroups", "09_GrepExtendedAndFixedStrings",
+                    "10_AwkFieldsAndSyntax", "11_AwkConditionsAndRegex", "12_AwkBeginEndAndAggregation",
+                    "13_AwkOutputFormatting", "14_GrepVsSedVsAwk"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_11_procesy", "Linux - procesy", List.of(
+                    "01_WhatIsAProcess", "02_CpuScheduler", "03_PsCommand", "04_ParentAndChildProcesses",
+                    "05_TopAndHtop", "06_KillAndSignals", "07_NiceAndRenice", "08_BackgroundJobs",
+                    "09_NohupAndClosingTerminal", "10_DaemonsAndSystemdAsPid1"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_12_siec_i_ssh", "Linux - sieć i SSH", List.of(
+                    "01_NatVsBridgedNetworking", "02_IpAddressClasses", "03_CheckingNetworkConnectivity",
+                    "04_SshClientServerArchitecture", "05_InstallingSshAndConnecting", "06_ScpFileTransfer",
+                    "07_PublicKeyCryptography", "08_PasswordlessSshWithKeys", "09_SshConfigAliases",
+                    "10_ChangingSshPort", "11_SshKeysForGitAndGithub", "12_ServingFilesOverHttp"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_13_rsync", "Linux - synchronizacja i kopie zapasowe (rsync)", List.of(
+                    "01_WhatIsRsync", "02_DeltaTransferAlgorithm", "03_SyntaxAndArchiveFlag",
+                    "04_LocalSynchronization", "05_RsyncOverSsh", "06_MirrorWithDelete",
+                    "07_ExcludeAndInclude", "08_PermissionsResumeAndBandwidth", "09_RsyncAsBackup"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_14_porty_i_diagnostyka_sieci", "Linux - porty i diagnostyka sieci", List.of(
+                    "01_WhatIsAPort", "02_NetstatBasics", "03_ListeningPortsNetstatPlnt",
+                    "04_TcpConnectionStates", "05_NetstatWithPipesAndRoot", "06_SsModernReplacement",
+                    "07_NmapBasicScans", "08_TcpScanTypes", "09_ServiceAndOsDetection",
+                    "10_NmapScriptsAndLocalNetwork", "11_ScanningLegalityAndZenmap"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_15_systemd", "Linux - usługi i systemd", List.of(
+                    "01_WhatIsSystemd", "02_DaemonsAndServices", "03_UnitFilesStructure",
+                    "04_SystemctlStartStopStatus", "05_EnableAndAutostart", "06_OverridesAndDaemonReload",
+                    "07_JournalctlLogs"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_16_serwer_www", "Linux - serwer: Java, Apache, PHP i MySQL", List.of(
+                    "01_JdkVsJreInstallation", "02_EnvironmentVariablesJavaHomeAndPath", "03_ChecksumsSha256",
+                    "04_MavenInstallation", "05_ApacheHttpServerBasics", "06_ApacheStructureAndConfigFiles",
+                    "07_SharedLibrariesAndApacheModules", "08_BuildingPhpFromSource",
+                    "09_IntegratingPhpWithApache", "10_MysqlInstallation", "11_MysqlDataAndBackup",
+                    "12_PhpMyAdmin", "13_DirectoryIndexConfiguration"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_17_powloki_i_terminale", "Linux - powłoki i terminale", List.of(
+                    "01_BashVsZsh", "02_OhMyZshInstallation", "03_ZshrcAndPlugins", "04_Powerlevel10kTheme",
+                    "05_TerminatorAndGuake"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_18_wsl", "Linux - WSL (Windows Subsystem for Linux)", List.of(
+                    "01_WhatIsWsl", "02_Wsl1VsWsl2", "03_InstallingWslAndDistributions",
+                    "04_WslFilesAndWindowsDrives", "05_WslLimitations", "06_GuiAppsAndXServer",
+                    "07_SystemdInWsl2", "08_WslVsVmVsServer"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_19_docker_na_wsl2", "Linux - Docker na WSL2", List.of(
+                    "01_DockerVsVirtualMachine", "02_WhyDockerNeedsLinux",
+                    "03_DockerDesktopAndWsl2Architecture", "04_PortsAndContainerCommunication",
+                    "05_VolumesAndFileSystemPerformance", "06_DockerComposeInWsl2",
+                    "07_DebuggingLimitationsAndWhenToUse"
+            ), CourseTrack.LINUX),
+
+            new ChapterSeed("_lx_20_skrypty_bash", "Linux - skrypty powłoki bash (uzupełnienie)", List.of(
+                    "01_FirstScriptAndShebang", "02_VariablesAndEnvironment", "03_ConditionsAndTests",
+                    "04_Loops", "05_ArgumentsAndExitCodes", "06_FunctionsInBash", "07_CronScheduling"
+            ), CourseTrack.LINUX)
     );
 
     private ChapterSeedData() {

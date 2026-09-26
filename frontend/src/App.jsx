@@ -10,18 +10,23 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useAuth } from './useAuth'
 import './App.css'
 
+const TRACKS = [
+  { path: '/', label: 'Java' },
+  { path: '/js', label: 'JavaScript' },
+  { path: '/linux', label: 'Linux' },
+]
+
 function TrackSwitcher() {
   const location = useLocation()
-  const isJavaScript = location.pathname.startsWith('/js')
+  const activePath = TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
 
   return (
     <nav className="track-switcher">
-      <Link to="/" className={`track-switcher__button ${isJavaScript ? '' : 'active'}`}>
-        Java
-      </Link>
-      <Link to="/js" className={`track-switcher__button ${isJavaScript ? 'active' : ''}`}>
-        JavaScript
-      </Link>
+      {TRACKS.map((t) => (
+        <Link key={t.path} to={t.path} className={`track-switcher__button ${activePath === t.path ? 'active' : ''}`}>
+          {t.label}
+        </Link>
+      ))}
     </nav>
   )
 }
@@ -78,6 +83,7 @@ function App() {
           <Route element={<RequireAuth />}>
             <Route path="/" element={<ChapterListPage track="JAVA" />} />
             <Route path="/js" element={<ChapterListPage track="JAVASCRIPT" />} />
+            <Route path="/linux" element={<ChapterListPage track="LINUX" />} />
             <Route path="/krytyczne" element={<CriticalTopicsPage />} />
             <Route path="/rozdzial/:chapterSlug" element={<LessonListPage />} />
             <Route path="/rozdzial/:chapterSlug/:lessonSlug" element={<LessonDetailPage />} />
