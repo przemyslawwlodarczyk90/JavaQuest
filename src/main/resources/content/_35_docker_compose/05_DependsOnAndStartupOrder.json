@@ -106,6 +106,41 @@
       "prompt": "Serwis 'migracja' uruchamia jednorazowy skrypt aktualizujący schemat bazy danych i powinien zakończyć działanie kodem 0 przed startem 'tasks-api'. Napisz (jako String), jakiego warunku 'depends_on' użyjesz zamiast 'service_healthy', i dlaczego.",
       "hint": "Przypomnij sobie trzecia wartosc 'condition' z bloku API_reference, przeznaczona dokladnie dla kontenerow jednorazowych, ktore maja sie zakonczyc, a nie dzialac w nieskonczonosc.",
       "solution": "Nalezy uzyc 'condition: service_completed_successfully' zamiast 'service_healthy':\n```\nservices:\n  migracja:\n    build: ./migracje\n    # kontener wykonuje skrypt i KONCZY dzialanie (nie dziala w nieskonczonosc)\n\n  tasks-api:\n    build: .\n    depends_on:\n      migracja:\n        condition: service_completed_successfully\n```\n'service_healthy' NIE pasuje tutaj, poniewaz zaklada usluge DZIALAJACA W NIESKONCZONOSC z wlasnym healthcheckiem - kontener 'migracja' natomiast ma sie ZAKONCZYC (kodem 0, oznaczajacym sukces) i to WLASNIE ZAKONCZENIE (nie 'stan zdrowia' dzialajacego procesu) jest sygnalem, ze 'tasks-api' moze bezpiecznie wystartowac."
+    },
+    {
+      "prompt": "Napisz (jako String) pełny plik z serwisami `migracja` (jednorazowe uruchomienie migracji Flyway z obrazu `flyway/flyway:10`, kończy się kodem 0), `baza` (PostgreSQL z healthcheckiem) i `api`, tak aby: migracja startowała dopiero przy zdrowej bazie, a api - dopiero po udanej migracji i przy zdrowej bazie. Wyjaśnij, co się stanie, gdy migracja zakończy się błędem.",
+      "hint": "condition: service_healthy dla bazy, condition: service_completed_successfully dla migracji.",
+      "solution": "services:\n  baza:\n    image: postgres:16\n    environment:\n      POSTGRES_DB: app\n      POSTGRES_PASSWORD: ${DB_PASSWORD:?}\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U postgres -d app\"]\n      interval: 2s\n      timeout: 3s\n      retries: 15\n  migracja:\n    image: flyway/flyway:10\n    command: -url=jdbc:postgresql://baza:5432/app -user=postgres -password=${DB_PASSWORD} migrate\n    volumes: [\"./db/migration:/flyway/sql:ro\"]\n    depends_on:\n      baza: {condition: service_healthy}\n  api:\n    build: .\n    depends_on:\n      baza: {condition: service_healthy}\n      migracja: {condition: service_completed_successfully}\n\nGdy migracja zakończy się kodem różnym od 0, docker compose up przerwie uruchamianie z komunikatem 'service \"migracja\" didn't complete successfully: exit N' i api w ogóle nie wystartuje - lepsze niż aplikacja działająca na niezmigrowanym schemacie."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String) znaczenie parametrów healthchecku `interval`, `timeout`, `retries` i `start_period` dla bazy, której pierwsza inicjalizacja trwa ok. 20 s, a kolejne starty 2 s. Dobierz wartości tak, żeby Compose nie uznał bazy za niezdrową przy pierwszym starcie, a jednocześnie aplikacja nie czekała niepotrzebnie długo przy kolejnych.",
+      "hint": "W start_period porażki się nie liczą, a pierwszy sukces od razu daje healthy. interval decyduje, jak szybko zauważymy gotowość.",
+      "solution": "healthcheck:\n  test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n  interval: 2s\n  timeout: 3s\n  retries: 5\n  start_period: 30s\n\ninterval - co ile sprawdzać (krótki = szybka reakcja na gotowość); timeout - ile czekać na pojedyncze sprawdzenie; retries - ile kolejnych porażek oznacza unhealthy; start_period - okres rozruchu, w którym porażki nie są liczone, ale sukces od razu oznacza healthy. Przy pierwszym starcie (20 s) start_period 30 s chroni przed fałszywym unhealthy; przy kolejnych startach baza będzie healthy po ok. 2-4 s, bo pierwszy udany test kończy oczekiwanie."
+    },
+    {
+      "prompt": "Porównaj (jako String) zachowanie trzech wariantów, gdy baza jest gotowa po 8 sekundach: (a) brak depends_on, (b) `depends_on: [baza]`, (c) `depends_on: {baza: {condition: service_healthy}}` z healthcheckiem. Aplikacja Spring Boot kończy się błędem, jeśli przy starcie nie połączy się z bazą.",
+      "hint": "Lista depends_on to tylko kolejność tworzenia i startu kontenerów.",
+      "solution": "(a) Compose uruchamia kontenery równolegle - aplikacja może wystartować przed bazą i od razu paść (Connection refused). (b) Kontener bazy startuje pierwszy, ale Compose nie czeka na gotowość PostgreSQL - aplikacja rusza chwilę później, próbuje się łączyć w trakcie inicjalizacji i nadal może paść (typowo przy pierwszym uruchomieniu, gdy inicjalizacja jest dłuższa). (c) Compose czeka, aż healthcheck bazy zgłosi healthy (ok. 8 s), dopiero wtedy startuje aplikację - pewny start. Dodatkowo warto, by aplikacja miała restart: on-failure lub ponawianie połączeń - baza może chwilowo zniknąć także w trakcie działania."
+    },
+    {
+      "prompt": "Opisz (jako String) różnice między `restart: no`, `on-failure`, `always` i `unless-stopped` w Compose dla dwóch serwisów: `api` (usługa działająca stale) i `migracja` (zadanie jednorazowe). Którą politykę wybierzesz dla każdego i dlaczego `always` dla migracji to błąd?",
+      "hint": "Zadanie jednorazowe ma zakończyć się kodem 0 i nie wracać.",
+      "solution": "api: unless-stopped (albo always) - usługa ma wstać po awarii procesu i po restarcie Dockera, ale ręczne zatrzymanie ma być respektowane. migracja: no (domyślne) albo on-failure (ponowienie przy chwilowym błędzie, np. z limitem prób). always dla migracji oznaczałoby, że po udanym zakończeniu (kod 0) Docker uruchamia ją znowu i znowu - migracja wykonywałaby się w pętli, a warunek service_completed_successfully traci sens. Polityka restart dotyczy zakończenia procesu, a nie stanu zdrowia."
+    },
+    {
+      "prompt": "Dla RabbitMQ i Redisa napisz (jako String) sensowne polecenia healthcheck w Compose i wyjaśnij, dlaczego sam fakt działania kontenera (Up) nie oznacza gotowości tych usług. Czym różni się `CMD` od `CMD-SHELL` w polu `test`?",
+      "hint": "RabbitMQ ma rabbitmq-diagnostics, Redis - redis-cli ping. CMD uruchamia program bezpośrednio, CMD-SHELL przez powłokę.",
+      "solution": "  kolejka:\n    image: rabbitmq:3-management\n    healthcheck:\n      test: [\"CMD\", \"rabbitmq-diagnostics\", \"-q\", \"ping\"]\n      interval: 5s\n      retries: 10\n      start_period: 20s\n  cache:\n    image: redis:7\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 2s\n      retries: 5\n\nProces brokera/bazy startuje natychmiast, ale usługa potrzebuje czasu na wczytanie danych, uruchomienie wtyczek i otwarcie portu - w tym czasie połączenia są odrzucane. CMD uruchamia program bezpośrednio (bez powłoki, więc bez $ZMIENNYCH, && czy ||), CMD-SHELL - przez /bin/sh -c, co pozwala np. na 'pg_isready -U $$POSTGRES_USER || exit 1'."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), jak `depends_on` z opcją `restart: true` (Compose 2.17+) zmienia zachowanie `api`, gdy baza zostanie zrestartowana przez `docker compose restart baza`, i kiedy to przydatne.",
+      "hint": "Bez tej opcji restart zależności nie wpływa na zależny serwis.",
+      "solution": "depends_on:\n  baza:\n    condition: service_healthy\n    restart: true\n\nZ restart: true operacja Compose, która restartuje bazę (docker compose restart baza, albo odtworzenie po zmianie konfiguracji), restartuje też api - aplikacja nie zostaje z zerwanymi połączeniami lub nieaktualnym stanem (np. cache sesji, prepared statements). Bez tej opcji api działa dalej i polega wyłącznie na własnym ponawianiu połączeń. Przydatne dla aplikacji, które nie radzą sobie dobrze z utratą zależności. Nie dotyczy restartów robionych przez samego daemona (restart policy)."
+    },
+    {
+      "prompt": "Aplikacja przy pierwszym `docker compose up` sporadycznie pada z błędem połączenia do bazy, choć ma `condition: service_healthy`. Healthcheck to `pg_isready -U postgres`. Wyjaśnij (jako String) możliwą przyczynę związaną z inicjalizacją obrazu postgres i jak poprawić healthcheck.",
+      "hint": "Obraz postgres podczas pierwszej inicjalizacji uruchamia tymczasowy serwer (tylko przez gniazdo lokalne), wykonuje skrypty init, a potem restartuje serwer. pg_isready bez -h sprawdza gniazdo lokalne.",
+      "solution": "Przy pierwszym starcie skrypt obrazu uruchamia tymczasowy serwer dostępny tylko przez gniazdo Unix, wykonuje initdb i skrypty z /docker-entrypoint-initdb.d, a potem go zatrzymuje i uruchamia właściwy serwer. pg_isready bez -h łączy się przez gniazdo lokalne, więc może zgłosić gotowość już dla serwera tymczasowego - aplikacja łączy się przez TCP akurat w chwili restartu. Poprawka: sprawdzać przez TCP i właściwą bazę, np. test: [\"CMD-SHELL\", \"pg_isready -h localhost -U postgres -d app\"] (albo zapytanie psql -h localhost -c 'select 1'), plus start_period; w aplikacji - ponawianie połączeń (np. restart: on-failure)."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Usługi z zauważalną fazą inicjalizacji (jak bazy danych czy brokerzy wiadomości) najczęściej powodują wyścigi z czasem przy samym depends_on, dlatego warunek service_healthy jest tam szczególnie wartościowy."
+    },
+    {
+      "question": "Co gwarantuje ta konfiguracja?",
+      "code": "services:\n  tasks-api:\n    depends_on:\n      - baza\n  baza:\n    image: postgres:16",
+      "options": {
+        "A": "Że baza jest gotowa na połączenia przed startem tasks-api",
+        "B": "Nic - depends_on jest ignorowane",
+        "C": "Że tasks-api zrestartuje się przy awarii bazy",
+        "D": "Tylko że kontener baza zostanie utworzony i uruchomiony przed tasks-api - bez czekania na gotowość PostgreSQL"
+      },
+      "correct": "D",
+      "explanation": "Lista depends_on ustala kolejność. Na gotowość czeka się przez condition: service_healthy z healthcheckiem."
+    },
+    {
+      "question": "Co się stanie przy uruchomieniu tego pliku?",
+      "code": "services:\n  baza:\n    image: postgres:16        # brak healthcheck\n  api:\n    build: .\n    depends_on:\n      baza:\n        condition: service_healthy",
+      "options": {
+        "A": "api poczeka 30 s i wystartuje",
+        "B": "Compose doda domyślny healthcheck",
+        "C": "Warunek zostanie zignorowany",
+        "D": "Błąd: dependency failed to start: container ... has no healthcheck configured"
+      },
+      "correct": "D",
+      "explanation": "service_healthy wymaga zdefiniowanego healthchecku (w Compose albo w obrazie - HEALTHCHECK w Dockerfile). Obraz postgres go nie ma."
+    },
+    {
+      "question": "Co się stanie, gdy migracja zakończy się kodem 3?",
+      "code": "services:\n  migracja:\n    command: [\"sh\",\"-c\",\"exit 3\"]\n  api:\n    depends_on:\n      migracja:\n        condition: service_completed_successfully",
+      "options": {
+        "A": "Compose przerwie: service \"migracja\" didn't complete successfully: exit 3 - api nie wystartuje",
+        "B": "api wystartuje normalnie",
+        "C": "Migracja zostanie powtórzona w nieskończoność",
+        "D": "api wystartuje po 10 sekundach"
+      },
+      "correct": "A",
+      "explanation": "service_completed_successfully czeka na zakończenie z kodem 0. To właściwy warunek dla zadań jednorazowych: migracji, seedowania danych, generowania konfiguracji."
+    },
+    {
+      "question": "Który warunek pasuje do serwisu, który ma tylko wystartować (bez czekania na gotowość)?",
+      "code": "depends_on:\n  baza:\n    condition: ???",
+      "options": {
+        "A": "service_completed_successfully",
+        "B": "service_healthy",
+        "C": "service_started",
+        "D": "service_ready"
+      },
+      "correct": "C",
+      "explanation": "service_started to jawna forma zachowania listy depends_on. service_ready nie istnieje."
+    },
+    {
+      "question": "Ile najdłużej healthcheck może trwać, zanim baza zostanie oznaczona jako unhealthy (po okresie start_period)?",
+      "code": "healthcheck:\n  test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n  interval: 2s\n  timeout: 3s\n  retries: 5",
+      "options": {
+        "A": "Unhealthy po 5 kolejnych nieudanych próbach (co 2 s, każda do 3 s) - rząd kilkunastu sekund",
+        "B": "2 sekundy",
+        "C": "Nigdy",
+        "D": "Dokładnie 5 minut"
+      },
+      "correct": "A",
+      "explanation": "Stan unhealthy wymaga retries kolejnych porażek. Pierwszy sukces od razu daje healthy, więc zbyt duże retries nie opóźnia startu - tylko wykrycie problemu."
+    },
+    {
+      "question": "Do czego służy start_period?",
+      "code": "healthcheck:\n  test: [\"CMD\", \"rabbitmq-diagnostics\", \"-q\", \"ping\"]\n  start_period: 30s",
+      "options": {
+        "A": "Opóźnia start kontenera o 30 s",
+        "B": "Ustala czas trwania jednego sprawdzenia",
+        "C": "Wyłącza healthcheck po 30 s",
+        "D": "Przez 30 s porażki healthchecku nie są liczone do retries, ale pierwszy sukces od razu oznacza healthy"
+      },
+      "correct": "D",
+      "explanation": "Chroni wolno startujące usługi (brokery, bazy przy pierwszej inicjalizacji) przed fałszywym unhealthy, nie wydłużając startu, gdy usługa jest gotowa wcześniej."
+    },
+    {
+      "question": "Czym różni się CMD od CMD-SHELL w healthchecku?",
+      "code": "test: [\"CMD\", \"redis-cli\", \"ping\"]\ntest: [\"CMD-SHELL\", \"pg_isready -U $$POSTGRES_USER || exit 1\"]",
+      "options": {
+        "A": "CMD uruchamia program bezpośrednio; CMD-SHELL - przez powłokę, co pozwala na zmienne, || i &&",
+        "B": "Niczym",
+        "C": "CMD działa tylko w Alpine",
+        "D": "CMD-SHELL jest przestarzałe"
+      },
+      "correct": "A",
+      "explanation": "$$ w pliku Compose to ucieczka - do kontenera trafia $POSTGRES_USER, który rozwinie powłoka kontenera. CMD-SHELL wymaga powłoki w obrazie (nie zadziała w distroless)."
+    },
+    {
+      "question": "Jak zmienia się status kontenera bazy w docker compose ps podczas startu?",
+      "code": "$ docker compose ps --format '{{.Service}} {{.Status}}'",
+      "options": {
+        "A": "Up -> Exited",
+        "B": "Created -> Healthy -> Up",
+        "C": "Up (health: starting) -> Up (healthy)",
+        "D": "Status się nie zmienia"
+      },
+      "correct": "C",
+      "explanation": "Dopiero przejście w healthy odblokowuje serwisy zależne z condition: service_healthy."
+    },
+    {
+      "question": "Jaką politykę restartu wybrać dla jednorazowego kontenera migracji?",
+      "code": "migracja:\n  image: flyway/flyway:10\n  restart: ???",
+      "options": {
+        "A": "always",
+        "B": "unless-stopped",
+        "C": "on-success",
+        "D": "no (domyślne) albo on-failure - zadanie po sukcesie nie powinno być uruchamiane ponownie"
+      },
+      "correct": "D",
+      "explanation": "always restartowałoby migrację po każdym udanym zakończeniu - w pętli. on-failure może pomóc przy chwilowych błędach, najlepiej z limitem (on-failure:3)."
+    },
+    {
+      "question": "Czy polityka restart: always zrestartuje kontener, który jest 'unhealthy', ale jego proces nadal działa?",
+      "code": "api:\n  restart: always\n  healthcheck:\n    test: [\"CMD\", \"curl\", \"-f\", \"http://localhost:8080/actuator/health\"]",
+      "options": {
+        "A": "Tak",
+        "B": "Tak, po 3 porażkach",
+        "C": "Nie - restart reaguje na zakończenie procesu; stan unhealthy nie powoduje restartu w czystym Dockerze/Compose",
+        "D": "Tylko przy service_healthy"
+      },
+      "correct": "C",
+      "explanation": "Automatyczną wymianę niezdrowych instancji zapewniają orkiestratory. W Compose stan zdrowia steruje głównie kolejnością startu (depends_on)."
+    },
+    {
+      "question": "Co dodaje opcja restart: true w depends_on?",
+      "code": "depends_on:\n  baza:\n    condition: service_healthy\n    restart: true",
+      "options": {
+        "A": "Gdy Compose restartuje bazę (np. docker compose restart baza), restartuje także serwis zależny",
+        "B": "Restartuje bazę przy awarii",
+        "C": "Restartuje serwis co minutę",
+        "D": "Nic - to błąd składni"
+      },
+      "correct": "A",
+      "explanation": "Pomaga aplikacjom, które źle znoszą utratę zależności. Nie zastępuje ponawiania połączeń w samej aplikacji."
+    },
+    {
+      "question": "Dlaczego ten healthcheck może zgłosić gotowość za wcześnie przy pierwszej inicjalizacji bazy?",
+      "code": "test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]",
+      "options": {
+        "A": "Bo pg_isready zawsze zwraca 0",
+        "B": "Bo brakuje hasła",
+        "C": "Bo bez -h łączy się przez gniazdo lokalne i może 'zobaczyć' tymczasowy serwer uruchamiany przez skrypt inicjalizacji; lepiej sprawdzać przez TCP i właściwą bazę (-h localhost -d app)",
+        "D": "Bo interval jest za krótki"
+      },
+      "correct": "C",
+      "explanation": "Obraz postgres przy pierwszym starcie uruchamia serwer tymczasowy (bez TCP), wykonuje skrypty init i restartuje się. Sprawdzenie przez TCP odzwierciedla to, czego potrzebuje aplikacja."
+    },
+    {
+      "question": "W jakiej kolejności Compose uruchomi serwisy?",
+      "code": "services:\n  api:      { depends_on: {migracja: {condition: service_completed_successfully}} }\n  migracja: { depends_on: {baza: {condition: service_healthy}} }\n  baza:     { healthcheck: {test: [\"CMD-SHELL\", \"pg_isready\"]} }",
+      "options": {
+        "A": "api, migracja, baza",
+        "B": "migracja, baza, api",
+        "C": "Wszystkie równocześnie",
+        "D": "baza (czekanie na healthy) -> migracja (czekanie na exit 0) -> api"
+      },
+      "correct": "D",
+      "explanation": "Compose buduje graf zależności i uruchamia serwisy w kolejności topologicznej, czekając na każdy warunek."
+    },
+    {
+      "question": "Co się stanie przy docker compose up, gdy graf zależności ma cykl?",
+      "code": "services:\n  a: { depends_on: [b] }\n  b: { depends_on: [a] }",
+      "options": {
+        "A": "Compose zgłosi błąd wykrytego cyklu zależności",
+        "B": "Uruchomi oba równocześnie",
+        "C": "Uruchomi tylko a",
+        "D": "Zawiesi się bez komunikatu"
+      },
+      "correct": "A",
+      "explanation": "Kolejność startu musi dać się ustalić. Cykl oznacza zwykle błąd projektowy - np. dwie usługi wywołujące się nawzajem przy starcie."
+    },
+    {
+      "question": "Dlaczego nawet z service_healthy aplikacja powinna umieć ponawiać połączenia z bazą?",
+      "code": "depends_on:\n  baza:\n    condition: service_healthy",
+      "options": {
+        "A": "Nie powinna - warunek wszystko załatwia",
+        "B": "Bo Compose losuje kolejność",
+        "C": "Bo warunek dotyczy tylko startu; baza może zostać zrestartowana lub chwilowo niedostępna później (aktualizacja, awaria, sieć)",
+        "D": "Bo healthcheck działa tylko raz"
+      },
+      "correct": "C",
+      "explanation": "Pule połączeń (HikariCP) odtwarzają zerwane połączenia, a restart: on-failure ratuje sytuację, gdy aplikacja jednak padnie."
+    },
+    {
+      "question": "Który healthcheck jest poprawny dla Redisa?",
+      "code": "cache:\n  image: redis:7\n  healthcheck:\n    test: ???",
+      "options": {
+        "A": "[\"CMD\", \"redis\", \"health\"]",
+        "B": "[\"CMD\", \"pg_isready\"]",
+        "C": "[\"CMD\", \"curl\", \"localhost:6379\"]",
+        "D": "[\"CMD\", \"redis-cli\", \"ping\"]"
+      },
+      "correct": "D",
+      "explanation": "redis-cli jest w obrazie redis, a PING zwraca PONG, gdy serwer przyjmuje polecenia. Healthcheck zawsze buduje się z narzędzi dostępnych w danym obrazie."
+    },
+    {
+      "question": "Czym różni się depends_on od restart?",
+      "code": "api:\n  depends_on: {baza: {condition: service_healthy}}\n  restart: unless-stopped",
+      "options": {
+        "A": "depends_on steruje kolejnością i warunkami STARTU; restart - reakcją na ZAKOŃCZENIE procesu w trakcie działania",
+        "B": "Niczym",
+        "C": "restart zastępuje depends_on",
+        "D": "depends_on działa tylko z Kubernetesem"
+      },
+      "correct": "A",
+      "explanation": "Oba mechanizmy się uzupełniają: warunek chroni pierwszy start, a polityka restartu - późniejsze awarie."
+    },
+    {
+      "question": "Czy obraz może mieć healthcheck bez sekcji healthcheck w pliku Compose?",
+      "code": "# Dockerfile obrazu tasks-api:\nHEALTHCHECK CMD curl -fs http://localhost:8080/actuator/health || exit 1\n# compose.yaml:\ndepends_on:\n  api: {condition: service_healthy}",
+      "options": {
+        "A": "Tak - Compose użyje HEALTHCHECK zdefiniowanego w obrazie (sekcja healthcheck w Compose może go nadpisać lub wyłączyć: disable: true)",
+        "B": "Nie - trzeba zawsze zdefiniować go w Compose",
+        "C": "Tylko przy build:",
+        "D": "Tylko w Swarm"
+      },
+      "correct": "A",
+      "explanation": "Healthcheck z obrazu jest dziedziczony przez kontener. Compose pozwala zmienić jego parametry lub go wyłączyć."
+    },
+    {
+      "question": "Który zestaw najlepiej zabezpiecza start aplikacji zależnej od bazy i migracji?",
+      "code": "# baza + migracja + api",
+      "options": {
+        "A": "depends_on: [baza, migracja]",
+        "B": "healthcheck bazy + service_healthy dla migracji i api + service_completed_successfully migracji dla api + ponawianie połączeń w aplikacji",
+        "C": "sleep 30 w komendzie api",
+        "D": "restart: always dla wszystkich"
+      },
+      "correct": "B",
+      "explanation": "sleep to zgadywanie: albo za krótko (błąd), albo za długo (strata czasu). Warunki oparte na faktycznym stanie usług są i szybsze, i pewniejsze."
+    },
+    {
+      "question": "Co pokaże docker compose ps -a po udanym starcie stosu z migracją?",
+      "code": "$ docker compose ps -a --format '{{.Service}} {{.State}} {{.ExitCode}}'",
+      "options": {
+        "A": "migracja running 0",
+        "B": "api running 0 oraz migracja exited 0 - zadanie jednorazowe zakończyło się sukcesem i tak ma zostać",
+        "C": "Tylko api",
+        "D": "migracja restarting"
+      },
+      "correct": "B",
+      "explanation": "Zwykłe ps (bez -a) nie pokaże zakończonej migracji. Kod 0 potwierdza, że warunek service_completed_successfully został spełniony."
     }
   ]
 }

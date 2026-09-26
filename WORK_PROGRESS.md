@@ -40,8 +40,8 @@ za mało ćwiczeń i pytań — zwiększyć ich liczbę, w tym **dużo pytań qu
 - **Poprawki treści przy okazji w `_34`:** Dockerfile w teorii `_34/05`, `_34/10`, `_34/11` wołał
   `./mvnw` bez skopiowania `mvnw`/`.mvn` (build kończył się exit 127) - dodano `COPY mvnw pom.xml ./`
   + `COPY .mvn .mvn`.
-- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11) — KOMPLETNE (commity per rozdział).
-  **Następne: `_35_docker_compose`**, potem `_36`...`_41` (Kubernetes, AWS, Redis,
+- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11), `_35` (8/8) — KOMPLETNE (commity per rozdział). W `_35/02` poprawiono CODE_WRONG: Compose ODRZUCA nieznany klucz serwisu - cicha pomyłka to zmienna w environment złego serwisu.
+  **Następne: `_36_kubernetes_fundamentals`**, potem `_37`...`_41` (AWS, Redis,
   Prometheus/Grafana, REST Assured, NoSQL), jeden commit na rozdział + rebalance + test
   `LessonContentFilesTest`.
 
