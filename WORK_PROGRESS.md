@@ -40,12 +40,16 @@ za mało ćwiczeń i pytań — zwiększyć ich liczbę, w tym **dużo pytań qu
 - **Poprawki treści przy okazji w `_34`:** Dockerfile w teorii `_34/05`, `_34/10`, `_34/11` wołał
   `./mvnw` bez skopiowania `mvnw`/`.mvn` (build kończył się exit 127) - dodano `COPY mvnw pom.xml ./`
   + `COPY .mvn .mvn`.
-- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11), `_35` (8/8), `_36` (6/6), `_37` (9/9), `_38` (16/16) — KOMPLETNE (commity per rozdział). W `_36` dodano brakujący `spec.selector` w Deploymentach (01, 02, 04 - API odrzucało manifesty) i uaktualniono `kubectl logs` bez `-c` (nowszy kubectl bierze kontener domyślny); weryfikacja na k3s w Dockerze (tymczasowy kontener, usunięty po weryfikacji). W `_35/02` poprawiono CODE_WRONG: Compose ODRZUCA nieznany klucz serwisu - cicha pomyłka to zmienna w environment złego serwisu.
+- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11), `_35` (8/8), `_36` (6/6), `_37` (9/9), `_38` (16/16), `_39` (7/7) — KOMPLETNE (commity per rozdział). W `_36` dodano brakujący `spec.selector` w Deploymentach (01, 02, 04 - API odrzucało manifesty) i uaktualniono `kubectl logs` bez `-c` (nowszy kubectl bierze kontener domyślny); weryfikacja na k3s w Dockerze (tymczasowy kontener, usunięty po weryfikacji). W `_35/02` poprawiono CODE_WRONG: Compose ODRZUCA nieznany klucz serwisu - cicha pomyłka to zmienna w environment złego serwisu.
   W `_37/02` i `_37/04` komentarze `#` wyjęto z dokumentów JSON polityk (JSON nie dopuszcza komentarzy);
   fakty AWS bez konta - tylko udokumentowane zachowania.
   W `_38/05` poprawiono komentarz w linii właściwości `.properties` (`#` w środku linii staje się częścią wartości); odpowiedzi Redis weryfikowane na redis:7 (7.4) w kontenerze.
-  **Następne: `_39_observability_prometheus_grafana`** (uwaga: `_39/01` ma ten sam błąd komentarza w `.properties`), potem `_40`, `_41` (
-  Prometheus/Grafana, REST Assured, NoSQL), jeden commit na rozdział + rebalance + test
+  W `_39` poprawiono BŁĄD MERYTORYCZNY: wzór na udział błędów `rate(x{status=~"5.."}[5m]) / rate(x[5m])` bez `sum()`
+  (02, 05, 06, 07) - na prawdziwym Prometheusie 3.15 zwraca 1 dla każdej serii z błędami (dzielenie łączy serie o
+  identycznych etykietach), więc alert odpalałby przy pierwszym błędzie; teraz `sum(...) / sum(...)`. Ponadto `_39/01`:
+  komentarz w linii `.properties`, port zarządzania 9090 (kolizja z Prometheusem) -> 8081, realny format wyjścia Actuatora.
+  Weryfikacja: testowa aplikacja Spring Boot 3.4 + Prometheus 3.15 + Grafana 13.2 w kontenerach (usunięte po teście).
+  **Następne: `_40_rest_assured_testing`**, potem `_41_nosql_overview`; jeden commit na rozdział + rebalance + test
   `LessonContentFilesTest`.
 
 ## Aktualny etap
