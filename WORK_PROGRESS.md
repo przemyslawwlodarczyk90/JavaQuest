@@ -3,6 +3,37 @@
 > Ten plik jest JEDYNYM miejscem do sprawdzenia stanu prac. Nadpisywany, nie dziennik. Pełna
 > instrukcja/standard: `STAGE2_LESSON_REDESIGN_PROMPT.md`. Trwałe fakty o projekcie: `CLAUDE.md`.
 
+## BIEŻĄCA INICJATYWA (od 2026-09-26): więcej ćwiczeń i pytań quizowych w `_32`-`_41`
+
+Polecenie użytkownika: rozdziały tematów krytycznych dopisane po bloku Spring (`_32`-`_41`) mają
+za mało ćwiczeń i pytań — zwiększyć ich liczbę, w tym **dużo pytań quizowych opartych na kodzie**.
+
+- **Cel na lekcję:** quiz ≥ 25 pytań (serwer losuje 20 — `platform.quiz.draw-size`, więc powtórka
+  po niezdanym podejściu dostaje nowe pytania), ćwiczenia ≥ 10. Nowe pytania głównie z polem
+  `code` (wynik programu, złożoność, znajdź błąd, komendy/wyjścia narzędzi, YAML, Dockerfile...).
+- **Nowe pole `code` w pytaniu quizowym** (opcjonalne): JSON → `LessonContentFile.QuizQuestionJson`
+  → encja `QuizQuestion.code` (kolumna TEXT, dodawana przez `ddl-auto=update`) →
+  `QuizService.QuestionView.code` → `QuizView.jsx` renderuje `<pre className="quiz-view__code">`.
+  UWAGA: te zmiany w kodzie platformy NIE są scommitowane — pliki (`QuizQuestion.java`,
+  `LessonContentLoader.java`, `App.css`...) zawierały już niezacommitowaną pracę użytkownika
+  (reset hasła, batchowanie loadera), więc commit zostawiony użytkownikowi. Treść JSON commituje
+  się osobno (loader z HEAD ignoruje nieznane pole `code`, więc nic się nie psuje).
+- **Test** `src/test/java/.../platform/content/LessonContentFilesTest.java` (niescommitowany z tego
+  samego powodu - zależy od `code()`): parsuje WSZYSTKIE pliki treści ścisłym ObjectMapperem
+  (nieznane pole = błąd) i sprawdza quizy (opcje A-D, litera odpowiedzi, niepuste pola).
+- **Narzędzie:** `node scripts/content-migration/append_practice.js <paczka.json>` (paczka =
+  `{"<rozdzial>/<lekcja>.json": {"exercises": [...], "quiz": [...]}}`, ścieżki względem
+  `src/main/resources/content`). Dopisuje NA KONIEC (numeracja pytań widzianych przez
+  użytkowników zostaje), waliduje (opcje A-D, duplikaty, cyrylica) i przy błędzie nic nie zapisuje.
+- **Weryfikacja treści:** odpowiedzi „co wypisze” sprawdzane uruchomieniem (`java Plik.java` z
+  `openjdk-25.0.2`), zachowanie Gita - na testowych repozytoriach w scratchpadzie. Poprawki
+  znalezione przy okazji: komentarz CODE_WRONG w `_32/10` (pętla nie utyka, gubi resztę listy),
+  niuans `git branch -d` po squash-merge'u w `_33/04` i `_33/07` (z upstreamem `-d` przechodzi).
+- **Stan:** `_32` (15/15) — KOMPLETNE, commit `6daf71c`. `_33` (16/16) — KOMPLETNE (commit
+  "_33: wiecej cwiczen..."). **Następne: `_34_docker_fundamentals`**, potem `_35`...`_41`
+  (Docker Compose, Kubernetes, AWS, Redis, Prometheus/Grafana, REST Assured, NoSQL), jeden commit
+  na rozdział + test `LessonContentFilesTest`.
+
 ## Aktualny etap
 
 Etap 1-3 — zakończone. **Etap 4 (migracja rozdziałami) — w toku.**
