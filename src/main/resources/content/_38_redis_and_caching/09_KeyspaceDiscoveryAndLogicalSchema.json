@@ -131,6 +131,16 @@
       "prompt": "Wyjaśnij ograniczenie type string.",
       "hint": "Semantyka może być inna niż typ fizyczny.",
       "solution": "String może zawierać tekst, liczbę, binarne dane, serializowany JSON, bitmapę lub HyperLogLog; potrzebna jest inspekcja i wiedza aplikacji."
+    },
+    {
+      "prompt": "Napisz w Javie narzędzie, które z listy kluczy (np. wyniku `redis-cli --scan`) wyprowadza 'rodziny kluczy': zamienia segmenty liczbowe i UUID na `{id}` (np. `user:42:sessions` -> `user:{id}:sessions`) i liczy, ile kluczy należy do każdej rodziny. Przetestuj na kilkunastu przykładowych kluczach.",
+      "hint": "Podziel po ':' i zamień segment pasujący do \\d+ lub wzorca UUID na {id}. TreeMap<String, Integer> z merge.",
+      "solution": "import java.util.*;\n\npublic class RodzinyKluczy {\n    static String rodzina(String klucz) {\n        String[] czesci = klucz.split(\":\", -1);\n        for (int i = 0; i < czesci.length; i++) {\n            if (czesci[i].matches(\"\\\\d+\") || czesci[i].matches(\"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\")) {\n                czesci[i] = \"{id}\";\n            }\n        }\n        return String.join(\":\", czesci);\n    }\n\n    public static void main(String[] args) {\n        List<String> klucze = List.of(\"user:42\", \"user:17\", \"user:42:sessions\", \"user:17:sessions\",\n            \"leaderboard:weekly\", \"cache:product:991\", \"cache:product:12\",\n            \"session:3f2b8c1e-9a7d-4e21-b6c3-0d1e2f3a4b5c\", \"user:99\");\n        Map<String, Integer> rodziny = new TreeMap<>();\n        for (String k : klucze) rodziny.merge(rodzina(k), 1, Integer::sum);\n        rodziny.forEach((r, n) -> System.out.println(n + \"\\t\" + r));\n    }\n}\n// 2  cache:product:{id}\n// 1  leaderboard:weekly\n// 1  session:{id}\n// 3  user:{id}\n// 2  user:{id}:sessions\nTo pierwszy krok rekonstrukcji schematu: rodziny kluczy, a dla każdej - próbka TYPE/TTL/rozmiar."
+    },
+    {
+      "prompt": "Opisz (jako String) procedurę odkrywania schematu dla rodziny `cache:product:{id}` na produkcji, która z próbki 50 kluczy ustala: typ, rozkład TTL (brak/krótki/długi), rozmiar (MEMORY USAGE) i format wartości (JSON? serializacja Javy?). Jakie polecenia wykonasz i jakie wnioski mogą wymagać rozmowy z zespołem aplikacji?",
+      "hint": "redis-cli --scan --pattern 'cache:product:*' | head -50, potem per klucz TYPE, TTL, MEMORY USAGE, GETRANGE 0 99.",
+      "solution": "redis-cli --scan --pattern 'cache:product:*' --count 1000 | head -50 > probka.txt\nwhile read -r k; do\n  redis-cli TYPE \"$k\"; redis-cli TTL \"$k\"; redis-cli MEMORY USAGE \"$k\"; redis-cli GETRANGE \"$k\" 0 99\ndone < probka.txt\n(Dla dużej próbki lepiej jeden proces z wieloma poleceniami niż pętla procesów.)\nWnioski: wszystkie string, TTL 0-600 s -> cache z TTL 10 min; część kluczy z TTL -1 -> błąd w kodzie (brak TTL), do zgłoszenia; wartości zaczynające się od \\xac\\xed -> serializacja Javy (format zależny od klas - migracja wymaga kodu aplikacji); '{\"@class\":...' -> Jackson z informacją o typie. Rozmowy z zespołem wymagają: źródło prawdy o formacie (kod serializatora), znaczenie pól, czy klucze bez TTL są celowe. Pierwsze 50 kluczy SCAN nie jest losową próbką - warto brać klucze z kilku różnych miejsc iteracji."
     }
   ],
   "quiz": [
@@ -221,6 +231,210 @@
       },
       "correct": "B",
       "explanation": "Filtr nie zmniejsza kosztu pełnej iteracji."
+    },
+    {
+      "question": "Co robi to polecenie redis-cli?",
+      "code": "$ redis-cli --scan --pattern 'user:*' --count 200",
+      "options": {
+        "A": "Wykonuje KEYS user:*",
+        "B": "Usuwa klucze user:*",
+        "C": "Zwraca tylko 200 kluczy",
+        "D": "Iteruje SCAN-em do kursora 0 i wypisuje pasujące klucze, po jednym w linii"
+      },
+      "correct": "D",
+      "explanation": "--count to wskazówka rozmiaru kroku SCAN, nie limit wyniku. Wynik może zawierać duplikaty - przy liczeniu używa się sort -u."
+    },
+    {
+      "question": "Co zwróci SCAN z opcją TYPE?",
+      "code": "HSET user:42 name Anna\nSET liczba 1\nSET tekst abc\nSCAN 0 TYPE hash",
+      "options": {
+        "A": "Wszystkie klucze",
+        "B": "Błąd",
+        "C": "liczba i tekst",
+        "D": "Tylko user:42 (i kursor)"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. Filtr TYPE jest stosowany po przejrzeniu porcji - Redis nadal musi przejść cały keyspace."
+    },
+    {
+      "question": "Jak policzyć unikalne klucze rodziny, skoro SCAN może zwracać duplikaty?",
+      "code": "$ redis-cli --scan --pattern 'import:v1:user:*' --count 1000 | ???",
+      "options": {
+        "A": "sort -u | wc -l",
+        "B": "wc -l",
+        "C": "head -1",
+        "D": "grep -c user"
+      },
+      "correct": "A",
+      "explanation": "SCAN gwarantuje zwrócenie kluczy istniejących przez cały czas iteracji, ale jeden klucz może pojawić się kilka razy (np. przy rehashowaniu)."
+    },
+    {
+      "question": "Które polecenie bezpiecznie obejrzy pola dużego hasha?",
+      "code": "HLEN user:42\n(integer) 250000",
+      "options": {
+        "A": "HGETALL user:42",
+        "B": "HKEYS user:42",
+        "C": "HSCAN user:42 0 COUNT 100",
+        "D": "DUMP user:42"
+      },
+      "correct": "C",
+      "explanation": "HGETALL i HKEYS zwracają wszystko naraz - przy 250 tys. pól blokują serwer i przesyłają duże dane."
+    },
+    {
+      "question": "Który zestaw poleceń odpowiada 'ograniczonej, typowanej próbce' dla dużego seta?",
+      "code": "TYPE user:42:sessions\nset",
+      "options": {
+        "A": "SMEMBERS user:42:sessions",
+        "B": "KEYS user:42:*",
+        "C": "SORT user:42:sessions",
+        "D": "SCARD user:42:sessions i SSCAN user:42:sessions 0 COUNT 50"
+      },
+      "correct": "D",
+      "explanation": "Najpierw liczność (O(1)), potem mała porcja elementów. SMEMBERS zwraca cały zbiór."
+    },
+    {
+      "question": "Jaką rodzinę kluczy reprezentują te klucze?",
+      "code": "user:42:sessions\nuser:17:sessions\nuser:9001:sessions",
+      "options": {
+        "A": "user:{id}:sessions",
+        "B": "user:{id}",
+        "C": "sessions:{id}",
+        "D": "user:*"
+      },
+      "correct": "A",
+      "explanation": "Rodzina (wzorzec klucza) wraz z typem, TTL i znaczeniem pól tworzy kontrakt klucza - odpowiednik tabeli w logicznym schemacie."
+    },
+    {
+      "question": "Co oznacza wynik TTL -1 dla klucza cache:product:991?",
+      "code": "TYPE cache:product:991 -> string\nTTL cache:product:991  -> -1",
+      "options": {
+        "A": "Klucz nie istnieje",
+        "B": "Klucz wygasa za sekundę",
+        "C": "Klucz nie ma czasu wygaśnięcia - dla rodziny 'cache' to prawdopodobnie błąd w kodzie, do wyjaśnienia z zespołem",
+        "D": "Klucz jest trwały z definicji Redis"
+      },
+      "correct": "C",
+      "explanation": "Odkrywanie schematu ujawnia też anomalie. -2 oznaczałoby brak klucza."
+    },
+    {
+      "question": "Dlaczego wniosek z jednego klucza jest ryzykowny?",
+      "code": "HGETALL user:42\n1) \"name\" 2) \"Anna\" 3) \"email\" 4) \"a@example.test\"",
+      "options": {
+        "A": "Nie jest ryzykowny",
+        "B": "Bo user:42 to klucz testowy",
+        "C": "Bo HGETALL zmienia dane",
+        "D": "Inne klucze rodziny mogą mieć dodatkowe lub brakujące pola, inny typ czy TTL (starsze wersje aplikacji) - potrzebna jest reprezentatywna próbka"
+      },
+      "correct": "D",
+      "explanation": "Redis nie wymusza schematu - dane z różnych wersji aplikacji mogą współistnieć."
+    },
+    {
+      "question": "Co jest źródłem prawdy o formacie tej wartości?",
+      "code": "GETRANGE cache:product:991 0 20\n\"\\xac\\xed\\x00\\x05sr\\x00\\x1bcom.shop...\"",
+      "options": {
+        "A": "Kod aplikacji (serializator i klasy) - to serializacja Javy, której struktura zależy od klas",
+        "B": "Sama wartość w Redis",
+        "C": "Dokumentacja Redis",
+        "D": "Polecenie TYPE"
+      },
+      "correct": "A",
+      "explanation": "Nagłówek \\xac\\xed\\x00\\x05 to strumień ObjectOutputStream. Migracja takich danych bez kodu aplikacji jest zgadywaniem."
+    },
+    {
+      "question": "Który wpis kontraktu jest kompletny?",
+      "code": "# rodzina: leaderboard:weekly",
+      "options": {
+        "A": "leaderboard:weekly - zset",
+        "B": "leaderboard:weekly - dane",
+        "C": "leaderboard:weekly - zset, member = userId, score = punkty tygodnia (całkowite), TTL ok. 12 h do końca tygodnia, właściciel: zespół gier",
+        "D": "leaderboard:weekly - ważne"
+      },
+      "correct": "C",
+      "explanation": "Kontrakt opisuje typ, znaczenie elementów i wartości, politykę TTL i właściciela."
+    },
+    {
+      "question": "Jak w jednej sesji sprawdzić typ, TTL i rozmiar klucza?",
+      "code": "# klucz: cache:product:991",
+      "options": {
+        "A": "KEYS, TYPE",
+        "B": "GET, GET, GET",
+        "C": "DEBUG OBJECT, FLUSHDB",
+        "D": "TYPE, TTL, MEMORY USAGE"
+      },
+      "correct": "D",
+      "explanation": "Wszystkie trzy są tanie i nie zwracają samej wartości (ważne przy danych wrażliwych)."
+    },
+    {
+      "question": "Czy klucz dodany w trakcie iteracji SCAN zostanie zwrócony?",
+      "code": "SCAN 0 ...        # start\n# w tym czasie aplikacja: SET user:99999 x\nSCAN <kursor> ... # dalsze kroki",
+      "options": {
+        "A": "Może, ale nie musi - SCAN gwarantuje tylko klucze istniejące przez cały czas iteracji",
+        "B": "Zawsze",
+        "C": "Nigdy",
+        "D": "Tylko z opcją TYPE"
+      },
+      "correct": "A",
+      "explanation": "Dlatego wynik SCAN na żywej bazie to przybliżony obraz, a nie migawka."
+    },
+    {
+      "question": "Który klucz narusza konwencję rodziny, jeśli kontrakt to user:{id} jako hash?",
+      "code": "TYPE user:42  -> hash\nTYPE user:17  -> hash\nTYPE user:new -> string",
+      "options": {
+        "A": "user:42",
+        "B": "user:17",
+        "C": "user:new - inny typ i nieliczbowy identyfikator; do wyjaśnienia przed importem",
+        "D": "Żaden"
+      },
+      "correct": "C",
+      "explanation": "Takie wyjątki (np. licznik lub flaga) mogą złamać importer lub zapytania typu HGETALL user:*."
+    },
+    {
+      "question": "Co zwróci ostatnie polecenie, gdy iteracja się zakończyła?",
+      "code": "127.0.0.1:6379> SCAN 1792 MATCH user:* COUNT 100\n1) \"0\"\n2) 1) \"user:17\"",
+      "options": {
+        "A": "Kursor \"0\" oznacza koniec pełnej iteracji; zwrócony klucz należy jeszcze uwzględnić",
+        "B": "Kursor 0 oznacza, że należy zacząć od nowa",
+        "C": "Błąd",
+        "D": "Brak danych"
+      },
+      "correct": "A",
+      "explanation": "Ostatnia porcja może zawierać klucze - nie pomija się jej tylko dlatego, że kursor wynosi 0."
+    },
+    {
+      "question": "Dlaczego SCAN z MATCH na instancji z 50 mln kluczy trwa długo, nawet gdy pasuje tylko 100 kluczy?",
+      "code": "redis-cli --scan --pattern 'rzadki:*'",
+      "options": {
+        "A": "Bo MATCH jest wyłączony",
+        "B": "Bo SCAN sortuje klucze",
+        "C": "Bo MATCH filtruje po przejrzeniu porcji - SCAN i tak musi przejść cały keyspace",
+        "D": "Bo wynik jest kompresowany"
+      },
+      "correct": "C",
+      "explanation": "SCAN nie blokuje serwera jak KEYS, ale całkowita praca jest proporcjonalna do liczby wszystkich kluczy."
+    },
+    {
+      "question": "Jak przejrzeć porcję elementów rankingu bez pobierania całości?",
+      "code": "ZCARD leaderboard:weekly\n(integer) 2000000",
+      "options": {
+        "A": "ZRANGE leaderboard:weekly 0 -1",
+        "B": "HGETALL leaderboard:weekly",
+        "C": "SMEMBERS leaderboard:weekly",
+        "D": "ZSCAN leaderboard:weekly 0 COUNT 20 albo ZRANGE leaderboard:weekly 0 19 WITHSCORES"
+      },
+      "correct": "D",
+      "explanation": "ZRANGE z małym zakresem jest tani (O(log n + m)); ZRANGE 0 -1 zwraca 2 mln elementów."
+    },
+    {
+      "question": "Który zapis kontraktu klucza pozwala importerowi ponownie użyć istniejącej konwencji?",
+      "code": "# odkryte: user:{id} hash, user:{id}:sessions set",
+      "options": {
+        "A": "Nowe klucze zgodne z odkrytą konwencją, w wersjonowanym namespace, np. import:v1:user:{id}",
+        "B": "Nowe klucze: uzytkownik_{id}",
+        "C": "Wszystko w jednym kluczu JSON",
+        "D": "Klucze losowe"
+      },
+      "correct": "A",
+      "explanation": "Spójność z istniejącymi rodzinami ułatwia pracę aplikacji i narzędzi; osobny namespace daje izolację."
     }
   ]
 }

@@ -131,6 +131,16 @@
       "prompt": "Zaprojektuj cleanup canary.",
       "hint": "Nie używaj keys+del.",
       "solution": "Importer zapisuje manifest dokładnych utworzonych kluczy; cleanup usuwa wyłącznie tę listę po weryfikacji."
+    },
+    {
+      "prompt": "Wykonaj w lokalnym Redis (kontener) import 'canary' pięciu rekordów do przestrzeni `import:chg-1234:*`: dwa hashe z EXPIREAT w MULTI/EXEC, jeden string JSON z `SET ... NX EXAT`, jedno ponowienie tego samego SET NX (sprawdź wynik), jeden rekord bez daty wygaśnięcia. Zapisz (jako String) polecenia, oczekiwane odpowiedzi i sprzątanie po teście.",
+      "hint": "SET NX przy istniejącym kluczu zwraca (nil). Sprzątanie: UNLINK konkretnych kluczy z listy, nie po wzorcu na ślepo.",
+      "solution": "MULTI\nHSET import:chg-1234:user:42 name Anna country PL\nEXPIREAT import:chg-1234:user:42 1798675200\nEXEC                         -> 1) (integer) 2  2) (integer) 1\nMULTI\nHSET import:chg-1234:user:43 name Jan country DE\nEXPIREAT import:chg-1234:user:43 1798675200\nEXEC                         -> 1) (integer) 2  2) (integer) 1\nSET import:chg-1234:user:44 '{\"name\":\"Ola\",\"country\":\"PL\"}' NX EXAT 1798675200   -> OK\nSET import:chg-1234:user:44 '{\"name\":\"X\"}' NX EXAT 1798675200                    -> (nil), wartość bez zmian\nHSET import:chg-1234:user:45 name Piotr country PL   -> (integer) 2, TTL -1 (celowo, wg kontraktu)\nWeryfikacja: TYPE, HGETALL (małe hashe testowe), TTL/EXPIRETIME, GET user:44.\nSprzątanie: UNLINK import:chg-1234:user:42 import:chg-1234:user:43 import:chg-1234:user:44 import:chg-1234:user:45 - lista kluczy z manifestu canary."
+    },
+    {
+      "prompt": "Pokaż (jako String) eksperymentem, że MULTI/EXEC nie jest transakcją SQL: w jednym bloku wykonaj HSET na nowym kluczu, INCR na kluczu typu hash (błąd wykonania) i SET innego klucza. Jakie odpowiedzi zwróci EXEC i jaki będzie stan danych? Czym różni się błąd składni polecenia w kolejce (np. nieznane polecenie) od błędu wykonania?",
+      "hint": "Błąd runtime nie przerywa pozostałych poleceń; błąd przy kolejkowaniu powoduje EXECABORT.",
+      "solution": "MULTI\nHSET m f v        -> QUEUED\nINCR user:42      -> QUEUED (user:42 to hash)\nSET m2 x          -> QUEUED\nEXEC              -> 1) (integer) 1  2) (error) WRONGTYPE ...  3) OK\nHGET m f -> \"v\", GET m2 -> \"x\" (sprawdzone na Redis 7.4).\nBłąd wykonania nie cofa pozostałych poleceń - Redis nie ma rollbacku. MULTI gwarantuje tylko, że polecenia wykonają się razem, bez przeplatania z innymi klientami. Błąd wykryty przy kolejkowaniu (nieznane polecenie, zła liczba argumentów) powoduje, że EXEC zwraca EXECABORT i nie wykonuje niczego. Dlatego importer musi sprawdzać odpowiedź każdego polecenia, a walidacja typów kluczy poprzedza import."
     }
   ],
   "quiz": [
@@ -221,6 +231,210 @@
       },
       "correct": "B",
       "explanation": "Typ wynika z istniejącego modelu i wzorców dostępu."
+    },
+    {
+      "question": "Co zwróci drugie polecenie SET?",
+      "code": "SET import:u:42 \"{}\" NX EXAT 1798675200\nSET import:u:42 \"{x}\" NX EXAT 1798675200",
+      "options": {
+        "A": "OK i wartość \"{x}\"",
+        "B": "OK, tylko nowy TTL",
+        "C": "Błąd",
+        "D": "(nil) - klucz istnieje, wartość i TTL pozostają bez zmian"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. NX czyni zapis bezpiecznym przy ponowieniu - nie nadpisze wcześniej zaimportowanego rekordu."
+    },
+    {
+      "question": "Co zwróci EXEC?",
+      "code": "MULTI\nHSET m f v\nINCR user:42          # user:42 jest hashem\nSET m2 x\nEXEC",
+      "options": {
+        "A": "1, błąd WRONGTYPE, OK - pozostałe polecenia wykonały się mimo błędu (brak rollbacku)",
+        "B": "EXECABORT - nic się nie wykonało",
+        "C": "Błąd i cofnięcie HSET",
+        "D": "Tylko OK"
+      },
+      "correct": "A",
+      "explanation": "Sprawdzone na Redis 7.4: po EXEC HGET m f zwraca v, a GET m2 zwraca x."
+    },
+    {
+      "question": "Dlaczego HSET i EXPIREAT wysyła się w MULTI/EXEC?",
+      "code": "MULTI\nHSET import:chg-1234:user:42 name Anna country PL\nEXPIREAT import:chg-1234:user:42 1798675200\nEXEC",
+      "options": {
+        "A": "Żeby było szybciej",
+        "B": "Żeby cofnąć HSET przy błędzie EXPIREAT",
+        "C": "Żeby inni klienci nie zobaczyli rekordu bez TTL i żeby oba polecenia wykonały się razem (bez przeplatania)",
+        "D": "Bo EXPIREAT wymaga MULTI"
+      },
+      "correct": "C",
+      "explanation": "MULTI nie cofa zmian przy błędzie wykonania, ale eliminuje lukę czasową między poleceniami."
+    },
+    {
+      "question": "Co zwróci TTL po tym poleceniu?",
+      "code": "SET import:u:42 \"{}\" NX EXAT 1798675200\nEXPIRETIME import:u:42",
+      "options": {
+        "A": "-1",
+        "B": "-2",
+        "C": "0",
+        "D": "1798675200"
+      },
+      "correct": "D",
+      "explanation": "EXAT ustawia bezwzględny czas wygaśnięcia w jednym poleceniu z zapisem - bez luki między SET a EXPIREAT."
+    },
+    {
+      "question": "Co jest złego w tym skrypcie?",
+      "code": "while IFS=, read id name email; do\n  redis-cli HSET \"user:$id\" name $name email $email\ndone < users.csv",
+      "options": {
+        "A": "Nie obsługuje CSV (cudzysłowy, przecinki w polach), $name bez cudzysłowów rozbija się na słowa (np. 'Anna Maria'), brak walidacji i jeden proces na rekord",
+        "B": "Nic",
+        "C": "Tylko brak TTL",
+        "D": "IFS nie działa z przecinkiem"
+      },
+      "correct": "A",
+      "explanation": "Imię 'Anna Maria' dałoby HSET user:1 name Anna Maria email ... - przesunięte argumenty i błędne pola."
+    },
+    {
+      "question": "Jaki kod wyjścia zwróci redis-cli z opcją -e przy błędzie polecenia?",
+      "code": "$ redis-cli -e HGET klucz-string pole; echo $?",
+      "options": {
+        "A": "0",
+        "B": "2",
+        "C": "1",
+        "D": "Zależy od błędu"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Redis 7.4 (bez -e kod wynosi 0). W automatyzacji -e pozwala zatrzymać skrypt przy pierwszym błędzie."
+    },
+    {
+      "question": "Czym różni się SET XX od SET NX?",
+      "code": "SET k v XX\nSET k v NX",
+      "options": {
+        "A": "Niczym",
+        "B": "NX ustawia TTL",
+        "C": "XX usuwa klucz",
+        "D": "XX zapisuje tylko, gdy klucz istnieje (aktualizacja); NX - tylko, gdy nie istnieje (utworzenie)"
+      },
+      "correct": "D",
+      "explanation": "NX chroni przed nadpisaniem, XX przed przypadkowym utworzeniem rekordu, którego miało nie być."
+    },
+    {
+      "question": "Co zwróci EXEC, gdy w kolejce jest nieznane polecenie?",
+      "code": "MULTI\nHSET m f v\nHSETT m g w\nEXEC",
+      "options": {
+        "A": "(error) EXECABORT Transaction discarded because of previous errors. - nic się nie wykona",
+        "B": "1 i błąd",
+        "C": "OK",
+        "D": "Wykona się tylko HSET"
+      },
+      "correct": "A",
+      "explanation": "Błędy wykryte przy kolejkowaniu (nieznane polecenie, zła liczba argumentów) przerywają cały blok; błędy wykonania - nie."
+    },
+    {
+      "question": "Kiedy lepiej zapisać rekord jako String JSON niż Hash?",
+      "code": "# (a) rekord zawsze czytany i zapisywany w całości, z zagnieżdżoną listą adresów\n# (b) częste zmiany pojedynczych pól",
+      "options": {
+        "A": "W (b)",
+        "B": "Nigdy",
+        "C": "W (a)",
+        "D": "Zawsze"
+      },
+      "correct": "C",
+      "explanation": "JSON dobrze pasuje do dokumentów czytanych w całości i struktur zagnieżdżonych; hash - do pól zmienianych osobno."
+    },
+    {
+      "question": "Jak bezpiecznie usunąć klucze po imporcie canary?",
+      "code": "# canary: import:chg-1234:user:42 ... user:46 (lista w manifeście)",
+      "options": {
+        "A": "FLUSHDB",
+        "B": "KEYS import:* i DEL",
+        "C": "redis-cli --scan --pattern '*' | xargs redis-cli DEL",
+        "D": "UNLINK konkretnych kluczy z manifestu canary"
+      },
+      "correct": "D",
+      "explanation": "Usuwanie po liście z manifestu nie zahaczy o dane, których import nie utworzył. UNLINK zwalnia pamięć w tle."
+    },
+    {
+      "question": "Co zwróci HSET przy aktualizacji istniejącego pola i dodaniu nowego?",
+      "code": "HSET import:u:42 name Anna country PL\nHSET import:u:42 name Anna email a@example.test",
+      "options": {
+        "A": "1 - liczbę NOWO dodanych pól (email); nadpisanie name się nie liczy",
+        "B": "2",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "A",
+      "explanation": "Wartość zwracana przez HSET pozwala importerowi rozróżnić utworzenie od aktualizacji."
+    },
+    {
+      "question": "Co zawiera poprawny kod zapisu jednego rekordu w Javie?",
+      "code": "ValidatedUser u = validate(csvRecord);\n???",
+      "options": {
+        "A": "redis.execute(\"HSET user:\" + u.id() + \" name \" + u.name());",
+        "B": "Runtime.exec(\"redis-cli HSET ...\")",
+        "C": "redis.opsForHash().putAll(key(u.id()), Map.of(\"name\", u.name(), \"email\", u.email())); redis.expireAt(key(u.id()), u.expiresAt());",
+        "D": "System.out.println(u)"
+      },
+      "correct": "C",
+      "explanation": "Argumenty przekazywane osobno są binarnie bezpieczne - spacje czy cudzysłowy w danych nie zmienią polecenia."
+    },
+    {
+      "question": "Co powinien zrobić executor pipeline po wysłaniu partii 1000 poleceń?",
+      "code": "List<Object> odpowiedzi = redis.executePipelined(...);",
+      "options": {
+        "A": "Nic - brak wyjątku oznacza sukces",
+        "B": "Zrestartować Redis",
+        "C": "Wysłać partię drugi raz",
+        "D": "Sprawdzić wszystkie odpowiedzi: liczba = liczbie poleceń, brak błędów, a przy błędzie zapisać partię do ponowienia"
+      },
+      "correct": "D",
+      "explanation": "Pipelining tylko grupuje przesyłanie - każde polecenie ma własną odpowiedź, która może być błędem."
+    },
+    {
+      "question": "Czy MULTI/EXEC jest potrzebne przy pojedynczym SET z EXAT?",
+      "code": "SET import:u:42 '{...}' NX EXAT 1798675200",
+      "options": {
+        "A": "Nie - jedno polecenie jest atomowe samo w sobie; wartość i czas wygaśnięcia ustawiane są razem",
+        "B": "Tak",
+        "C": "Tylko w klastrze",
+        "D": "Tylko z NX"
+      },
+      "correct": "A",
+      "explanation": "Dla stringów opcje EX/PX/EXAT/PXAT eliminują potrzebę osobnego EXPIRE. Hash wymaga osobnego EXPIREAT."
+    },
+    {
+      "question": "Po co zaczynać od importu pięciu rekordów (canary)?",
+      "code": "import --canary batch-00000.resp   # 5 rekordów, różne przypadki",
+      "options": {
+        "A": "Żeby było szybciej",
+        "B": "Bo Redis wymaga",
+        "C": "Żeby tanio i odwracalnie sprawdzić kontrakt (typy, pola, TTL, kodowanie znaków) na reprezentatywnych przypadkach przed pełnym importem",
+        "D": "Żeby zająć mniej pamięci"
+      },
+      "correct": "C",
+      "explanation": "Canary powinien obejmować przypadki brzegowe: polskie znaki, brak daty wygaśnięcia, maksymalne długości pól."
+    },
+    {
+      "question": "Co zwróci GET dla klucza z polskimi znakami zapisanego binarnie bezpiecznie?",
+      "code": "HSET import:u:43 name \"Zażółć\"\nHSTRLEN import:u:43 name",
+      "options": {
+        "A": "6",
+        "B": "7",
+        "C": "12",
+        "D": "10"
+      },
+      "correct": "D",
+      "explanation": "Długości w Redis są w bajtach UTF-8. Test canary z polskimi znakami wykrywa błędne kodowanie (np. Windows-1250) przed pełnym importem."
+    },
+    {
+      "question": "Które polecenie ustawia TTL tylko wtedy, gdy klucz jeszcze go nie ma (Redis 7.0+)?",
+      "code": "HSET import:u:42 name Anna\n??? import:u:42 1798675200",
+      "options": {
+        "A": "EXPIREAT ... NX",
+        "B": "EXPIREAT ... XX",
+        "C": "EXPIREAT ... GT",
+        "D": "PERSIST"
+      },
+      "correct": "A",
+      "explanation": "Opcje EXPIRE/EXPIREAT: NX (tylko gdy brak TTL), XX (tylko gdy TTL jest), GT/LT (tylko gdy nowy dłuższy/krótszy)."
     }
   ]
 }

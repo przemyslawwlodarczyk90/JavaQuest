@@ -106,6 +106,41 @@
       "prompt": "Zaprojektuj (jako String) poprawna kombinacje adnotacji Spring Cache dla serwisu z trzema metodami: 'znajdzProdukt(id)' (odczyt), 'zaktualizujCene(produkt)' (aktualizacja), 'usunProdukt(id)' (usuniecie). Uzasadnij wybor kazdej adnotacji.",
       "hint": "Przypomnij sobie API_reference - kazda z trzech operacji (odczyt/aktualizacja/usuniecie) ma dedykowana adnotacje w Spring Cache.",
       "solution": "'znajdzProdukt(id)' powinno miec adnotacje '@Cacheable(value=\"produkty\", key=\"#id\")' - to metoda WYLACZNIE odczytujaca, wiec sprawdzenie cache PRZED wykonaniem (i pominiecie metody przy trafieniu) jest POZADANYM zachowaniem. 'zaktualizujCene(produkt)' powinno miec adnotacje '@CachePut(value=\"produkty\", key=\"#produkt.id\")' - metoda MUSI byc wykonana ZA KAZDYM razem (rzeczywista aktualizacja w bazie), a JEJ wynik powinien NADPISAC wartosc w cache, aby KOLEJNE odczyty zwracaly juz zaktualizowana cene. 'usunProdukt(id)' powinno miec adnotacje '@CacheEvict(value=\"produkty\", key=\"#id\")' - PO usunieciu produktu z bazy, odpowiadajacy mu wpis w cache MUSI zostac USUNIETY, zeby KOLEJNE proby odczytu nie zwracaly juz NIEISTNIEJACEGO produktu z przestarzalego cache."
+    },
+    {
+      "prompt": "Skonfiguruj `RedisCacheManager` w Spring Boot tak, aby: domyślny TTL wynosił 10 minut, cache `produkty` miał TTL 1 godzinę, wartości były zapisywane jako JSON (nie serializacja Javy), a wartości null nie były cache'owane. Napisz klasę konfiguracyjną z `RedisCacheManagerBuilderCustomizer` lub `RedisCacheConfiguration`.",
+      "hint": "RedisCacheConfiguration.defaultCacheConfig().entryTtl(...).disableCachingNullValues().serializeValuesWith(...). GenericJackson2JsonRedisSerializer.",
+      "solution": "@Configuration\n@EnableCaching\npublic class CacheConfig {\n\n    @Bean\n    RedisCacheConfiguration cacheConfiguration() {\n        return RedisCacheConfiguration.defaultCacheConfig()\n            .entryTtl(Duration.ofMinutes(10))\n            .disableCachingNullValues()\n            .serializeValuesWith(RedisSerializationContext.SerializationPair\n                .fromSerializer(new GenericJackson2JsonRedisSerializer()));\n    }\n\n    @Bean\n    RedisCacheManagerBuilderCustomizer cacheCustomizer(RedisCacheConfiguration domyslna) {\n        return builder -> builder\n            .withCacheConfiguration(\"produkty\", domyslna.entryTtl(Duration.ofHours(1)));\n    }\n}\nDomyślna konfiguracja RedisCacheConfiguration: brak wygasania, cache'owanie null i serializacja JDK (wymaga Serializable, nieczytelna w redis-cli). JSON jest czytelny i nie zależy od serializacji Javy. Proste ustawienia można też podać we właściwościach: spring.cache.redis.time-to-live=10m, spring.cache.redis.cache-null-values=false."
+    },
+    {
+      "prompt": "Napisz serwis `ProduktService` z pełnym cyklem cache: `znajdz(id)` z `@Cacheable` (bez cache'owania wyników null), `zmienCene(id, cena)` z `@CachePut`, `usun(id)` z `@CacheEvict`, `przeladujKatalog()` czyszczący cały cache `produkty`, oraz `szukaj(kategoria, strona)` z kluczem złożonym z obu parametrów. Opisz, jakie klucze powstaną w Redis.",
+      "hint": "unless = \"#result == null\", allEntries = true, key = \"#kategoria + ':' + #strona\". Domyślny prefiks klucza to nazwaCache::.",
+      "solution": "@Service\npublic class ProduktService {\n    private final ProduktRepository repo;\n    public ProduktService(ProduktRepository repo) { this.repo = repo; }\n\n    @Cacheable(value = \"produkty\", key = \"#id\", unless = \"#result == null\")\n    public Produkt znajdz(Long id) { return repo.findById(id).orElse(null); }\n\n    @CachePut(value = \"produkty\", key = \"#id\")\n    public Produkt zmienCene(Long id, BigDecimal cena) {\n        Produkt p = repo.findById(id).orElseThrow();\n        p.setCena(cena);\n        return repo.save(p);\n    }\n\n    @CacheEvict(value = \"produkty\", key = \"#id\")\n    public void usun(Long id) { repo.deleteById(id); }\n\n    @CacheEvict(value = {\"produkty\", \"wyszukiwanie\"}, allEntries = true)\n    public void przeladujKatalog() { }\n\n    @Cacheable(value = \"wyszukiwanie\", key = \"#kategoria + ':' + #strona\")\n    public List<Produkt> szukaj(String kategoria, int strona) { return repo.findByKategoria(kategoria, PageRequest.of(strona, 20)); }\n}\nKlucze w Redis: produkty::42, wyszukiwanie::kubki:0. Uwaga: zmiana ceny nie unieważnia list w 'wyszukiwanie' - trzeba je czyścić lub akceptować nieaktualność do wygaśnięcia TTL (lekcja 5)."
+    },
+    {
+      "prompt": "Pokaż problem wywołania wewnętrznego: w klasie `RaportService` metoda `raportMiesieczny()` woła `this.kosztowneObliczenie(miesiac)` oznaczoną `@Cacheable`. Napisz test lub opis, który pokazuje, że cache nie działa, a następnie dwie poprawki: wydzielenie metody do osobnego beanu oraz wstrzyknięcie samego siebie (self-injection). Która jest czystsza?",
+      "hint": "Proxy Springa przechwytuje tylko wywołania z zewnątrz beanu. this omija proxy.",
+      "solution": "Problem: @Cacheable działa przez proxy - wywołanie z zewnątrz przechodzi przez proxy (sprawdzenie cache), a this.kosztowneObliczenie() wywołuje metodę bezpośrednio na obiekcie, omijając proxy. Każde wywołanie raportMiesieczny() liczy wszystko od nowa (widać w logach/liczniku wywołań repozytorium).\nPoprawka 1 (czystsza):\n@Service class Obliczenia {\n    @Cacheable(\"obliczenia\") public Wynik kosztowneObliczenie(YearMonth m) { ... }\n}\n@Service class RaportService {\n    private final Obliczenia obliczenia;\n    Raport raportMiesieczny(YearMonth m) { return new Raport(obliczenia.kosztowneObliczenie(m)); }\n}\nPoprawka 2: @Lazy @Autowired private RaportService self; i self.kosztowneObliczenie(m) - działa, ale zaciemnia projekt (klasa zależy od siebie). Wydzielenie osobnego beanu jest czytelniejsze i zwykle lepiej oddaje podział odpowiedzialności. Ta sama zasada dotyczy @Transactional i @Async."
+    },
+    {
+      "prompt": "Napisz przykład użycia `StringRedisTemplate` do licznika wywołań API z oknem minutowym (rate limiting): klucz `limit:<uzytkownik>:<minuta>`, INCR, ustawienie TTL przy pierwszym wywołaniu, odrzucenie po przekroczeniu 100 żądań. Wyjaśnij, dlaczego tu `@Cacheable` się nie nadaje.",
+      "hint": "opsForValue().increment(klucz) zwraca nową wartość; gdy == 1 -> expire(klucz, Duration.ofMinutes(1)).",
+      "solution": "@Component\npublic class LimitZadan {\n    private final StringRedisTemplate redis;\n    public LimitZadan(StringRedisTemplate redis) { this.redis = redis; }\n\n    public boolean pozwol(String uzytkownik) {\n        long minuta = Instant.now().getEpochSecond() / 60;\n        String klucz = \"limit:\" + uzytkownik + \":\" + minuta;\n        Long liczba = redis.opsForValue().increment(klucz);\n        if (liczba != null && liczba == 1) {\n            redis.expire(klucz, Duration.ofMinutes(2));\n        }\n        return liczba != null && liczba <= 100;\n    }\n}\n@Cacheable zapamiętuje WYNIK metody dla argumentów - tu potrzebujemy atomowej operacji na liczniku współdzielonym przez wszystkie instancje (INCR) i ręcznego TTL, więc właściwy jest niski poziom (RedisTemplate). TTL nieco dłuższy niż okno chroni przed pozostawieniem klucza bez wygaśnięcia. (Między INCR a EXPIRE jest mała luka - w pełni atomowo można to zrobić skryptem Lua lub MULTI.)"
+    },
+    {
+      "prompt": "Napisz test integracyjny Spring Boot z Testcontainers sprawdzający, że `ProduktService.znajdz(1L)` wywołane dwa razy odpytuje repozytorium tylko raz, a po `usun(1L)` wpis znika z cache. Użyj kontenera `redis:7` i `@ServiceConnection` oraz `@MockitoSpyBean` (lub `@MockitoBean`) na repozytorium.",
+      "hint": "@Container @ServiceConnection static GenericContainer<?> redis = new GenericContainer<>(\"redis:7\").withExposedPorts(6379); verify(repo, times(1)).findById(1L).",
+      "solution": "@SpringBootTest\n@Testcontainers\nclass ProduktServiceCacheTest {\n\n    @Container\n    @ServiceConnection(name = \"redis\")\n    static GenericContainer<?> redis = new GenericContainer<>(\"redis:7\").withExposedPorts(6379);\n\n    @MockitoBean ProduktRepository repo;\n    @Autowired ProduktService service;\n    @Autowired CacheManager cacheManager;\n\n    @Test\n    void drugiOdczytZCache() {\n        when(repo.findById(1L)).thenReturn(Optional.of(new Produkt(1L, \"Kubek\", new BigDecimal(\"20\"))));\n\n        service.znajdz(1L);\n        service.znajdz(1L);\n        verify(repo, times(1)).findById(1L);\n\n        service.usun(1L);\n        assertThat(cacheManager.getCache(\"produkty\").get(1L)).isNull();\n    }\n}\nTest z prawdziwym Redis sprawdza też serializację (np. brak Serializable albo problem z JSON-em wyjdzie tutaj, a nie na produkcji). Między testami warto czyścić cache (cacheManager.getCache(...).clear()), żeby testy nie zależały od kolejności."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), jak `@Cacheable(sync = true)` zmienia zachowanie przy równoczesnych wywołaniach dla tego samego klucza, jakie ma ograniczenia (m.in. nie łączy się z `unless`) i czy chroni przed stampede między wieloma instancjami aplikacji.",
+      "hint": "sync synchronizuje obliczanie wartości w obrębie jednej instancji (dla RedisCache - lokalna blokada).",
+      "solution": "Bez sync: 50 równoczesnych wywołań znajdz(42) przy pustym cache - wszystkie mogą wykonać metodę (50 zapytań do bazy). Z sync = true: Spring używa Cache.get(key, valueLoader) - pierwsze wywołanie liczy wartość, pozostałe w tej samej instancji czekają i dostają wynik. Ograniczenia: sync nie może być łączony z unless (i z wieloma cache w jednej adnotacji); w RedisCache domyślnie synchronizacja działa w obrębie jednej JVM - przy 5 instancjach nadal może być do 5 równoczesnych obliczeń (zamiast 50 x 5). Pełna ochrona między instancjami wymaga blokady rozproszonej (SET lock NX EX w Redis, Redisson) albo odświeżania w tle."
+    },
+    {
+      "prompt": "Klucze w Redis wyglądają dziwnie: `\\xac\\xed\\x00\\x05t\\x00\\x0bprodukty::1`, a wartości są nieczytelne. Wyjaśnij (jako String) przyczynę (domyślne serializatory `RedisTemplate`), skutki (klucze niedostępne dla innych aplikacji i redis-cli, kruchość przy zmianie klas) i napisz konfigurację `RedisTemplate<String, Object>` z serializatorem String dla kluczy i JSON dla wartości.",
+      "hint": "Domyślny RedisTemplate używa JdkSerializationRedisSerializer. StringRedisTemplate używa StringRedisSerializer.",
+      "solution": "Domyślny RedisTemplate<Object,Object> serializuje klucze i wartości serializacją Javy (JdkSerializationRedisSerializer): bajty \\xac\\xed\\x00\\x05 to nagłówek strumienia ObjectOutputStream. Skutki: GET produkty::1 w redis-cli nie znajduje klucza, inne aplikacje (np. w innym języku) nie odczytają danych, zmiana klasy (pola, serialVersionUID) psuje odczyt starych wpisów, a deserializacja danych z niezaufanego źródła to ryzyko bezpieczeństwa.\n@Bean\nRedisTemplate<String, Object> redisTemplate(RedisConnectionFactory cf) {\n    RedisTemplate<String, Object> t = new RedisTemplate<>();\n    t.setConnectionFactory(cf);\n    t.setKeySerializer(RedisSerializer.string());\n    t.setHashKeySerializer(RedisSerializer.string());\n    GenericJackson2JsonRedisSerializer json = new GenericJackson2JsonRedisSerializer();\n    t.setValueSerializer(json);\n    t.setHashValueSerializer(json);\n    return t;\n}\nDla prostych wartości tekstowych wystarczy StringRedisTemplate (autokonfigurowany przez Spring Boot)."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Adnotacje pokrywają typowe przypadki cache'owania wyniku metody, ale RedisTemplate jest potrzebny do wykorzystania bardziej zaawansowanych struktur danych Redis wykraczających poza prosty cache klucz-wartość."
+    },
+    {
+      "question": "Jaki klucz powstanie w Redis dla wywołania znajdzZadanie(42L) przy domyślnej konfiguracji RedisCacheManager?",
+      "code": "@Cacheable(value = \"zadania\", key = \"#id\")\npublic Zadanie znajdzZadanie(Long id) { ... }",
+      "options": {
+        "A": "zadania:42",
+        "B": "cache:zadania:42",
+        "C": "42",
+        "D": "zadania::42"
+      },
+      "correct": "D",
+      "explanation": "Domyślnie klucz ma prefiks 'nazwaCache::'. Prefiks można zmienić w RedisCacheConfiguration (computePrefixWith / prefixCacheNameWith)."
+    },
+    {
+      "question": "Co się stanie przy drugim wywołaniu zaktualizujZadanie(z) z tym samym id, jeśli wpis jest już w cache?",
+      "code": "@Cacheable(value = \"zadania\", key = \"#zadanie.id\")\npublic Zadanie zaktualizujZadanie(Zadanie zadanie) {\n    return repository.save(zadanie);\n}",
+      "options": {
+        "A": "Zadanie zostanie zapisane i cache zaktualizowany",
+        "B": "Wyjątek",
+        "C": "Metoda nie wykona się - Spring zwróci starą wartość z cache, a zmiana nie trafi do bazy",
+        "D": "Cache zostanie wyczyszczony"
+      },
+      "correct": "C",
+      "explanation": "Do metod zapisujących służy @CachePut (zawsze wykonuje metodę i nadpisuje wpis) albo @CacheEvict."
+    },
+    {
+      "question": "Dlaczego cache nie zadziała przy wywołaniu raport()?",
+      "code": "@Service\npublic class RaportService {\n    public Raport raport(YearMonth m) {\n        return new Raport(this.oblicz(m));\n    }\n\n    @Cacheable(\"obliczenia\")\n    public Wynik oblicz(YearMonth m) { ... }\n}",
+      "options": {
+        "A": "Bo YearMonth nie może być kluczem",
+        "B": "Bo metoda nie jest statyczna",
+        "C": "Bo brakuje key",
+        "D": "Bo wywołanie przez this omija proxy Springa, które realizuje cache - adnotacja działa tylko przy wywołaniu z innego beanu"
+      },
+      "correct": "D",
+      "explanation": "Najczystsza poprawka: przenieść oblicz() do osobnego beanu. Ta sama pułapka dotyczy @Transactional i @Async."
+    },
+    {
+      "question": "Czego brakuje, żeby adnotacje cache w ogóle zadziałały?",
+      "code": "@SpringBootApplication\npublic class App { ... }\n\n@Service\nclass ProduktService {\n    @Cacheable(\"produkty\") public Produkt znajdz(Long id) { ... }\n}",
+      "options": {
+        "A": "@EnableCaching (na klasie konfiguracyjnej) - bez niego adnotacje są ignorowane",
+        "B": "Niczego",
+        "C": "@EnableRedis",
+        "D": "@CacheConfig na klasie App"
+      },
+      "correct": "A",
+      "explanation": "Brak @EnableCaching nie powoduje błędu - metoda po prostu wykonuje się za każdym razem, co łatwo przeoczyć."
+    },
+    {
+      "question": "Co oznacza ten atrybut?",
+      "code": "@Cacheable(value = \"produkty\", key = \"#id\", unless = \"#result == null\")\npublic Produkt znajdz(Long id) { return repo.findById(id).orElse(null); }",
+      "options": {
+        "A": "Metoda nie wykona się dla null id",
+        "B": "Cache jest wyłączony",
+        "C": "Wynik null nie zostanie zapisany w cache - kolejne wywołanie dla nieistniejącego produktu znowu sprawdzi bazę",
+        "D": "Null powoduje wyjątek"
+      },
+      "correct": "C",
+      "explanation": "unless jest oceniane PO wykonaniu metody (ma dostęp do #result), condition - PRZED (tylko argumenty)."
+    },
+    {
+      "question": "Kiedy metoda zostanie zapisana w cache?",
+      "code": "@Cacheable(value = \"produkty\", key = \"#id\", condition = \"#id > 0\")\npublic Produkt znajdz(Long id) { ... }",
+      "options": {
+        "A": "Zawsze",
+        "B": "Nigdy",
+        "C": "Tylko gdy wynik > 0",
+        "D": "Tylko gdy id > 0; dla id <= 0 cache jest pomijany (ani odczyt, ani zapis)"
+      },
+      "correct": "D",
+      "explanation": "condition jest oceniany przed wywołaniem i decyduje, czy w ogóle używać cache dla tych argumentów."
+    },
+    {
+      "question": "Co zrobi ta metoda z cache?",
+      "code": "@CacheEvict(value = \"produkty\", allEntries = true)\npublic void przeladujKatalog() { importer.importuj(); }",
+      "options": {
+        "A": "Usunie wszystkie wpisy cache 'produkty' po wykonaniu metody",
+        "B": "Usunie jeden wpis",
+        "C": "Usunie wszystkie klucze w Redis",
+        "D": "Nic"
+      },
+      "correct": "A",
+      "explanation": "Domyślnie usunięcie następuje po udanym wykonaniu metody; beforeInvocation = true czyści przed wywołaniem (także gdy metoda rzuci wyjątek)."
+    },
+    {
+      "question": "Jaki klucz powstanie dla szukaj(\"kubki\", 2)?",
+      "code": "@Cacheable(value = \"wyszukiwanie\", key = \"#kategoria + ':' + #strona\")\npublic List<Produkt> szukaj(String kategoria, int strona) { ... }",
+      "options": {
+        "A": "kubki2",
+        "B": "wyszukiwanie:kubki:2",
+        "C": "wyszukiwanie::kubki:2",
+        "D": "wyszukiwanie::[kubki, 2]"
+      },
+      "correct": "C",
+      "explanation": "Wyrażenie SpEL tworzy część 'kubki:2', a RedisCacheManager dodaje prefiks 'wyszukiwanie::'."
+    },
+    {
+      "question": "Dlaczego klucze w redis-cli wyglądają tak?",
+      "code": "127.0.0.1:6379> KEYS *\n1) \"\\xac\\xed\\x00\\x05t\\x00\\x0bprodukt:1\"",
+      "options": {
+        "A": "Aplikacja użyła domyślnego RedisTemplate z serializacją Javy (JdkSerializationRedisSerializer) także dla kluczy",
+        "B": "Redis szyfruje klucze",
+        "C": "Błąd kodowania terminala",
+        "D": "Klucze są skompresowane"
+      },
+      "correct": "A",
+      "explanation": "\\xac\\xed\\x00\\x05 to nagłówek serializacji Javy. Rozwiązanie: StringRedisTemplate lub RedisTemplate z serializatorem String dla kluczy i JSON dla wartości."
+    },
+    {
+      "question": "Który wyjątek może się pojawić przy domyślnej serializacji JDK wartości cache?",
+      "code": "public class Produkt {   // brak implements Serializable\n    private Long id; private String nazwa;\n}\n@Cacheable(\"produkty\") public Produkt znajdz(Long id) { ... }",
+      "options": {
+        "A": "NullPointerException",
+        "B": "Żaden - Redis zapisze toString()",
+        "C": "ClassCastException przy zapisie",
+        "D": "Błąd serializacji (SerializationException z przyczyną NotSerializableException / IllegalArgumentException o wymaganym Serializable)"
+      },
+      "correct": "D",
+      "explanation": "Domyślny serializator JDK wymaga Serializable. Serializacja JSON (GenericJackson2JsonRedisSerializer) nie ma tego wymagania i daje czytelne dane."
+    },
+    {
+      "question": "Jak ustawić TTL wszystkich wpisów cache na 10 minut we właściwościach Spring Boot?",
+      "code": "# application.properties\nspring.cache.type=redis\n???",
+      "options": {
+        "A": "spring.cache.redis.time-to-live=10m",
+        "B": "spring.data.redis.ttl=600",
+        "C": "spring.cache.expire=10",
+        "D": "redis.ttl=10m"
+      },
+      "correct": "A",
+      "explanation": "Bez TTL wpisy cache Redis domyślnie nie wygasają. TTL per cache ustawia się w RedisCacheManagerBuilderCustomizer."
+    },
+    {
+      "question": "Co zwróci drugie wywołanie znajdz(1L) i ile razy wykona się repo.findById?",
+      "code": "@Cacheable(value = \"produkty\", key = \"#id\")\npublic Produkt znajdz(Long id) { return repo.findById(id).orElseThrow(); }\n\n// test:\nservice.znajdz(1L);\nservice.znajdz(1L);\nverify(repo, times(?)).findById(1L);",
+      "options": {
+        "A": "2",
+        "B": "0",
+        "C": "1 - drugie wywołanie zwraca wartość z cache bez wykonania metody",
+        "D": "Zależy od TTL"
+      },
+      "correct": "C",
+      "explanation": "Taki test z prawdziwym Redis (Testcontainers) sprawdza konfigurację cache i serializację."
+    },
+    {
+      "question": "Co zwraca increment w tym kodzie przy pierwszym wywołaniu dla nowego klucza?",
+      "code": "Long liczba = stringRedisTemplate.opsForValue().increment(\"limit:jan:28771234\");",
+      "options": {
+        "A": "1 - INCR traktuje brak klucza jak 0",
+        "B": "0",
+        "C": "null",
+        "D": "Wyjątek"
+      },
+      "correct": "A",
+      "explanation": "Dlatego warunek liczba == 1 oznacza 'pierwsze wywołanie w oknie' - wtedy ustawia się TTL klucza."
+    },
+    {
+      "question": "Czym różni się StringRedisTemplate od domyślnego RedisTemplate?",
+      "code": "@Autowired StringRedisTemplate s;\n@Autowired RedisTemplate<Object, Object> r;",
+      "options": {
+        "A": "Niczym",
+        "B": "StringRedisTemplate nie obsługuje TTL",
+        "C": "StringRedisTemplate serializuje klucze i wartości jako zwykły tekst (czytelne w redis-cli); domyślny RedisTemplate - serializacją Javy",
+        "D": "RedisTemplate działa tylko z Hash"
+      },
+      "correct": "C",
+      "explanation": "Oba są autokonfigurowane przez Spring Boot."
+    },
+    {
+      "question": "Co robi @Cacheable(sync = true)?",
+      "code": "@Cacheable(value = \"raporty\", key = \"#m\", sync = true)\npublic Raport raport(YearMonth m) { ... }",
+      "options": {
+        "A": "Synchronizuje cache między regionami",
+        "B": "Wyłącza TTL",
+        "C": "Zapisuje synchronicznie do bazy",
+        "D": "Przy równoczesnych wywołaniach dla tego samego klucza tylko jedno liczy wartość, pozostałe (w tej samej instancji) czekają na wynik"
+      },
+      "correct": "D",
+      "explanation": "Ogranicza stampede w obrębie jednej JVM. Nie łączy się z unless, a między instancjami potrzebna jest blokada rozproszona."
+    },
+    {
+      "question": "Które adnotacje obsłużą: odczyt, aktualizację ceny i usunięcie produktu?",
+      "code": "Produkt znajdz(Long id)\nProdukt zmienCene(Long id, BigDecimal cena)\nvoid usun(Long id)",
+      "options": {
+        "A": "@Cacheable, @CachePut (key = \"#id\"), @CacheEvict (key = \"#id\")",
+        "B": "@Cacheable, @Cacheable, @Cacheable",
+        "C": "@CachePut, @CacheEvict, @Cacheable",
+        "D": "@CacheEvict na wszystkich"
+      },
+      "correct": "A",
+      "explanation": "@CachePut nadpisuje wpis zwróconym obiektem; @CacheEvict usuwa wpis po udanym usunięciu z bazy."
+    },
+    {
+      "question": "Jaki jest problem tego klucza?",
+      "code": "@Cacheable(value = \"raport\", key = \"#filtr.toString() + T(java.time.Instant).now()\")\npublic Raport raport(Filtr filtr) { ... }",
+      "options": {
+        "A": "Brak problemu",
+        "B": "SpEL nie obsługuje T()",
+        "C": "Klucz zawiera bieżący czas - każde wywołanie tworzy nowy klucz, więc cache nigdy nie trafia, a Redis zapełnia się śmieciami",
+        "D": "Klucz jest za krótki"
+      },
+      "correct": "C",
+      "explanation": "Klucz musi być deterministyczny dla tych samych danych wejściowych. Aktualność zapewnia TTL, nie zmienny klucz."
+    },
+    {
+      "question": "Która właściwość wskazuje aplikacji host Redis w Spring Boot 3?",
+      "code": "# application.properties",
+      "options": {
+        "A": "spring.redis.host",
+        "B": "spring.cache.redis.host",
+        "C": "redis.server",
+        "D": "spring.data.redis.host"
+      },
+      "correct": "D",
+      "explanation": "W Spring Boot 3 właściwości przeniesiono pod spring.data.redis.* (spring.redis.* było w wersji 2.x)."
+    },
+    {
+      "question": "Co się stanie, gdy Redis jest niedostępny, a metoda ma @Cacheable (bez własnego CacheErrorHandler)?",
+      "code": "@Cacheable(\"produkty\")\npublic Produkt znajdz(Long id) { ... }",
+      "options": {
+        "A": "Wywołanie zakończy się wyjątkiem połączenia z Redis (np. RedisConnectionFailureException) - awaria cache staje się awarią endpointu",
+        "B": "Metoda wykona się normalnie, cache zostanie pominięty",
+        "C": "Spring przełączy się na cache w pamięci",
+        "D": "Aplikacja się zamknie"
+      },
+      "correct": "A",
+      "explanation": "Własny CacheErrorHandler (CachingConfigurer.errorHandler()) może logować błąd i traktować go jak miss, a krótki timeout połączenia zapobiega wiszeniu żądań."
+    },
+    {
+      "question": "Do czego służy @CacheConfig na klasie?",
+      "code": "@Service\n@CacheConfig(cacheNames = \"produkty\")\npublic class ProduktService {\n    @Cacheable(key = \"#id\") public Produkt znajdz(Long id) { ... }\n    @CacheEvict(key = \"#id\") public void usun(Long id) { ... }\n}",
+      "options": {
+        "A": "Włącza cache w aplikacji",
+        "B": "Ustawia wspólne ustawienia (tu nazwę cache) dla adnotacji w klasie - nie trzeba powtarzać value w każdej metodzie",
+        "C": "Konfiguruje połączenie z Redis",
+        "D": "Ustawia TTL"
+      },
+      "correct": "B",
+      "explanation": "Samo włączenie cache nadal wymaga @EnableCaching w konfiguracji."
     }
   ]
 }

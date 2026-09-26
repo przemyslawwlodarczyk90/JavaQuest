@@ -106,6 +106,41 @@
       "prompt": "Wyjasnij (jako String), dlaczego przechowywanie jedynej kopii wazonych danych finansowych (np. saldo konta uzytkownika) wylacznie w Redis (bez odpowiadajacego zapisu w relacyjnej bazie danych) jest ryzykowna praktyka.",
       "hint": "Przypomnij sobie blok note - Redis (w podstawowej konfiguracji) przechowuje dane wylacznie w pamieci RAM, ktora nie przetrwa restartu/awarii bez dodatkowej konfiguracji trwalosci.",
       "solution": "Redis, w podstawowej konfiguracji, przechowuje dane WYLACZNIE w ulotnej pamieci RAM - restart procesu Redis lub awaria calego serwera (BEZ dodatkowej konfiguracji trwalosci, poza zakresem tego wprowadzajacego rozdzialu) oznacza CALKOWITA, NIEODWRACALNA utrate wszystkich przechowywanych tam danych. Dla danych finansowych (jak saldo konta), taka utrata jest NIEDOPUSZCZALNA - dlatego relacyjna baza danych (jak PostgreSQL na RDS), zaprojektowana OD PODSTAW pod trwalosc (zapis na dysku, mechanizmy odzyskiwania po awarii), powinna byc JEDYNYM 'zrodlem prawdy' dla takich danych, a Redis moze JEDYNIE przyspieszac ich ODCZYT jako dodatkowa, pomocnicza warstwa cache."
+    },
+    {
+      "prompt": "Napisz w Javie symulację problemu z lekcji: dwie 'instancje aplikacji' (dwa obiekty z własnym `HashMap` jako cache lokalny) i wspólna 'baza' (`HashMap`). Instancja A odczytuje produkt (cache miss -> baza -> cache), instancja B aktualizuje cenę w bazie i w SWOIM cache. Pokaż, że A nadal zwraca starą cenę. Potem zamień cache lokalne na jeden współdzielony obiekt (jak Redis) i pokaż, że problem znika.",
+      "hint": "Klasa Instancja z polami Map<String,Integer> cache i referencją do bazy. Metody odczytaj(id) i zmienCene(id, cena).",
+      "solution": "import java.util.*;\n\npublic class CacheLokalnyVsWspolny {\n    static class Instancja {\n        final String nazwa; final Map<String, Integer> cache; final Map<String, Integer> baza;\n        Instancja(String nazwa, Map<String, Integer> cache, Map<String, Integer> baza) {\n            this.nazwa = nazwa; this.cache = cache; this.baza = baza;\n        }\n        int odczytaj(String id) {\n            return cache.computeIfAbsent(id, baza::get);\n        }\n        void zmienCene(String id, int cena) {\n            baza.put(id, cena);\n            cache.put(id, cena);\n        }\n    }\n\n    public static void main(String[] args) {\n        Map<String, Integer> baza = new HashMap<>(Map.of(\"p1\", 100));\n        Instancja a = new Instancja(\"A\", new HashMap<>(), baza);\n        Instancja b = new Instancja(\"B\", new HashMap<>(), baza);\n        a.odczytaj(\"p1\");\n        b.zmienCene(\"p1\", 80);\n        System.out.println(\"Lokalne: A=\" + a.odczytaj(\"p1\") + \" B=\" + b.odczytaj(\"p1\")); // A=100 B=80\n\n        Map<String, Integer> wspolny = new HashMap<>();   // 'Redis'\n        baza.put(\"p1\", 100);\n        Instancja a2 = new Instancja(\"A\", wspolny, baza);\n        Instancja b2 = new Instancja(\"B\", wspolny, baza);\n        a2.odczytaj(\"p1\");\n        b2.zmienCene(\"p1\", 80);\n        System.out.println(\"Wspolny: A=\" + a2.odczytaj(\"p1\") + \" B=\" + b2.odczytaj(\"p1\")); // A=80 B=80\n    }\n}"
+    },
+    {
+      "prompt": "Zaimplementuj w Javie wzorzec cache-aside z lekcji z licznikami trafień: metoda `pobierz(id)` najpierw sprawdza 'cache' (Map), przy braku woła wolną 'bazę' (metoda z `Thread.sleep(100)`), zapisuje wynik i zwraca. Wywołaj ją 10 razy dla 3 różnych id i wypisz liczbę hit/miss oraz łączny czas. Ile razy została odpytana baza?",
+      "hint": "Dla ids [1,2,3,1,2,3,1,1,2,3] - miss tylko przy pierwszym odczycie każdego id.",
+      "solution": "import java.util.*;\n\npublic class CacheAside {\n    static Map<Integer, String> cache = new HashMap<>();\n    static int hit, miss;\n\n    static String zBazy(int id) throws InterruptedException {\n        Thread.sleep(100);\n        return \"produkt-\" + id;\n    }\n\n    static String pobierz(int id) throws InterruptedException {\n        String w = cache.get(id);\n        if (w != null) { hit++; return w; }\n        miss++;\n        w = zBazy(id);\n        cache.put(id, w);\n        return w;\n    }\n\n    public static void main(String[] args) throws Exception {\n        long start = System.currentTimeMillis();\n        for (int id : new int[]{1, 2, 3, 1, 2, 3, 1, 1, 2, 3}) pobierz(id);\n        long czas = System.currentTimeMillis() - start;\n        System.out.println(\"hit=\" + hit + \" miss=\" + miss + \" czas~\" + czas + \" ms\");\n        // hit=7 miss=3 czas~300 ms - baza odpytana 3 razy zamiast 10\n    }\n}"
+    },
+    {
+      "prompt": "Rozszerz poprzednie ćwiczenie o czas życia wpisów (TTL): przechowuj w cache rekord `Wpis(String wartosc, long wygasaO)`, a przy odczycie traktuj przeterminowany wpis jak brak. Zasymuluj upływ czasu przez przekazywany zegar (`long teraz`) zamiast prawdziwego czekania i pokaż, że po upływie TTL następuje ponowne odpytanie bazy.",
+      "hint": "Zegar jako parametr ułatwia testowanie - w Javie produkcyjnej używa się java.time.Clock.",
+      "solution": "import java.util.*;\n\npublic class CacheZTtl {\n    record Wpis(String wartosc, long wygasaO) {}\n    static Map<Integer, Wpis> cache = new HashMap<>();\n    static int zapytaniaDoBazy;\n    static final long TTL = 300;\n\n    static String pobierz(int id, long teraz) {\n        Wpis w = cache.get(id);\n        if (w != null && w.wygasaO() > teraz) return w.wartosc();\n        zapytaniaDoBazy++;\n        String wartosc = \"produkt-\" + id + \"@\" + teraz;\n        cache.put(id, new Wpis(wartosc, teraz + TTL));\n        return wartosc;\n    }\n\n    public static void main(String[] args) {\n        System.out.println(pobierz(1, 0));    // produkt-1@0 (miss)\n        System.out.println(pobierz(1, 299));  // produkt-1@0 (hit)\n        System.out.println(pobierz(1, 300));  // produkt-1@300 (wygasl -> baza)\n        System.out.println(\"zapytania do bazy: \" + zapytaniaDoBazy); // 2\n    }\n}\nTo odpowiednik SET klucz wartosc EX 300 w Redis: po wygaśnięciu klucz znika, a następny odczyt odświeża dane z bazy."
+    },
+    {
+      "prompt": "Oszacuj (jako String) korzyść z cache: endpoint wywoływany 1000 razy na sekundę, zapytanie do bazy trwa 20 ms, odczyt z Redis 1 ms, współczynnik trafień 90%. Policz średni czas odpowiedzi warstwy danych z cache i bez oraz liczbę zapytań do bazy na sekundę. Co się stanie z bazą, jeśli Redis nagle przestanie działać?",
+      "hint": "Średni czas = hit% * czas_hit + miss% * (czas_miss_redis + czas_bazy).",
+      "solution": "Bez cache: 20 ms, 1000 zapytań/s do bazy.\nZ cache: 0.9 * 1 ms + 0.1 * (1 ms + 20 ms) = 0.9 + 2.1 = 3.0 ms; zapytań do bazy 1000 * 0.1 = 100/s.\nAwaria Redis: cały ruch (1000/s) spada nagle na bazę przyzwyczajoną do 100/s - dziesięciokrotny wzrost może ją przeciążyć (kaskadowa awaria). Dlatego: baza musi być wymiarowana na sensowny zapas, aplikacja powinna traktować błąd Redis jak cache miss (z krótkim timeoutem, nie wiszącym połączeniem), a przy dużej skali stosuje się ograniczanie ruchu i ochronę przed jednoczesnym odświeżaniem (lekcja 5)."
+    },
+    {
+      "prompt": "Dla każdego z przypadków zdecyduj (jako String), czy cache w Redis ma sens, i uzasadnij: (1) lista kategorii sklepu zmieniana raz w tygodniu, (2) aktualne saldo konta przy przelewie, (3) wynik kosztownego raportu odświeżanego co godzinę, (4) profil użytkownika czytany przy każdym żądaniu, (5) jednorazowy kod weryfikacyjny SMS ważny 5 minut.",
+      "hint": "Cache ma sens dla częstych, kosztownych odczytów danych, które mogą być chwilowo nieaktualne. Redis bywa też magazynem krótkotrwałych danych z TTL.",
+      "solution": "(1) Tak - rzadko zmieniane, czytane bardzo często; długi TTL + unieważnienie przy zmianie.\n(2) Nie jako źródło decyzji - przelew musi opierać się na aktualnym saldzie z bazy (transakcja); cache co najwyżej do wyświetlania.\n(3) Tak - kosztowne obliczenie, akceptowalna nieaktualność do godziny (TTL 1 h lub odświeżanie po wygenerowaniu).\n(4) Tak - bardzo częsty odczyt; TTL + unieważnienie przy edycji profilu.\n(5) Tak, ale jako magazyn krótkotrwały, nie cache: SET kod:tel ... EX 300 - wygaśnięcie jest częścią logiki biznesowej, utrata klucza oznacza tylko ponowne wysłanie kodu."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String) różnicę między 'cache miss' a 'cache stampede' (thundering herd): co dzieje się, gdy popularny klucz wygasa w chwili, gdy 500 żądań jednocześnie go potrzebuje, i jakie dwie proste techniki temu zapobiegają.",
+      "hint": "Wszystkie żądania widzą brak i jednocześnie idą do bazy. Techniki: blokada (tylko jeden odświeża), losowe przesunięcie TTL (jitter), wcześniejsze odświeżanie.",
+      "solution": "Cache miss to pojedynczy brak wpisu - jedno zapytanie do bazy. Stampede: popularny klucz wygasa, 500 równoległych żądań jednocześnie widzi brak i wszystkie wykonują to samo kosztowne zapytanie do bazy, co może ją przeciążyć. Zapobieganie: 1) blokada - tylko pierwsze żądanie odświeża wartość (np. SET lock:klucz 1 NX EX 10 w Redis albo @Cacheable(sync = true) w obrębie jednej instancji), pozostałe czekają lub dostają starą wartość; 2) losowe rozrzucenie TTL (np. 300 s +/- 10%), żeby wiele kluczy nie wygasało w tej samej sekundzie; 3) odświeżanie w tle przed wygaśnięciem popularnych kluczy."
+    },
+    {
+      "prompt": "Napisz w Javie symulację stampede: 20 wątków (ExecutorService) jednocześnie woła `pobierz(\"top\")` na pustym cache opartym o `ConcurrentHashMap`. Wersja 1 używa `get` + `put` (każdy wątek może pójść do 'bazy'), wersja 2 - `computeIfAbsent` (tylko jeden). Policz wywołania 'bazy' w obu wersjach.",
+      "hint": "AtomicInteger jako licznik wywołań bazy; baza z Thread.sleep(50). CountDownLatch, żeby wątki wystartowały razem.",
+      "solution": "import java.util.concurrent.*;\nimport java.util.concurrent.atomic.AtomicInteger;\n\npublic class Stampede {\n    static AtomicInteger wywolania = new AtomicInteger();\n\n    static String baza(String k) {\n        wywolania.incrementAndGet();\n        try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }\n        return \"wartosc-\" + k;\n    }\n\n    static int uruchom(boolean computeIfAbsent) throws Exception {\n        wywolania.set(0);\n        ConcurrentHashMap<String, String> cache = new ConcurrentHashMap<>();\n        ExecutorService ex = Executors.newFixedThreadPool(20);\n        CountDownLatch start = new CountDownLatch(1);\n        for (int i = 0; i < 20; i++) {\n            ex.submit(() -> {\n                start.await();\n                if (computeIfAbsent) return cache.computeIfAbsent(\"top\", Stampede::baza);\n                String w = cache.get(\"top\");\n                if (w == null) { w = baza(\"top\"); cache.put(\"top\", w); }\n                return w;\n            });\n        }\n        start.countDown();\n        ex.shutdown();\n        ex.awaitTermination(5, TimeUnit.SECONDS);\n        return wywolania.get();\n    }\n\n    public static void main(String[] args) throws Exception {\n        System.out.println(\"get+put: \" + uruchom(false));          // zwykle 20 (lub blisko)\n        System.out.println(\"computeIfAbsent: \" + uruchom(true));   // 1\n    }\n}\nW rozproszonym systemie (wiele instancji) to samo osiąga się blokadą w Redis (SET ... NX EX)."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Standardowy wzorzec cache-aside: najpierw sprawdzany jest szybki cache, a dopiero przy braku danych (cache miss) następuje kosztowniejsze zapytanie do bazy danych, którego wynik trafia do cache na przyszłość."
+    },
+    {
+      "question": "Co zwróci ostatnie polecenie?",
+      "code": "SET user:42 \"Jan Kowalski\"\nEXPIRE user:42 3600\nSET user:42 \"Anna\"\nTTL user:42",
+      "options": {
+        "A": "3600",
+        "B": "0",
+        "C": "-2",
+        "D": "-1 - zwykły SET nadpisuje wartość i usuwa wcześniejszy czas wygaśnięcia"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. Aby zachować TTL przy nadpisaniu, używa się SET ... KEEPTTL albo podaje nowy EX."
+    },
+    {
+      "question": "Co oznaczają wyniki TTL?",
+      "code": "TTL klucz_bez_ttl      -> -1\nTTL nieistniejacy     -> -2",
+      "options": {
+        "A": "-1: klucz istnieje bez czasu wygaśnięcia; -2: klucz nie istnieje",
+        "B": "-1: błąd; -2: klucz wygasł przed chwilą",
+        "C": "Oba oznaczają brak klucza",
+        "D": "-1: 1 sekunda do wygaśnięcia"
+      },
+      "correct": "A",
+      "explanation": "Rozróżnienie jest przydatne przy diagnozie: -1 w kluczu cache zwykle oznacza zapomniany TTL (klucz nie wygaśnie nigdy)."
+    },
+    {
+      "question": "Instancje A i B mają własne cache lokalne. Co zwróci A w kroku 3?",
+      "code": "// 1. A: odczytaj(p1) -> z bazy 100, zapis w cache A\n// 2. B: zmienCene(p1, 80) -> baza=80, cache B=80\n// 3. A: odczytaj(p1) -> ?",
+      "options": {
+        "A": "100 - cache A nic nie wie o zmianie dokonanej przez B (niespójność cache lokalnych)",
+        "B": "80",
+        "C": "null",
+        "D": "Wyjątek"
+      },
+      "correct": "A",
+      "explanation": "To główny powód wspólnego cache (Redis): wszystkie instancje widzą ten sam wpis, więc jego unieważnienie dotyczy wszystkich."
+    },
+    {
+      "question": "Ile razy zostanie odpytana baza przy tej sekwencji odczytów (cache bez TTL, początkowo pusty)?",
+      "code": "for (int id : new int[]{1, 2, 3, 1, 2, 3, 1, 1, 2, 3}) pobierz(id);\n// pobierz: cache hit -> zwraca; miss -> baza + zapis w cache",
+      "options": {
+        "A": "10",
+        "B": "7",
+        "C": "1",
+        "D": "3 - tylko pierwszy odczyt każdego id"
+      },
+      "correct": "D",
+      "explanation": "3 chybienia (miss) i 7 trafień (hit) - współczynnik trafień 70%."
+    },
+    {
+      "question": "Jaki jest średni czas odczytu warstwy danych przy 90% trafień?",
+      "code": "// odczyt z Redis: 1 ms\n// zapytanie do bazy: 20 ms (przy miss: najpierw Redis, potem baza)\n// hit ratio: 90%",
+      "options": {
+        "A": "3 ms (0.9*1 + 0.1*21)",
+        "B": "1 ms",
+        "C": "10.5 ms",
+        "D": "20 ms"
+      },
+      "correct": "A",
+      "explanation": "Przy okazji liczba zapytań do bazy spada dziesięciokrotnie - to często ważniejsze od samego czasu."
+    },
+    {
+      "question": "Co jest nie tak w tym kodzie z punktu widzenia odporności?",
+      "code": "String pobierz(Long id) {\n    String w = redis.get(\"produkt:\" + id);   // brak timeoutu, wyjątek leci wyżej\n    if (w != null) return w;\n    ...\n}",
+      "options": {
+        "A": "Nic",
+        "B": "Klucz powinien być liczbą",
+        "C": "Awaria lub spowolnienie Redis blokuje/przerywa całe żądanie - błąd cache powinien być traktowany jak miss (krótki timeout, obsługa wyjątku, odczyt z bazy)",
+        "D": "Redis nie obsługuje String"
+      },
+      "correct": "C",
+      "explanation": "Cache jest optymalizacją - jego niedostępność nie powinna wyłączać aplikacji. Spring pozwala to obsłużyć przez CacheErrorHandler."
+    },
+    {
+      "question": "Które polecenie ustawi wartość z czasem życia w jednym kroku (atomowo)?",
+      "code": "# chcemy: saldo:user42 = 1500.00, wygasa po 5 min",
+      "options": {
+        "A": "SETTTL saldo:user42 300",
+        "B": "SET saldo:user42 \"1500.00\" TTL 300",
+        "C": "EXPIRE saldo:user42 \"1500.00\" 300",
+        "D": "SET saldo:user42 \"1500.00\" EX 300"
+      },
+      "correct": "D",
+      "explanation": "Osobne SET i EXPIRE to dwa polecenia - awaria między nimi zostawiłaby klucz bez TTL. Alternatywa: SETEX klucz 300 wartosc."
+    },
+    {
+      "question": "Który przypadek NIE nadaje się do polegania na danych z cache?",
+      "code": "// (a) lista kategorii sklepu\n// (b) saldo sprawdzane przy wykonywaniu przelewu\n// (c) wynik raportu odświeżanego co godzinę\n// (d) profil użytkownika do wyświetlenia",
+      "options": {
+        "A": "(b) - decyzja finansowa musi opierać się na aktualnym stanie z bazy (w transakcji)",
+        "B": "(a)",
+        "C": "(c)",
+        "D": "(d)"
+      },
+      "correct": "A",
+      "explanation": "Cache może być chwilowo nieaktualny. Tam, gdzie nieaktualność prowadzi do błędnej decyzji (pieniądze, stany magazynowe przy zakupie), źródłem jest baza."
+    },
+    {
+      "question": "Co się dzieje przy 'cache stampede'?",
+      "code": "// popularny klucz 'top-produkty' wygasa\n// 500 równoległych żądań w tej samej chwili: GET -> (nil)",
+      "options": {
+        "A": "Wszystkie 500 żądań jednocześnie wykonuje to samo kosztowne zapytanie do bazy - skok obciążenia może ją przeciążyć",
+        "B": "Redis się restartuje",
+        "C": "Tylko jedno żądanie dostaje odpowiedź",
+        "D": "Klucz odnawia się sam"
+      },
+      "correct": "A",
+      "explanation": "Pomaga blokada odświeżania (tylko jedno żądanie liczy wartość), losowe rozrzucenie TTL i odświeżanie w tle."
+    },
+    {
+      "question": "Ile razy zostanie wywołana 'baza', gdy 20 wątków jednocześnie wywoła ten kod na pustym cache?",
+      "code": "ConcurrentHashMap<String, String> cache = new ConcurrentHashMap<>();\n// w 20 wątkach równocześnie:\ncache.computeIfAbsent(\"top\", k -> baza(k));   // baza trwa 50 ms",
+      "options": {
+        "A": "20",
+        "B": "Zależy od liczby rdzeni",
+        "C": "0",
+        "D": "1 - computeIfAbsent wykonuje funkcję atomowo dla danego klucza, pozostałe wątki czekają na wynik"
+      },
+      "correct": "D",
+      "explanation": "Wersja get + put pozwoliłaby wielu wątkom jednocześnie iść do bazy. W rozproszonym systemie ten sam efekt daje blokada w Redis (SET lock NX EX)."
+    },
+    {
+      "question": "Dlaczego dodaje się losowe przesunięcie (jitter) do TTL?",
+      "code": "long ttl = 300 + ThreadLocalRandom.current().nextInt(-30, 31);\nredis.set(klucz, wartosc, Duration.ofSeconds(ttl));",
+      "options": {
+        "A": "Dla bezpieczeństwa",
+        "B": "Bo Redis wymaga losowego TTL",
+        "C": "Żeby klucze zapisane w tej samej chwili (np. po restarcie) nie wygasały jednocześnie, powodując falę zapytań do bazy",
+        "D": "Żeby oszczędzać pamięć"
+      },
+      "correct": "C",
+      "explanation": "Rozproszenie wygaśnięć wygładza obciążenie bazy."
+    },
+    {
+      "question": "Co wypisze ten program?",
+      "code": "record Wpis(String w, long wygasaO) {}\nMap<Integer, Wpis> cache = new HashMap<>();\nint zapytania = 0;\n// pobierz(id, teraz): jeśli wpis istnieje i wygasaO > teraz -> hit,\n//                     inaczej zapytania++ i zapis z wygasaO = teraz + 300\npobierz(1, 0); pobierz(1, 299); pobierz(1, 300);\nSystem.out.println(zapytania);",
+      "options": {
+        "A": "1",
+        "B": "3",
+        "C": "0",
+        "D": "2 - odczyt w chwili 300 widzi wygasły wpis (300 > 300 to fałsz)"
+      },
+      "correct": "D",
+      "explanation": "Pierwszy odczyt to miss, drugi - trafienie, trzeci - wpis wygasł, więc ponowne zapytanie."
+    },
+    {
+      "question": "Czym różni się Redis od Caffeine w typowym zastosowaniu?",
+      "code": "// Caffeine: cache w pamięci JVM\n// Redis: osobny serwer, dostęp przez sieć",
+      "options": {
+        "A": "Redis jest zawsze szybszy",
+        "B": "Caffeine działa tylko z Redis",
+        "C": "Caffeine jest szybszy (brak sieci), ale prywatny dla instancji; Redis jest wspólny dla wszystkich instancji i przeżywa ich restart, kosztem przejścia przez sieć",
+        "D": "Nie ma różnicy"
+      },
+      "correct": "C",
+      "explanation": "Stosuje się też cache dwupoziomowy: krótki lokalny (Caffeine) przed wspólnym (Redis) dla najgorętszych kluczy."
+    },
+    {
+      "question": "Co zwróci ostatnie polecenie?",
+      "code": "SET licznik 10\nINCR licznik\nINCRBY licznik 5\nGET licznik",
+      "options": {
+        "A": "\"16\"",
+        "B": "\"105\"",
+        "C": "\"15\"",
+        "D": "Błąd - licznik to tekst"
+      },
+      "correct": "A",
+      "explanation": "Redis przechowuje wartość jako tekst, ale INCR/INCRBY interpretują ją jako liczbę całkowitą i zmieniają atomowo - to podstawa liczników i limitów żądań."
+    },
+    {
+      "question": "Co zwróci INCR w tym przypadku?",
+      "code": "SET tekst abc\nINCR tekst",
+      "options": {
+        "A": "1",
+        "B": "\"abc1\"",
+        "C": "(error) ERR value is not an integer or out of range",
+        "D": "0"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Redis 7.4. INCR na nieistniejącym kluczu działałby jak na 0 i zwróciłby 1."
+    },
+    {
+      "question": "Dlaczego INCR w Redis jest bezpieczny przy wielu instancjach aplikacji zwiększających ten sam licznik?",
+      "code": "// 10 instancji równolegle:\nredis.increment(\"odslony:artykul:7\");",
+      "options": {
+        "A": "Nie jest bezpieczny",
+        "B": "Bo aplikacja używa synchronized",
+        "C": "Bo polecenia Redis wykonują się pojedynczo (atomowo) - nie ma wyścigu 'odczytaj-zmień-zapisz' jak przy GET + SET z aplikacji",
+        "D": "Bo Redis blokuje klucz na minutę"
+      },
+      "correct": "C",
+      "explanation": "Wersja GET, +1 w Javie, SET może zgubić aktualizacje przy równoległych wywołaniach."
+    },
+    {
+      "question": "Która sytuacja jest typowym zastosowaniem Redis POZA cache?",
+      "code": "SET kod:48600100200 \"731942\" EX 300",
+      "options": {
+        "A": "Przechowywanie historii zamówień na lata",
+        "B": "Transakcje finansowe",
+        "C": "Przechowywanie plików wideo",
+        "D": "Krótkotrwałe dane z wygaśnięciem, np. jednorazowy kod weryfikacyjny ważny 5 minut"
+      },
+      "correct": "D",
+      "explanation": "Tu wygaśnięcie jest częścią logiki. Utrata klucza (np. restart) oznacza tylko konieczność ponownego wysłania kodu."
+    },
+    {
+      "question": "Co zwróci SET z opcją NX, gdy klucz już istnieje?",
+      "code": "SET k v\nSET k v2 NX\nGET k",
+      "options": {
+        "A": "SET NX zwraca (nil) i nic nie zmienia - GET zwraca \"v\"",
+        "B": "SET NX zwraca OK, GET zwraca v2",
+        "C": "Błąd",
+        "D": "GET zwraca (nil)"
+      },
+      "correct": "A",
+      "explanation": "NX = 'tylko jeśli nie istnieje' - podstawa prostych blokad (SET lock:x 1 NX EX 10). Przeciwieństwo to XX - 'tylko jeśli istnieje'."
+    },
+    {
+      "question": "Co zwróci ostatnie polecenie?",
+      "code": "SET s \"x\" EX 100\nPERSIST s\nTTL s",
+      "options": {
+        "A": "100",
+        "B": "-2",
+        "C": "-1 - PERSIST usunął czas wygaśnięcia",
+        "D": "0"
+      },
+      "correct": "C",
+      "explanation": "PERSIST zamienia klucz ulotny w trwały. W cache zwykle niepożądane - klucz nigdy nie wygaśnie."
+    },
+    {
+      "question": "Gdzie w architekturze umieszcza się Redis jako cache?",
+      "code": "Klient -> Aplikacja (3 instancje) -> ??? -> PostgreSQL",
+      "options": {
+        "A": "Przed load balancerem",
+        "B": "Obok aplikacji jako wspólna warstwa, sprawdzana przed zapytaniem do bazy (bazy nie zastępuje)",
+        "C": "Zamiast PostgreSQL",
+        "D": "W przeglądarce"
+      },
+      "correct": "B",
+      "explanation": "Baza pozostaje źródłem prawdy; Redis przyspiesza powtarzalne odczyty i odciąża bazę."
     }
   ]
 }

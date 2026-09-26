@@ -131,6 +131,16 @@
       "prompt": "Jak zaimportować dokładny snapshot seta bez pustego okna?",
       "hint": "Wersjonowany klucz.",
       "solution": "Zbuduj nowy set, zweryfikuj, a następnie przełącz wskaźnik/konfigurację zgodnie z architekturą."
+    },
+    {
+      "prompt": "Sprawdź w lokalnym Redis (kontener) zachowanie ZADD z flagami dla rankingu importowanego z CSV: `ZADD lb NX 1500 42`, ponownie `ZADD lb NX 1600 42`, `ZADD lb XX GT 1550 42`, `ZADD lb XX GT 1400 42`, `ZADD lb XX 100 99`. Zapisz (jako String) odpowiedzi, końcowy stan i wskaż, która kombinacja flag pasuje do polityki 'aktualizuj tylko istniejących graczy i tylko na wyższy wynik'.",
+      "hint": "ZADD zwraca liczbę NOWYCH elementów (bez CH). XX nie tworzy elementów.",
+      "solution": "ZADD lb NX 1500 42    -> 1 (dodano)\nZADD lb NX 1600 42    -> 0, score nadal 1500 (NX nie aktualizuje)\nZADD lb XX GT 1550 42 -> 0 (nowych brak), score 1550 (zaktualizowano, bo wyższy)\nZADD lb XX GT 1400 42 -> 0, score nadal 1550 (niższy - pominięty)\nZADD lb XX 100 99     -> 0, ZCARD lb = 1 (XX nie tworzy gracza 99)\n(Sprawdzone na Redis 7.4.) Polityka 'tylko istniejący i tylko wyżej' = XX GT. Wartość zwracana bez CH liczy tylko nowe elementy - aby liczyć także zmienione, dodaje się CH (ZADD lb GT CH 1700 42 -> 1). Do importu pełnego snapshotu (stan ze źródła wygrywa) używa się zwykłego ZADD bez flag."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) import dokładnego snapshotu członkostwa w zespole (`team:blue:members`) tak, aby: członkowie usunięci w źródle zniknęli także w Redis, a aplikacja nigdy nie zobaczyła pustego ani częściowego zbioru. Porównaj z podejściem 'SADD na istniejącym zbiorze' i podaj polecenia.",
+      "hint": "SADD tylko dodaje - nie usunie byłych członków. Buduj w kluczu tymczasowym i RENAME.",
+      "solution": "Problem: SADD team:blue:members 42 17 na istniejącym zbiorze tylko dodaje - osoba usunięta z zespołu w źródle zostaje w Redis. DEL + SADD tworzy okno, w którym zbiór jest pusty lub częściowy.\nPoprawnie:\nDEL team:blue:members:tmp            # na wypadek resztek po nieudanej próbie\nSADD team:blue:members:tmp 42 17 99  # porcjami, z pliku snapshotu\nSCARD team:blue:members:tmp          # porównanie z liczbą w CSV\nRENAME team:blue:members:tmp team:blue:members   # atomowa podmiana\nIndeks odwrotny (user:{id}:teams) wymaga tej samej procedury albo wyliczenia różnicy: SDIFF stary nowy daje usuniętych członków, dla których trzeba zaktualizować ich user:{id}:teams (SREM). W klastrze klucz tymczasowy i docelowy muszą być w tym samym slocie - np. team:{blue}:members i team:{blue}:members:tmp."
     }
   ],
   "quiz": [
@@ -221,6 +231,210 @@
       },
       "correct": "B",
       "explanation": "Struktury odpowiadają innym zapytaniom."
+    },
+    {
+      "question": "Co zwróci ZSCORE po tych poleceniach?",
+      "code": "ZADD lb NX 1500 42\nZADD lb NX 1600 42\nZSCORE lb 42",
+      "options": {
+        "A": "1600",
+        "B": "(nil)",
+        "C": "3100",
+        "D": "1500 - NX dodaje tylko nowe elementy, nie aktualizuje istniejących"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. Drugi ZADD zwrócił 0."
+    },
+    {
+      "question": "Jaki będzie score gracza 42?",
+      "code": "ZADD lb 1500 42\nZADD lb XX GT 1550 42\nZADD lb XX GT 1400 42\nZSCORE lb 42",
+      "options": {
+        "A": "1400",
+        "B": "1500",
+        "C": "1550 - GT aktualizuje tylko na wyższy wynik",
+        "D": "4450"
+      },
+      "correct": "C",
+      "explanation": "XX: tylko istniejące elementy; GT: tylko gdy nowy score jest większy. Sprawdzone na Redis 7.4."
+    },
+    {
+      "question": "Co zwróci ZCARD?",
+      "code": "ZADD lb 1500 42\nZADD lb XX 100 99\nZCARD lb",
+      "options": {
+        "A": "2",
+        "B": "0",
+        "C": "1 - XX nie tworzy nowych elementów, gracz 99 nie został dodany",
+        "D": "Błąd"
+      },
+      "correct": "C",
+      "explanation": "XX zabezpiecza przed przypadkowym dodaniem graczy, których nie ma w rankingu."
+    },
+    {
+      "question": "Jaki będzie wynik po dwukrotnym uruchomieniu tego importu snapshotu?",
+      "code": "for row in csv:            # 42,1500\n  ZINCRBY leaderboard row.points row.user_id",
+      "options": {
+        "A": "1500",
+        "B": "0",
+        "C": "Błąd",
+        "D": "3000 - ZINCRBY sumuje, więc ponowienie importu podwaja wyniki"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. Do snapshotu służy ZADD (nadpisuje score), który jest idempotentny."
+    },
+    {
+      "question": "Co zwróci drugie ZINCRBY?",
+      "code": "ZINCRBY z 0.1 a\nZINCRBY z 0.2 a",
+      "options": {
+        "A": "\"0.30000000000000004\" - score to liczba zmiennoprzecinkowa double",
+        "B": "\"0.3\"",
+        "C": "\"0.2\"",
+        "D": "Błąd"
+      },
+      "correct": "A",
+      "explanation": "Sprawdzone na Redis 7.4. Punkty z częścią ułamkową warto przechowywać w jednostkach całkowitych (np. setne) albo zaokrąglać przy prezentacji."
+    },
+    {
+      "question": "W jakiej kolejności zwróci elementy o równym score?",
+      "code": "ZADD t 100 b 100 a 100 c\nZRANGE t 0 -1",
+      "options": {
+        "A": "b, a, c (kolejność dodania)",
+        "B": "Losowo",
+        "C": "a, b, c - przy remisie Redis porządkuje leksykograficznie po nazwie elementu",
+        "D": "c, b, a"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Redis 7.4 (ZREVRANGE daje c, b, a). Jeśli remisy mają być rozstrzygane inaczej (np. kto pierwszy), trzeba to zakodować w score."
+    },
+    {
+      "question": "Dlaczego SADD snapshotu nie wystarczy do odzwierciedlenia usunięć?",
+      "code": "# Redis: team:blue:members = {42, 17, 99}\n# nowy CSV: 42, 17\nSADD team:blue:members 42 17",
+      "options": {
+        "A": "Wystarczy",
+        "B": "Trzeba użyć SMOVE",
+        "C": "SADD usuwa brakujące",
+        "D": "SADD tylko dodaje - 99 zostanie w zbiorze; snapshot buduje się w kluczu tymczasowym i podmienia RENAME"
+      },
+      "correct": "D",
+      "explanation": "Snapshot to nie to samo co upsert - różnica dotyczy właśnie usunięć."
+    },
+    {
+      "question": "Które polecenie wskaże członków usuniętych w nowym snapshocie?",
+      "code": "SADD stary 42 17 99\nSADD nowy 42 17\n???",
+      "options": {
+        "A": "SDIFF stary nowy -> 99",
+        "B": "SINTER stary nowy",
+        "C": "SUNION stary nowy",
+        "D": "SDIFF nowy stary -> 99"
+      },
+      "correct": "A",
+      "explanation": "SDIFF nowy stary dałby nowo dodanych. Różnice są potrzebne do aktualizacji indeksów odwrotnych."
+    },
+    {
+      "question": "Po co w nazwach kluczy nawiasy klamrowe w Redis Cluster?",
+      "code": "users:v2:user:{42}\nusers:v2:user:{42}:teams",
+      "options": {
+        "A": "Dla czytelności",
+        "B": "To składnia JSON",
+        "C": "To hash tag - slot liczony jest tylko z części w {}, więc oba klucze trafiają do tego samego slotu i mogą być użyte w jednym MULTI/poleceniu wielokluczowym",
+        "D": "Oznaczają klucz tymczasowy"
+      },
+      "correct": "C",
+      "explanation": "W instancji bez klastra nawiasy są zwykłymi znakami (CLUSTER KEYSLOT zwróci tam błąd 'cluster support disabled')."
+    },
+    {
+      "question": "Który zapis tworzy relację w obu kierunkach dla wiersza user_id=42, team_id=blue?",
+      "code": "# CSV: 42,blue,1500",
+      "options": {
+        "A": "SADD team:blue:members 42",
+        "B": "LPUSH team:blue 42",
+        "C": "HSET team:blue 42",
+        "D": "SADD team:blue:members 42 oraz SADD user:42:teams blue"
+      },
+      "correct": "D",
+      "explanation": "Indeks odwrotny pozwala szybko odpowiedzieć na oba pytania: kto jest w zespole i w jakich zespołach jest użytkownik."
+    },
+    {
+      "question": "Dlaczego List nie zastępuje Set dla członkostwa?",
+      "code": "RPUSH team:blue:members 42\nRPUSH team:blue:members 42\nLLEN team:blue:members",
+      "options": {
+        "A": "List dopuszcza duplikaty (LLEN = 2) i sprawdzenie członkostwa wymaga przejścia listy; Set zapewnia unikalność i SISMEMBER w O(1)",
+        "B": "Bo List jest wolniejszy przy dodawaniu",
+        "C": "Bo List nie ma TTL",
+        "D": "Zastępuje"
+      },
+      "correct": "A",
+      "explanation": "List pasuje, gdy liczy się kolejność i powtórzenia (np. historia zdarzeń)."
+    },
+    {
+      "question": "Co zwróci ZADD z flagą CH?",
+      "code": "ZADD lb 1550 42\nZADD lb GT CH 1700 42",
+      "options": {
+        "A": "0",
+        "B": "1700",
+        "C": "1 - CH liczy także elementy, których score się zmienił",
+        "D": "Błąd"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Redis 7.4. Bez CH ZADD zwraca tylko liczbę nowo dodanych elementów."
+    },
+    {
+      "question": "Która walidacja rankingu po imporcie jest najbardziej wartościowa?",
+      "code": "ZCARD import:chg-1234:leaderboard\nZREVRANGE import:chg-1234:leaderboard 0 9 WITHSCORES",
+      "options": {
+        "A": "Tylko sprawdzenie, że klucz istnieje",
+        "B": "INFO memory",
+        "C": "DBSIZE",
+        "D": "ZCARD = liczba unikalnych graczy w CSV, top 10 zgodne z top 10 policzonym niezależnie z pliku, próbka ZSCORE dla kilku graczy"
+      },
+      "correct": "D",
+      "explanation": "Porównanie z niezależnie policzonym wynikiem ze źródła wykrywa błędy mapowania (np. zamienione score i member)."
+    },
+    {
+      "question": "Co się stało, jeśli ranking wygląda tak?",
+      "code": "ZREVRANGE lb 0 2 WITHSCORES\n1) \"1500\"  2) \"42\"\n3) \"980\"   4) \"17\"",
+      "options": {
+        "A": "Importer zamienił kolejność argumentów ZADD (member i score) - graczami są liczby punktów, a score to identyfikatory",
+        "B": "Wszystko poprawnie",
+        "C": "Redis sortuje błędnie",
+        "D": "To remis"
+      },
+      "correct": "A",
+      "explanation": "Poprawnie: ZADD lb 1500 42 (najpierw score). Test canary z asercją ZSCORE lb 42 = 1500 wykryje taki błąd."
+    },
+    {
+      "question": "Jak iterować po dużym zbiorze członków bez blokowania?",
+      "code": "SCARD team:blue:members -> 1200000",
+      "options": {
+        "A": "SMEMBERS team:blue:members",
+        "B": "SORT team:blue:members",
+        "C": "SSCAN team:blue:members 0 COUNT 100 (w pętli do kursora 0)",
+        "D": "SRANDMEMBER team:blue:members -1"
+      },
+      "correct": "C",
+      "explanation": "SMEMBERS zwróciłby 1,2 mln elementów w jednej odpowiedzi."
+    },
+    {
+      "question": "Dlaczego klucz tymczasowy i docelowy w klastrze muszą mieć wspólny hash tag przy RENAME?",
+      "code": "RENAME team:{blue}:members:tmp team:{blue}:members",
+      "options": {
+        "A": "Nie muszą",
+        "B": "Dla wydajności",
+        "C": "Bo RENAME działa tylko na hash",
+        "D": "Bo polecenia wielokluczowe w klastrze wymagają kluczy w tym samym slocie - bez hash tagu RENAME zwróci błąd CROSSSLOT"
+      },
+      "correct": "D",
+      "explanation": "Projekt kluczy trzeba dostosować do klastra, zanim pojawi się potrzeba atomowych operacji na kilku kluczach."
+    },
+    {
+      "question": "Która operacja pozwala policzyć graczy z wynikiem co najmniej 1000?",
+      "code": "# leaderboard:global - zset",
+      "options": {
+        "A": "ZCOUNT leaderboard:global 1000 +inf",
+        "B": "ZCARD leaderboard:global 1000",
+        "C": "SCARD leaderboard:global",
+        "D": "ZRANK leaderboard:global 1000"
+      },
+      "correct": "A",
+      "explanation": "+inf i -inf oznaczają nieograniczone końce zakresu. Operacja jest logarytmiczna - nie wymaga przeglądania elementów."
     }
   ]
 }

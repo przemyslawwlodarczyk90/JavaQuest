@@ -131,6 +131,16 @@
       "prompt": "Napisz procedurę zakończenia sesji z sekretem w `rediscli_auth`.",
       "hint": "Pamiętaj o historii i logach.",
       "solution": "Zakończ CLI, usuń zmienną w tej samej powłoce, nie loguj środowiska i usuń tymczasowe pliki zawierające sekrety zgodnie z polityką."
+    },
+    {
+      "prompt": "Uruchom lokalnie parę primary + replica (dwa kontenery w jednej sieci Docker, drugi z `--replicaof`), a następnie opisz (jako String) jak sprawdzić rolę każdego węzła (`INFO replication`, `ROLE`) i co się stanie przy próbie zapisu na replice. Dlaczego ta wiedza jest ważna przed importem danych?",
+      "hint": "docker network create rnet; docker run -d --name rp --network rnet redis:7; docker run -d --name rr --network rnet redis:7 redis-server --replicaof rp 6379.",
+      "solution": "docker network create rnet\ndocker run -d --name rp --network rnet redis:7\ndocker run -d --name rr --network rnet redis:7 redis-server --replicaof rp 6379\ndocker exec rp redis-cli INFO replication   -> role:master, connected_slaves:1\ndocker exec rr redis-cli INFO replication   -> role:slave, master_host:rp\ndocker exec rp redis-cli ROLE               -> 1) \"master\" ...\ndocker exec rr redis-cli SET x 1            -> READONLY You can't write against a read only replica.\n(Sprawdzone na Redis 7.4; INFO nadal używa historycznej nazwy 'slave'.)\nImport skierowany przez pomyłkę na replikę zakończy się błędami READONLY - albo, co gorsze, odkrywanie danych na replice z opóźnieniem replikacji da nieaktualny obraz. Dlatego przed pracą potwierdza się rolę węzła, a zapisy kieruje wyłącznie na uzgodniony primary."
+    },
+    {
+      "prompt": "Utwórz dwóch użytkowników ACL: `auditor` (tylko odczyt kluczy `user:*` i `leaderboard:*`, bez KEYS) oraz `importer` (odczyt i zapis wyłącznie w `import:chg-1234:*`, bez poleceń niebezpiecznych). Sprawdź uprawnienia poleceniem `ACL DRYRUN` dla kilku przypadków i zapisz (jako String) polecenia oraz oczekiwane wyniki.",
+      "hint": "ACL SETUSER nazwa on >haslo ~wzorzec +@read -keys; ACL DRYRUN user polecenie argumenty.",
+      "solution": "ACL SETUSER auditor on >haslo123 ~user:* ~leaderboard:* +@read +scan +type +ttl -keys\nACL SETUSER importer on >haslo456 ~import:chg-1234:* +@write +@read -@dangerous\n\nACL DRYRUN auditor GET user:1                          -> OK\nACL DRYRUN auditor SET user:1 x                        -> User auditor has no permissions to run the 'set' command\nACL DRYRUN auditor GET session:1                       -> User auditor has no permissions to access the 'session:1' key\nACL DRYRUN auditor KEYS *                              -> User auditor has no permissions to run the 'keys' command\nACL DRYRUN importer HSET import:chg-1234:user:1 a b    -> OK\nACL DRYRUN importer HSET user:1 a b                    -> User importer has no permissions to access the 'user:1' key\nACL DRYRUN importer FLUSHALL                           -> User importer has no permissions to run the 'flushall' command\n(Sprawdzone na Redis 7.4.) ACL DRYRUN (od Redis 7.0) pozwala zweryfikować uprawnienia bez wykonywania poleceń. Hasła w praktyce ustawia administrator z menedżera sekretów, nie w historii konsoli."
     }
   ],
   "quiz": [
@@ -221,6 +231,210 @@
       },
       "correct": "B",
       "explanation": "Rozpoznawalna nazwa pomaga operatorom zidentyfikować sesję migracyjną."
+    },
+    {
+      "question": "Co oznacza ta odpowiedź?",
+      "code": "$ redis-cli -h redis-replica.internal SET x 1\n(error) READONLY You can't write against a read only replica.",
+      "options": {
+        "A": "Brak uprawnień ACL",
+        "B": "Pamięć jest pełna",
+        "C": "Klucz x jest zablokowany",
+        "D": "Połączono z repliką, która nie przyjmuje zapisów - zapisy kieruje się na primary"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4 w parze primary/replica. Rolę węzła pokazują INFO replication i ROLE."
+    },
+    {
+      "question": "Co pokazuje INFO replication na replice?",
+      "code": "$ redis-cli INFO replication\n# Replication\nrole:slave\nmaster_host:rp\n...",
+      "options": {
+        "A": "Że węzeł jest primary",
+        "B": "Że replikacja jest wyłączona",
+        "C": "Że węzeł jest repliką (INFO używa historycznej nazwy 'slave') i replikuje z hosta rp",
+        "D": "Że węzeł jest Sentinelem"
+      },
+      "correct": "C",
+      "explanation": "Na primary zobaczysz role:master i connected_slaves. Nowsze polecenia i dokumentacja używają nazwy 'replica'."
+    },
+    {
+      "question": "Co zwróci ostatnie polecenie?",
+      "code": "127.0.0.1:6379> SELECT 1\nOK\n127.0.0.1:6379[1]> SET tylko-w-db1 x\n127.0.0.1:6379[1]> SELECT 0\n127.0.0.1:6379> EXISTS tylko-w-db1",
+      "options": {
+        "A": "1",
+        "B": "x",
+        "C": "Błąd",
+        "D": "0 - klucz istnieje tylko w logicznej bazie 1"
+      },
+      "correct": "D",
+      "explanation": "Ten sam klucz może istnieć w różnych bazach logicznych - numer bazy jest częścią kontekstu połączenia. redis-cli -n 1 EXISTS tylko-w-db1 zwróciłby 1."
+    },
+    {
+      "question": "Co zwróci SELECT 16 w domyślnej konfiguracji?",
+      "code": "127.0.0.1:6379> SELECT 16",
+      "options": {
+        "A": "(error) ERR DB index is out of range",
+        "B": "OK",
+        "C": "Utworzy nową bazę",
+        "D": "(nil)"
+      },
+      "correct": "A",
+      "explanation": "Domyślnie jest 16 baz (0-15; parametr databases). W Redis Cluster dostępna jest tylko baza 0."
+    },
+    {
+      "question": "Jak redis-cli zgłosi błąd polecenia skryptowi powłoki?",
+      "code": "$ redis-cli -e HGET klucz-string pole\nWRONGTYPE Operation against a key holding the wrong kind of value\n$ echo $?",
+      "options": {
+        "A": "0",
+        "B": "2",
+        "C": "1 - z opcją -e redis-cli kończy się niezerowym kodem po odpowiedzi-błędzie; bez -e kod wynosiłby 0",
+        "D": "127"
+      },
+      "correct": "C",
+      "explanation": "Sprawdzone na Redis 7.4. Bez -e skrypt importu 'udawałby', że wszystko się udało."
+    },
+    {
+      "question": "Co zwróci ACL DRYRUN?",
+      "code": "ACL SETUSER auditor on >haslo ~user:* +@read\nACL DRYRUN auditor GET session:1",
+      "options": {
+        "A": "OK",
+        "B": "Błąd składni",
+        "C": "Wartość klucza",
+        "D": "User auditor has no permissions to access the 'session:1' key"
+      },
+      "correct": "D",
+      "explanation": "Wzorzec ~user:* ogranicza dostęp do kluczy. DRYRUN sprawdza uprawnienia bez wykonania polecenia."
+    },
+    {
+      "question": "Czy użytkownik importer może wykonać FLUSHALL?",
+      "code": "ACL SETUSER importer on >haslo ~import:chg-1234:* +@write +@read -@dangerous\nACL DRYRUN importer FLUSHALL",
+      "options": {
+        "A": "Nie - -@dangerous odbiera m.in. FLUSHALL (odpowiedź: no permissions to run the 'flushall' command)",
+        "B": "Tak, bo ma +@write",
+        "C": "Tak, ale tylko w import:*",
+        "D": "Tylko w bazie 0"
+      },
+      "correct": "A",
+      "explanation": "Kolejność reguł ma znaczenie - -@dangerous po +@write odbiera niebezpieczne polecenia. Sprawdzone na Redis 7.4."
+    },
+    {
+      "question": "Które polecenie połączenia nie ujawnia hasła w historii i liście procesów?",
+      "code": "# użytkownik ACL: redis-auditor",
+      "options": {
+        "A": "redis-cli -a SuperSecret123",
+        "B": "redis-cli -u redis://redis-auditor:SuperSecret123@host:6379",
+        "C": "redis-cli --user redis-auditor --askpass --tls --cacert ca.pem -h redis.internal.example -p 6380",
+        "D": "echo SuperSecret123 | redis-cli"
+      },
+      "correct": "C",
+      "explanation": "--askpass prosi o hasło z maskowaniem. redis-cli przy -a sam wyświetla ostrzeżenie o niebezpieczeństwie."
+    },
+    {
+      "question": "Czym różnią się te URI?",
+      "code": "redis://redis-auditor@host:6379/0\nrediss://redis-auditor@host:6380/0",
+      "options": {
+        "A": "Niczym",
+        "B": "rediss:// to klaster",
+        "C": "rediss:// to Redis Sentinel",
+        "D": "rediss:// oznacza połączenie szyfrowane TLS, redis:// - bez szyfrowania; /0 to numer bazy logicznej"
+      },
+      "correct": "D",
+      "explanation": "Hasło lepiej podać przez --askpass niż umieszczać w URI."
+    },
+    {
+      "question": "Po co nadawać nazwę połączeniu?",
+      "code": "CLIENT SETNAME csv-discovery-CHG-1234\n# lub: redis-cli --name csv-discovery-CHG-1234",
+      "options": {
+        "A": "Żeby administrator widział w CLIENT LIST, kto i w jakiej sprawie jest połączony (i mógł np. rozłączyć sesję powodującą problemy)",
+        "B": "Żeby zmienić użytkownika",
+        "C": "Żeby przyspieszyć polecenia",
+        "D": "Żeby wybrać bazę"
+      },
+      "correct": "A",
+      "explanation": "Numer zgłoszenia zmiany w nazwie łączy sesję z procedurą i audytem."
+    },
+    {
+      "question": "Co zwraca ACL WHOAMI?",
+      "code": "127.0.0.1:6379> ACL WHOAMI",
+      "options": {
+        "A": "Adres IP klienta",
+        "B": "Listę uprawnień",
+        "C": "Nazwę użytkownika ACL bieżącego połączenia (np. default)",
+        "D": "Nazwę hosta"
+      },
+      "correct": "C",
+      "explanation": "Potwierdzenie tożsamości to pierwszy krok sesji - np. czy nie jesteś przypadkiem zalogowany jako administrator."
+    },
+    {
+      "question": "Dlaczego nie uruchamia się importu przeciw portowi Sentinela?",
+      "code": "$ redis-cli -p 26379 HSET user:1 name Anna",
+      "options": {
+        "A": "Bo Sentinel jest wolniejszy",
+        "B": "Można",
+        "C": "Bo Sentinel wymaga TLS",
+        "D": "Bo Sentinel nie jest bazą danych - służy do monitorowania i wskazywania aktualnego primary; dane zapisuje się na primary, którego adres podaje Sentinel"
+      },
+      "correct": "D",
+      "explanation": "Adres primary można uzyskać: SENTINEL get-master-addr-by-name <nazwa>."
+    },
+    {
+      "question": "Co robi -c w redis-cli przy pracy z Redis Cluster?",
+      "code": "$ redis-cli -c -h node1 GET user:42\n-> Redirected to slot [...] located at 10.0.1.12:6379",
+      "options": {
+        "A": "Obsługuje przekierowania MOVED/ASK - klient łączy się z węzłem, który przechowuje slot klucza",
+        "B": "Włącza kompresję",
+        "C": "Skanuje cały klaster",
+        "D": "Włącza kolory"
+      },
+      "correct": "A",
+      "explanation": "Pełny SCAN klastra wymaga iteracji po każdym węźle primary osobno - -c tego nie zapewnia."
+    },
+    {
+      "question": "Jak bezpiecznie usunąć sekret po sesji ze zmienną REDISCLI_AUTH?",
+      "code": "read -rs REDISCLI_AUTH; export REDISCLI_AUTH\nredis-cli --user redis-auditor -h ... PING\n???",
+      "options": {
+        "A": "Nic nie trzeba robić",
+        "B": "export REDISCLI_AUTH=\"\" w .bashrc",
+        "C": "unset REDISCLI_AUTH (i zamknąć powłokę) - zmienna jest dziedziczona przez procesy potomne",
+        "D": "history -c"
+      },
+      "correct": "C",
+      "explanation": "read -rs wczytuje hasło bez echa i bez zapisu w historii; po pracy zmienną trzeba usunąć."
+    },
+    {
+      "question": "Dlaczego odkrywanie danych na replice może dać mylący obraz?",
+      "code": "INFO replication\nmaster_last_io_seconds_ago:1\nmaster_repl_offset / slave_repl_offset ...",
+      "options": {
+        "A": "Bo replika ma inne klucze z definicji",
+        "B": "Nie może",
+        "C": "Bo replika nie obsługuje SCAN",
+        "D": "Bo replikacja jest asynchroniczna - replika może być opóźniona względem primary"
+      },
+      "correct": "D",
+      "explanation": "Odczyt z repliki odciąża primary, ale trzeba znać i akceptować opóźnienie."
+    },
+    {
+      "question": "Który zestaw poleceń jest bezpieczny jako pierwsze kroki sesji rozpoznawczej?",
+      "code": "# konto read-only, produkcja",
+      "options": {
+        "A": "PING, ACL WHOAMI, CLIENT INFO, INFO server, INFO replication, DBSIZE",
+        "B": "FLUSHDB, KEYS *, CONFIG GET *",
+        "C": "MONITOR, DEBUG OBJECT, SAVE",
+        "D": "SELECT 5, FLUSHALL"
+      },
+      "correct": "A",
+      "explanation": "Wszystkie są tanie i odczytowe: potwierdzają łączność, tożsamość, wersję, rolę węzła i rozmiar bazy."
+    },
+    {
+      "question": "Dlaczego to polecenie jest podwójnie ryzykowne?",
+      "code": "redis-cli -h public.example.com -a SuperSecret123\nFLUSHALL",
+      "options": {
+        "A": "Tylko z powodu hasła",
+        "B": "Hasło trafia do historii i listy procesów, połączenie jest bez TLS do publicznego hosta, nie potwierdzono środowiska ani roli - a potem pada nieodwracalne FLUSHALL",
+        "C": "Bo brakuje -c",
+        "D": "Nie jest ryzykowne"
+      },
+      "correct": "B",
+      "explanation": "Właściwy kontekst: prywatny endpoint, TLS, konto ACL bez poleceń niebezpiecznych, nazwa klienta, najpierw polecenia odczytowe."
     }
   ]
 }

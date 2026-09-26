@@ -131,6 +131,16 @@
       "prompt": "Zaprojektuj wznowienie po błędzie partii 37.",
       "hint": "Idempotentne komendy.",
       "solution": "Napraw źródło, ponownie wygeneruj tę samą partię i wykonaj HSET/SADD/ZADD ustawiające stan; nie powtarzaj INCRBY/LPUSH bez deduplikacji."
+    },
+    {
+      "prompt": "Napisz w Javie generator pliku RESP dla trzech użytkowników (w tym imię z polskimi znakami, imię ze spacją i imię z cudzysłowami): dla każdego HSET (name, country), SADD do zbioru kraju i ZADD do rankingu w przestrzeni `import:chg-1234:`. Załaduj plik przez `redis-cli --pipe` do lokalnego Redis w kontenerze i sprawdź dane. Co pokaże ponowne uruchomienie importu?",
+      "hint": "Długość $ to liczba BAJTÓW UTF-8. Nagłówki ASCII, końce linii \\r\\n. docker exec -i <kontener> redis-cli --pipe < import.resp.",
+      "solution": "import java.io.*;\nimport java.nio.charset.StandardCharsets;\nimport java.nio.file.*;\nimport java.util.*;\n\npublic class GeneratorResp {\n    static void polecenie(OutputStream out, String... args) throws IOException {\n        out.write((\"*\" + args.length + \"\\r\\n\").getBytes(StandardCharsets.US_ASCII));\n        for (String a : args) {\n            byte[] b = a.getBytes(StandardCharsets.UTF_8);\n            out.write((\"$\" + b.length + \"\\r\\n\").getBytes(StandardCharsets.US_ASCII));\n            out.write(b);\n            out.write(\"\\r\\n\".getBytes(StandardCharsets.US_ASCII));\n        }\n    }\n\n    public static void main(String[] args) throws IOException {\n        record User(String id, String name, String country, long points) {}\n        List<User> users = List.of(new User(\"42\", \"Anna Maria\", \"PL\", 1500),\n                                   new User(\"43\", \"Zażółć\", \"PL\", 980),\n                                   new User(\"44\", \"Jan \\\"Kowal\\\"\", \"DE\", 1200));\n        String ns = \"import:chg-1234:\";\n        int liczba = 0;\n        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Path.of(\"import.resp\")))) {\n            for (User u : users) {\n                polecenie(out, \"HSET\", ns + \"user:\" + u.id(), \"name\", u.name(), \"country\", u.country()); liczba++;\n                polecenie(out, \"SADD\", ns + \"users:country:\" + u.country(), u.id()); liczba++;\n                polecenie(out, \"ZADD\", ns + \"leaderboard\", Long.toString(u.points()), u.id()); liczba++;\n            }\n        }\n        System.out.println(\"polecen: \" + liczba + \", bajtow: \" + Files.size(Path.of(\"import.resp\")));\n    }\n}\n\n$ java GeneratorResp.java\npolecen: 9, bajtow: 657\n$ docker exec -i moj-redis redis-cli --pipe < import.resp\nAll data transferred. Waiting for the last reply...\nLast reply received from server.\nerrors: 0, replies: 9\nHGET import:chg-1234:user:43 name -> \"Zażółć\"; HGETALL import:chg-1234:user:44 -> name \"Jan \\\"Kowal\\\"\", country DE; ZREVRANGE import:chg-1234:leaderboard 0 -1 WITHSCORES -> 42 1500, 44 1200, 43 980 (sprawdzone na Redis 7.4).\nPonowne uruchomienie: errors: 0, replies: 9, a DBSIZE nadal 6 (3 hashe, 2 zbiory krajów, ranking) - HSET, SADD i ZADD są idempotentne. Spacje i cudzysłowy nie wymagają escapowania, bo RESP podaje długość każdego argumentu."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) mechanizm checkpointów dla importu 1 mln wierszy w partiach po 10 000: format pliku checkpoint, moment jego zapisu, zachowanie po błędzie w partii 37 i warunek, który gwarantuje, że wznowienie nie zdubluje efektów.",
+      "hint": "Checkpoint zapisuj po zweryfikowanej partii (replies == polecenia, errors == 0). Operacje idempotentne.",
+      "solution": "checkpoint.json:\n{\"zrodlo_sha256\":\"9f2c...\",\"namespace\":\"import:chg-1234:v2\",\"rozmiar_partii\":10000,\"ostatnia_ok\":36,\"polecen_ok\":1110000,\"czas\":\"2026-09-26T21:14:03Z\"}\nZapis: dopiero gdy partia N zakończyła się 'errors: 0, replies: <liczba poleceń partii>' i przeszła szybką kontrolę (np. SCARD/ZCARD przyrostowo lub próbka kluczy). Plik zapisywany atomowo (zapis do .tmp i rename). Błąd w partii 37: zatrzymanie importu, analiza odpowiedzi (np. WRONGTYPE, OOM), poprawka danych/konfiguracji, wznowienie od partii 37 (ostatnia_ok + 1). Gwarancja braku dublowania: wszystkie operacje są idempotentne (HSET/SADD/ZADD/SET z EXAT, bez INCRBY/ZINCRBY/LPUSH), więc ponowne wykonanie części partii 37, która już przeszła, daje ten sam stan. Suma kontrolna źródła w checkpoincie chroni przed wznowieniem na innym pliku."
     }
   ],
   "quiz": [
@@ -221,6 +231,210 @@
       },
       "correct": "B",
       "explanation": "Odpowiedzi transportowe nie dowodzą zgodności biznesowej."
+    },
+    {
+      "question": "Jak wygląda polecenie HSET user:42 name Anna w RESP?",
+      "code": "HSET user:42 name Anna",
+      "options": {
+        "A": "*3\\r\\n$4\\r\\nHSET\\r\\n$7\\r\\nuser:42\\r\\n$9\\r\\nname Anna\\r\\n",
+        "B": "HSET user:42 name Anna\\n",
+        "C": "*4\\r\\n$4\\r\\nHSET\\r\\n$7\\r\\nuser:42\\r\\n$4\\r\\nname\\r\\n$4\\r\\nAnna\\r\\n",
+        "D": "$4 HSET $7 user:42 $4 name $4 Anna"
+      },
+      "correct": "C",
+      "explanation": "*4 - tablica 4 argumentów; każdy argument poprzedza $<długość w bajtach>. Wszystkie linie kończą się \\r\\n."
+    },
+    {
+      "question": "Jaka jest wartość $len dla argumentu \"Zażółć\"?",
+      "code": "\"Zażółć\".getBytes(StandardCharsets.UTF_8).length",
+      "options": {
+        "A": "10",
+        "B": "6",
+        "C": "12",
+        "D": "7"
+      },
+      "correct": "A",
+      "explanation": "RESP liczy bajty. Użycie String.length() (znaki) dałoby uszkodzony strumień dla tekstów z polskimi znakami."
+    },
+    {
+      "question": "Co oznacza to podsumowanie i kod wyjścia?",
+      "code": "$ redis-cli --pipe < p.resp     # SET a 1; HGET a f; SET b 2\nAll data transferred. Waiting for the last reply...\nLast reply received from server.\nerrors: 1, replies: 3\n$ echo $?\n1",
+      "options": {
+        "A": "Nic się nie zapisało",
+        "B": "Import się udał",
+        "C": "Wszystko zostało cofnięte",
+        "D": "Jedno polecenie zakończyło się błędem (HGET na stringu), ale pozostałe wykonały się - GET b zwraca \"2\"; --pipe nie działa w trybie wszystko albo nic"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. Stąd operacje idempotentne, checkpointy i walidacja po imporcie."
+    },
+    {
+      "question": "Dlaczego pętla uruchamiająca redis-cli dla każdego wiersza jest zła przy milionie rekordów?",
+      "code": "for row in csv:\n  system(\"redis-cli HSET user:\" + row.id + \" name \" + row.name)",
+      "options": {
+        "A": "Milion procesów i połączeń (ogromny narzut), sklejanie tekstu łamie argumenty ze spacjami, brak zbiorczej kontroli błędów",
+        "B": "Bo redis-cli nie obsługuje HSET",
+        "C": "Bo Redis nie przyjmie tylu poleceń",
+        "D": "Jest poprawna"
+      },
+      "correct": "A",
+      "explanation": "--pipe wysyła wszystkie polecenia jednym połączeniem, bez czekania na odpowiedź po każdym."
+    },
+    {
+      "question": "Co się stanie, jeśli plik RESP zostanie zapisany edytorem zmieniającym \\r\\n na \\n?",
+      "code": "*3\\n$3\\nSET\\n$1\\na\\n$1\\n1\\n",
+      "options": {
+        "A": "Nic",
+        "B": "Plik będzie mniejszy i szybszy",
+        "C": "Protokół zostanie uszkodzony - serwer oczekuje \\r\\n (a długości $ nie będą pasować do danych), więc polecenia zostaną odrzucone lub źle zinterpretowane",
+        "D": "Redis sam poprawi końce linii"
+      },
+      "correct": "C",
+      "explanation": "Plik RESP traktuje się jak binarny (np. .gitattributes: *.resp binary) i nie edytuje ręcznie."
+    },
+    {
+      "question": "Co pokaże DBSIZE po dwukrotnym załadowaniu tego samego pliku RESP (HSET, SADD, ZADD dla 3 użytkowników, 2 kraje)?",
+      "code": "$ redis-cli --pipe < import.resp   # dwa razy\n$ redis-cli DBSIZE",
+      "options": {
+        "A": "12",
+        "B": "18",
+        "C": "9",
+        "D": "6 - operacje są idempotentne (3 hashe + 2 zbiory + 1 ranking)"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzone na Redis 7.4. Plik z INCRBY lub LPUSH dałby przy powtórzeniu inny stan."
+    },
+    {
+      "question": "Który zestaw operacji ułatwia bezpieczne ponawianie partii?",
+      "code": "# partia 37 przerwana w połowie",
+      "options": {
+        "A": "HSET, SADD, ZADD, SET ... EXAT",
+        "B": "LPUSH, INCRBY, ZINCRBY",
+        "C": "APPEND, RPUSH",
+        "D": "DEL i FLUSHDB"
+      },
+      "correct": "A",
+      "explanation": "Operacje ustawiające stan dają ten sam wynik bez względu na liczbę powtórzeń."
+    },
+    {
+      "question": "Jak wykryć usuwanie kluczy z braku pamięci podczas importu?",
+      "code": "INFO stats\n...",
+      "options": {
+        "A": "keyspace_hits",
+        "B": "total_connections_received",
+        "C": "Rosnące evicted_keys (oraz used_memory bliskie maxmemory w INFO memory) - import może wypychać inne dane albo własne klucze",
+        "D": "Nie da się"
+      },
+      "correct": "C",
+      "explanation": "Próg zatrzymania importu: jakikolwiek wzrost evicted_keys w trakcie ładowania."
+    },
+    {
+      "question": "Co zawiera nagłówek *3 w RESP?",
+      "code": "*3\\r\\n$3\\r\\nSET\\r\\n$1\\r\\na\\r\\n$1\\r\\n1\\r\\n",
+      "options": {
+        "A": "Numer polecenia",
+        "B": "Numer bazy",
+        "C": "Liczbę bajtów",
+        "D": "Liczbę argumentów polecenia (łącznie z nazwą polecenia)"
+      },
+      "correct": "D",
+      "explanation": "SET a 1 to trzy argumenty: SET, a, 1."
+    },
+    {
+      "question": "Który fragment generatora RESP jest poprawny?",
+      "code": "for (String arg : args) {\n    ???\n}",
+      "options": {
+        "A": "byte[] b = arg.getBytes(StandardCharsets.UTF_8); out.write((\"$\" + b.length + \"\\r\\n\").getBytes(StandardCharsets.US_ASCII)); out.write(b); out.write(\"\\r\\n\".getBytes(StandardCharsets.US_ASCII));",
+        "B": "out.write((\"$\" + arg.length() + \"\\r\\n\" + arg + \"\\r\\n\").getBytes());",
+        "C": "out.write(arg.getBytes());",
+        "D": "out.write((\"$\" + arg + \"\\n\").getBytes());"
+      },
+      "correct": "A",
+      "explanation": "A używa liczby znaków i domyślnego kodowania platformy - błąd przy znakach spoza ASCII."
+    },
+    {
+      "question": "Czy spacje i cudzysłowy w wartości wymagają escapowania w RESP?",
+      "code": "HSET import:u:44 name \"Jan \\\"Kowal\\\"\"",
+      "options": {
+        "A": "Tak, backslashem",
+        "B": "Tak, podwojeniem cudzysłowu",
+        "C": "Nie - RESP podaje długość każdego argumentu, więc dowolne bajty (spacje, cudzysłowy, \\r\\n) są przesyłane dosłownie",
+        "D": "Nie można ich zapisać"
+      },
+      "correct": "C",
+      "explanation": "To jest 'binarne bezpieczeństwo' RESP - przewaga nad sklejaniem poleceń tekstowych."
+    },
+    {
+      "question": "Dlaczego podsumowanie --pipe z errors: 0 nie wystarcza do akceptacji importu?",
+      "code": "errors: 0, replies: 299526",
+      "options": {
+        "A": "Wystarcza",
+        "B": "Bo --pipe nie liczy błędów",
+        "C": "Bo liczba odpowiedzi jest losowa",
+        "D": "Potwierdza tylko transport; nie wykrywa błędów mapowania (zły klucz, zamienione pola, zły score) - potrzebna walidacja struktury i biznesowa"
+      },
+      "correct": "D",
+      "explanation": "Lekcja 15 opisuje trzy kolejne poziomy walidacji: strukturę, biznes i operacje."
+    },
+    {
+      "question": "Gdzie przechowywać checkpoint importu?",
+      "code": "{\"ostatnia_ok\": 36, \"zrodlo_sha256\": \"9f2c...\"}",
+      "options": {
+        "A": "W trwałym pliku/magazynie poza procesem importu, zapisywanym atomowo po zweryfikowanej partii, z sumą kontrolną źródła",
+        "B": "Tylko w pamięci procesu",
+        "C": "W zmiennej środowiskowej",
+        "D": "W logach Redis"
+      },
+      "correct": "A",
+      "explanation": "Awaria procesu nie może zniszczyć informacji, od którego miejsca wznowić."
+    },
+    {
+      "question": "Który zapis wczytuje hasło bez echa i przekazuje je redis-cli bez argumentu w linii poleceń?",
+      "code": "???\nredis-cli -h host --tls --user importer -e --pipe < import.resp\nunset REDISCLI_AUTH",
+      "options": {
+        "A": "export REDISCLI_AUTH=SuperSecret",
+        "B": "redis-cli -a SuperSecret",
+        "C": "read -rsp 'Redis password: ' REDISCLI_AUTH && export REDISCLI_AUTH",
+        "D": "echo SuperSecret > haslo.txt"
+      },
+      "correct": "C",
+      "explanation": "read -s nie wyświetla wpisywanych znaków i nie zapisuje hasła w historii. Po imporcie zmienną się usuwa."
+    },
+    {
+      "question": "Kiedy lepiej użyć biblioteki klienta (np. Lettuce z pipeliningiem) zamiast --pipe?",
+      "code": "# import z logiką warunkową zależną od odpowiedzi serwera",
+      "options": {
+        "A": "Nigdy",
+        "B": "Gdy Redis nie obsługuje RESP",
+        "C": "Gdy plik ma mniej niż 10 linii",
+        "D": "Gdy import potrzebuje reagować na odpowiedzi (warunki, ponowienia per polecenie, raporty per rekord) albo jest częścią aplikacji"
+      },
+      "correct": "D",
+      "explanation": "--pipe jest świetny do jednorazowego, przygotowanego strumienia poleceń; biblioteka daje pełną kontrolę w kodzie."
+    },
+    {
+      "question": "Ile poleceń zawiera plik wygenerowany dla 3 użytkowników po 3 operacje?",
+      "code": "polecenie(out, \"HSET\", ...); polecenie(out, \"SADD\", ...); polecenie(out, \"ZADD\", ...);   // x3",
+      "options": {
+        "A": "9 - podsumowanie --pipe powinno pokazać replies: 9",
+        "B": "3",
+        "C": "6",
+        "D": "27"
+      },
+      "correct": "A",
+      "explanation": "Liczba odpowiedzi musi być równa liczbie poleceń zapisanej w manifeście partii."
+    },
+    {
+      "question": "Po co dzielić import na partie i ograniczać tempo (throttling)?",
+      "code": "--batches 10000\n# przerwa lub limit poleceń na sekundę między partiami",
+      "options": {
+        "A": "Bez powodu",
+        "B": "Bo --pipe przyjmuje najwyżej 10 000 poleceń",
+        "C": "Żeby móc wznawiać od ostatniej udanej partii, kontrolować metryki (opóźnienia, pamięć, eviction) między partiami i nie zagłodzić ruchu produkcyjnego",
+        "D": "Żeby ominąć ACL"
+      },
+      "correct": "C",
+      "explanation": "Redis jest jednowątkowy w wykonywaniu poleceń - długi, nieprzerwany strumień importu zwiększa opóźnienia aplikacji."
     }
   ]
 }

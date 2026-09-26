@@ -106,6 +106,41 @@
       "prompt": "Zaprojektuj (jako String) decyzje 'Pub/Sub czy Kafka' dla nastepujacych dwoch scenariuszy, uzasadniajac kazda z nich: (1) informowanie interfejsu uzytkownika o nowym komentarzu pod artykulem, do odswiezenia widoku na zywo, (2) wysylanie potwierdzenia platnosci do systemu ksiegowego.",
       "hint": "Zastosuj pytanie z bloku when_to_use - 'co sie stanie, jesli ta wiadomosc zginie' - dla kazdego scenariusza z osobna.",
       "solution": "Dla scenariusza 1 (odswiezenie interfejsu o nowym komentarzu): Pub/Sub Redis WYSTARCZA - jesli wiadomosc zginie (np. uzytkownik akurat przelaczyl karte przegladarki), jedyna konsekwencja to brak natychmiastowego odswiezenia widoku - uzytkownik zobaczy nowy komentarz PRZY nastepnym odswiezeniu strony, bez zadnej realnej straty. Dla scenariusza 2 (potwierdzenie platnosci do systemu ksiegowego): WYMAGANA jest Kafka (lub inny system gwarantujacy trwalosc) - utrata takiej wiadomosci oznaczalaby, ze platnosc NIGDY nie zostanie zaksiegowana, co jest powazna, realna strata biznesowa/finansowa, niedopuszczalna do zaakceptowania."
+    },
+    {
+      "prompt": "Przeprowadź eksperyment w dwóch terminalach (lub opisz go jako String z oczekiwanymi wynikami): 1) `PUBLISH powiadomienia \"test1\"` bez subskrybentów, 2) w drugim terminalu `SUBSCRIBE powiadomienia`, 3) `PUBLISH powiadomienia \"test2\"`, 4) zamknij subskrybenta i `PUBLISH powiadomienia \"test3\"`. Co zwraca każde PUBLISH i które wiadomości zobaczy subskrybent?",
+      "hint": "PUBLISH zwraca liczbę klientów, którzy otrzymali wiadomość.",
+      "solution": "1) PUBLISH powiadomienia \"test1\" -> (integer) 0 - nikt nie słucha, wiadomość przepada.\n2) SUBSCRIBE powiadomienia -> 1) \"subscribe\" 2) \"powiadomienia\" 3) (integer) 1.\n3) PUBLISH powiadomienia \"test2\" -> (integer) 1; subskrybent widzi 1) \"message\" 2) \"powiadomienia\" 3) \"test2\".\n4) Po zamknięciu subskrybenta PUBLISH ... \"test3\" -> (integer) 0.\nSubskrybent zobaczy tylko test2. test1 i test3 zginęły bezpowrotnie - Pub/Sub nie przechowuje wiadomości, a subskrybent po ponownym połączeniu nie odbierze tego, co przegapił."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) użycie Pub/Sub do unieważniania cache lokalnych (Caffeine) w wielu instancjach aplikacji: kanał, treść wiadomości, zachowanie przy starcie instancji i przy utracie połączenia z Redis. Dlaczego mimo zawodności Pub/Sub ten projekt jest akceptowalny, jeśli lokalne wpisy mają krótki TTL?",
+      "hint": "Wiadomość 'uniewaznij produkt:42'; każda instancja usuwa lokalny wpis. Przegapiona wiadomość = wpis nieaktualny do TTL.",
+      "solution": "Kanał: cache-invalidation. Treść: JSON {\"cache\":\"produkty\",\"klucz\":42} publikowany po commicie zmiany. Każda instancja subskrybuje kanał (RedisMessageListenerContainer) i wykonuje caffeine.invalidate(klucz). Start instancji: jej cache jest pusty, więc nie ma czego unieważniać. Utrata połączenia: w tym czasie wiadomości przepadają - po ponownym połączeniu bezpiecznie jest wyczyścić cały lokalny cache. Zawodność jest akceptowalna, bo lokalny TTL (np. 30-60 s) ogranicza czas trwania ewentualnej niespójności, a Pub/Sub tylko skraca go w typowym przypadku do milisekund. Dane krytyczne nie powinny zależeć od takiego mechanizmu."
+    },
+    {
+      "prompt": "Porównaj (jako String) trzy mechanizmy Redis do przekazywania wiadomości: Pub/Sub, List (LPUSH/BRPOP) jako kolejka i Redis Streams (XADD/XREADGROUP/XACK) - trwałość, możliwość odczytu przez spóźnionych konsumentów, potwierdzenia, wielu odbiorców. Kiedy nadal lepsza jest Kafka?",
+      "hint": "Streams mają grupy konsumentów, potwierdzenia i historię.",
+      "solution": "Pub/Sub: brak trwałości, tylko obecni subskrybenci, brak potwierdzeń; każdy subskrybent dostaje kopię - powiadomienia na żywo. List jako kolejka: wiadomości czekają w liście (przy trwałości Redis), każdą odbiera jeden konsument (BRPOP), ale brak potwierdzeń - awaria konsumenta po pobraniu = utrata (wzorzec LMOVE do listy 'w przetwarzaniu' łagodzi problem). Streams: dziennik wpisów z identyfikatorami, grupy konsumentów, potwierdzenia XACK, lista nieprzetworzonych (XPENDING), odczyt historii przez spóźnionych - lekki system kolejkowy w Redis. Kafka: gdy potrzebna jest bardzo duża przepustowość, długa retencja (dni, tygodnie), odtwarzanie historii przez wiele niezależnych systemów, partycjonowanie i ekosystem integracji - oraz gdy pamięć Redis byłaby zbyt drogim miejscem na historię zdarzeń."
+    },
+    {
+      "prompt": "Napisz konfigurację Spring Boot dla subskrybenta Pub/Sub: bean `RedisMessageListenerContainer` z listenerem na kanale `ui-odswiez` i wzorcu `zamowienia.*`, oraz nadawcę używającego `StringRedisTemplate.convertAndSend`. Wyjaśnij różnicę między `ChannelTopic` a `PatternTopic`.",
+      "hint": "container.addMessageListener(listener, new ChannelTopic(...)); PatternTopic odpowiada PSUBSCRIBE.",
+      "solution": "@Configuration\nclass PubSubConfig {\n    @Bean\n    RedisMessageListenerContainer kontener(RedisConnectionFactory cf, Odbiorca odbiorca) {\n        RedisMessageListenerContainer c = new RedisMessageListenerContainer();\n        c.setConnectionFactory(cf);\n        c.addMessageListener(odbiorca, new ChannelTopic(\"ui-odswiez\"));\n        c.addMessageListener(odbiorca, new PatternTopic(\"zamowienia.*\"));\n        return c;\n    }\n}\n\n@Component\nclass Odbiorca implements MessageListener {\n    public void onMessage(Message m, byte[] wzorzec) {\n        System.out.println(new String(m.getChannel()) + \": \" + new String(m.getBody(), StandardCharsets.UTF_8));\n    }\n}\n\n@Service\nclass Nadawca {\n    private final StringRedisTemplate redis;\n    Nadawca(StringRedisTemplate redis) { this.redis = redis; }\n    void odswiezPanel() { redis.convertAndSend(\"ui-odswiez\", \"nowe-zamowienie\"); }\n}\nChannelTopic = SUBSCRIBE dokładnie jednego kanału; PatternTopic = PSUBSCRIBE z wzorcem (zamowienia.* obejmie zamowienia.nowe, zamowienia.anulowane). Przy wzorcu parametr 'wzorzec' w onMessage zawiera pasujący wzorzec."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) prosty przepływ zamówień na Redis Streams zamiast Pub/Sub: polecenia tworzące strumień i grupę konsumentów, dodanie zamówienia, odczyt przez konsumenta, potwierdzenie oraz obsługa konsumenta, który padł w trakcie przetwarzania.",
+      "hint": "XGROUP CREATE ... MKSTREAM, XADD, XREADGROUP GROUP g c COUNT 10 STREAMS s >, XACK, XPENDING, XCLAIM/XAUTOCLAIM.",
+      "solution": "XGROUP CREATE zamowienia przetwarzanie $ MKSTREAM\nXADD zamowienia * id 1001 kwota 250.00           # zwraca identyfikator wpisu, np. 1727330000000-0\nXREADGROUP GROUP przetwarzanie konsument-1 COUNT 10 BLOCK 5000 STREAMS zamowienia >\n# ... przetworzenie ...\nXACK zamowienia przetwarzanie 1727330000000-0\nWpis odebrany, ale niepotwierdzony, trafia na listę oczekujących grupy: XPENDING zamowienia przetwarzanie. Gdy konsument-1 padnie, inny konsument przejmuje stare wpisy: XAUTOCLAIM zamowienia przetwarzanie konsument-2 60000 0-0 (wpisy oczekujące ponad 60 s). Wiadomości przetrwają brak konsumenta (w przeciwieństwie do Pub/Sub), a długość strumienia ogranicza się przez XADD ... MAXLEN ~ 100000. Wymaga to trwałości Redis (AOF) - bez niej restart nadal oznacza utratę."
+    },
+    {
+      "prompt": "Zdecyduj (jako String) Pub/Sub, Redis Streams czy Kafka dla: (1) wskaźnik 'ktoś pisze...' w czacie, (2) wysłanie e-maila po rejestracji, (3) strumień zdarzeń płatności używany przez 5 zespołów, przechowywany 30 dni, (4) odświeżenie konfiguracji we wszystkich instancjach, (5) kolejka generowania PDF w małej aplikacji, która już ma Redis.",
+      "hint": "Zadaj pytanie: co, jeśli wiadomość zaginie? Ilu odbiorców, jak długo przechowywać?",
+      "solution": "(1) Pub/Sub - zdarzenie efemeryczne, utrata bez znaczenia.\n(2) Streams (lub kolejka z potwierdzeniami / outbox) - utrata oznacza brak e-maila; potrzebne ponowienia.\n(3) Kafka - wielu niezależnych konsumentów, długa retencja, odtwarzanie historii, krytyczne dane.\n(4) Pub/Sub + okresowe odświeżanie jako zabezpieczenie (lub Spring Cloud Bus) - przegapione powiadomienie naprawi odświeżanie.\n(5) Streams - wystarczające potwierdzenia i ponowienia bez dodawania nowej infrastruktury; przy wzroście wymagań migracja do dedykowanej kolejki."
+    },
+    {
+      "prompt": "Napisz w Javie symulację 'Pub/Sub w pamięci': klasa `Kanal` z listą subskrybentów (`Consumer<String>`) i metodą `publish(String)` zwracającą liczbę odbiorców. Pokaż, że wiadomość opublikowana przed subskrypcją nie dociera, a po wypisaniu się subskrybenta - również. Dodaj wersję 'Stream' z historią (lista), w której późny subskrybent może odczytać wiadomości od początku.",
+      "hint": "CopyOnWriteArrayList dla subskrybentów; stream = ArrayList<String> + indeks odczytu konsumenta.",
+      "solution": "import java.util.*;\nimport java.util.concurrent.CopyOnWriteArrayList;\nimport java.util.function.Consumer;\n\npublic class PubSubVsStream {\n    static class Kanal {\n        final List<Consumer<String>> subskrybenci = new CopyOnWriteArrayList<>();\n        int publish(String w) { subskrybenci.forEach(s -> s.accept(w)); return subskrybenci.size(); }\n    }\n    static class Strumien {\n        final List<String> wpisy = new ArrayList<>();\n        void xadd(String w) { wpisy.add(w); }\n        List<String> czytajOd(int pozycja) { return wpisy.subList(pozycja, wpisy.size()); }\n    }\n\n    public static void main(String[] args) {\n        Kanal k = new Kanal();\n        List<String> odebrane = new ArrayList<>();\n        System.out.println(k.publish(\"test1\"));   // 0\n        Consumer<String> sub = odebrane::add;\n        k.subskrybenci.add(sub);\n        System.out.println(k.publish(\"test2\"));   // 1\n        k.subskrybenci.remove(sub);\n        System.out.println(k.publish(\"test3\"));   // 0\n        System.out.println(\"Pub/Sub odebral: \" + odebrane);  // [test2]\n\n        Strumien s = new Strumien();\n        s.xadd(\"test1\"); s.xadd(\"test2\"); s.xadd(\"test3\");\n        System.out.println(\"Spozniony czytelnik strumienia: \" + s.czytajOd(0)); // [test1, test2, test3]\n    }\n}"
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Pub/Sub sprawdza się w scenariuszach, gdzie ewentualna utrata wiadomości nie powoduje realnych konsekwencji biznesowych, jak odświeżanie interfejsu w czasie rzeczywistym."
+    },
+    {
+      "question": "Co zwróci PUBLISH, gdy nikt nie subskrybuje kanału?",
+      "code": "127.0.0.1:6379> PUBLISH powiadomienia \"test1\"",
+      "options": {
+        "A": "OK",
+        "B": "Błąd - kanał nie istnieje",
+        "C": "(integer) 1",
+        "D": "(integer) 0 - wiadomość nie trafiła do nikogo i przepadła"
+      },
+      "correct": "D",
+      "explanation": "Kanałów nie trzeba tworzyć; PUBLISH zwraca liczbę odbiorców. Redis nie przechowuje wiadomości dla przyszłych subskrybentów."
+    },
+    {
+      "question": "Które wiadomości otrzyma subskrybent?",
+      "code": "PUBLISH k \"a\"       # przed subskrypcją\nSUBSCRIBE k         # w drugim terminalu\nPUBLISH k \"b\"\n# subskrybent się rozłącza i łączy ponownie\nPUBLISH k \"c\"       # w czasie, gdy był rozłączony",
+      "options": {
+        "A": "b",
+        "B": "a, b, c",
+        "C": "b, c",
+        "D": "a, b"
+      },
+      "correct": "A",
+      "explanation": "Pub/Sub dostarcza tylko do połączonych w danej chwili subskrybentów - 'radio na żywo'."
+    },
+    {
+      "question": "Co subskrybuje PSUBSCRIBE z tym wzorcem?",
+      "code": "PSUBSCRIBE zamowienia.*",
+      "options": {
+        "A": "Tylko kanał o nazwie 'zamowienia.*'",
+        "B": "Klucze zamowienia.*",
+        "C": "Wszystkie kanały pasujące do wzorca, np. zamowienia.nowe i zamowienia.anulowane",
+        "D": "Tylko istniejące kanały"
+      },
+      "correct": "C",
+      "explanation": "W Spring Data Redis odpowiada temu PatternTopic, a SUBSCRIBE - ChannelTopic."
+    },
+    {
+      "question": "Czy Redis Pub/Sub nadaje się do tego zastosowania?",
+      "code": "redisTemplate.convertAndSend(\"nowe-zamowienia\", zamowienie);\n// system magazynowy subskrybuje kanał i wysyła paczki",
+      "options": {
+        "A": "Tak",
+        "B": "Tak, jeśli kanał ma TTL",
+        "C": "Tak, jeśli Redis ma AOF",
+        "D": "Nie - przy restarcie lub awarii subskrybenta zamówienie zginie bez śladu; potrzebny jest mechanizm z trwałością i potwierdzeniami (Kafka, Streams, kolejka)"
+      },
+      "correct": "D",
+      "explanation": "Trwałość AOF nie pomaga - wiadomości Pub/Sub w ogóle nie są zapisywane w keyspace."
+    },
+    {
+      "question": "Czym jest wpis w strumieniu Redis?",
+      "code": "127.0.0.1:6379> XADD zamowienia * id 1001 kwota 250.00\n\"1727330000000-0\"",
+      "options": {
+        "A": "Trwałym (w keyspace) wpisem z identyfikatorem czas-numer, który mogą odczytać także konsumenci podłączeni później",
+        "B": "Wiadomością Pub/Sub",
+        "C": "Kluczem typu hash",
+        "D": "Tymczasową wiadomością znikającą po odczycie"
+      },
+      "correct": "A",
+      "explanation": "* oznacza automatycznie generowany identyfikator. Strumień to typ danych (TYPE zwraca stream)."
+    },
+    {
+      "question": "Co oznacza > w tym poleceniu?",
+      "code": "XREADGROUP GROUP przetwarzanie konsument-1 COUNT 10 STREAMS zamowienia >",
+      "options": {
+        "A": "Wpisy większe niż 10",
+        "B": "Wszystkie wpisy od początku",
+        "C": "Nowe wpisy, których grupa jeszcze nikomu nie dostarczyła",
+        "D": "Wpisy potwierdzone"
+      },
+      "correct": "C",
+      "explanation": "Odebrane wpisy trafiają na listę oczekujących grupy, dopóki konsument nie potwierdzi ich XACK."
+    },
+    {
+      "question": "Po co XACK?",
+      "code": "XACK zamowienia przetwarzanie 1727330000000-0",
+      "options": {
+        "A": "Usuwa strumień",
+        "B": "Tworzy grupę",
+        "C": "Wysyła wiadomość",
+        "D": "Potwierdza przetworzenie wpisu - znika z listy oczekujących (XPENDING); niepotwierdzone wpisy może przejąć inny konsument"
+      },
+      "correct": "D",
+      "explanation": "To mechanizm, którego brakuje w Pub/Sub: awaria konsumenta w trakcie przetwarzania nie oznacza utraty wiadomości."
+    },
+    {
+      "question": "Jak inny konsument przejmie wpisy po awarii konsumenta-1?",
+      "code": "# konsument-1 odebrał wpisy i padł przed XACK",
+      "options": {
+        "A": "XAUTOCLAIM (lub XCLAIM) - przejęcie wpisów oczekujących dłużej niż zadany czas",
+        "B": "Nie da się",
+        "C": "XDEL",
+        "D": "PUBLISH"
+      },
+      "correct": "A",
+      "explanation": "Np. XAUTOCLAIM zamowienia przetwarzanie konsument-2 60000 0-0 przejmuje wpisy oczekujące ponad 60 s."
+    },
+    {
+      "question": "Który mechanizm wybrać dla wskaźnika 'ktoś pisze...' w czacie?",
+      "code": "// zdarzenie co kilka sekund, ważne tylko 'teraz'",
+      "options": {
+        "A": "Kafka z retencją 30 dni",
+        "B": "Tabela w PostgreSQL",
+        "C": "Redis Pub/Sub",
+        "D": "Redis Streams z grupami"
+      },
+      "correct": "C",
+      "explanation": "Utrata takiego zdarzenia nie ma znaczenia, a Pub/Sub ma minimalny narzut."
+    },
+    {
+      "question": "Który mechanizm najlepiej pasuje do strumienia płatności używanego przez 5 zespołów i przechowywanego 30 dni?",
+      "code": "// wielu niezależnych konsumentów, odtwarzanie historii",
+      "options": {
+        "A": "Pub/Sub",
+        "B": "Lista Redis",
+        "C": "Klucz String",
+        "D": "Kafka"
+      },
+      "correct": "D",
+      "explanation": "Długa retencja i wielu niezależnych konsumentów to typowy przypadek Kafki. Trzymanie 30 dni historii w pamięci Redis byłoby drogie."
+    },
+    {
+      "question": "Co zawiera tablica odebrana przez subskrybenta?",
+      "code": "127.0.0.1:6379> SUBSCRIBE powiadomienia\n...\n1) \"message\"\n2) \"powiadomienia\"\n3) \"test2\"",
+      "options": {
+        "A": "Typ, klucz, TTL",
+        "B": "Identyfikator, kanał, liczba odbiorców",
+        "C": "Rodzaj zdarzenia (message), nazwę kanału i treść wiadomości",
+        "D": "Błąd"
+      },
+      "correct": "C",
+      "explanation": "Przy PSUBSCRIBE rodzaj to pmessage i dodatkowo pojawia się pasujący wzorzec."
+    },
+    {
+      "question": "Dlaczego unieważnianie cache lokalnych przez Pub/Sub jest akceptowalne mimo zawodności?",
+      "code": "// każda instancja: Caffeine z TTL 60 s + subskrypcja 'cache-invalidation'",
+      "options": {
+        "A": "Bo przegapiona wiadomość oznacza tylko nieaktualny wpis do czasu lokalnego TTL - Pub/Sub skraca typową niespójność, TTL ją ogranicza",
+        "B": "Bo Pub/Sub nigdy nie gubi wiadomości",
+        "C": "Bo Caffeine sam synchronizuje instancje",
+        "D": "Nie jest akceptowalne"
+      },
+      "correct": "A",
+      "explanation": "Mechanizm zawodny + ograniczenie czasowe = przewidywalna, krótka niespójność."
+    },
+    {
+      "question": "Co można robić na połączeniu po SUBSCRIBE (w protokole RESP2)?",
+      "code": "127.0.0.1:6379> SUBSCRIBE k\n...\n127.0.0.1:6379(subscribed mode)> GET x",
+      "options": {
+        "A": "Dowolne polecenia",
+        "B": "Tylko GET",
+        "C": "Tylko polecenia związane z subskrypcją (SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PING...) - dlatego subskrybent używa osobnego połączenia",
+        "D": "Tylko PUBLISH"
+      },
+      "correct": "C",
+      "explanation": "RedisMessageListenerContainer w Springu zarządza osobnym połączeniem dla subskrypcji."
+    },
+    {
+      "question": "Jak ograniczyć długość strumienia przy dodawaniu wpisów?",
+      "code": "XADD zamowienia ??? * id 1001",
+      "options": {
+        "A": "TTL 100000",
+        "B": "EX 3600",
+        "C": "LIMIT 100000",
+        "D": "MAXLEN ~ 100000"
+      },
+      "correct": "D",
+      "explanation": "~ pozwala Redis przycinać wydajniej (w przybliżeniu). Bez limitu strumień rośnie aż do wyczerpania pamięci."
+    },
+    {
+      "question": "Kiedy lista Redis (RPUSH + BRPOP) jest gorsza od strumienia jako kolejka?",
+      "code": "RPUSH zadania pdf:17\n# konsument: BRPOP zadania 0 -> pobiera i USUWA element",
+      "options": {
+        "A": "Gdy konsument może paść po pobraniu elementu - element jest już usunięty z listy, a brak potwierdzeń oznacza utratę zadania",
+        "B": "Nigdy",
+        "C": "Gdy jest tylko jeden konsument",
+        "D": "Gdy zadania są małe"
+      },
+      "correct": "A",
+      "explanation": "Częściowym obejściem jest LMOVE/BLMOVE do listy 'w przetwarzaniu'; strumienie mają potwierdzenia wbudowane."
+    },
+    {
+      "question": "Co wypisze ta symulacja?",
+      "code": "Kanal k = new Kanal();                 // publish zwraca liczbę subskrybentów\nList<String> odebrane = new ArrayList<>();\nk.publish(\"test1\");\nk.subskrybenci.add(odebrane::add);\nk.publish(\"test2\");\nint n = k.publish(\"test3\");\nSystem.out.println(odebrane + \" \" + n);",
+      "options": {
+        "A": "[test2, test3] 1",
+        "B": "[test1, test2, test3] 1",
+        "C": "[test2] 1",
+        "D": "[] 0"
+      },
+      "correct": "A",
+      "explanation": "test1 opublikowano, zanim ktokolwiek subskrybował - przepadła. Subskrybent odebrał test2 i test3, a publish zwraca liczbę odbiorców (1). Sprawdzone symulacją w Javie."
+    },
+    {
+      "question": "Który nagłówek wiadomości przekazuje Spring w onMessage?",
+      "code": "public void onMessage(Message message, byte[] pattern) {\n    String kanal = new String(message.getChannel());\n    String tresc = new String(message.getBody(), StandardCharsets.UTF_8);\n}",
+      "options": {
+        "A": "Tylko treść",
+        "B": "Identyfikator wpisu strumienia",
+        "C": "Kanał i treść (a przy PatternTopic - także dopasowany wzorzec w parametrze pattern)",
+        "D": "Klucz i TTL"
+      },
+      "correct": "C",
+      "explanation": "Jawne kodowanie UTF-8 zapobiega problemom z polskimi znakami zależnymi od domyślnego kodowania platformy."
+    },
+    {
+      "question": "Dlaczego przy ponownym połączeniu subskrybenta z Redis warto wyczyścić lokalny cache?",
+      "code": "// połączenie z Redis przerwane na 20 s, potem odnowione",
+      "options": {
+        "A": "Bo Redis tego wymaga",
+        "B": "Nie warto",
+        "C": "Bo cache wygasa przy rozłączeniu",
+        "D": "Bo w czasie przerwy mogły zginąć wiadomości o unieważnieniu - bezpieczniej zacząć od pustego cache niż z potencjalnie nieaktualnymi wpisami"
+      },
+      "correct": "D",
+      "explanation": "Pub/Sub nie ma mechanizmu nadrabiania zaległości - trzeba to uwzględnić w projekcie."
+    },
+    {
+      "question": "Czy wiadomości Pub/Sub trafiają do pliku AOF lub RDB?",
+      "code": "appendonly yes",
+      "options": {
+        "A": "Nie - Pub/Sub nie zapisuje wiadomości w keyspace, więc mechanizmy trwałości ich nie obejmują",
+        "B": "Tak",
+        "C": "Tylko do RDB",
+        "D": "Tylko przy PSUBSCRIBE"
+      },
+      "correct": "A",
+      "explanation": "Strumienie (XADD) są typem danych w keyspace i są objęte trwałością."
+    },
+    {
+      "question": "Co zwróci TYPE dla strumienia?",
+      "code": "XADD zamowienia * id 1\nTYPE zamowienia",
+      "options": {
+        "A": "list",
+        "B": "stream",
+        "C": "hash",
+        "D": "pubsub"
+      },
+      "correct": "B",
+      "explanation": "Liczbę wpisów podaje XLEN, a zawartość - XRANGE zamowienia - + COUNT 20."
     }
   ]
 }
