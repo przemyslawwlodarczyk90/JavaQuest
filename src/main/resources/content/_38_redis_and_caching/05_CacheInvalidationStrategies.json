@@ -28,7 +28,7 @@
       "type": "CODE_BASIC",
       "heading": "TTL — najprostsza strategia, wbudowana w samą adnotację/konfigurację",
       "body": "Spring Cache pozwala skonfigurować domyślny TTL dla całej nazwanej przestrzeni cache — wszystkie klucze pod TĄ nazwą wygasają automatycznie po ustalonym czasie.",
-      "code": "# application.properties\nspring.cache.redis.time-to-live=600000    # 600000 ms = 10 minut\n\n# Alternatywnie, RECZNIE przez RedisTemplate (_38/Lesson4):\nredisTemplate.opsForValue().set(\"produkt:42\", produkt, Duration.ofMinutes(10));"
+      "code": "# application.properties\n# 10 minut (wartość bez jednostki = milisekundy; w .properties komentarz tylko w osobnej linii)\nspring.cache.redis.time-to-live=10m\n\n# Alternatywnie, RECZNIE przez RedisTemplate (_38/Lesson4):\nredisTemplate.opsForValue().set(\"produkt:42\", produkt, Duration.ofMinutes(10));"
     },
     {
       "type": "CODE_PRACTICAL",
@@ -106,6 +106,41 @@
       "prompt": "Zaproponuj (jako String) odpowiednia dlugosc TTL dla dwoch roznych typow danych: (1) stan magazynowy produktu (zmienia sie bardzo czesto, przy kazdym zamowieniu), (2) opis produktu (zmienia sie rzadko, raz na kilka miesiecy). Uzasadnij kazdy wybor.",
       "hint": "Przypomnij sobie blok usage - czestosc zmian danych powinna byc glownym kryterium przy wyborze dlugosci TTL.",
       "solution": "Dla stanu magazynowego produktu: KROTKI TTL (np. kilkadziesiat sekund lub kilka minut) - dane zmieniaja sie bardzo czesto, wiec DLUGI TTL prowadzilby do CZESTEGO pokazywania nieaktualnego stanu magazynowego (np. produkt POKAZANY jako dostepny, mimo ze wlasnie sie WYPRZEDAL). Dla opisu produktu: DLUGI TTL (np. kilka godzin) - dane zmieniaja sie RZADKO, wiec DLUGI okres cache'owania ZNACZACO ODCIAZA baze danych (mniej ponownych zapytan o dane, ktore i tak niemal nigdy sie nie zmieniaja), a POTENCJALNE okno nieaktualnosci RZADKO KIEDY faktycznie sie zmaterializuje w praktyce."
+    },
+    {
+      "prompt": "Przejrzyj serwis i wskaż (jako String) wszystkie metody, które zmieniają dane, a nie unieważniają cache `produkty` (klucz = id): `znajdz(id)` z @Cacheable, `zmienCene(id, cena)` z @CacheEvict, `ustawZnizke(id, procent)` bez adnotacji, `importujCennik(List<Cena>)` bez adnotacji, `zmienNazwe(id, nazwa)` z `@CacheEvict(value=\"produkty\", key=\"#nazwa\")`. Zaproponuj poprawki.",
+      "hint": "Szukaj metod bez adnotacji oraz adnotacji z błędnym kluczem.",
+      "solution": "1) ustawZnizke - brak unieważnienia: dodać @CacheEvict(value = \"produkty\", key = \"#id\").\n2) importujCennik - zmienia wiele produktów naraz: @CacheEvict(value = \"produkty\", allEntries = true) albo usuwanie konkretnych kluczy przez CacheManager w pętli (cache.evict(c.produktId())), jeśli cache jest duży i współdzielony.\n3) zmienNazwe - adnotacja jest, ale klucz #nazwa jest błędny: usuwa wpis 'produkty::Kubek' zamiast 'produkty::42'. Poprawnie key = \"#id\".\nzmienCene jest poprawna. Dodatkowo TTL jako siatka bezpieczeństwa ograniczy czas życia ewentualnie przeoczonych niespójności, a test integracyjny 'zmiana -> odczyt zwraca nową wartość' dla każdej metody zmieniającej wyłapie brakujące unieważnienia."
+    },
+    {
+      "prompt": "Opisz (jako String) wyścig między unieważnieniem a ponownym zapisem w cache-aside: wątek A czyta z bazy starą wartość (cache miss), wątek B aktualizuje bazę i usuwa wpis z cache, a następnie A zapisuje do cache starą wartość. Rozpisz kroki w czasie, skutki i trzy sposoby ograniczenia problemu.",
+      "hint": "Stara wartość zostaje w cache do wygaśnięcia TTL. Pomagają: krótki TTL, opóźnione drugie unieważnienie, wersjonowanie wartości.",
+      "solution": "t1: A - GET produkty::42 -> brak. t2: A - SELECT z bazy -> cena 100. t3: B - UPDATE cena = 80 (commit). t4: B - DEL produkty::42. t5: A - SET produkty::42 (cena 100). Wynik: cache zawiera nieaktualną cenę 100 aż do wygaśnięcia TTL, choć B poprawnie unieważnił wpis. Ograniczenia: 1) TTL jako górna granica nieaktualności (bez TTL błąd trwałby w nieskończoność); 2) opóźnione podwójne usunięcie - B usuwa wpis ponownie po krótkim czasie (np. 500 ms); 3) wersjonowanie - wartość w cache zawiera wersję rekordu (np. kolumna version z JPA), a zapis nadpisuje tylko starszą wersję (skrypt Lua porównujący wersję). Dla danych krytycznych: odczyt z bazy zamiast z cache."
+    },
+    {
+      "prompt": "Unieważnianie po transakcji: metoda `@Transactional zmienCene()` z `@CacheEvict` usuwa wpis z cache, ale transakcja jest wycofywana wyjątkiem - albo odwrotnie, wpis znika przed commitem i inny wątek zdąży wczytać starą wartość do cache. Wyjaśnij (jako String) problem i pokaż rozwiązanie z `TransactionAwareCacheManagerProxy` / `RedisCacheManager.builder(...).transactionAware()` lub zdarzeniem `@TransactionalEventListener(phase = AFTER_COMMIT)`.",
+      "hint": "Cache powinien zmieniać się dopiero po udanym commicie.",
+      "solution": "Problem: @CacheEvict wykonuje się po powrocie z metody, ale kolejność względem commitu zależy od kolejności proxy (cache vs transakcja). Jeśli wpis zniknie przed commitem, równoległy odczyt trafi w bazę, dostanie JESZCZE starą wartość i zapisze ją do cache na cały TTL. Rozwiązania:\n1) RedisCacheManager.builder(connectionFactory).cacheDefaults(konfiguracja).transactionAware().build() - operacje put/evict wykonane w transakcji są odkładane do momentu po commicie (i pomijane przy rollbacku).\n2) Jawne zdarzenie: serwis publikuje CenaZmieniona, a\n@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)\nvoid po(CenaZmieniona e) { cacheManager.getCache(\"produkty\").evict(e.id()); }\nOba podejścia sprawiają, że cache odzwierciedla wyłącznie zatwierdzone dane."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) unieważnianie 'grupowe': strona kategorii (`kategorie::kubki:0`, `kategorie::kubki:1`, ...) pokazuje listy produktów. Zmiana ceny jednego kubka powinna unieważnić wszystkie strony kategorii 'kubki', ale nie innych kategorii. Porównaj trzy podejścia: allEntries, SCAN + DEL po wzorcu, wersja kategorii w kluczu.",
+      "hint": "Wersja w kluczu: kategorie::kubki:v7:0 - zmiana wersji (INCR) sprawia, że stare klucze nie są już czytane i wygasają przez TTL.",
+      "solution": "1) @CacheEvict(value = \"kategorie\", allEntries = true) - najprościej, ale czyści wszystkie kategorie (spadek trafień w całym cache).\n2) SCAN MATCH kategorie::kubki:* + DEL (lub UNLINK) - usuwa tylko strony kubków; wymaga iteracji po keyspace (koszt przy dużej liczbie kluczy, nie jest atomowe).\n3) Wersja w kluczu: INCR wersja:kategoria:kubki przy zmianie; klucz strony zawiera wersję (kategorie::kubki:v8:0). Odczyt najpierw pobiera numer wersji, potem stronę. Zmiana wersji to jedna atomowa operacja O(1); stare wpisy nie są już używane i znikają po TTL (TTL jest tu obowiązkowy). Wybór: dla małego cache - 1), dla dużego i częstych zmian - 3)."
+    },
+    {
+      "prompt": "Napisz w Javie prostą symulację write-through i cache-aside z unieważnianiem: klasa z mapami `baza` i `cache`, metody `zapiszWriteThrough(id, wartosc)` (baza + cache), `zapiszZEvict(id, wartosc)` (baza + usunięcie z cache) i `odczyt(id)` (cache-aside). Policz zapytania do bazy dla sekwencji: zapis(1), odczyt(1) x3, zapis(1), odczyt(1) w obu strategiach.",
+      "hint": "Write-through: odczyty po zapisie trafiają w cache. Evict: pierwszy odczyt po zapisie to miss.",
+      "solution": "import java.util.*;\n\npublic class StrategieZapisu {\n    Map<Integer, String> baza = new HashMap<>(), cache = new HashMap<>();\n    int odczytyBazy;\n\n    void zapiszWriteThrough(int id, String w) { baza.put(id, w); cache.put(id, w); }\n    void zapiszZEvict(int id, String w) { baza.put(id, w); cache.remove(id); }\n    String odczyt(int id) {\n        return cache.computeIfAbsent(id, k -> { odczytyBazy++; return baza.get(k); });\n    }\n\n    static int scenariusz(boolean writeThrough) {\n        StrategieZapisu s = new StrategieZapisu();\n        for (int krok = 0; krok < 2; krok++) {\n            if (writeThrough) s.zapiszWriteThrough(1, \"v\" + krok); else s.zapiszZEvict(1, \"v\" + krok);\n            int ile = krok == 0 ? 3 : 1;\n            for (int i = 0; i < ile; i++) s.odczyt(1);\n        }\n        return s.odczytyBazy;\n    }\n\n    public static void main(String[] args) {\n        System.out.println(\"write-through: \" + scenariusz(true));  // 0\n        System.out.println(\"evict: \" + scenariusz(false));        // 2\n    }\n}\nWrite-through daje trafienia od razu po zapisie, ale zapisuje do cache także dane, których nikt nie przeczyta. Evict jest prostszy i bezpieczniejszy przy wyścigach (brak ryzyka zapisania w cache wartości innej niż w bazie po nieudanej transakcji), kosztem jednego chybienia."
+    },
+    {
+      "prompt": "Dobierz (jako String) strategię unieważniania i TTL dla: (1) kurs walut aktualizowany co 15 minut przez zadanie cykliczne, (2) uprawnienia użytkownika (zmiana roli ma działać natychmiast), (3) licznik polubień wyświetlany przy artykule, (4) konfiguracja feature flag zmieniana kilka razy w miesiącu, (5) wynik wyszukiwania pełnotekstowego.",
+      "hint": "Zastanów się, jak szkodliwa jest nieaktualność i kto zmienia dane.",
+      "solution": "(1) Write-through z zadania cyklicznego (po pobraniu kursów zapis do cache) + TTL nieco dłuższy niż 15 min (np. 20 min) na wypadek awarii zadania; ewentualnie z alarmem na brak odświeżenia.\n(2) Jawne unieważnienie przy każdej zmianie roli (@CacheEvict / zdarzenie po commicie) + krótki TTL (np. 1-5 min); nieaktualne uprawnienia to problem bezpieczeństwa - przy zmianach krytycznych (odebranie dostępu) dodatkowo unieważnienie sesji.\n(3) Tylko krótki TTL (np. 30-60 s) albo licznik prowadzony bezpośrednio w Redis (INCR) - niewielka nieaktualność jest akceptowalna.\n(4) Długi TTL (np. 1 h) + jawne unieważnienie przy zmianie (lub Pub/Sub do lokalnych cache).\n(5) Krótki TTL (np. 1-5 min) bez jawnego unieważniania - zbyt wiele kombinacji zapytań, aby śledzić zależności."
+    },
+    {
+      "prompt": "Napisz test integracyjny (szkic w Javie, JUnit 5 + Spring Boot + Testcontainers Redis), który dla każdej metody zmieniającej produkt sprawdza, że kolejny odczyt `znajdz(id)` zwraca nowe dane. Wyjaśnij, dlaczego taki test jest lepszym zabezpieczeniem przed 'zapomnianym @CacheEvict' niż code review.",
+      "hint": "Parametryzowany test z listą operacji (Consumer<ProduktService>) i oczekiwaną ceną.",
+      "solution": "@SpringBootTest @Testcontainers\nclass UniewaznianieCacheTest {\n    @Container @ServiceConnection(name = \"redis\")\n    static GenericContainer<?> redis = new GenericContainer<>(\"redis:7\").withExposedPorts(6379);\n\n    @Autowired ProduktService service;\n    @Autowired ProduktRepository repo;\n\n    static Stream<Arguments> operacje() {\n        return Stream.of(\n            Arguments.of(\"zmienCene\", (BiConsumer<ProduktService, Long>) (s, id) -> s.zmienCene(id, new BigDecimal(\"80.00\"))),\n            Arguments.of(\"ustawZnizke\", (BiConsumer<ProduktService, Long>) (s, id) -> s.ustawZnizke(id, new BigDecimal(\"0.20\"))));\n    }\n\n    @ParameterizedTest(name = \"{0} uniewaznia cache\")\n    @MethodSource(\"operacje\")\n    void odczytPoZmianieWidziNoweDane(String nazwa, BiConsumer<ProduktService, Long> operacja) {\n        Long id = repo.save(new Produkt(\"Kubek\", new BigDecimal(\"100.00\"))).getId();\n        service.znajdz(id);                       // zapełnia cache\n        operacja.accept(service, id);\n        assertThat(service.znajdz(id).getCena()).isEqualByComparingTo(\"80.00\");\n    }\n}\nTest z prawdziwym Redisem wykrywa brak lub błędny klucz @CacheEvict automatycznie przy każdym buildzie - także w metodach dodanych po miesiącach, jeśli lista operacji jest rozszerzana razem z serwisem. Code review opiera się na uwadze recenzenta i łatwo przepuszcza taki błąd."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Częstsza zmiana danych oznacza wyższe ryzyko nieaktualności przy dłuższym TTL, dlatego takie dane powinny mieć krótszy okres cache'owania."
+    },
+    {
+      "question": "Dlaczego ta adnotacja nie unieważni właściwego wpisu?",
+      "code": "@Cacheable(value = \"produkty\", key = \"#id\")\npublic Produkt znajdz(Long id) { ... }\n\n@CacheEvict(value = \"produkty\", key = \"#nazwa\")\npublic void zmienNazwe(Long id, String nazwa) { ... }",
+      "options": {
+        "A": "Bo klucz #nazwa usuwa wpis 'produkty::<nazwa>', a produkt jest w cache pod 'produkty::<id>' - klucze muszą być zgodne",
+        "B": "Bo @CacheEvict nie działa z String",
+        "C": "Bo brakuje allEntries",
+        "D": "Unieważni poprawnie"
+      },
+      "correct": "A",
+      "explanation": "Błąd nie daje żadnego wyjątku - cache po prostu zostaje nieaktualny do wygaśnięcia TTL."
+    },
+    {
+      "question": "Co jest błędne w tej konfiguracji w pliku .properties?",
+      "code": "spring.cache.redis.time-to-live=600000    # 10 minut",
+      "options": {
+        "A": "Nic",
+        "B": "Wartość musi być w sekundach",
+        "C": "W plikach .properties komentarz musi zaczynać linię - '# 10 minut' staje się częścią wartości i jej konwersja na Duration się nie powiedzie",
+        "D": "Właściwość nie istnieje"
+      },
+      "correct": "C",
+      "explanation": "Poprawnie: komentarz w osobnej linii, a wartość np. 10m lub 600000 (bez jednostki = milisekundy)."
+    },
+    {
+      "question": "Czym różni się @CacheEvict od @CachePut przy aktualizacji?",
+      "code": "@CacheEvict(value = \"produkty\", key = \"#id\")\npublic Produkt zmienCene1(Long id, BigDecimal c) { ... }\n\n@CachePut(value = \"produkty\", key = \"#id\")\npublic Produkt zmienCene2(Long id, BigDecimal c) { ... }",
+      "options": {
+        "A": "Niczym",
+        "B": "Evict działa tylko z allEntries",
+        "C": "Put usuwa, Evict zapisuje",
+        "D": "Evict usuwa wpis (następny odczyt idzie do bazy); Put zapisuje zwrócony obiekt do cache (następny odczyt trafia w cache)"
+      },
+      "correct": "D",
+      "explanation": "Evict jest prostszy i bezpieczniejszy przy wyścigach; Put oszczędza jedno chybienie, ale zapisuje w cache to, co zwróciła metoda."
+    },
+    {
+      "question": "Ile zapytań do bazy wykona ta sekwencja przy strategii 'zapis do bazy + usunięcie z cache'?",
+      "code": "zapisz(1, \"v0\");            // baza + DEL z cache\nodczyt(1); odczyt(1); odczyt(1);   // cache-aside\nzapisz(1, \"v1\");\nodczyt(1);",
+      "options": {
+        "A": "0",
+        "B": "4",
+        "C": "2 - pierwszy odczyt po każdym zapisie to miss",
+        "D": "1"
+      },
+      "correct": "C",
+      "explanation": "Przy write-through (zapis także do cache) byłoby 0 zapytań. Sprawdzone symulacją w Javie."
+    },
+    {
+      "question": "Jakie zagrożenie pokazuje ta sekwencja zdarzeń?",
+      "code": "t1: A  GET produkty::42 -> (nil)\nt2: A  SELECT ... -> cena 100\nt3: B  UPDATE cena = 80; COMMIT\nt4: B  DEL produkty::42\nt5: A  SET produkty::42 {cena: 100}",
+      "options": {
+        "A": "Wyścig: A zapisuje do cache wartość odczytaną PRZED zmianą - cache zawiera nieaktualną cenę aż do wygaśnięcia TTL",
+        "B": "Brak zagrożenia",
+        "C": "Deadlock w bazie",
+        "D": "Utratę danych w bazie"
+      },
+      "correct": "A",
+      "explanation": "TTL ogranicza czas trwania problemu; pomagają też opóźnione drugie usunięcie i wersjonowanie wartości."
+    },
+    {
+      "question": "Dlaczego TTL jest potrzebny nawet przy starannie dodanych @CacheEvict?",
+      "code": "@CacheEvict(value = \"produkty\", key = \"#id\")   // na wszystkich metodach zapisu",
+      "options": {
+        "A": "Nie jest potrzebny",
+        "B": "Bo @CacheEvict działa tylko z TTL",
+        "C": "Bo niektóre zmiany omijają aplikację (ręczny UPDATE w bazie, inny system, wyścigi, przeoczona metoda) - TTL ogranicza czas życia takiej niespójności",
+        "D": "Bo Redis wymaga TTL"
+      },
+      "correct": "C",
+      "explanation": "TTL to siatka bezpieczeństwa: nawet nieprzewidziana niespójność sama się naprawi."
+    },
+    {
+      "question": "Co się stanie z cache, jeśli metoda rzuci wyjątek?",
+      "code": "@CacheEvict(value = \"produkty\", key = \"#id\")\npublic void zmienCene(Long id, BigDecimal c) {\n    walidacja(c);   // rzuca IllegalArgumentException\n    ...\n}",
+      "options": {
+        "A": "Wpis zostanie usunięty",
+        "B": "Wyjątek zostanie połknięty",
+        "C": "Cały cache zostanie wyczyszczony",
+        "D": "Wpis zostanie w cache - domyślnie @CacheEvict działa po udanym wykonaniu metody (beforeInvocation = false)"
+      },
+      "correct": "D",
+      "explanation": "To zwykle pożądane: skoro zmiana się nie udała, dane w cache są nadal aktualne. beforeInvocation = true zmienia to zachowanie."
+    },
+    {
+      "question": "Jak Spring może odłożyć operacje na cache do momentu commitu transakcji?",
+      "code": "@Transactional\n@CacheEvict(value = \"produkty\", key = \"#id\")\npublic void zmienCene(Long id, BigDecimal c) { ... }",
+      "options": {
+        "A": "RedisCacheManager.builder(cf)...transactionAware().build() - put/evict w transakcji wykonują się po commicie (i nie wykonują przy rollbacku)",
+        "B": "Nie da się",
+        "C": "@Transactional(cache = true)",
+        "D": "spring.cache.commit=true"
+      },
+      "correct": "A",
+      "explanation": "Alternatywa: @TransactionalEventListener(phase = AFTER_COMMIT) z jawnym evict."
+    },
+    {
+      "question": "Który sposób unieważni wszystkie strony kategorii 'kubki' w jednej operacji O(1), bez przeszukiwania kluczy?",
+      "code": "# klucze: kategorie::kubki:0, kategorie::kubki:1, ...",
+      "options": {
+        "A": "KEYS kategorie::kubki:* + DEL",
+        "B": "FLUSHALL",
+        "C": "Numer wersji kategorii w kluczu (kategorie::kubki:v7:0) i INCR wersja:kategoria:kubki przy zmianie - stare wpisy przestają być czytane i wygasają przez TTL",
+        "D": "EXPIRE kategorie::kubki 0"
+      },
+      "correct": "C",
+      "explanation": "Wymaga TTL na wpisach stron. SCAN + DEL też działa, ale wymaga iteracji po keyspace."
+    },
+    {
+      "question": "Co zrobi ta adnotacja?",
+      "code": "@CacheEvict(value = \"produkty\", allEntries = true)\npublic void importujCennik(List<Cena> ceny) { ... }",
+      "options": {
+        "A": "Usunie jeden wpis",
+        "B": "Nic, bo brak key",
+        "C": "Usunie wszystkie klucze w Redis",
+        "D": "Usunie wszystkie wpisy cache 'produkty' po imporcie - prosto, kosztem chwilowego spadku trafień"
+      },
+      "correct": "D",
+      "explanation": "Przy imporcie zmieniającym wiele rekordów to rozsądny wybór. Usuwa klucze z prefiksem cache 'produkty', nie cały Redis."
+    },
+    {
+      "question": "Która strategia najlepiej pasuje do kursów walut odświeżanych co 15 minut przez zadanie cykliczne?",
+      "code": "@Scheduled(fixedRate = 900_000)\nvoid pobierzKursy() { ... }",
+      "options": {
+        "A": "Zapis do cache w zadaniu (write-through) + TTL nieco dłuższy niż 15 min na wypadek awarii zadania",
+        "B": "Brak TTL i brak odświeżania",
+        "C": "TTL 1 sekunda",
+        "D": "Unieważnianie przy każdym odczycie"
+      },
+      "correct": "A",
+      "explanation": "Źródło zmian jest jedno i znane - najprościej aktualizować cache w tym samym miejscu."
+    },
+    {
+      "question": "Dlaczego uprawnienia użytkownika wymagają jawnego unieważnienia, a nie tylko TTL?",
+      "code": "@Cacheable(value = \"uprawnienia\", key = \"#userId\")   // TTL 1 h\npublic Set<String> uprawnienia(Long userId) { ... }",
+      "options": {
+        "A": "Nie wymagają",
+        "B": "Bo Set nie może być w cache",
+        "C": "Bo odebrane uprawnienia działałyby nadal nawet przez godzinę - to problem bezpieczeństwa, więc zmiana roli musi od razu usuwać wpis",
+        "D": "Bo TTL nie działa dla Set"
+      },
+      "correct": "C",
+      "explanation": "Szkodliwość nieaktualnych danych decyduje o strategii."
+    },
+    {
+      "question": "Co wypisze ten kod (cache ma TTL 10 min, a zmiana następuje bezpośrednio w bazie SQL-em)?",
+      "code": "service.znajdz(42L);                               // cena 100, zapis w cache\njdbc.update(\"UPDATE produkt SET cena = 80 WHERE id = 42\");\nSystem.out.println(service.znajdz(42L).getCena());",
+      "options": {
+        "A": "80",
+        "B": "Wyjątek",
+        "C": "null",
+        "D": "100 - zmiana ominęła aplikację, więc wpis w cache nie został unieważniony"
+      },
+      "correct": "D",
+      "explanation": "Stąd TTL jako siatka bezpieczeństwa i zasada, że dane z cache zmienia się przez aplikację (albo przez mechanizm powiadamiania o zmianach)."
+    },
+    {
+      "question": "Dlaczego unieważnienie w tej kolejności jest ryzykowne?",
+      "code": "@Transactional\npublic void zmienCene(Long id, BigDecimal c) {\n    cacheManager.getCache(\"produkty\").evict(id);   // najpierw cache\n    repo.save(...);                                 // commit dopiero na końcu metody\n}",
+      "options": {
+        "A": "Między evict a commitem inny wątek może odczytać z bazy STARĄ wartość i zapisać ją ponownie do cache na cały TTL",
+        "B": "Nie jest ryzykowne",
+        "C": "Bo evict nie działa w transakcji",
+        "D": "Bo save rzuci wyjątek"
+      },
+      "correct": "A",
+      "explanation": "Unieważnienie powinno następować po commicie (transactionAware lub AFTER_COMMIT)."
+    },
+    {
+      "question": "Kiedy krótki TTL bez jawnego unieważniania jest rozsądnym wyborem?",
+      "code": "@Cacheable(value = \"wyszukiwanie\", key = \"#fraza + ':' + #strona\")",
+      "options": {
+        "A": "Nigdy",
+        "B": "Dla sald kont",
+        "C": "Gdy zależności są zbyt złożone do śledzenia (np. wyniki wyszukiwania dla wielu kombinacji zapytań), a krótkotrwała nieaktualność jest akceptowalna",
+        "D": "Dla uprawnień"
+      },
+      "correct": "C",
+      "explanation": "Nie da się sensownie ustalić, które wyniki wyszukiwania zmienia edycja jednego produktu - krótki TTL rozwiązuje to prościej."
+    },
+    {
+      "question": "Jaki wynik da ta sekwencja w Redis?",
+      "code": "SET produkty::42 \"{cena:100}\" EX 600\nDEL produkty::42\nGET produkty::42\nTTL produkty::42",
+      "options": {
+        "A": "\"{cena:100}\" i 600",
+        "B": "\"\" i 0",
+        "C": "(nil) i -1",
+        "D": "(nil) i -2"
+      },
+      "correct": "D",
+      "explanation": "DEL usuwa klucz razem z TTL; -2 oznacza brak klucza. Tak działa @CacheEvict pod spodem."
+    },
+    {
+      "question": "Który zapis ustawi wpis z TTL w RedisTemplate?",
+      "code": "// cel: produkt:42 wygasa po 10 minutach",
+      "options": {
+        "A": "redisTemplate.opsForValue().set(\"produkt:42\", produkt, Duration.ofMinutes(10));",
+        "B": "redisTemplate.opsForValue().set(\"produkt:42\", produkt); // TTL domyślny 10 min",
+        "C": "redisTemplate.expire(\"produkt:42\");",
+        "D": "redisTemplate.ttl(\"produkt:42\", 10);"
+      },
+      "correct": "A",
+      "explanation": "Wersja z Duration wysyła SET z opcją wygaśnięcia w jednym poleceniu. Bez niej klucz nie ma TTL."
+    },
+    {
+      "question": "Co się stanie z cache 'produkty' i 'kategorie' po wywołaniu tej metody?",
+      "code": "@Caching(evict = {\n    @CacheEvict(value = \"produkty\", key = \"#id\"),\n    @CacheEvict(value = \"kategorie\", allEntries = true)\n})\npublic void zmienKategorie(Long id, String kategoria) { ... }",
+      "options": {
+        "A": "Usunięty zostanie wpis produktu 42 oraz wszystkie wpisy cache 'kategorie'",
+        "B": "Nic",
+        "C": "Tylko wpis produktu",
+        "D": "Błąd - nie można łączyć adnotacji"
+      },
+      "correct": "A",
+      "explanation": "@Caching grupuje wiele operacji cache na jednej metodzie - przydatne, gdy zmiana dotyczy kilku widoków danych."
+    },
+    {
+      "question": "Która metoda w tym serwisie zostawi nieaktualny cache?",
+      "code": "@Cacheable(value = \"produkty\", key = \"#id\") Produkt znajdz(Long id)\n@CacheEvict(value = \"produkty\", key = \"#id\") void zmienCene(Long id, BigDecimal c)\nvoid ustawZnizke(Long id, BigDecimal procent)\n@CacheEvict(value = \"produkty\", key = \"#id\") void usun(Long id)",
+      "options": {
+        "A": "znajdz",
+        "B": "zmienCene",
+        "C": "usun",
+        "D": "ustawZnizke - zmienia dane, a nie ma @CacheEvict"
+      },
+      "correct": "D",
+      "explanation": "Klasyczny 'zapomniany @CacheEvict' z lekcji. Automatyczny test 'zmiana -> odczyt' wykrywa go niezależnie od uwagi recenzenta."
+    },
+    {
+      "question": "Co oznacza strategia 'write-behind' (write-back)?",
+      "code": "// zapis -> cache, do bazy asynchronicznie później",
+      "options": {
+        "A": "To samo co cache-aside",
+        "B": "Aplikacja zapisuje do cache, a do bazy dane trafiają później, w tle - szybkie zapisy kosztem ryzyka utraty danych przy awarii cache",
+        "C": "Zapis tylko do bazy",
+        "D": "Zapis do cache po odczycie z bazy"
+      },
+      "correct": "B",
+      "explanation": "Stosowana rzadko i świadomie (np. liczniki). Dla danych krytycznych źródłem prawdy pozostaje baza zapisywana synchronicznie."
     }
   ]
 }

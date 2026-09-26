@@ -106,6 +106,41 @@
       "prompt": "Wyjasnij (jako String), dlaczego uruchomienie Redis jako kontenera Docker jest opisywane jako 'koncepcyjnie identyczne' do uruchomienia PostgreSQL z rozdzialu _34, mimo ze to dwie zupelnie rozne bazy danych.",
       "hint": "Przypomnij sobie blok analogy - obie uslugi maja oficjalny obraz Dockera i uruchamiaja sie ta sama komenda 'docker run' z mapowaniem portu.",
       "solution": "Mimo ze Redis i PostgreSQL sluza do calkowicie roznych celow (cache w pamieci vs trwala, relacyjna baza danych), OBIE uslugi sa dostepne jako oficjalne obrazy Dockera i uruchamiaja sie DOKLADNIE TA SAMA, ogolna procedura poznana w '_34_docker_fundamentals': 'docker run' z odpowiednim mapowaniem portu (-p), oraz polaczenie sie odpowiednim klientem CLI (redis-cli zamiast psql). Wiedza o Dockerze poznana przy PostgreSQL PRZENOSI SIE bezposrednio na Redis - to ta sama, uniwersalna umiejetnosc (zarzadzanie kontenerami), zastosowana do INNEGO 'silnika bazy danych', nie nowa wiedza do nauczenia od zera."
+    },
+    {
+      "prompt": "Napisz plik `compose.yaml` z Redis 7 dla lokalnego środowiska deweloperskiego: nazwany wolumen na dane, włączony zapis AOF (`--appendonly yes`), healthcheck oparty o `redis-cli ping` i port wystawiony tylko na localhost. Wyjaśnij każdy element.",
+      "hint": "command: [\"redis-server\", \"--appendonly\", \"yes\"], volumes: redis-dane:/data, ports: \"127.0.0.1:6379:6379\".",
+      "solution": "services:\n  redis:\n    image: redis:7\n    command: [\"redis-server\", \"--appendonly\", \"yes\"]\n    ports:\n      - \"127.0.0.1:6379:6379\"\n    volumes:\n      - redis-dane:/data\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 5s\n      timeout: 3s\n      retries: 5\nvolumes:\n  redis-dane:\n\ncommand - Redis zapisuje każdą operację do pliku AOF w /data (po restarcie odtwarza dane). Wolumen - dane przeżywają docker compose down (bez -v). 127.0.0.1 - port dostępny tylko z tego komputera (Redis bez hasła wystawiony na wszystkie interfejsy to częsty wektor ataku). Healthcheck - aplikacja z depends_on: condition: service_healthy wystartuje dopiero po PONG."
+    },
+    {
+      "prompt": "Uruchom Redis w kontenerze i wykonaj sesję diagnostyczną: PING, INFO server (wersja), DBSIZE, zapis kilku kluczy, SCAN z MATCH, sprawdzenie TYPE i TTL. Zapisz (jako String) polecenia i oczekiwane odpowiedzi, a następnie wyjaśnij, dlaczego SCAN może zwrócić mniej lub więcej elementów niż COUNT i kiedy iteracja jest zakończona.",
+      "hint": "SCAN zwraca kursor i porcję kluczy; koniec, gdy kursor wróci do 0. COUNT to wskazówka, nie gwarancja.",
+      "solution": "docker run -d --name moj-redis -p 127.0.0.1:6379:6379 redis:7\ndocker exec -it moj-redis redis-cli\n> PING                          -> PONG\n> INFO server                   -> m.in. redis_version:7.4.x\n> DBSIZE                        -> (integer) 0\n> SET user:1 Jan                -> OK\n> SET user:2 Anna EX 60         -> OK\n> HSET produkt:1 nazwa Kubek    -> (integer) 1\n> SCAN 0 MATCH user:* COUNT 100 -> 1) \"0\"  2) \"user:1\" \"user:2\" (kolejność dowolna)\n> TYPE produkt:1                -> hash\n> TTL user:2                    -> (integer) 60 (lub mniej)\nCOUNT to tylko wskazówka, ile 'miejsc' przejrzeć w jednym kroku; MATCH filtruje PO przejrzeniu, więc krok może zwrócić mniej (nawet 0) pasujących kluczy przy niezerowym kursorze. Iteracja kończy się dopiero, gdy Redis zwróci kursor 0 - pusta porcja nie oznacza końca. Klucz może się pojawić więcej niż raz - aplikacja powinna to tolerować."
+    },
+    {
+      "prompt": "Napisz w Javie klasę, która symuluje zachowanie SCAN z kursorem na liście kluczy: metoda `Wynik scan(int kursor, String wzorzec, int count)` zwraca rekord z nowym kursorem i dopasowanymi kluczami z okna `count` elementów. Przejdź w pętli po 25 kluczach `user:0`..`user:24` i `produkt:*`, zbierając klucze `user:*`, dopóki kursor nie wróci do 0.",
+      "hint": "Wzorzec zamień na regex (\"*\" -> \".*\"). Nowy kursor = kursor + count, a 0 gdy przekroczy rozmiar.",
+      "solution": "import java.util.*;\nimport java.util.stream.*;\n\npublic class ScanSymulacja {\n    record Wynik(int kursor, List<String> klucze) {}\n    static List<String> wszystkie = new ArrayList<>();\n\n    static Wynik scan(int kursor, String wzorzec, int count) {\n        String regex = wzorzec.replace(\"*\", \".*\");\n        int koniec = Math.min(kursor + count, wszystkie.size());\n        List<String> pasujace = wszystkie.subList(kursor, koniec).stream()\n            .filter(k -> k.matches(regex)).toList();\n        return new Wynik(koniec >= wszystkie.size() ? 0 : koniec, pasujace);\n    }\n\n    public static void main(String[] args) {\n        for (int i = 0; i < 25; i++) { wszystkie.add(\"user:\" + i); wszystkie.add(\"produkt:\" + i); }\n        List<String> zebrane = new ArrayList<>();\n        int kursor = 0, kroki = 0;\n        do {\n            Wynik w = scan(kursor, \"user:*\", 10);\n            zebrane.addAll(w.klucze());\n            kursor = w.kursor();\n            kroki++;\n        } while (kursor != 0);\n        System.out.println(\"kroki=\" + kroki + \" znaleziono=\" + zebrane.size()); // kroki=5 znaleziono=25\n    }\n}\nKażdy krok zwraca ok. 5 pasujących kluczy, choć COUNT=10 - dokładnie jak w Redis, gdzie MATCH filtruje przejrzaną porcję."
+    },
+    {
+      "prompt": "Porównaj (jako String) dwa mechanizmy trwałości Redis: snapshoty RDB i dziennik AOF. Jakie dane można stracić w każdym przy nagłej awarii i jaka konfiguracja jest sensowna dla: (1) czystego cache, (2) magazynu sesji użytkowników, (3) kolejki zadań, której utrata jest kosztowna?",
+      "hint": "RDB - zrzut co jakiś czas (utrata od ostatniego zrzutu). AOF - zapis każdej operacji, appendfsync everysec (utrata do ok. 1 s).",
+      "solution": "RDB: okresowy zrzut całej pamięci do pliku dump.rdb (np. save 3600 1 300 100 60 10000) - szybki restart, mały plik, ale przy awarii tracisz zmiany od ostatniego zrzutu (minuty). AOF: każda operacja zapisu dopisywana do pliku; przy appendfsync everysec tracisz najwyżej ok. 1 sekundę; większy plik (okresowo przepisywany). (1) Cache: trwałość zbędna (save \"\" i brak AOF) - dane odtworzy baza; restart z pustym cache to tylko chwilowe spowolnienie. (2) Sesje: RDB albo AOF everysec - utrata sesji oznacza ponowne logowanie, więc zwykle akceptowalna niewielka strata. (3) Kolejka: AOF everysec (lub always, kosztem wydajności) + replikacja; a jeszcze lepiej rozważyć narzędzie przeznaczone do kolejek (RabbitMQ, Kafka) z potwierdzeniami."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), dlaczego Redis wystawiony na publiczny interfejs bez hasła jest poważnym zagrożeniem, i podaj konfigurację zabezpieczeń dla serwera Redis: bind, protected-mode, hasło/ACL, zmiana nazw lub wyłączenie niebezpiecznych poleceń, TLS.",
+      "hint": "Skanery szukają otwartego 6379. Atakujący może odczytać dane, FLUSHALL, a przy starych konfiguracjach nawet zapisać pliki przez CONFIG SET dir.",
+      "solution": "Otwarty Redis to pełny dostęp do danych i poleceń administracyjnych: odczyt sesji i tokenów, FLUSHALL, a w przeszłości - zapis plików na dysk serwera przez CONFIG SET dir/dbfilename (masowo wykorzystywane do przejmowania serwerów). Zabezpieczenia: bind 127.0.0.1 lub adres sieci prywatnej (w Dockerze: publikacja portu tylko na 127.0.0.1 albo brak publikacji i sieć wewnętrzna); protected-mode yes (domyślne - bez hasła odrzuca połączenia z zewnątrz); ACL z użytkownikami i minimalnymi uprawnieniami (ACL SETUSER aplikacja on >haslo ~cache:* +get +set +del ...) albo co najmniej requirepass; wyłączenie zbędnych poleceń dla użytkownika aplikacji (-flushall -config -keys); TLS przy ruchu przez niezaufaną sieć; w chmurze - Security Group wpuszczająca 6379 tylko z grupy aplikacji."
+    },
+    {
+      "prompt": "Opisz (jako String) jak sprawdzić, co dzieje się w Redis 'na żywo' i co go spowalnia: MONITOR, SLOWLOG, INFO stats/memory, LATENCY. Dlaczego MONITOR należy używać na produkcji bardzo ostrożnie?",
+      "hint": "MONITOR wypisuje każde polecenie - duży narzut. SLOWLOG GET 10 - najwolniejsze polecenia.",
+      "solution": "SLOWLOG GET 10 - ostatnie polecenia, które przekroczyły próg slowlog-log-slower-than (domyślnie 10 000 mikrosekund), z czasem i argumentami - szybko ujawnia KEYS *, ogromne HGETALL czy LRANGE 0 -1 na wielkich listach. INFO stats - m.in. keyspace_hits/keyspace_misses (współczynnik trafień cache), instantaneous_ops_per_sec. INFO memory - used_memory_human, maxmemory, fragmentacja. LATENCY DOCTOR - diagnoza opóźnień. MONITOR - strumień wszystkich wykonywanych poleceń; przydatny lokalnie, ale na produkcji może znacząco obniżyć przepustowość i ujawnia dane (w tym wartości) - tylko krótko, w oknie serwisowym."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), jak policzyć współczynnik trafień cache (hit ratio) z INFO stats, i zinterpretuj przykład: keyspace_hits:90000, keyspace_misses:30000. Co może oznaczać niski współczynnik i co wtedy sprawdzić?",
+      "hint": "hit ratio = hits / (hits + misses).",
+      "solution": "hit ratio = 90000 / (90000 + 30000) = 0.75 = 75%. Co czwarty odczyt kończy się zapytaniem do bazy. Niski współczynnik może oznaczać: za krótki TTL (wpisy wygasają, zanim zostaną ponownie użyte), zbyt mały maxmemory i usuwanie kluczy (INFO stats: evicted_keys), niestabilne klucze (np. w kluczu znacznik czasu albo nieuporządkowane parametry - każde żądanie tworzy nowy klucz), dane rzadko czytane ponownie (cache nie ma sensu) albo unieważnianie zbyt wielu wpisów naraz. Uwaga: statystyki obejmują wszystkie odczyty Redis, nie tylko cache aplikacji; dokładniejszy obraz dają metryki cache w aplikacji (Micrometer, cache.gets z tagiem result=hit/miss)."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Ta sama relacja co między narzędziem cli do ręcznej diagnostyki a programowym dostępem przez kod aplikacji - redis-cli i psql pełnią analogiczną, pomocniczą rolę."
+    },
+    {
+      "question": "Kiedy kończy się iteracja SCAN?",
+      "code": "127.0.0.1:6379> SCAN 0 MATCH user:* COUNT 100\n1) \"1792\"\n2) (empty array)",
+      "options": {
+        "A": "Teraz - brak wyników oznacza koniec",
+        "B": "Po jednej sekundzie",
+        "C": "Po 100 kluczach",
+        "D": "Dopiero gdy Redis zwróci kursor \"0\" - pusta porcja przy niezerowym kursorze jest normalna (MATCH filtruje po przejrzeniu porcji)"
+      },
+      "correct": "D",
+      "explanation": "Kolejne wywołanie to SCAN 1792 MATCH user:* COUNT 100. COUNT jest tylko wskazówką dla serwera."
+    },
+    {
+      "question": "Dlaczego ten kod jest błędny?",
+      "code": "// Java, Spring Data Redis\nSet<String> klucze = redisTemplate.keys(\"sesja:*\");   // na produkcji, 5 mln kluczy\nredisTemplate.delete(klucze);",
+      "options": {
+        "A": "Bo keys() nie istnieje",
+        "B": "Bo delete nie przyjmuje zbioru",
+        "C": "Bo keys() wykonuje polecenie KEYS, które blokuje jednowątkowy Redis na czas przeszukania wszystkich kluczy; bezpieczniej iterować SCAN-em (redisTemplate.scan(ScanOptions...)) i usuwać porcjami",
+        "D": "Bo wzorzec powinien być *sesja"
+      },
+      "correct": "C",
+      "explanation": "Ten sam problem co KEYS * w redis-cli - tylko ukryty w kodzie aplikacji."
+    },
+    {
+      "question": "Co oznacza zapis portu w tym poleceniu?",
+      "code": "docker run -d --name moj-redis -p 127.0.0.1:6379:6379 redis:7",
+      "options": {
+        "A": "Redis jest dostępny dla całej sieci",
+        "B": "Port 6379 jest zablokowany",
+        "C": "Redis nasłuchuje wewnątrz kontenera tylko na 127.0.0.1",
+        "D": "Port jest opublikowany tylko na interfejsie localhost komputera - inne maszyny w sieci się nie połączą"
+      },
+      "correct": "D",
+      "explanation": "Samo -p 6379:6379 publikuje port na wszystkich interfejsach hosta - przy Redis bez hasła to ryzyko."
+    },
+    {
+      "question": "Co się stanie z danymi po tych poleceniach?",
+      "code": "docker run -d --name r1 redis:7\ndocker exec r1 redis-cli SET a 1\ndocker rm -f r1\ndocker run -d --name r1 redis:7\ndocker exec r1 redis-cli GET a",
+      "options": {
+        "A": "Zwróci pusty wynik (nil) - dane były tylko w usuniętym kontenerze (brak wolumenu)",
+        "B": "Zwróci \"1\"",
+        "C": "Błąd - kontener już istniał",
+        "D": "Zwróci \"a\""
+      },
+      "correct": "A",
+      "explanation": "Obraz redis deklaruje wolumen /data, ale bez nazwanego wolumenu nowy kontener dostaje nowy, pusty wolumen anonimowy."
+    },
+    {
+      "question": "Który healthcheck w Compose poprawnie sprawdza gotowość Redis?",
+      "code": "services:\n  redis:\n    image: redis:7\n    healthcheck:\n      test: ???",
+      "options": {
+        "A": "[\"CMD\", \"docker\", \"ps\"]",
+        "B": "[\"CMD\", \"curl\", \"localhost:6379\"]",
+        "C": "[\"CMD\", \"redis-cli\", \"ping\"]",
+        "D": "[\"CMD\", \"pg_isready\"]"
+      },
+      "correct": "C",
+      "explanation": "redis-cli jest w obrazie redis, a PING -> PONG potwierdza, że serwer odpowiada na polecenia. Obraz nie zawiera curl."
+    },
+    {
+      "question": "Co zrobi ten parametr uruchomienia?",
+      "code": "command: [\"redis-server\", \"--appendonly\", \"yes\"]",
+      "options": {
+        "A": "Włączy AOF - każda operacja zapisu trafia do dziennika w /data, więc po restarcie dane są odtwarzane (przy domyślnym fsync co sekundę strata najwyżej ok. 1 s)",
+        "B": "Wyłączy zapis na dysk",
+        "C": "Pozwoli tylko na dopisywanie do list",
+        "D": "Włączy tryb tylko do odczytu"
+      },
+      "correct": "A",
+      "explanation": "Dla czystego cache trwałość jest zbędna; dla sesji i kolejek - zwykle pożądana."
+    },
+    {
+      "question": "Co pokaże SLOWLOG GET?",
+      "code": "127.0.0.1:6379> SLOWLOG GET 5",
+      "options": {
+        "A": "Klucze z najdłuższym TTL",
+        "B": "Logi systemowe kontenera",
+        "C": "Połączonych klientów",
+        "D": "Ostatnie polecenia, których wykonanie przekroczyło próg (domyślnie 10 ms), z czasem trwania i argumentami"
+      },
+      "correct": "D",
+      "explanation": "Pierwsze miejsce do szukania przyczyn spowolnień: KEYS *, HGETALL na ogromnych hashach, LRANGE 0 -1 na długich listach."
+    },
+    {
+      "question": "Jaki jest współczynnik trafień cache?",
+      "code": "127.0.0.1:6379> INFO stats\n...\nkeyspace_hits:90000\nkeyspace_misses:30000",
+      "options": {
+        "A": "33%",
+        "B": "90%",
+        "C": "75%",
+        "D": "25%"
+      },
+      "correct": "C",
+      "explanation": "90000 / (90000 + 30000) = 0.75. Niski współczynnik może wskazywać na za krótki TTL, usuwanie kluczy z braku pamięci albo niestabilne klucze."
+    },
+    {
+      "question": "Dlaczego MONITOR jest ryzykowny na produkcji?",
+      "code": "127.0.0.1:6379> MONITOR\nOK\n1727330000.123 [0 10.0.1.5:51234] \"GET\" \"sesja:abc\"\n...",
+      "options": {
+        "A": "Bo wypisuje każde polecenie wszystkich klientów - znacząco obniża przepustowość i ujawnia dane (także wartości)",
+        "B": "Bo usuwa klucze",
+        "C": "Bo restartuje serwer",
+        "D": "Nie jest ryzykowny"
+      },
+      "correct": "A",
+      "explanation": "Do diagnozy produkcji lepsze są SLOWLOG, INFO i metryki; MONITOR tylko krótko i świadomie."
+    },
+    {
+      "question": "Co zwróci DBSIZE?",
+      "code": "FLUSHALL\nSET a 1\nHSET h f v\nRPUSH l x y z\nDBSIZE",
+      "options": {
+        "A": "5",
+        "B": "1",
+        "C": "3 - liczbę kluczy, niezależnie od liczby elementów w strukturach",
+        "D": "6"
+      },
+      "correct": "C",
+      "explanation": "DBSIZE działa w czasie stałym i jest bezpieczny na produkcji - w przeciwieństwie do KEYS *."
+    },
+    {
+      "question": "Co zwróci EXISTS?",
+      "code": "SET a 1\nSET k v\nEXISTS a k brak",
+      "options": {
+        "A": "1",
+        "B": "true",
+        "C": "3",
+        "D": "2 - liczbę istniejących kluczy spośród podanych"
+      },
+      "correct": "D",
+      "explanation": "EXISTS przyjmuje wiele kluczy i zwraca liczbę istniejących."
+    },
+    {
+      "question": "Co zwróci MGET?",
+      "code": "MSET a 1 b 2\nMGET a b c",
+      "options": {
+        "A": "\"1\", \"2\", (nil) - brak klucza nie jest błędem",
+        "B": "1, 2, błąd",
+        "C": "\"1\", \"2\"",
+        "D": "(nil)"
+      },
+      "correct": "A",
+      "explanation": "MGET pobiera wiele wartości w jednym zapytaniu sieciowym - zamiast N osobnych GET."
+    },
+    {
+      "question": "Jaka jest różnica między FLUSHDB a FLUSHALL?",
+      "code": "127.0.0.1:6379> SELECT 1\n127.0.0.1:6379[1]> FLUSHDB",
+      "options": {
+        "A": "Żadna",
+        "B": "FLUSHDB usuwa tylko klucze z TTL",
+        "C": "FLUSHDB czyści tylko bieżącą bazę logiczną (tu 1), FLUSHALL - wszystkie bazy",
+        "D": "FLUSHALL działa tylko w klastrze"
+      },
+      "correct": "C",
+      "explanation": "Oba są nieodwracalne; na produkcji powinny być zablokowane dla użytkownika aplikacji (ACL)."
+    },
+    {
+      "question": "Jak połączyć się redis-cli z serwerem wymagającym hasła i użytkownika ACL?",
+      "code": "$ redis-cli -h redis.internal -p 6379 ???",
+      "options": {
+        "A": "Hasło nie jest obsługiwane",
+        "B": "-u root",
+        "C": "--password-file",
+        "D": "--user aplikacja --pass tajne (albo zmienna REDISCLI_AUTH z hasłem, żeby nie zostawiało go w historii)"
+      },
+      "correct": "D",
+      "explanation": "Opcja -a/--pass wyświetla ostrzeżenie o niebezpiecznym przekazywaniu hasła w linii poleceń; bezpieczniej REDISCLI_AUTH albo AUTH w sesji."
+    },
+    {
+      "question": "Który wpis ACL daje aplikacji minimalne uprawnienia do cache?",
+      "code": "ACL SETUSER aplikacja on >silneHaslo ???",
+      "options": {
+        "A": "~cache:* +get +set +del +expire +scan",
+        "B": "~* +@all",
+        "C": "allkeys allcommands",
+        "D": "nopass +@all"
+      },
+      "correct": "A",
+      "explanation": "Użytkownik ma dostęp tylko do kluczy z prefiksem cache: i tylko do potrzebnych poleceń - bez FLUSHALL, CONFIG czy KEYS."
+    },
+    {
+      "question": "Co oznacza odpowiedź przy próbie połączenia?",
+      "code": "$ redis-cli -h 10.0.1.20 PING\nCould not connect to Redis at 10.0.1.20:6379: Connection refused",
+      "options": {
+        "A": "Pod tym adresem i portem nic nie nasłuchuje (serwer nie działa, nasłuchuje na innym interfejsie/porcie albo port nie jest opublikowany)",
+        "B": "Złe hasło",
+        "C": "Zapora zrywa pakiety",
+        "D": "Redis jest przeciążony"
+      },
+      "correct": "A",
+      "explanation": "Zapora odrzucająca pakiety zwykle daje timeout. Błędne hasło to odpowiedź NOAUTH/WRONGPASS po nawiązaniu połączenia."
+    },
+    {
+      "question": "Co zwróci polecenie na serwerze z hasłem, gdy klient go nie podał?",
+      "code": "$ redis-cli -h redis.internal GET x",
+      "options": {
+        "A": "(nil)",
+        "B": "Connection refused",
+        "C": "(error) NOAUTH Authentication required.",
+        "D": "PONG"
+      },
+      "correct": "C",
+      "explanation": "Połączenie działa, ale polecenia są odrzucane do czasu AUTH."
+    },
+    {
+      "question": "Dlaczego w kontenerze aplikacji Spring Boot adres Redis to nazwa serwisu, a nie localhost?",
+      "code": "# compose.yaml: serwisy app i redis\nspring.data.redis.host=???",
+      "options": {
+        "A": "localhost - kontenery dzielą sieć",
+        "B": "host.docker.internal zawsze",
+        "C": "127.0.0.1",
+        "D": "redis - w sieci Compose nazwa serwisu jest nazwą DNS; localhost w kontenerze aplikacji oznacza sam ten kontener"
+      },
+      "correct": "D",
+      "explanation": "Ten sam mechanizm co w rozdziale _35 dla bazy PostgreSQL."
+    },
+    {
+      "question": "Która konfiguracja trwałości jest sensowna dla Redis używanego WYŁĄCZNIE jako cache?",
+      "code": "# dane zawsze można odtworzyć z PostgreSQL",
+      "options": {
+        "A": "Brak trwałości (save \"\" i appendonly no) - po restarcie cache zapełni się ponownie; oszczędza I/O",
+        "B": "AOF z appendfsync always",
+        "C": "RDB co sekundę",
+        "D": "Replikacja do trzech regionów"
+      },
+      "correct": "A",
+      "explanation": "Warto jednak liczyć się z chwilowym wzrostem obciążenia bazy po restarcie ('zimny' cache)."
+    },
+    {
+      "question": "Jak sprawdzić wersję serwera Redis z redis-cli?",
+      "code": "127.0.0.1:6379> ???",
+      "options": {
+        "A": "VERSION",
+        "B": "INFO server (pole redis_version)",
+        "C": "PING VERSION",
+        "D": "CONFIG VERSION"
+      },
+      "correct": "B",
+      "explanation": "Z linii poleceń: redis-server --version albo redis-cli INFO server | grep redis_version."
     }
   ]
 }

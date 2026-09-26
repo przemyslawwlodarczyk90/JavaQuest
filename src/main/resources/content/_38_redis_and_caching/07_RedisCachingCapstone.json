@@ -106,6 +106,41 @@
       "prompt": "Wyjasnij (jako String), dlaczego 'prawdziwe' dane o punktach uzytkownikow (historia, aktualny stan) powinny pozostawac w relacyjnej bazie danych, nawet gdy Sorted Set w Redis rowniez przechowuje te punkty jako 'score' rankingu.",
       "hint": "Przypomnij sobie kryterium z bloku definition - Redis prawie zawsze powinien byc warstwa przyspieszajaca, nie jedynym zrodlem prawdy.",
       "solution": "Mimo ze Sorted Set w Redis PRZECHOWUJE punkty uzytkownikow jako 'score' (potrzebne do utrzymania rankingu w posortowanej kolejnosci), Redis w podstawowej konfiguracji NIE gwarantuje takiej trwalosci danych, jaka oferuje relacyjna baza danych zaprojektowana pod ten cel (_38/Lesson1/NOTE) - restart lub awaria Redis MOZE oznaczac utrate calego rankingu. Trzymajac 'prawdziwe' dane o punktach w relacyjnej bazie danych, mozna w KAZDEJ chwili ODTWORZYC caly Sorted Set od podstaw (ponownie wypelniajac go danymi z bazy), gdyby Redis zostal wyczyszczony lub padl - Sorted Set pelni wtedy role WYLACZNIE PRZYSPIESZAJACEJ warstwy (szybki dostep do rankingu), a NIE jedynego miejsca, w ktorym te dane w ogole istnieja."
+    },
+    {
+      "prompt": "Zaprojektuj (jako String) strategię Redis dla sklepu internetowego: (1) strona produktu, (2) koszyk zalogowanego użytkownika, (3) lista 'bestsellery tygodnia', (4) liczba sztuk w magazynie przy dodawaniu do koszyka, (5) sesja HTTP (Spring Session). Dla każdego elementu: struktura, klucz, TTL, unieważnianie, czy Redis jest źródłem prawdy.",
+      "hint": "Zastosuj metodę z lekcji: pytanie o zapytanie, strukturę, świeżość, skutki utraty.",
+      "solution": "(1) Strona produktu: String JSON lub @Cacheable, klucz produkty::{id}, TTL 10-30 min, @CacheEvict przy zmianie; źródło: baza.\n(2) Koszyk: Hash koszyk:{userId} (produkt -> ilość, HINCRBY), TTL 30 dni od ostatniej zmiany; źródło: Redis jest akceptowalny jako magazyn (utrata koszyka to niewygoda) - albo baza, jeśli koszyk ma przetrwać wszystko.\n(3) Bestsellery: Sorted Set bestsellery:{rok-tydzien}, ZINCRBY przy zamówieniu, ZRANGE ... REV 0 9, TTL ok. 2 tygodnie; źródło: zamówienia w bazie (odtwarzalne).\n(4) Stan magazynu: NIE z cache przy decyzji - rezerwacja w bazie w transakcji; cache z krótkim TTL tylko do wyświetlania 'dostępny'.\n(5) Sesja: Spring Session Data Redis, klucze spring:session:*, TTL = czas bezczynności sesji; utrata = ponowne logowanie."
+    },
+    {
+      "prompt": "Przeprowadź (jako String) code review poniższego kodu i wypisz problemy z poprawkami:\n```java\n@Cacheable(\"ranking\")\npublic List<Gracz> ranking() {\n    return repo.findAll().stream().sorted(comparing(Gracz::getPunkty).reversed()).limit(10).toList();\n}\npublic void dodajPunkty(Long id, int pkt) { Gracz g = repo.findById(id).get(); g.setPunkty(g.getPunkty()+pkt); repo.save(g); }\n```",
+      "hint": "findAll przy każdym miss, brak unieważnienia, brak TTL, wyścig odczyt-zmiana-zapis.",
+      "solution": "1) findAll + sortowanie w Javie przy każdym chybieniu - przy milionie graczy wczytuje całą tabelę; poprawka: ORDER BY punkty DESC LIMIT 10 w zapytaniu albo Sorted Set w Redis (ZINCRBY przy zmianie, ZRANGE ranking 0 9 REV WITHSCORES).\n2) dodajPunkty nie unieważnia cache 'ranking' - ranking jest nieaktualny w nieskończoność (brak TTL); poprawka: @CacheEvict(\"ranking\", allEntries = true) albo krótki TTL, a przy Sorted Set - ZINCRBY aktualizuje ranking natychmiast.\n3) Brak TTL w konfiguracji - dodać spring.cache.redis.time-to-live.\n4) Wyścig: dwa równoległe dodajPunkty mogą zgubić punkty (odczyt-zmiana-zapis); poprawka: UPDATE gracz SET punkty = punkty + :pkt WHERE id = :id albo blokada optymistyczna (@Version).\n5) findById(id).get() - NoSuchElementException bez czytelnego komunikatu; lepiej orElseThrow z własnym wyjątkiem."
+    },
+    {
+      "prompt": "Zaimplementuj w Spring Boot ranking na Sorted Set: metody `dodajPunkty(String gracz, double pkt)` (ZINCRBY), `top10()` zwracającą listę rekordów `Pozycja(int miejsce, String gracz, double punkty)` oraz `miejsce(String gracz)` (od 1, Optional.empty() gdy brak). Użyj `StringRedisTemplate.opsForZSet()`.",
+      "hint": "incrementScore, reverseRangeWithScores(klucz, 0, 9), reverseRank(klucz, gracz).",
+      "solution": "@Service\npublic class RankingService {\n    private static final String KLUCZ = \"ranking:global\";\n    private final StringRedisTemplate redis;\n    public RankingService(StringRedisTemplate redis) { this.redis = redis; }\n\n    public record Pozycja(int miejsce, String gracz, double punkty) {}\n\n    public void dodajPunkty(String gracz, double pkt) {\n        redis.opsForZSet().incrementScore(KLUCZ, gracz, pkt);\n    }\n\n    public List<Pozycja> top10() {\n        Set<ZSetOperations.TypedTuple<String>> wynik = redis.opsForZSet().reverseRangeWithScores(KLUCZ, 0, 9);\n        List<Pozycja> lista = new ArrayList<>();\n        int miejsce = 1;\n        for (var t : wynik) lista.add(new Pozycja(miejsce++, t.getValue(), t.getScore()));\n        return lista;\n    }\n\n    public Optional<Integer> miejsce(String gracz) {\n        Long rank = redis.opsForZSet().reverseRank(KLUCZ, gracz);\n        return rank == null ? Optional.empty() : Optional.of(rank.intValue() + 1);\n    }\n}\nreverseRank odpowiada ZREVRANK (liczony od 0), stąd +1. Punkty nadal zapisuje się w bazie - Sorted Set można w razie utraty odbudować z bazy."
+    },
+    {
+      "prompt": "Opisz (jako String) procedurę odbudowy Sorted Set rankingu z bazy danych po utracie danych Redis, tak aby w trakcie odbudowy użytkownicy nie widzieli pustego ani częściowego rankingu. Podaj polecenia Redis.",
+      "hint": "Budowa pod kluczem tymczasowym, potem atomowe RENAME.",
+      "solution": "1) Zapytanie do bazy: SELECT gracz_id, punkty FROM gracze (porcjami, np. po 10 000).\n2) Zapis do klucza tymczasowego: ZADD ranking:global:budowa <punkty> <gracz> ... (pipeline dla wydajności).\n3) Po zakończeniu - sprawdzenie: ZCARD ranking:global:budowa równe liczbie graczy w bazie.\n4) Atomowa podmiana: RENAME ranking:global:budowa ranking:global - czytelnicy widzą albo stary, albo kompletny nowy ranking, nigdy stan pośredni.\n5) Zmiany punktów w trakcie odbudowy: albo kolejkowane i stosowane po RENAME, albo odbudowa uruchamiana w oknie o małym ruchu i ponowiona różnicowo. Ten sam wzorzec 'buduj obok, podmień atomowo' wróci w lekcjach o imporcie CSV (staging namespace)."
+    },
+    {
+      "prompt": "Oszacuj (jako String) pamięć Redis dla: 1 mln graczy w Sorted Set (średnio ok. 100 B na element z narzutem), 200 tys. aktywnych sesji po 2 KB, 50 tys. zbuforowanych stron produktów po 5 KB. Jaki `maxmemory` i jaką politykę usuwania (`maxmemory-policy`) wybrać, jeśli ten sam Redis przechowuje cache i sesje?",
+      "hint": "allkeys-lru usuwa dowolne klucze; volatile-lru tylko z TTL. Sesje nie powinny być usuwane przed czasem.",
+      "solution": "Ranking: ok. 100 MB; sesje: 200 000 * 2 KB = ok. 400 MB; cache: 50 000 * 5 KB = ok. 250 MB; razem ok. 750 MB + narzut i zapas (fragmentacja, bufory, wzrost) -> maxmemory ok. 1.5 GB. Polityka: skoro cache i sesje dzielą instancję, allkeys-lru mógłby usunąć sesje (wylogowanie użytkowników) albo ranking. Przy volatile-lru usuwane są tylko klucze z TTL - ale sesje też mają TTL. Czystsze rozwiązanie: osobne instancje (cache z allkeys-lru, sesje/ranking z noeviction i monitorowaniem pamięci). Jeśli jedna instancja: volatile-lru/volatile-ttl i dopilnowanie, by ranking nie miał TTL, a pamięć była wymiarowana tak, żeby usuwanie zdarzało się rzadko. Weryfikacja: INFO memory i evicted_keys w INFO stats."
+    },
+    {
+      "prompt": "Napisz (jako String) listę kontrolną code review dla zmian używających Redis (co najmniej 10 punktów) - od projektu kluczy po obsługę awarii.",
+      "hint": "Zbierz wnioski z lekcji 1-7.",
+      "solution": "1) Czy Redis nie jest jedynym miejscem ważnych danych? 2) Czy struktura pasuje do zapytania (Hash/Set/Sorted Set zamiast JSON i sortowania w Javie)? 3) Czy klucze mają spójny prefiks i schemat (obiekt:id:pole)? 4) Czy każdy wpis cache ma TTL? 5) Czy każda metoda zmieniająca dane unieważnia powiązane wpisy (i czy klucze @CacheEvict zgadzają się z @Cacheable)? 6) Czy unieważnienie następuje po commicie? 7) Czy serializacja jest jawna (String/JSON, nie domyślna JDK)? 8) Czy nie ma KEYS, HGETALL/SMEMBERS/LRANGE 0 -1 na potencjalnie dużych kolekcjach? 9) Czy błędy Redis są obsłużone jak miss (timeout, CacheErrorHandler)? 10) Czy Pub/Sub nie przenosi danych krytycznych? 11) Czy liczniki używają INCR zamiast GET+SET? 12) Czy są testy integracyjne z prawdziwym Redisem (Testcontainers)? 13) Czy wielkość danych i maxmemory/polityka usuwania są przemyślane?"
+    },
+    {
+      "prompt": "Dla wymagań 'profil użytkownika czytany 500 razy/s, zmieniany kilka razy dziennie; lista znajomych do sprawdzania \"czy X jest znajomym Y\"; licznik nieprzeczytanych powiadomień' napisz (jako String) konkretne polecenia Redis / adnotacje Spring dla odczytu i zapisu każdego elementu.",
+      "hint": "Profil: @Cacheable + @CacheEvict. Znajomi: Set + SISMEMBER. Licznik: INCR/DECR/SET 0.",
+      "solution": "Profil:\n@Cacheable(value = \"profile\", key = \"#id\") Profil profil(Long id)\n@CacheEvict(value = \"profile\", key = \"#id\") void zmienProfil(Long id, ...)\n+ spring.cache.redis.time-to-live=30m\nZnajomi (Set, źródło prawdy w bazie, Set jako indeks):\nSADD znajomi:42 17 99 (przy dodaniu znajomego - także SADD znajomi:17 42)\nSISMEMBER znajomi:42 17 -> 1/0 (O(1))\nSREM znajomi:42 17 przy usunięciu\nSINTER znajomi:42 znajomi:17 -> wspólni znajomi\nLicznik nieprzeczytanych:\nINCR nieprzeczytane:42 (nowe powiadomienie)\nGET nieprzeczytane:42 (wyświetlenie)\nSET nieprzeczytane:42 0 (oznaczenie wszystkich jako przeczytane)\nLicznik można w razie utraty odtworzyć zapytaniem COUNT(*) z bazy."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "Ta sama fundamentalna intuicja dotycząca cache'owania z _13_libraries przenosi się bezpośrednio na Redis, rozszerzona o pytanie, czy dany cache musi być współdzielony między wieloma kopiami aplikacji."
+    },
+    {
+      "question": "Która implementacja rankingu top 10 jest najbardziej efektywna przy milionie graczy?",
+      "code": "// (1) @Cacheable + repo.findAll() + sort w Javie + limit(10)\n// (2) ZRANGE ranking 0 9 REV WITHSCORES\n// (3) SMEMBERS gracze + sort w Javie",
+      "options": {
+        "A": "(1)",
+        "B": "Wszystkie są równoważne",
+        "C": "(3)",
+        "D": "(2) - Sorted Set utrzymuje porządek, pobranie top 10 kosztuje O(log n + 10)"
+      },
+      "correct": "D",
+      "explanation": "(1) przy każdym chybieniu wczytuje całą tabelę; (3) przesyła wszystkich graczy przez sieć."
+    },
+    {
+      "question": "Co zwróci reverseRank dla lidera rankingu?",
+      "code": "Long r = redis.opsForZSet().reverseRank(\"ranking:global\", \"Anna\");  // Anna ma najwięcej punktów",
+      "options": {
+        "A": "0 - pozycja liczona od zera (jak ZREVRANK)",
+        "B": "1",
+        "C": "-1",
+        "D": "null"
+      },
+      "correct": "A",
+      "explanation": "Miejsce 'od 1' w UI to rank + 1. Dla gracza spoza rankingu metoda zwraca null."
+    },
+    {
+      "question": "Która struktura najlepiej odpowie na pytanie 'czy X jest znajomym Y'?",
+      "code": "# użytkownik 42 ma 500 znajomych",
+      "options": {
+        "A": "List + LRANGE 0 -1 i szukanie w Javie",
+        "B": "String z JSON",
+        "C": "Set + SISMEMBER znajomi:42 17",
+        "D": "Sorted Set + ZRANGE"
+      },
+      "correct": "C",
+      "explanation": "SISMEMBER działa w O(1) i przesyła jedną liczbę zamiast całej listy."
+    },
+    {
+      "question": "Jak atomowo podmienić odbudowany ranking, żeby czytelnicy nie widzieli stanu częściowego?",
+      "code": "# ranking:global:budowa jest kompletny",
+      "options": {
+        "A": "DEL ranking:global, potem kopiowanie elementów",
+        "B": "FLUSHALL i ponowny import",
+        "C": "ZUNIONSTORE w pętli",
+        "D": "RENAME ranking:global:budowa ranking:global"
+      },
+      "correct": "D",
+      "explanation": "RENAME jest atomowe i nadpisuje klucz docelowy. Wzorzec 'buduj obok, podmień' wraca przy imporcie CSV."
+    },
+    {
+      "question": "Dlaczego stan magazynowy przy dodawaniu do koszyka nie powinien pochodzić z cache?",
+      "code": "@Cacheable(\"stan\") int stan(Long produktId)   // TTL 5 min\n// if (stan(id) > 0) zarezerwuj(...)",
+      "options": {
+        "A": "Bo decyzja na podstawie danych sprzed kilku minut może sprzedać towar, którego już nie ma - rezerwacja musi odbywać się na aktualnych danych w transakcji",
+        "B": "Bo Redis nie przechowuje liczb",
+        "C": "Bo @Cacheable nie działa z int",
+        "D": "Może pochodzić z cache"
+      },
+      "correct": "A",
+      "explanation": "Cache stanu może służyć do wyświetlania 'dostępny', ale nie do decyzji."
+    },
+    {
+      "question": "Którą politykę maxmemory wybrać dla instancji Redis używanej WYŁĄCZNIE jako cache?",
+      "code": "maxmemory 2gb\nmaxmemory-policy ???",
+      "options": {
+        "A": "noeviction",
+        "B": "volatile-ttl",
+        "C": "allkeys-lru (lub allkeys-lfu) - przy braku pamięci usuwane są najdawniej/najrzadziej używane klucze",
+        "D": "Bez polityki"
+      },
+      "correct": "C",
+      "explanation": "noeviction (domyślna) przy pełnej pamięci odrzuca zapisy błędem - dla cache to zwykle gorsze niż usunięcie starych wpisów."
+    },
+    {
+      "question": "Co się stanie przy zapisie, gdy pamięć jest pełna, a polityka to noeviction?",
+      "code": "maxmemory 100mb\nmaxmemory-policy noeviction\n> SET nowy x",
+      "options": {
+        "A": "Najstarszy klucz zostanie usunięty",
+        "B": "Dane trafią na dysk",
+        "C": "Redis się zrestartuje",
+        "D": "Polecenie zapisu zwróci błąd OOM (command not allowed when used memory > 'maxmemory'); odczyty nadal działają"
+      },
+      "correct": "D",
+      "explanation": "Dla danych, które nie mogą znikać (np. kolejki, sesje), noeviction z monitorowaniem pamięci jest właściwy."
+    },
+    {
+      "question": "Co jest błędne w tym kodzie?",
+      "code": "public void dodajPunkty(Long id, int pkt) {\n    Gracz g = repo.findById(id).orElseThrow();\n    g.setPunkty(g.getPunkty() + pkt);\n    repo.save(g);\n}\n// ranking(): @Cacheable(\"ranking\"), brak TTL",
+      "options": {
+        "A": "Brak unieważnienia cache 'ranking' (bez TTL nieaktualny na zawsze) oraz wyścig odczyt-zmiana-zapis przy równoległych wywołaniach",
+        "B": "Nic",
+        "C": "Tylko nazwa metody",
+        "D": "orElseThrow jest niedozwolone"
+      },
+      "correct": "A",
+      "explanation": "Poprawki: @CacheEvict/TTL (albo ZINCRBY w Sorted Set) oraz UPDATE ... SET punkty = punkty + :pkt lub @Version."
+    },
+    {
+      "question": "Który wybór dla koszyka zalogowanego użytkownika jest rozsądny?",
+      "code": "# dodaj 2 sztuki produktu 7 do koszyka użytkownika 42",
+      "options": {
+        "A": "SADD koszyk:42 produkt:7",
+        "B": "SET koszyk:42 z całym JSON-em przy każdej zmianie",
+        "C": "HINCRBY koszyk:42 produkt:7 2 (Hash) z TTL odświeżanym przy zmianie",
+        "D": "PUBLISH koszyk:42 produkt:7"
+      },
+      "correct": "C",
+      "explanation": "Hash pozwala atomowo zmieniać ilość jednego produktu. Set nie przechowa ilości."
+    },
+    {
+      "question": "Jakie klucze zobaczysz w Redis przy Spring Session Data Redis?",
+      "code": "spring.session.store-type=redis   # lub zależność spring-session-data-redis",
+      "options": {
+        "A": "spring:session:*",
+        "B": "session:*",
+        "C": "JSESSIONID",
+        "D": "http:session:*"
+      },
+      "correct": "A",
+      "explanation": "Domyślny namespace to spring:session. Sesje w Redis pozwalają dowolnej instancji obsłużyć żądanie zalogowanego użytkownika."
+    },
+    {
+      "question": "Który element NIE powinien trafić do Pub/Sub w projekcie rankingu?",
+      "code": "// (a) 'przeskoczyłeś gracza X' w UI\n// (b) naliczenie nagrody pieniężnej za 1. miejsce\n// (c) odświeżenie tablicy wyników na ekranie",
+      "options": {
+        "A": "(a)",
+        "B": "Żaden",
+        "C": "(c)",
+        "D": "(b) - utrata oznacza niewypłaconą nagrodę; potrzebny trwały mechanizm z potwierdzeniem"
+      },
+      "correct": "D",
+      "explanation": "Kryterium z lekcji 6: co się stanie, jeśli wiadomość zaginie?"
+    },
+    {
+      "question": "Co zwróci ten kod dla gracza, którego nie ma w rankingu?",
+      "code": "Long rank = redis.opsForZSet().reverseRank(\"ranking:global\", \"nieznany\");\nreturn rank == null ? Optional.empty() : Optional.of(rank.intValue() + 1);",
+      "options": {
+        "A": "Optional.empty",
+        "B": "Optional[0]",
+        "C": "Optional[-1]",
+        "D": "Wyjątek"
+      },
+      "correct": "A",
+      "explanation": "ZREVRANK dla nieistniejącego elementu zwraca nil, co Spring mapuje na null."
+    },
+    {
+      "question": "Który tygodniowy ranking wygaśnie automatycznie po zakończeniu okresu?",
+      "code": "ZINCRBY bestsellery:2026-W39 1 produkt:7\nEXPIRE bestsellery:2026-W39 1209600",
+      "options": {
+        "A": "Żaden - Sorted Set nie może mieć TTL",
+        "B": "Wszystkie bestsellery",
+        "C": "bestsellery:2026-W39 - usunięty po 14 dniach od ostatniego ustawienia EXPIRE",
+        "D": "Tylko produkt:7"
+      },
+      "correct": "C",
+      "explanation": "TTL dotyczy całego klucza, niezależnie od typu. Klucz z datą w nazwie + TTL to typowy wzorzec danych okresowych."
+    },
+    {
+      "question": "Czy TTL można ustawić dla pojedynczego elementu Sorted Set?",
+      "code": "ZADD ranking 100 Jan\nEXPIRE ranking:Jan 60   # ?",
+      "options": {
+        "A": "Tak, EXPIRE na elemencie",
+        "B": "Tak, przez TTL w ZADD",
+        "C": "Tak, ZEXPIRE",
+        "D": "Nie - EXPIRE działa na całym kluczu; wygasanie elementów trzeba zrealizować inaczej (np. score = znacznik czasu + ZREMRANGEBYSCORE)"
+      },
+      "correct": "D",
+      "explanation": "Redis 7.4 dodał TTL pojedynczych pól HASH (HEXPIRE), ale nie elementów Sorted Set."
+    },
+    {
+      "question": "Ile pamięci zajmą sesje?",
+      "code": "# 200 000 aktywnych sesji, średnio 2 KB każda",
+      "options": {
+        "A": "ok. 400 MB (plus narzut Redis)",
+        "B": "ok. 40 MB",
+        "C": "ok. 4 GB",
+        "D": "ok. 2 MB"
+      },
+      "correct": "A",
+      "explanation": "Szacowanie pamięci przed wdrożeniem pozwala dobrać maxmemory i politykę usuwania."
+    },
+    {
+      "question": "Dlaczego ranking punktów w Redis może nie mieć TTL, a mimo to baza pozostaje źródłem prawdy?",
+      "code": "ZINCRBY ranking:global 50 gracz:42      # przy każdej zmianie\nUPDATE gracze SET punkty = punkty + 50 WHERE id = 42",
+      "options": {
+        "A": "Bo Redis jest trwalszy niż baza",
+        "B": "Bo Sorted Set nie może mieć TTL",
+        "C": "Bo ranking jest aktualizowany przy każdej zmianie (nie wymaga wygasania), a w razie utraty można go w całości odbudować z bazy",
+        "D": "Bo baza nie przechowuje punktów"
+      },
+      "correct": "C",
+      "explanation": "To indeks pochodny - jak indeks w bazie danych, który można przebudować."
+    },
+    {
+      "question": "Który zestaw jest poprawną kombinacją dla profilu użytkownika czytanego 500 razy/s?",
+      "code": "Profil profil(Long id)\nvoid zmienProfil(Long id, ProfilDto dto)",
+      "options": {
+        "A": "@Cacheable na obu",
+        "B": "Bez cache",
+        "C": "@CacheEvict na odczycie",
+        "D": "@Cacheable(value=\"profile\", key=\"#id\") na odczycie, @CacheEvict(value=\"profile\", key=\"#id\") na zmianie, plus TTL"
+      },
+      "correct": "D",
+      "explanation": "Duża liczba odczytów i rzadkie zmiany to idealny przypadek cache-aside z jawnym unieważnianiem."
+    },
+    {
+      "question": "Co zrobi ten kod w Redis?",
+      "code": "redis.opsForZSet().incrementScore(\"ranking:global\", \"gracz:42\", 50);",
+      "options": {
+        "A": "ZINCRBY ranking:global 50 gracz:42 - dodaje 50 punktów (tworzy element, jeśli go nie ma)",
+        "B": "SET ranking:global 50",
+        "C": "ZADD ranking:global 50 gracz:42 - ustawia wynik na 50",
+        "D": "HINCRBY"
+      },
+      "correct": "A",
+      "explanation": "Operacja jest atomowa - równoległe zmiany punktów się nie gubią."
+    },
+    {
+      "question": "Co oznacza wysoka wartość evicted_keys w INFO stats?",
+      "code": "evicted_keys:1843210",
+      "options": {
+        "A": "Klucze wygasłe przez TTL",
+        "B": "Klucze usunięte z powodu braku pamięci (maxmemory) - cache jest za mały lub przechowuje zbyt dużo; spada współczynnik trafień",
+        "C": "Klucze usunięte przez DEL",
+        "D": "Klucze zreplikowane"
+      },
+      "correct": "B",
+      "explanation": "Wygasłe przez TTL liczy osobno expired_keys."
+    },
+    {
+      "question": "Który element strategii NIE wynika z metody projektowania z tej lekcji?",
+      "code": "// 1. jakie zapytanie? 2. jaka struktura? 3. jaka świeżość / TTL?\n// 4. co przy utracie? 5. ???",
+      "options": {
+        "A": "Jak i kiedy unieważniać wpisy",
+        "B": "Czy Redis jest źródłem prawdy",
+        "C": "Użyj Redis dla wszystkich danych aplikacji, bo jest najszybszy",
+        "D": "Jaki jest koszt pamięci"
+      },
+      "correct": "C",
+      "explanation": "Pitfall lekcji: cache'owanie wszystkiego bez przemyślenia struktury i unieważniania."
     }
   ]
 }

@@ -131,6 +131,16 @@
       "prompt": "Zaprojektuj raport końcowy.",
       "hint": "Ma umożliwiać audyt.",
       "solution": "Checksum CSV/generatora, środowisko, czas, namespace, commands/replies/errors, invariants, próbki, metryki, decyzja i podpis właściciela."
+    },
+    {
+      "prompt": "Napisz w Javie wybór deterministycznej próbki 1% rekordów do walidacji: rekord trafia do próbki, gdy hash (np. CRC32 lub SHA-256) jego identyfikatora modulo 100 wynosi 0. Pokaż, że ta sama lista ID zawsze daje tę samą próbkę, i policz jej wielkość dla 100 000 identyfikatorów.",
+      "hint": "java.util.zip.CRC32 - update(bytes), getValue() % 100.",
+      "solution": "import java.nio.charset.StandardCharsets;\nimport java.util.*;\nimport java.util.zip.CRC32;\n\npublic class ProbkaDeterministyczna {\n    static boolean wProbce(String id) {\n        CRC32 crc = new CRC32();\n        crc.update(id.getBytes(StandardCharsets.UTF_8));\n        return crc.getValue() % 100 == 0;\n    }\n\n    public static void main(String[] args) {\n        List<String> probka1 = new ArrayList<>(), probka2 = new ArrayList<>();\n        for (int i = 1; i <= 100_000; i++) if (wProbce(Integer.toString(i))) probka1.add(Integer.toString(i));\n        for (int i = 1; i <= 100_000; i++) if (wProbce(Integer.toString(i))) probka2.add(Integer.toString(i));\n        System.out.println(\"rozmiar: \" + probka1.size() + \", identyczne: \" + probka1.equals(probka2));\n        System.out.println(\"pierwsze: \" + probka1.subList(0, 5));\n    }\n}\nRozmiar wynosi ok. 1000 (około 1%), a obie próbki są identyczne. Deterministyczna próbka pozwala powtórzyć walidację po poprawce i porównać wyniki, a różne osoby sprawdzają te same rekordy - w przeciwieństwie do losowania bez ziarna."
+    },
+    {
+      "prompt": "Przeprowadź lokalnie (kontener Redis) próbę przełączenia i wycofania wersji: utwórz dane `users:v1:user:{42}` i `users:v2:user:{42}` (różne nazwiska), wskaźnik `dataset:users:active-version`, a następnie opisz (jako String) jak aplikacja odczytuje dane przez wskaźnik, jak wykonać przełączenie na v2, wycofanie do v1 i opóźnione sprzątanie v2 z manifestu.",
+      "hint": "GET wskaźnika, potem HGETALL users:<wersja>:user:{42}. Przełączenie = jeden SET. Sprzątanie = UNLINK kluczy z manifestu po okresie retencji.",
+      "solution": "HSET users:v1:user:{42} name \"Anna Nowak\"\nHSET users:v2:user:{42} name \"Anna Kowalska\"\nSET dataset:users:active-version v1\nOdczyt w aplikacji: wersja = GET dataset:users:active-version; HGETALL users:<wersja>:user:{42} (wersję można cache'ować lokalnie na kilka sekund).\nPrzełączenie po go: SET dataset:users:active-version v2 - jedna atomowa operacja, kolejne odczyty widzą v2.\nWycofanie przy regresji: SET dataset:users:active-version v1 - natychmiast, bez usuwania czy ponownego importu danych.\nSprzątanie v2 (po decyzji, że v2 jest niepotrzebne, i po okresie retencji): UNLINK wyłącznie kluczy z manifestu v2, porcjami (np. po 1000), z kontrolą, że wskaźnik nie wskazuje v2. Nigdy FLUSHDB ani usuwanie po szerokim wzorcu."
     }
   ],
   "quiz": [
@@ -221,6 +231,210 @@
       },
       "correct": "B",
       "explanation": "Zachowanie danych wspiera diagnozę i bezpieczny powrót."
+    },
+    {
+      "question": "Jak wycofać nieudany import przy wersjonowanym datasecie?",
+      "code": "GET dataset:users:active-version   -> \"v2\"\n# regresja po przełączeniu",
+      "options": {
+        "A": "SET dataset:users:active-version v1 - przełączenie wskaźnika, dane v2 zostają do analizy i późniejszego sprzątania",
+        "B": "FLUSHDB",
+        "C": "Usunąć wszystkie klucze users:*",
+        "D": "Zaimportować v1 od nowa"
+      },
+      "correct": "A",
+      "explanation": "Rollback to przełączenie wskaźnika, a nie usuwanie danych - szybki i odwracalny."
+    },
+    {
+      "question": "Dlaczego DBSIZE nie waliduje importu?",
+      "code": "DBSIZE przed: 5 000 000\nDBSIZE po:    5 099 842",
+      "options": {
+        "A": "Bo DBSIZE jest niedokładne",
+        "B": "Bo DBSIZE jest wolne",
+        "C": "Bo liczy wszystkie klucze w bazie - zmiany innych procesów, wygasanie TTL czy eviction mogą maskować błędy; liczy się namespace importu, typy i treść",
+        "D": "Waliduje"
+      },
+      "correct": "C",
+      "explanation": "Właściwe liczenie: SCAN namespace importu + sort -u + porównanie z liczbą unikalnych ID w zaakceptowanym CSV."
+    },
+    {
+      "question": "Który zestaw poleceń sprawdza spójność jednego rekordu z manifestem?",
+      "code": "# CSV: 42,Anna,a@example.test,PL,1500",
+      "options": {
+        "A": "GET user:42",
+        "B": "INFO",
+        "C": "KEYS import:*",
+        "D": "TYPE import:v1:user:42; HMGET import:v1:user:42 name country; SISMEMBER import:v1:users:country:PL 42; ZSCORE import:v1:leaderboard 42; TTL import:v1:user:42"
+      },
+      "correct": "D",
+      "explanation": "Rekord jest poprawny dopiero, gdy zgadzają się typ, pola, relacje (zbiór, ranking) i TTL."
+    },
+    {
+      "question": "Czym różni się UNLINK od DEL?",
+      "code": "UNLINK import:v2:leaderboard   # zset z 2 mln elementów",
+      "options": {
+        "A": "UNLINK usuwa klucz z keyspace od razu, a zwalnianie pamięci dużej wartości wykonuje w tle - nie blokuje serwera jak DEL dużej kolekcji",
+        "B": "Niczym",
+        "C": "UNLINK tylko ukrywa klucz",
+        "D": "UNLINK działa tylko na stringach"
+      },
+      "correct": "A",
+      "explanation": "Dla małych kluczy różnica jest pomijalna; dla dużych kolekcji DEL może zablokować Redis na zauważalny czas."
+    },
+    {
+      "question": "Dlaczego ten rollback jest niedopuszczalny?",
+      "code": "redis-cli -h production FLUSHDB",
+      "options": {
+        "A": "Bo jest wolny",
+        "B": "Bo wymaga hasła",
+        "C": "Bo usuwa wszystkie dane bazy, także niezwiązane z importem (sesje, cache, inne datasety) - nieodwracalnie",
+        "D": "Jest dopuszczalny"
+      },
+      "correct": "C",
+      "explanation": "Rollback danych trzeba zaprojektować przed importem: wersje, wskaźnik aktywnej wersji, manifest kluczy."
+    },
+    {
+      "question": "Który element jest niezmiennikiem (invariant) importu?",
+      "code": "# manifest: każdy user ma hash, członkostwo kraju i wpis w rankingu",
+      "options": {
+        "A": "'Import wyglądał dobrze'",
+        "B": "Użyto --pipe",
+        "C": "Redis nie zgłosił błędu",
+        "D": "Liczba kluczy import:v1:user:* = liczba unikalnych user_id w zaakceptowanym CSV i dla każdego rekordu z próbki: SISMEMBER kraju = 1 oraz ZSCORE = points"
+      },
+      "correct": "D",
+      "explanation": "Niezmiennik to mierzalny warunek, który musi być spełniony - można go sprawdzić automatycznie."
+    },
+    {
+      "question": "Co jest złego w tym sprzątaniu?",
+      "code": "redis-cli --scan --pattern 'users:*' | xargs redis-cli DEL",
+      "options": {
+        "A": "Wzorzec obejmuje także aktywną wersję i inne dane users:*; brak manifestu i porcjowania, DEL dużych kluczy blokuje; argumenty ze spacjami rozbiją się w xargs",
+        "B": "Nic",
+        "C": "Tylko użycie DEL zamiast UNLINK",
+        "D": "Tylko brak -c"
+      },
+      "correct": "A",
+      "explanation": "Sprzątanie powinno obejmować wyłącznie klucze z manifestu wybranej wersji, porcjami, z UNLINK."
+    },
+    {
+      "question": "Kiedy wykonać sprzątanie v2 po wycofaniu do v1?",
+      "code": "SET dataset:users:active-version v1   # rollback",
+      "options": {
+        "A": "Natychmiast",
+        "B": "Nigdy",
+        "C": "Po analizie przyczyny i uzgodnionym okresie retencji - dane v2 pomagają zdiagnozować problem, a przedwczesne usunięcie uniemożliwia ponowne szybkie przełączenie",
+        "D": "Przed rollbackiem"
+      },
+      "correct": "C",
+      "explanation": "Przed sprzątaniem trzeba też potwierdzić, że wskaźnik nie wskazuje v2."
+    },
+    {
+      "question": "Która próbka do walidacji jest lepsza?",
+      "code": "// (1) losowe 1% przy każdym uruchomieniu\n// (2) CRC32(id) % 100 == 0",
+      "options": {
+        "A": "(1)",
+        "B": "Żadna",
+        "C": "Obie są takie same",
+        "D": "(2) - deterministyczna: ta sama przy każdej walidacji, więc wyniki są porównywalne po poprawkach"
+      },
+      "correct": "D",
+      "explanation": "Losowanie bez ziarna utrudnia powtarzanie sprawdzeń i porównanie przed/po."
+    },
+    {
+      "question": "Który próg zatrzymania importu jest rozsądny?",
+      "code": "# monitorowane w trakcie importu",
+      "options": {
+        "A": "errors > 0 w partii, wzrost evicted_keys, opóźnienia p99 aplikacji ponad ustalony próg, used_memory > 80% maxmemory",
+        "B": "Brak progów",
+        "C": "Zatrzymanie po 1 minucie",
+        "D": "Tylko awaria Redis"
+      },
+      "correct": "A",
+      "explanation": "Progi ustala się przed importem, a nie w trakcie incydentu."
+    },
+    {
+      "question": "Co pokaże SLOWLOG po imporcie przez --pipe z małymi poleceniami?",
+      "code": "SLOWLOG GET 10",
+      "options": {
+        "A": "Wszystkie polecenia importu",
+        "B": "Pełny profil aplikacji",
+        "C": "Tylko pojedyncze polecenia przekraczające próg czasu wykonania - nie pokazuje obciążenia wynikającego z ogromnej liczby szybkich poleceń",
+        "D": "Błędy sieci"
+      },
+      "correct": "C",
+      "explanation": "Wpływ importu na aplikację widać w metrykach opóźnień aplikacji i INFO stats (instantaneous_ops_per_sec), nie w SLOWLOG."
+    },
+    {
+      "question": "Jak policzyć klucze namespace importu?",
+      "code": "# zaakceptowany CSV: 99 842 unikalnych user_id",
+      "options": {
+        "A": "DBSIZE",
+        "B": "INFO keyspace",
+        "C": "KEYS import:* | wc -l",
+        "D": "redis-cli --scan --pattern 'import:CHG-1234:v1:user:*' --count 1000 | sort -u | wc -l"
+      },
+      "correct": "D",
+      "explanation": "Wynik porównuje się z liczbą unikalnych ID w źródle. sort -u usuwa ewentualne duplikaty zwrócone przez SCAN."
+    },
+    {
+      "question": "Co musi zawierać raport końcowy importu?",
+      "code": "# migracja CHG-1234",
+      "options": {
+        "A": "Suma kontrolna źródła, liczby (wiersze, odrzucenia, polecenia, odpowiedzi, błędy), wyniki niezmienników i próbek, metryki operacyjne, decyzja go/no-go, plan i termin sprzątania",
+        "B": "Tylko 'OK'",
+        "C": "Pełny zrzut danych",
+        "D": "Hasła użyte do importu"
+      },
+      "correct": "A",
+      "explanation": "Raport pozwala innym zweryfikować wynik i podjąć decyzję - bez danych osobowych i sekretów."
+    },
+    {
+      "question": "Jak aplikacja powinna odczytywać dane przy wersjonowanym datasecie?",
+      "code": "SET dataset:users:active-version v2",
+      "options": {
+        "A": "Zawsze z users:v2:*",
+        "B": "Z obu wersji naraz",
+        "C": "Najpierw GET dataset:users:active-version, potem klucze tej wersji (users:<wersja>:user:{id}); wskaźnik można krótko cache'ować",
+        "D": "Z najnowszej po SCAN"
+      },
+      "correct": "C",
+      "explanation": "Wersja zaszyta w kodzie uniemożliwiłaby przełączenie i rollback bez wdrożenia."
+    },
+    {
+      "question": "Czy brak błędów --pipe dowodzi poprawności biznesowej danych?",
+      "code": "errors: 0, replies: 299526",
+      "options": {
+        "A": "Tak",
+        "B": "Tylko dla hashy",
+        "C": "Tak, jeśli replies > 0",
+        "D": "Nie - dowodzi tylko, że Redis przyjął polecenia; błędne mapowanie (np. punkty w złym polu) też daje errors: 0"
+      },
+      "correct": "D",
+      "explanation": "Walidacja ma cztery poziomy: transport, struktura, biznes, operacje."
+    },
+    {
+      "question": "Dlaczego MONITOR nie jest standardowym narzędziem walidacji importu?",
+      "code": "MONITOR",
+      "options": {
+        "A": "Bo wypisuje wszystkie polecenia wszystkich klientów - duży narzut przy imporcie i ujawnianie danych; walidację robi się poleceniami odczytu na namespace",
+        "B": "Bo nie działa podczas importu",
+        "C": "Bo pokazuje tylko błędy",
+        "D": "Jest standardowym narzędziem"
+      },
+      "correct": "A",
+      "explanation": "Do walidacji służą SCAN, TYPE, liczności, próbki i metryki."
+    },
+    {
+      "question": "Co zwróci aplikacja po tych poleceniach?",
+      "code": "HSET users:v1:user:{42} name \"Anna Nowak\"\nHSET users:v2:user:{42} name \"Anna Kowalska\"\nSET dataset:users:active-version v2\nSET dataset:users:active-version v1\n# aplikacja: HGET users:<GET active-version>:user:{42} name",
+      "options": {
+        "A": "\"Anna Kowalska\"",
+        "B": "(nil)",
+        "C": "\"Anna Nowak\" - wskaźnik został przełączony z powrotem na v1",
+        "D": "Obie wartości"
+      },
+      "correct": "C",
+      "explanation": "Dane v2 nadal istnieją, ale nie są czytane - można je analizować przed sprzątaniem."
     }
   ]
 }
