@@ -40,7 +40,7 @@ za mało ćwiczeń i pytań — zwiększyć ich liczbę, w tym **dużo pytań qu
 - **Poprawki treści przy okazji w `_34`:** Dockerfile w teorii `_34/05`, `_34/10`, `_34/11` wołał
   `./mvnw` bez skopiowania `mvnw`/`.mvn` (build kończył się exit 127) - dodano `COPY mvnw pom.xml ./`
   + `COPY .mvn .mvn`.
-- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11), `_35` (8/8), `_36` (6/6), `_37` (9/9), `_38` (16/16), `_39` (7/7), `_40` (5/5) — KOMPLETNE (commity per rozdział). W `_36` dodano brakujący `spec.selector` w Deploymentach (01, 02, 04 - API odrzucało manifesty) i uaktualniono `kubectl logs` bez `-c` (nowszy kubectl bierze kontener domyślny); weryfikacja na k3s w Dockerze (tymczasowy kontener, usunięty po weryfikacji). W `_35/02` poprawiono CODE_WRONG: Compose ODRZUCA nieznany klucz serwisu - cicha pomyłka to zmienna w environment złego serwisu.
+- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11), `_35` (8/8), `_36` (6/6), `_37` (9/9), `_38` (16/16), `_39` (7/7), `_40` (5/5), `_41` (3/3) — KOMPLETNE (commity per rozdział). W `_36` dodano brakujący `spec.selector` w Deploymentach (01, 02, 04 - API odrzucało manifesty) i uaktualniono `kubectl logs` bez `-c` (nowszy kubectl bierze kontener domyślny); weryfikacja na k3s w Dockerze (tymczasowy kontener, usunięty po weryfikacji). W `_35/02` poprawiono CODE_WRONG: Compose ODRZUCA nieznany klucz serwisu - cicha pomyłka to zmienna w environment złego serwisu.
   W `_37/02` i `_37/04` komentarze `#` wyjęto z dokumentów JSON polityk (JSON nie dopuszcza komentarzy);
   fakty AWS bez konta - tylko udokumentowane zachowania.
   W `_38/05` poprawiono komentarz w linii właściwości `.properties` (`#` w środku linii staje się częścią wartości); odpowiedzi Redis weryfikowane na redis:7 (7.4) w kontenerze.
@@ -53,7 +53,13 @@ za mało ćwiczeń i pytań — zwiększyć ich liczbę, w tym **dużo pytań qu
   `closeTo(19.99, 0.001)` (dawny CODE_RIGHT) zawodzi tak samo jak `equalTo(19.99)`; teraz `numberReturnType(DOUBLE)`
   + `closeTo` lub `BIG_DECIMAL`. Rekord DTO w `extract().as(...)` dostał `@JsonIgnoreProperties(ignoreUnknown = true)`
   (własny ObjectMapper REST Assured odrzuca nieznane pola). Weryfikacja: REST Assured 5.5.1 z BOM Spring Boot 3.4.4.
-  **Następne: `_41_nosql_overview`**; jeden commit na rozdział + rebalance + test `LessonContentFilesTest`.
+  W `_41` poprawiono: `01` CODE_RIGHT (MySQL-owe `LAST_INSERT_ID()` w bloku 'PostgreSQL' -> CTE z `RETURNING`), PITFALL
+  (MongoDB MA transakcje wielodokumentowe od 4.0, ale tylko w replica secie), `03` klucz CQL `(klient_id, data_zamowienia)`
+  nadpisywał zamówienia z tą samą chwilą (INSERT = upsert) -> dodane `zamowienie_id`. Weryfikacja: PostgreSQL (tabele TEMP),
+  mongo:7 (7.0) i cassandra:5 w kontenerach (usunięte po teście).
+  **INICJATYWA ZAKOŃCZONA** - wszystkie lekcje `_32`-`_41` mają >= 10 ćwiczeń i >= 25 pytań (większość z polem `code`).
+  Do zrobienia przez użytkownika: zatwierdzić niezacommitowane zmiany platformy (pole `code` w quizie: QuizQuestion,
+  LessonContentFile, LessonContentLoader, QuizService, QuizView.jsx, App.css, test LessonContentFilesTest).
 
 ## Aktualny etap
 
