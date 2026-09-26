@@ -106,6 +106,41 @@
       "prompt": "Wyjaśnij (jako String), dlaczego wysłanie obrazu produkcyjnego zawierającego pełne JDK, Mavena i kod źródłowy (jak w przykładzie z bloku code_wrong) jest problemem nie tylko ze względu na rozmiar, ale również ze względu na bezpieczeństwo.",
       "hint": "Pomysl, co oznacza wieksza liczba zainstalowanych narzedzi/bibliotek w kontekscie potencjalnych podatnosci bezpieczenstwa - kazdy dodatkowy, niepotrzebny komponent to potencjalny dodatkowy wektor ataku.",
       "solution": "Każdy dodatkowy, zainstalowany komponent w obrazie (kompilator Javy, Maven wraz ze wszystkimi swoimi zależnościami, pełny kod źródłowy aplikacji) to POTENCJALNA dodatkowa 'powierzchnia ataku' - jeśli w JAKIMKOLWIEK z tych niepotrzebnych na produkcji narzędzi zostanie odkryta luka bezpieczeństwa, obraz produkcyjny (mimo że w ogóle jej nie UŻYWA w czasie działania) staje się POTENCJALNIE PODATNY, po prostu dlatego że ta podatna biblioteka/narzędzie FIZYCZNIE tam JEST. Dodatkowo, obecność PEŁNEGO kodu źródłowego w obrazie produkcyjnym oznacza, że KAŻDY z dostępem do tego obrazu (np. przez skompromitowany rejestr) może go po prostu ODCZYTAĆ - multi-stage build eliminuje OBA te ryzyka, bo finalny obraz zawiera WYŁĄCZNIE to, co faktycznie potrzebne do działania aplikacji."
+    },
+    {
+      "prompt": "Przepisz (jako String) poniższy jednoetapowy Dockerfile na wieloetapowy, z dobrym wykorzystaniem cache zależności, obrazem końcowym tylko z JRE i JAR-em, oraz wyjaśnij, co trafi do obrazu końcowego, a co zostanie w etapie budowania.\n```\nFROM eclipse-temurin:21-jdk\nWORKDIR /app\nCOPY . .\nRUN ./mvnw package -DskipTests\nENTRYPOINT [\"java\", \"-jar\", \"target/tasks-api.jar\"]\n```",
+      "hint": "Etap build: JDK, wrapper Mavena, pom.xml, zależności, źródła. Etap końcowy: JRE i COPY --from=build samego JAR-a.",
+      "solution": "FROM eclipse-temurin:21-jdk AS build\nWORKDIR /app\nCOPY mvnw pom.xml ./\nCOPY .mvn .mvn\nRUN ./mvnw -q dependency:go-offline\nCOPY src ./src\nRUN ./mvnw -q package -DskipTests\n\nFROM eclipse-temurin:21-jre\nWORKDIR /app\nCOPY --from=build /app/target/tasks-api.jar app.jar\nEXPOSE 8080\nENTRYPOINT [\"java\", \"-jar\", \"app.jar\"]\n\nDo obrazu końcowego trafia tylko to, co jest w ostatnim etapie: system bazowy z JRE i skopiowany JAR. JDK, Maven, repozytorium ~/.m2, kod źródłowy i pliki pośrednie (target/classes) zostają w etapie build, który nie jest publikowany."
+    },
+    {
+      "prompt": "Dodaj (jako String) do Dockerfile wieloetapowego osobny etap `test`, który uruchamia testy (`./mvnw verify`), i pokaż polecenia: zbudowanie tylko etapu testów w CI, zbudowanie obrazu produkcyjnego bez uruchamiania testów oraz wyjaśnij, dlaczego etap test nie wydłuża zwykłego `docker build`.",
+      "hint": "--target wybiera etap docelowy. BuildKit buduje tylko etapy potrzebne do etapu docelowego.",
+      "solution": "FROM eclipse-temurin:21-jdk AS build\nWORKDIR /app\nCOPY mvnw pom.xml ./\nCOPY .mvn .mvn\nRUN ./mvnw -q dependency:go-offline\nCOPY src ./src\n\nFROM build AS test\nRUN ./mvnw -q verify\n\nFROM build AS package\nRUN ./mvnw -q package -DskipTests\n\nFROM eclipse-temurin:21-jre\nWORKDIR /app\nCOPY --from=package /app/target/tasks-api.jar app.jar\nENTRYPOINT [\"java\", \"-jar\", \"app.jar\"]\n\ndocker build --target test .          # CI: tylko testy (błąd testu = błąd builda)\ndocker build -t tasks-api:1.0 .       # obraz produkcyjny\n\nBuildKit analizuje zależności etapów i buduje tylko te potrzebne do celu. Etap końcowy zależy od package, a nie od test, więc zwykły build pomija testy."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String) różnicę rozmiaru i zawartości trzech obrazów tej samej aplikacji: (a) jednoetapowy na `eclipse-temurin:21-jdk` z kodem i Mavenem, (b) wieloetapowy z `eclipse-temurin:21-jre`, (c) wieloetapowy z obrazem distroless Java. Podaj orientacyjne rozmiary i konsekwencje dla bezpieczeństwa oraz debugowania.",
+      "hint": "Mniej rzeczy w obrazie = mniejszy rozmiar i mniej podatności do łatania, ale też mniej narzędzi do diagnozy.",
+      "solution": "(a) ~800-900 MB: pełne JDK (kompilator, narzędzia), Maven z pobranymi zależnościami, kod źródłowy. Największa powierzchnia ataku, ujawnia kod, skanery znajdą najwięcej podatności.\n(b) ~250-300 MB: system bazowy (np. Ubuntu), JRE, JAR. Standardowy kompromis - jest powłoka do diagnostyki (docker exec sh).\n(c) ~200 MB lub mniej: tylko JRE i minimum bibliotek, bez powłoki i menedżera pakietów. Najmniejsza powierzchnia ataku, ale docker exec sh nie zadziała - diagnozuje się przez logi, metryki albo tymczasowy kontener debugowy (np. obrazy :debug z busybox)."
+    },
+    {
+      "prompt": "W Dockerfile wieloetapowym etap końcowy ma `COPY --from=build /app/target/*.jar app.jar`, a build kończy się błędem, bo w `target` są dwa pliki: `tasks-api.jar` i `tasks-api-plain.jar` (albo `original-...jar`). Wyjaśnij (jako String) przyczynę i podaj dwa rozwiązania.",
+      "hint": "Wzorzec pasujący do wielu plików z docelową nazwą pliku (a nie katalogu) jest błędem. Nazwę artefaktu można ustalić w pom.xml.",
+      "solution": "Build Mavena/Gradle potrafi tworzyć więcej niż jeden JAR (np. Gradle: tasks-api-plain.jar bez zależności; wtyczka shade: original-*.jar). COPY z wzorcem pasującym do wielu plików i celem będącym nazwą pliku zgłasza błąd (przy wielu źródłach cel musi być katalogiem zakończonym '/'). Rozwiązania: (1) ustalić stałą nazwę artefaktu w pom.xml (<build><finalName>tasks-api</finalName></build>) i kopiować dokładną ścieżkę COPY --from=build /app/target/tasks-api.jar app.jar; (2) w Gradle wyłączyć zbędny JAR (jar { enabled = false }) albo w etapie build przenieść właściwy plik pod stałą nazwę (RUN cp target/tasks-api-*[!n].jar /app/app.jar - mniej czytelne)."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), jak `COPY --from=<obraz zewnętrzny>` pozwala pobrać pojedynczy plik z innego obrazu bez etapu budowania, i podaj przykład z konfiguracją Nginx. Na co trzeba uważać, kopiując w ten sposób plik binarny?",
+      "hint": "--from może wskazywać nazwę obrazu, nie tylko etapu. Pliki binarne mogą zależeć od bibliotek systemowych (glibc vs musl).",
+      "solution": "FROM nginx:1.27-alpine\nCOPY --from=nginx:1.27 /etc/nginx/mime.types /etc/nginx/mime.types\n\n--from przyjmuje dowolny obraz - Docker pobierze go i skopiuje wskazany plik, bez dodawania reszty obrazu. Przy plikach binarnych trzeba uważać na zależności: program skompilowany dynamicznie pod glibc (np. z obrazu na Debianie) nie uruchomi się w Alpine (musl) - kończy się błędem typu 'no such file or directory' mimo istnienia pliku. Bezpieczne są pliki danych/konfiguracji albo binaria statycznie linkowane."
+    },
+    {
+      "prompt": "Opisz (jako String), jak Spring Boot `layertools` (warstwowy JAR) w połączeniu z buildem wieloetapowym zmniejsza ilość danych wysyłanych do rejestru przy każdej zmianie kodu. Pokaż etap rozpakowujący i etap końcowy.",
+      "hint": "Warstwowy JAR dzieli zawartość na dependencies, spring-boot-loader, snapshot-dependencies, application. Każda warstwa w osobnym COPY = osobna warstwa obrazu.",
+      "solution": "FROM eclipse-temurin:21-jre AS extract\nWORKDIR /app\nCOPY target/tasks-api.jar app.jar\nRUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted\n\nFROM eclipse-temurin:21-jre\nWORKDIR /app\nCOPY --from=extract /app/extracted/dependencies/ ./\nCOPY --from=extract /app/extracted/spring-boot-loader/ ./\nCOPY --from=extract /app/extracted/snapshot-dependencies/ ./\nCOPY --from=extract /app/extracted/application/ ./\nENTRYPOINT [\"java\", \"org.springframework.boot.loader.launch.JarLauncher\"]\n\nZależności (dziesiątki MB) zmieniają się rzadko i trafiają do osobnej warstwy - przy typowej zmianie kodu przebudowuje się i wysyła tylko mała warstwa application. (W starszych wersjach Spring Boot: -Djarmode=layertools -jar app.jar extract.)"
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), dlaczego build wieloetapowy czyni `.dockerignore` z wykluczonym `target/` wręcz zalecanym, a nie problemem (porównaj z lekcją 3), i jakie są konsekwencje budowania JAR-a w Dockerze dla czasu budowania na maszynie dewelopera.",
+      "hint": "W multi-stage JAR powstaje wewnątrz etapu build, więc lokalny target jest zbędny w kontekście. Cache warstw i --mount=type=cache łagodzą koszt.",
+      "solution": "W buildzie wieloetapowym JAR powstaje wewnątrz etapu build, więc lokalny katalog target nie jest potrzebny - wykluczenie go w .dockerignore zmniejsza kontekst i gwarantuje, że obraz nie zawiera przypadkiem starego, lokalnie zbudowanego JAR-a (wynik jest powtarzalny: ten sam kod -> ten sam JAR, niezależnie od stanu maszyny). Koszt: kompilacja odbywa się w Dockerze, więc pierwszy build jest wolniejszy; kolejne korzystają z cache warstw (zależności), a z RUN --mount=type=cache,target=/root/.m2 Maven nie pobiera ponownie artefaktów nawet po zmianie pom.xml."
     }
   ],
   "quiz": [
@@ -163,6 +198,246 @@
       },
       "correct": "B",
       "explanation": "--target pozwala zatrzymać budowanie na wskazanym etapie, co jest przydatne np. do zbadania stanu samego etapu budowania (sprawdzenia zależności, uruchomienia testów) bez konieczności dochodzenia do finalnego etapu."
+    },
+    {
+      "question": "Który etap staje się obrazem otagowanym jako tasks-api:1.0?",
+      "code": "FROM eclipse-temurin:21-jdk AS build\n...\nFROM eclipse-temurin:21-jre\nCOPY --from=build /app/target/tasks-api.jar app.jar\n\n$ docker build -t tasks-api:1.0 .",
+      "options": {
+        "A": "Etap build",
+        "B": "Pierwszy zdefiniowany etap",
+        "C": "Oba są łączone w jeden obraz",
+        "D": "Ostatni etap (z JRE) - chyba że --target wskaże inny"
+      },
+      "correct": "D",
+      "explanation": "Obraz końcowy to ostatni FROM w pliku. Wcześniejsze etapy istnieją tylko po to, żeby coś z nich skopiować - ich zawartość (JDK, Maven, źródła) nie trafia do obrazu."
+    },
+    {
+      "question": "Co wypisze kontener z obrazu zbudowanego z --target build?",
+      "code": "FROM alpine:3.20 AS build\nRUN echo zbudowane > /wynik.txt\nFROM alpine:3.20\nCOPY --from=build /wynik.txt /wynik.txt\nCMD [\"cat\",\"/wynik.txt\"]\n\n$ docker build -t t-build --target build .\n$ docker run --rm t-build cat /wynik.txt",
+      "options": {
+        "A": "Błąd - --target działa tylko z ostatnim etapem",
+        "B": "Błąd - etap build nie ma CMD",
+        "C": "Nic",
+        "D": "zbudowane - obraz to etap build z plikiem /wynik.txt"
+      },
+      "correct": "D",
+      "explanation": "--target zatrzymuje budowanie na wskazanym etapie i taguje właśnie jego. Przydaje się do obrazów deweloperskich/testowych z pełnym JDK albo do uruchomienia etapu z testami w CI."
+    },
+    {
+      "question": "Czy etap, z którego nic nie jest kopiowane, zostanie zbudowany (BuildKit)?",
+      "code": "FROM alpine:3.20 AS build\nRUN echo x > /wynik.txt\nFROM alpine:3.20 AS nieuzywany\nRUN sleep 20\nFROM alpine:3.20\nCOPY --from=build /wynik.txt /wynik.txt",
+      "options": {
+        "A": "Tak, zawsze budowane są wszystkie etapy",
+        "B": "Tak, ale równolegle",
+        "C": "Tylko przy --no-cache",
+        "D": "Nie - BuildKit buduje tylko etapy, od których zależy etap docelowy"
+      },
+      "correct": "D",
+      "explanation": "Dzięki temu w jednym Dockerfile mogą żyć etapy test, debug czy dev, uruchamiane tylko przez --target. Stary builder budował wszystkie etapy po kolei."
+    },
+    {
+      "question": "Co kopiuje ta instrukcja?",
+      "code": "COPY --from=build /app/target/tasks-api.jar app.jar",
+      "options": {
+        "A": "Plik /app/target/tasks-api.jar z systemu plików etapu 'build' do bieżącego etapu, pod nazwą app.jar",
+        "B": "Cały etap build",
+        "C": "Plik z kontekstu budowania (katalog projektu na hoście)",
+        "D": "Plik z rejestru"
+      },
+      "correct": "A",
+      "explanation": "--from przełącza źródło kopiowania z kontekstu na inny etap (albo obraz). Ścieżka źródłowa jest ścieżką wewnątrz tamtego etapu, a nie na dysku hosta."
+    },
+    {
+      "question": "Dlaczego ten obraz jest problematyczny poza samym rozmiarem?",
+      "code": "FROM eclipse-temurin:21-jdk\nWORKDIR /app\nCOPY . .\nRUN ./mvnw package -DskipTests\nENTRYPOINT [\"java\", \"-jar\", \"target/tasks-api.jar\"]",
+      "options": {
+        "A": "Bo JDK działa wolniej niż JRE",
+        "B": "Nie ma innych problemów",
+        "C": "Bo Java nie może działać z katalogu target",
+        "D": "Bo zawiera kod źródłowy, Mavena z repozytorium zależności i narzędzia JDK - większa powierzchnia ataku, więcej podatności w skanach i ujawnienie źródeł"
+      },
+      "correct": "D",
+      "explanation": "Każde dodatkowe narzędzie w obrazie produkcyjnym to potencjalne narzędzie dla atakującego i kolejne pozycje do łatania. Obraz produkcyjny powinien zawierać tylko to, co potrzebne do uruchomienia."
+    },
+    {
+      "question": "Ile instrukcji FROM ma typowy Dockerfile wieloetapowy dla aplikacji Java?",
+      "code": "FROM eclipse-temurin:21-jdk AS build\n...\nFROM eclipse-temurin:21-jre\n...",
+      "options": {
+        "A": "Dokładnie jedną",
+        "B": "Zawsze trzy",
+        "C": "Co najmniej dwie - każda rozpoczyna nowy etap z czystym systemem plików",
+        "D": "FROM nie jest potrzebny"
+      },
+      "correct": "C",
+      "explanation": "Każdy FROM zaczyna etap od nowa - nic z poprzedniego etapu nie przechodzi automatycznie. Jedyne połączenie między etapami to jawne COPY --from (albo FROM <nazwa-etapu>)."
+    },
+    {
+      "question": "Co oznacza zapis FROM build AS test?",
+      "code": "FROM eclipse-temurin:21-jdk AS build\nCOPY ...\nFROM build AS test\nRUN ./mvnw -q verify",
+      "options": {
+        "A": "Etap test startuje z pełnym stanem etapu build (dziedziczy jego system plików) i dodaje uruchomienie testów",
+        "B": "Błąd składni",
+        "C": "Kopiuje tylko pliki JAR",
+        "D": "Tworzy obraz o nazwie build"
+      },
+      "correct": "A",
+      "explanation": "Etap można oprzeć na wcześniejszym etapie. To wygodne do rozgałęzień: build -> test (CI) oraz build -> package -> obraz produkcyjny."
+    },
+    {
+      "question": "Dlaczego ta instrukcja kończy się błędem, gdy w target są tasks-api.jar i tasks-api-plain.jar?",
+      "code": "COPY --from=build /app/target/*.jar app.jar",
+      "options": {
+        "A": "Bo wzorzec pasuje do wielu plików, a celem jest nazwa pliku - przy wielu źródłach cel musi być katalogiem",
+        "B": "Bo --from nie obsługuje wzorców",
+        "C": "Bo pliki JAR są za duże",
+        "D": "Bo brakuje WORKDIR"
+      },
+      "correct": "A",
+      "explanation": "Najprościej ustalić stałą nazwę artefaktu (finalName w pom.xml) i kopiować dokładną ścieżkę. Gradle domyślnie tworzy też '-plain.jar', który można wyłączyć."
+    },
+    {
+      "question": "Jaki rozmiar orientacyjnie ma obraz końcowy przy przejściu z JDK+Maven+źródła na JRE+JAR?",
+      "code": "# przed: FROM eclipse-temurin:21-jdk + Maven + src + ~/.m2 + JAR  -> ~900 MB\n# po:    FROM eclipse-temurin:21-jre + JAR                          -> ?",
+      "options": {
+        "A": "~900 MB - bez zmian",
+        "B": "~2 GB",
+        "C": "~250-300 MB - znika JDK, Maven, źródła i cache zależności",
+        "D": "~5 MB"
+      },
+      "correct": "C",
+      "explanation": "Mniejszy obraz to szybszy pull przy wdrożeniu i skalowaniu, mniej miejsca w rejestrze i mniej podatności do łatania."
+    },
+    {
+      "question": "Skąd pochodzi plik w tej instrukcji?",
+      "code": "FROM nginx:1.27-alpine\nCOPY --from=nginx:1.27 /etc/nginx/mime.types /etc/nginx/mime.types",
+      "options": {
+        "A": "Z kontekstu budowania",
+        "B": "Z internetu",
+        "C": "Z zewnętrznego obrazu nginx:1.27 - --from może wskazywać dowolny obraz, nie tylko etap",
+        "D": "Błąd - --from musi wskazywać etap"
+      },
+      "correct": "C",
+      "explanation": "Docker pobiera obraz źródłowy i kopiuje tylko wskazany plik. Przy binariach trzeba uważać na zgodność bibliotek (glibc vs musl) - plik może 'istnieć', a mimo to się nie uruchomić."
+    },
+    {
+      "question": "Który zapis etapu budowania dobrze wykorzystuje cache zależności?",
+      "code": "# (1)\nCOPY . .\nRUN ./mvnw package\n# (2)\nCOPY mvnw pom.xml ./\nCOPY .mvn .mvn\nRUN ./mvnw dependency:go-offline\nCOPY src ./src\nRUN ./mvnw package",
+      "options": {
+        "A": "(1)",
+        "B": "Oba tak samo",
+        "C": "Żaden - w multi-stage cache nie działa",
+        "D": "(2) - zasady kolejności warstw z lekcji 5 obowiązują także w etapie build"
+      },
+      "correct": "D",
+      "explanation": "Multi-stage zmniejsza obraz końcowy, ale czas budowania nadal zależy od ułożenia etapu build. Oba mechanizmy się uzupełniają."
+    },
+    {
+      "question": "Czy kod źródłowy z etapu build znajdzie się w obrazie końcowym?",
+      "code": "FROM eclipse-temurin:21-jdk AS build\nCOPY src ./src\nRUN ./mvnw package\nFROM eclipse-temurin:21-jre\nCOPY --from=build /app/target/tasks-api.jar app.jar",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Tak, ale ukryty",
+        "C": "Nie - do obrazu końcowego trafia tylko to, co zawiera jego bazowy obraz i jawnie skopiowany JAR",
+        "D": "Tylko pliki .java z pakietu głównego"
+      },
+      "correct": "C",
+      "explanation": "Etapy pośrednie nie są publikowane. Źródła mogą natomiast 'wyciec', jeśli ktoś skopiuje za dużo (np. COPY --from=build /app /app)."
+    },
+    {
+      "question": "Jak uruchomić same testy w CI, korzystając z tego samego Dockerfile?",
+      "code": "FROM eclipse-temurin:21-jdk AS build\n...\nFROM build AS test\nRUN ./mvnw -q verify\nFROM eclipse-temurin:21-jre\n...",
+      "options": {
+        "A": "docker build --test .",
+        "B": "docker run test",
+        "C": "docker build --target test .",
+        "D": "Nie da się - testy uruchamia się tylko poza Dockerem"
+      },
+      "correct": "C",
+      "explanation": "Nieudane testy przerywają build (RUN zwraca błąd). Środowisko testów jest takie samo jak środowisko budowania obrazu - bez różnic 'u mnie działa'."
+    },
+    {
+      "question": "Dlaczego w obrazie distroless nie zadziała docker exec -it kontener sh?",
+      "code": "FROM gcr.io/distroless/java21-debian12\nCOPY --from=build /app/target/tasks-api.jar /app/app.jar\nCMD [\"/app/app.jar\"]",
+      "options": {
+        "A": "Bo obraz nie zawiera powłoki ani narzędzi systemowych - jest w nim tylko to, co potrzebne do uruchomienia Javy",
+        "B": "Bo distroless blokuje docker exec",
+        "C": "Bo trzeba użyć bash zamiast sh",
+        "D": "Zadziała normalnie"
+      },
+      "correct": "A",
+      "explanation": "Brak powłoki to mniejsza powierzchnia ataku, ale i trudniejsza diagnostyka. Obrazy distroless mają warianty :debug z busybox, a Docker oferuje docker debug / kontenery pomocnicze."
+    },
+    {
+      "question": "Co daje rozbicie warstwowego JAR-a Spring Boot na osobne instrukcje COPY?",
+      "code": "COPY --from=extract /app/extracted/dependencies/ ./\nCOPY --from=extract /app/extracted/spring-boot-loader/ ./\nCOPY --from=extract /app/extracted/snapshot-dependencies/ ./\nCOPY --from=extract /app/extracted/application/ ./",
+      "options": {
+        "A": "Przy zmianie samego kodu zmienia się tylko mała warstwa application - zależności (dziesiątki MB) zostają w cache i w rejestrze",
+        "B": "Szybszy start aplikacji",
+        "C": "Mniejszy rozmiar JAR-a",
+        "D": "Nic - to tylko inna organizacja plików"
+      },
+      "correct": "A",
+      "explanation": "Z jednym dużym JAR-em każda zmiana kodu tworzy nową warstwę z całym JAR-em (np. 60 MB). Z warstwami wysyła się kilkaset KB."
+    },
+    {
+      "question": "Który wariant Dockerfile zawiera przypadkową 'dziurę', przez którą kod źródłowy trafi do obrazu końcowego?",
+      "code": "# (1) COPY --from=build /app/target/tasks-api.jar app.jar\n# (2) COPY --from=build /app /app",
+      "options": {
+        "A": "(1)",
+        "B": "Oba",
+        "C": "(2) - kopiuje cały katalog roboczy etapu build: src, pom.xml, target i wszystko inne",
+        "D": "Żaden"
+      },
+      "correct": "C",
+      "explanation": "Multi-stage chroni tylko wtedy, gdy etap końcowy kopiuje wyłącznie potrzebne artefakty. Warto od czasu do czasu sprawdzić obraz (docker run --entrypoint sh ... ls -R /app)."
+    },
+    {
+      "question": "Czy JAR budowany w etapie build zależy od lokalnego katalogu target na komputerze dewelopera?",
+      "code": "# .dockerignore: target\nFROM eclipse-temurin:21-jdk AS build\nCOPY src ./src\nRUN ./mvnw package\nFROM eclipse-temurin:21-jre\nCOPY --from=build /app/target/tasks-api.jar app.jar",
+      "options": {
+        "A": "Tak - kopiowany jest lokalny JAR",
+        "B": "Tak, jeśli lokalny JAR jest nowszy",
+        "C": "Tylko na Windowsie",
+        "D": "Nie - JAR powstaje wewnątrz etapu build z przesłanych źródeł, więc wynik nie zależy od stanu maszyny (i target może być wykluczony w .dockerignore)"
+      },
+      "correct": "D",
+      "explanation": "To zwiększa powtarzalność: CI i dewelopera budują tak samo. Porównaj z lekcją 3, gdzie wykluczenie target psuło COPY target/app.jar - tam JAR budowano poza Dockerem."
+    },
+    {
+      "question": "Który obraz bazowy najlepiej pasuje do ETAPU BUDOWANIA aplikacji Maven, a który do etapu końcowego?",
+      "code": "# eclipse-temurin:21-jdk | eclipse-temurin:21-jre | maven:3.9-eclipse-temurin-21",
+      "options": {
+        "A": "Build: 21-jdk lub maven:3.9-eclipse-temurin-21 (kompilator, narzędzia); końcowy: 21-jre",
+        "B": "Build: 21-jre; końcowy: 21-jdk",
+        "C": "Oba etapy: maven:3.9-eclipse-temurin-21",
+        "D": "Build: alpine; końcowy: maven"
+      },
+      "correct": "A",
+      "explanation": "Do kompilacji potrzebny jest kompilator z JDK (i Maven - z obrazu maven albo przez wrapper mvnw). Do uruchomienia wystarcza JRE."
+    },
+    {
+      "question": "Jak nazwać etap, żeby móc się do niego odwołać w COPY --from?",
+      "code": "FROM eclipse-temurin:21-jdk ??? build",
+      "options": {
+        "A": "NAME",
+        "B": "AS",
+        "C": "STAGE",
+        "D": "LABEL"
+      },
+      "correct": "B",
+      "explanation": "Nazwa etapu (AS build) jest czytelniejsza niż numer (COPY --from=0) i odporna na dodanie nowych etapów wcześniej w pliku."
+    },
+    {
+      "question": "Który zestaw zawiera wyłącznie korzyści wynikające z buildu wieloetapowego?",
+      "code": "# (1) mniejszy obraz końcowy\n# (2) brak narzędzi buildowych i źródeł na produkcji\n# (3) szybszy start JVM\n# (4) powtarzalny build niezależny od narzędzi na hoście",
+      "options": {
+        "A": "(1), (3)",
+        "B": "(1), (2), (4)",
+        "C": "Wszystkie cztery",
+        "D": "Tylko (3)"
+      },
+      "correct": "B",
+      "explanation": "Czas startu JVM nie zależy od tego, jak zbudowano obraz. Multi-stage zmienia zawartość obrazu i sposób budowania, a nie działanie aplikacji."
     }
   ]
 }

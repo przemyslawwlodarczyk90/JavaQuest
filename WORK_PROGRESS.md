@@ -29,10 +29,21 @@ za mało ćwiczeń i pytań — zwiększyć ich liczbę, w tym **dużo pytań qu
   `openjdk-25.0.2`), zachowanie Gita - na testowych repozytoriach w scratchpadzie. Poprawki
   znalezione przy okazji: komentarz CODE_WRONG w `_32/10` (pętla nie utyka, gubi resztę listy),
   niuans `git branch -d` po squash-merge'u w `_33/04` i `_33/07` (z upstreamem `-d` przechodzi).
-- **Stan:** `_32` (15/15) — KOMPLETNE, commit `6daf71c`. `_33` (16/16) — KOMPLETNE (commit
-  "_33: wiecej cwiczen..."). **Następne: `_34_docker_fundamentals`**, potem `_35`...`_41`
-  (Docker Compose, Kubernetes, AWS, Redis, Prometheus/Grafana, REST Assured, NoSQL), jeden commit
-  na rozdział + test `LessonContentFilesTest`.
+- **Wyrównanie liter odpowiedzi:** `node scripts/content-migration/rebalance_answers.js <git-ref-sprzed-dopisania> <pliki...>`
+  zamienia miejscami poprawną opcję z opcją na najrzadszej literze - TYLKO w pytaniach dopisanych
+  (oryginały nietknięte; pytania z "Opcja X" w wyjaśnieniu pomijane). Uruchamiać po każdym rozdziale
+  (moje pierwsze paczki miały silny przechył na B).
+- **Weryfikacja E2E (2026-09-26):** Docker Desktop + `docker compose up -d` + backend: kolumna
+  `quiz_questions.code` wypełniona, `POST .../quiz/attempts` zwraca pole `code` (konto testowe
+  usunięte z bazy). Uwaga: Docker Desktop na tej maszynie ma StopTimeout=1s (w treści podawane jest
+  dokumentowane 10 s).
+- **Poprawki treści przy okazji w `_34`:** Dockerfile w teorii `_34/05`, `_34/10`, `_34/11` wołał
+  `./mvnw` bez skopiowania `mvnw`/`.mvn` (build kończył się exit 127) - dodano `COPY mvnw pom.xml ./`
+  + `COPY .mvn .mvn`.
+- **Stan:** `_32` (15/15), `_33` (16/16), `_34` (11/11) — KOMPLETNE (commity per rozdział).
+  **Następne: `_35_docker_compose`**, potem `_36`...`_41` (Kubernetes, AWS, Redis,
+  Prometheus/Grafana, REST Assured, NoSQL), jeden commit na rozdział + rebalance + test
+  `LessonContentFilesTest`.
 
 ## Aktualny etap
 

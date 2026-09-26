@@ -28,7 +28,7 @@
       "type": "CODE_BASIC",
       "heading": "Finalny Dockerfile — synteza lekcji 2, 3, 9, 10",
       "body": "Przypięta wersja, multi-stage, nieuprzywilejowany użytkownik — WSZYSTKO naraz, w JEDNYM Dockerfile'u.",
-      "code": "FROM eclipse-temurin:21.0.2_13-jdk AS build\nWORKDIR /app\nCOPY pom.xml .\nRUN ./mvnw dependency:go-offline\nCOPY src ./src\nRUN ./mvnw package -DskipTests\n\nFROM eclipse-temurin:21.0.2_13-jre\nRUN groupadd -r aplikacja && useradd -r -g aplikacja aplikacja\nWORKDIR /app\nCOPY --from=build --chown=aplikacja:aplikacja /app/target/javaquest-tasks-api.jar app.jar\nUSER aplikacja\nEXPOSE 8080\nENTRYPOINT [\"java\", \"-jar\", \"app.jar\"]"
+      "code": "FROM eclipse-temurin:21.0.2_13-jdk AS build\nWORKDIR /app\nCOPY mvnw pom.xml ./\nCOPY .mvn .mvn\nRUN ./mvnw dependency:go-offline\nCOPY src ./src\nRUN ./mvnw package -DskipTests\n\nFROM eclipse-temurin:21.0.2_13-jre\nRUN groupadd -r aplikacja && useradd -r -g aplikacja aplikacja\nWORKDIR /app\nCOPY --from=build --chown=aplikacja:aplikacja /app/target/javaquest-tasks-api.jar app.jar\nUSER aplikacja\nEXPOSE 8080\nENTRYPOINT [\"java\", \"-jar\", \"app.jar\"]"
     },
     {
       "type": "CODE_PRACTICAL",
@@ -105,6 +105,36 @@
       "prompt": "Wyjaśnij (jako String), dlaczego skonteneryzowanie całego systemu (aplikacja + baza danych) tak, jak w tym kapstonie, rozwiązuje dokładnie ten sam problem, który zmotywował cały rozdział w lekcji 1 ('u mnie działa') - odwołaj się konkretnie do tego, co różni się (albo nie różni) między maszynami różnych członków zespołu po zastosowaniu tego podejścia.",
       "hint": "Zastanow sie, co dokladnie kazdy czlonek zespolu musi miec zainstalowane na swoim hoscie, zeby uruchomic ten caly system - czy to Java, PostgreSQL w konkretnej wersji, czy tylko sam Docker.",
       "solution": "Po skonteneryzowaniu całego systemu, KAŻDY członek zespołu potrzebuje na swoim hoście WYŁĄCZNIE zainstalowanego Dockera - NIE musi mieć zainstalowanej konkretnej wersji Javy, PostgreSQL, ani żadnych innych zależności aplikacji BEZPOŚREDNIO na swoim systemie. CAŁA reszta (dokładna wersja JRE, dokładna wersja PostgreSQL, konfiguracja sieciowa, sposób budowania) jest ZAKODOWANA w Dockerfile'u i poleceniach `docker run`, IDENTYCZNA dla każdego, kto je uruchomi - eliminuje to DOKŁADNIE tę klasę problemów z lekcji 1 ('u mnie zainstalowana jest inna wersja X, więc u mnie działa inaczej'), bo NIKT już nie instaluje niczego RĘCZNIE, BEZPOŚREDNIO na swoim systemie - wszystko dzieje się WEWNĄTRZ identycznych, przenośnych kontenerów."
+    },
+    {
+      "prompt": "Napisz (jako String) skrypt powłoki `start.sh`, który od zera uruchamia system z kapstonu: tworzy sieć i wolumen tylko jeśli nie istnieją, uruchamia bazę z healthcheckiem, czeka (maksymalnie 60 s) na status `healthy`, buduje obraz aplikacji i uruchamia ją. Skrypt ma kończyć się błędem, jeśli baza nie wstanie w czasie.",
+      "hint": "docker network inspect / docker volume inspect zwracają błąd, gdy obiekt nie istnieje. Pętla z licznikiem i docker inspect -f '{{.State.Health.Status}}'.",
+      "solution": "#!/bin/sh\nset -e\ndocker network inspect javaquest-net >/dev/null 2>&1 || docker network create javaquest-net\ndocker volume inspect pgdata >/dev/null 2>&1 || docker volume create pgdata\ndocker run -d --name baza --network javaquest-net -v pgdata:/var/lib/postgresql/data \\\n  -e POSTGRES_PASSWORD=\"$DB_PASSWORD\" -e POSTGRES_DB=javaquest \\\n  --health-cmd='pg_isready -U postgres -d javaquest' --health-interval=2s postgres:16\ni=0\nuntil [ \"$(docker inspect -f '{{.State.Health.Status}}' baza)\" = healthy ]; do\n  i=$((i+1)); [ $i -gt 30 ] && { echo 'Baza nie wstala'; docker logs --tail 20 baza; exit 1; }\n  sleep 2\ndone\ndocker build -t javaquest-tasks-api:1.0 .\ndocker run -d --name tasks-api --network javaquest-net -p 8080:8080 \\\n  -e SPRING_DATASOURCE_URL=jdbc:postgresql://baza:5432/javaquest \\\n  -e SPRING_DATASOURCE_PASSWORD=\"$DB_PASSWORD\" javaquest-tasks-api:1.0\n\nHasło przychodzi ze zmiennej środowiskowej powłoki (np. z pliku .env załadowanego wcześniej), a nie z treści skryptu."
+    },
+    {
+      "prompt": "Opisz (jako String) procedurę aktualizacji aplikacji z `javaquest-tasks-api:1.0` do `1.1` w systemie z kapstonu, tak żeby baza i dane pozostały nietknięte, oraz jak wycofać wdrożenie, jeśli 1.1 nie przechodzi healthchecku.",
+      "hint": "Kontener aplikacji jest wymienny - dane żyją w wolumenie bazy. Stary obraz nadal jest lokalnie dostępny.",
+      "solution": "docker build -t javaquest-tasks-api:1.1 .\ndocker stop tasks-api && docker rm tasks-api\ndocker run -d --name tasks-api --network javaquest-net -p 8080:8080 \\\n  -e SPRING_DATASOURCE_URL=jdbc:postgresql://baza:5432/javaquest \\\n  -e SPRING_DATASOURCE_PASSWORD=\"$DB_PASSWORD\" javaquest-tasks-api:1.1\ncurl -f localhost:8080/actuator/health\n\nWycofanie: stop/rm kontenera 1.1 i ponowne uruchomienie z tagiem 1.0 (obraz nadal jest lokalnie; dlatego nie nadpisuje się tagów i nie używa latest). Baza nie jest dotykana. Uwaga: jeśli 1.1 wykonała migrację schematu bazy (Flyway), powrót do 1.0 może wymagać kompatybilnej wstecz migracji - zmiany schematu planuje się tak, żeby stara wersja nadal działała. Krótka przerwa przy wymianie kontenera to ograniczenie ręcznego podejścia - orkiestratory robią rolling update."
+    },
+    {
+      "prompt": "Nowa osoba w zespole uruchomiła kapston i `tasks-api` kończy się po kilku sekundach. `docker logs tasks-api` pokazuje `org.postgresql.util.PSQLException: Connection to localhost:5432 refused`. Przeprowadź (jako String) diagnozę krok po kroku i wskaż, które polecenie z kapstonu zostało najpewniej zmienione.",
+      "hint": "Aplikacja łączy się z localhost - czyli nie dostała zmiennej SPRING_DATASOURCE_URL albo ktoś ją zmienił.",
+      "solution": "1) Komunikat mówi o localhost:5432 - aplikacja w kontenerze szuka bazy we własnym kontenerze. 2) `docker inspect --format '{{json .Config.Env}}' tasks-api` - czy jest SPRING_DATASOURCE_URL z hostem 'baza'? Najpewniej brakuje tej zmiennej (Spring użył domyślnej wartości z application.properties z localhost) albo ktoś wpisał localhost. 3) `docker inspect --format '{{json .NetworkSettings.Networks}}' tasks-api` - czy kontener jest w javaquest-net. 4) `docker ps` / `docker inspect -f '{{.State.Health.Status}}' baza` - czy baza działa i jest healthy. Poprawka: odtworzyć tasks-api z -e SPRING_DATASOURCE_URL=jdbc:postgresql://baza:5432/javaquest i --network javaquest-net."
+    },
+    {
+      "prompt": "Porównaj (jako String) ręczne polecenia `docker` z kapstonu z tym, co da Docker Compose w kolejnym rozdziale: wypisz 5 problemów ręcznego podejścia (np. kolejność startu, powtarzalność konfiguracji, sprzątanie) i przy każdym wskaż, który mechanizm Compose go rozwiązuje.",
+      "hint": "Compose to deklaratywny plik YAML opisujący usługi, sieci i wolumeny + jedno polecenie up/down.",
+      "solution": "1) Długie polecenia z wieloma flagami, łatwe do pomylenia -> deklaratywny plik compose.yaml w repozytorium.\n2) Ręczne czekanie na gotowość bazy -> depends_on z condition: service_healthy.\n3) Ręczne tworzenie sieci i wolumenów -> Compose tworzy je automatycznie (sieć projektu, nazwane wolumeny).\n4) Sprzątanie wielu obiektów -> docker compose down (opcjonalnie -v dla wolumenów).\n5) Konfiguracja w historii powłoki -> env_file / .env i zmienne w pliku, wersjonowane (bez sekretów).\n(+ budowanie obrazu: build: . w definicji usługi; skalowanie: --scale.)"
+    },
+    {
+      "prompt": "Przygotuj (jako String) checklistę 'gotowe do przekazania zespołowi' dla skonteneryzowanej aplikacji z kapstonu - co najmniej 8 punktów, z konkretnym poleceniem lub plikiem przy każdym, obejmujących obraz, bezpieczeństwo, dane, konfigurację i dokumentację.",
+      "hint": "Zbierz praktyki z lekcji 2-10: tagi, .dockerignore, multi-stage, USER, HEALTHCHECK, wolumen, sieć, sekrety, skan.",
+      "solution": "1) Przypięte wersje obrazów (FROM eclipse-temurin:21.0.x-jre, postgres:16.x).\n2) .dockerignore (bez .git, .env, target).\n3) Multi-stage build - obraz końcowy tylko z JRE i JAR-em (docker images - rozmiar ~250 MB).\n4) USER nie-root + COPY --chown.\n5) ENTRYPOINT w formie exec (graceful shutdown).\n6) HEALTHCHECK aplikacji i bazy (docker ps pokazuje healthy).\n7) Wolumen nazwany dla danych bazy (docker volume ls).\n8) Własna sieć; baza bez -p (dostępna tylko dla aplikacji).\n9) Sekrety poza obrazem (.env.example w repo, prawdziwe wartości poza nim).\n10) Skan podatności (trivy image) bez CRITICAL.\n11) README: jak zbudować, uruchomić, zaktualizować i posprzątać."
+    },
+    {
+      "prompt": "Wyjaśnij (jako String), dlaczego `docker rm -f baza` jest bezpieczne w systemie z kapstonu, a `docker volume rm pgdata` nie, i jak przed ryzykowną operacją (np. zmianą wersji głównej PostgreSQL) zabezpieczyć dane logiczną kopią. Podaj polecenia.",
+      "hint": "Dane są w wolumenie, nie w kontenerze. pg_dump przez docker exec, przekierowanie na host.",
+      "solution": "Kontener bazy to tylko proces z konfiguracją - dane są w wolumenie pgdata, więc usunięcie kontenera ich nie rusza (nowy kontener z -v pgdata:... je zobaczy). Usunięcie wolumenu kasuje dane nieodwracalnie.\nKopia logiczna przed ryzykowną operacją:\ndocker exec baza pg_dump -U postgres -d javaquest -Fc > javaquest-$(date +%F).dump\nPrzywrócenie (np. do nowej bazy na postgres:17):\ndocker exec -i baza-nowa pg_restore -U postgres -d javaquest < javaquest-2026-09-26.dump\nFormat -Fc (custom) jest skompresowany i pozwala na wybiórcze przywracanie; zwykły plik SQL (bez -Fc) przywraca się przez psql."
     }
   ],
   "quiz": [
@@ -162,6 +192,246 @@
       },
       "correct": "B",
       "explanation": "Docker Compose (i podobne narzędzia) automatyzują dokładnie tę sekwencję ręcznych poleceń nauczoną w tym rozdziale, ale jako osobny temat o niższym priorytecie w analizie rynku pracy, świadomie pozostawiony poza zakresem."
+    },
+    {
+      "question": "W jakiej kolejności należy uruchamiać elementy systemu z kapstonu?",
+      "code": "# sieć javaquest-net, wolumen pgdata, kontener baza, obraz aplikacji, kontener tasks-api",
+      "options": {
+        "A": "Sieć i wolumen, potem baza (i czekanie na healthy), potem build obrazu i tasks-api",
+        "B": "tasks-api, baza, sieć, wolumen",
+        "C": "Wszystko jednocześnie",
+        "D": "Wolumen po uruchomieniu bazy"
+      },
+      "correct": "A",
+      "explanation": "Kontener można podłączyć tylko do istniejącej sieci, a wolumen musi być podany przy tworzeniu kontenera bazy. Aplikacja startuje ostatnia - gdy baza faktycznie przyjmuje połączenia."
+    },
+    {
+      "question": "Co oznacza ta pętla w skrypcie startowym?",
+      "code": "until [ \"$(docker inspect -f '{{.State.Health.Status}}' baza)\" = \"healthy\" ]; do\n  sleep 1\ndone",
+      "options": {
+        "A": "Czeka, aż kontener baza się zatrzyma",
+        "B": "Sprawdza, czy obraz istnieje",
+        "C": "Restartuje bazę co sekundę",
+        "D": "Czeka, aż healthcheck bazy (np. pg_isready) zacznie zwracać sukces - dopiero wtedy uruchamiana jest aplikacja"
+      },
+      "correct": "D",
+      "explanation": "Status Up oznacza tylko działający proces. PostgreSQL potrzebuje kilku sekund na inicjalizację (przy pierwszym starcie dłużej). Warto dodać limit prób, żeby skrypt nie czekał w nieskończoność."
+    },
+    {
+      "question": "Co sprawdza to polecenie healthchecku bazy?",
+      "code": "--health-cmd=\"pg_isready -U postgres -d javaquest\"",
+      "options": {
+        "A": "Czy serwer PostgreSQL przyjmuje połączenia (narzędzie z obrazu postgres zwraca 0, gdy baza jest gotowa)",
+        "B": "Czy baza ma kopię zapasową",
+        "C": "Czy tabela javaquest ma dane",
+        "D": "Czy port 5432 jest opublikowany na hoście"
+      },
+      "correct": "A",
+      "explanation": "pg_isready jest w obrazie postgres, więc nie trzeba niczego doinstalowywać. Healthcheck powinien sprawdzać możliwie tanio to, czego potrzebują klienci usługi."
+    },
+    {
+      "question": "Aplikacja kończy się błędem 'Connection to localhost:5432 refused'. Co jest najbardziej prawdopodobną przyczyną?",
+      "code": "$ docker logs tasks-api\norg.postgresql.util.PSQLException: Connection to localhost:5432 refused.",
+      "options": {
+        "A": "Baza nie ma wolumenu",
+        "B": "Brak -p 5432:5432 przy bazie",
+        "C": "Zła wersja Javy",
+        "D": "Kontener aplikacji nie dostał SPRING_DATASOURCE_URL z hostem 'baza' (użył domyślnego localhost) - localhost w kontenerze to sam kontener aplikacji"
+      },
+      "correct": "D",
+      "explanation": "Diagnoza: docker inspect --format '{{json .Config.Env}}' tasks-api. Publikacja portu bazy na hoście nic by tu nie zmieniła - kontenery rozmawiają przez sieć Dockera."
+    },
+    {
+      "question": "Co stanie się z danymi po tych poleceniach?",
+      "code": "$ docker rm -f baza\n$ docker run -d --name baza --network javaquest-net -v pgdata:/var/lib/postgresql/data \\\n    -e POSTGRES_PASSWORD=haslo postgres:16",
+      "options": {
+        "A": "Zostaną - dane są w wolumenie pgdata, który podłączono do nowego kontenera",
+        "B": "Znikną - baza jest nowa",
+        "C": "Zostaną tylko tabele systemowe",
+        "D": "Nowy kontener nie wystartuje"
+      },
+      "correct": "A",
+      "explanation": "Kontener bazy jest wymienny, dane nie. Uwaga: przy istniejących danych zmienne POSTGRES_PASSWORD/POSTGRES_DB nie są ponownie stosowane - obraz inicjalizuje bazę tylko przy pustym katalogu danych."
+    },
+    {
+      "question": "Dlaczego baza w kapstonie nie ma opcji -p?",
+      "code": "$ docker run -d --name baza --network javaquest-net ... postgres:16      # bez -p\n$ docker run -d --name tasks-api --network javaquest-net -p 8080:8080 ...",
+      "options": {
+        "A": "To błąd - aplikacja się nie połączy",
+        "B": "Bo postgres nie obsługuje -p",
+        "C": "Bo aplikacja łączy się przez sieć Dockera, a baza nie musi (i ze względów bezpieczeństwa nie powinna) być dostępna z hosta ani sieci lokalnej",
+        "D": "Bo port 5432 jest zawsze zajęty"
+      },
+      "correct": "C",
+      "explanation": "Publikuje się tylko to, co ma być dostępne z zewnątrz. Do jednorazowego podejrzenia bazy można użyć docker exec -it baza psql zamiast publikować port."
+    },
+    {
+      "question": "Jak wycofać nieudane wdrożenie wersji 1.1 aplikacji?",
+      "code": "$ docker run -d --name tasks-api ... javaquest-tasks-api:1.1\n$ curl -f localhost:8080/actuator/health   # błąd",
+      "options": {
+        "A": "Przywrócić bazę z kopii",
+        "B": "Nie da się bez przebudowania obrazu",
+        "C": "docker rollback tasks-api",
+        "D": "docker rm -f tasks-api, a potem docker run ... javaquest-tasks-api:1.0 (obraz z poprzednią wersją nadal jest dostępny pod swoim tagiem)"
+      },
+      "correct": "D",
+      "explanation": "Niezmienne, wersjonowane tagi (zamiast nadpisywania latest) sprawiają, że wycofanie to po prostu uruchomienie poprzedniego obrazu. Ostrożnie z migracjami schematu bazy wykonanymi przez nową wersję."
+    },
+    {
+      "question": "Jak wykonać logiczną kopię bazy z kontenera do pliku na hoście?",
+      "code": "$ docker exec baza pg_dump -U postgres -d javaquest -Fc ??? javaquest.dump",
+      "options": {
+        "A": ">",
+        "B": "-o",
+        "C": "--to-host",
+        "D": "| docker cp"
+      },
+      "correct": "A",
+      "explanation": "Wyjście pg_dump (stdout procesu w kontenerze) trafia przez docker exec do terminala hosta, a przekierowanie '>' zapisuje je do pliku. Przywracanie: docker exec -i baza pg_restore ... < plik."
+    },
+    {
+      "question": "Które polecenie usunie wszystkie elementy systemu z kapstonu łącznie z danymi?",
+      "code": "# kontenery: tasks-api, baza | sieć: javaquest-net | wolumen: pgdata",
+      "options": {
+        "A": "docker rm -f tasks-api baza",
+        "B": "docker system prune",
+        "C": "docker rm -f tasks-api baza && docker network rm javaquest-net && docker volume rm pgdata",
+        "D": "docker stop baza"
+      },
+      "correct": "C",
+      "explanation": "Każdy typ obiektu usuwa się osobno, a wolumen - jawnie (to zabezpieczenie danych). Docker Compose skraca to do jednego polecenia: docker compose down -v."
+    },
+    {
+      "question": "Dlaczego w kapstonie hasło bazy powinno pochodzić ze zmiennej środowiskowej powłoki, a nie być wpisane w skrypt start.sh?",
+      "code": "# (1) -e POSTGRES_PASSWORD=haslo123           w start.sh\n# (2) -e POSTGRES_PASSWORD=\"$DB_PASSWORD\"      w start.sh",
+      "options": {
+        "A": "Bo (1) nie zadziała",
+        "B": "Bo Docker wymaga cudzysłowów",
+        "C": "Bo skrypt trafia do repozytorium - (1) zapisałoby hasło w historii Gita; w (2) wartość przychodzi z lokalnego środowiska (np. z .env poza repozytorium)",
+        "D": "Nie ma różnicy"
+      },
+      "correct": "C",
+      "explanation": "Zasada z rozdziału o Gicie (lekcja 12) obowiązuje także dla skryptów wdrożeniowych: sekrety poza repozytorium, a w repozytorium tylko ich nazwy."
+    },
+    {
+      "question": "Jak ustalić, czy obraz aplikacji z kapstonu spełnia zasadę 'nie-root'?",
+      "code": "$ docker run --rm --entrypoint whoami javaquest-tasks-api:1.0\n$ docker inspect --format '{{.Config.User}}' javaquest-tasks-api:1.0",
+      "options": {
+        "A": "Nie da się sprawdzić bez kodu źródłowego",
+        "B": "Trzeba sprawdzić logi bazy",
+        "C": "Wystarczy docker ps",
+        "D": "whoami powinno wypisać nazwę użytkownika aplikacji, a Config.User - wartość z instrukcji USER (pusta oznacza root)"
+      },
+      "correct": "D",
+      "explanation": "Takie sprawdzenie łatwo zautomatyzować w CI (test obrazu), żeby przypadkowe usunięcie USER z Dockerfile nie przeszło niezauważone."
+    },
+    {
+      "question": "Co się stanie przy pierwszym starcie postgres z nowym, pustym wolumenem i zmienną POSTGRES_DB=javaquest?",
+      "code": "$ docker run -d --name baza -v pgdata:/var/lib/postgresql/data \\\n    -e POSTGRES_PASSWORD=haslo -e POSTGRES_DB=javaquest postgres:16",
+      "options": {
+        "A": "Skrypt startowy obrazu zainicjalizuje katalog danych, ustawi hasło i utworzy bazę javaquest (tylko przy pustym katalogu danych)",
+        "B": "Nic - bazę trzeba utworzyć ręcznie",
+        "C": "Baza zostanie utworzona przy każdym starcie od nowa",
+        "D": "Błąd - brak pliku SQL"
+      },
+      "correct": "A",
+      "explanation": "Inicjalizacja odbywa się tylko raz. Zmiana POSTGRES_PASSWORD przy kolejnym uruchomieniu na istniejących danych NIE zmienia hasła - to częste źródło 'password authentication failed'."
+    },
+    {
+      "question": "Który element kapstonu rozwiązuje problem 'aplikacja startuje, zanim baza jest gotowa'?",
+      "code": "# sieć | wolumen | healthcheck bazy + czekanie na healthy | multi-stage build",
+      "options": {
+        "A": "Sieć",
+        "B": "Wolumen",
+        "C": "Healthcheck bazy i czekanie na status healthy przed uruchomieniem aplikacji",
+        "D": "Multi-stage build"
+      },
+      "correct": "C",
+      "explanation": "Sieć i wolumen zapewniają łączność i trwałość, ale nie kolejność. Dodatkowo warto, żeby sama aplikacja umiała ponawiać połączenie (np. pula HikariCP przy chwilowych przerwach)."
+    },
+    {
+      "question": "Czego potrzebuje nowy członek zespołu na swoim komputerze, żeby uruchomić cały system z kapstonu?",
+      "code": "# aplikacja Spring Boot (Java 21, Maven) + PostgreSQL 16",
+      "options": {
+        "A": "JDK 21, Mavena i PostgreSQL 16",
+        "B": "Tylko JDK",
+        "C": "Tylko Dockera (oraz kodu z repozytorium) - JDK i Maven są w etapie build, a PostgreSQL w obrazie",
+        "D": "Maszynę wirtualną z Linuksem"
+      },
+      "correct": "C",
+      "explanation": "To odpowiedź na problem 'u mnie działa' z lekcji 1: wersje narzędzi są zapisane w Dockerfile i tagach obrazów, a nie w instrukcji instalacji."
+    },
+    {
+      "question": "Jak podejrzeć ostatnie wyniki healthchecku bazy, gdy status to unhealthy?",
+      "code": "$ docker inspect --format '???' baza",
+      "options": {
+        "A": "{{.State.Status}}",
+        "B": "{{.Health.Log}}",
+        "C": "{{.Config.Healthcheck}}",
+        "D": "{{json .State.Health}}"
+      },
+      "correct": "D",
+      "explanation": "State.Health zawiera stan, licznik kolejnych porażek i dziennik ostatnich prób z kodem wyjścia i wyjściem polecenia - zwykle od razu widać przyczynę (np. złą nazwę bazy w pg_isready)."
+    },
+    {
+      "question": "Dlaczego obraz aplikacji w kapstonie ma tag 1.0 zamiast latest?",
+      "code": "$ docker build -t javaquest-tasks-api:1.0 .",
+      "options": {
+        "A": "Bo wersjonowany tag jednoznacznie wskazuje, co działa, i pozwala wrócić do poprzedniej wersji; latest jest nadpisywany przy każdym buildzie",
+        "B": "Bo latest jest zarezerwowany dla Docker Hub",
+        "C": "Bo Docker nie pozwala budować z latest",
+        "D": "Nie ma to znaczenia"
+      },
+      "correct": "A",
+      "explanation": "Te same argumenty co przy obrazach bazowych (lekcja 2) dotyczą Twoich własnych obrazów: powtarzalność i możliwość wycofania."
+    },
+    {
+      "question": "Który zestaw poleceń najlepiej diagnozuje, czemu tasks-api nie widzi bazy?",
+      "code": "# objaw: UnknownHostException: baza",
+      "options": {
+        "A": "docker images; docker system df",
+        "B": "docker volume ls",
+        "C": "docker network inspect javaquest-net; docker inspect --format '{{json .NetworkSettings.Networks}}' tasks-api baza",
+        "D": "docker history javaquest-tasks-api:1.0"
+      },
+      "correct": "C",
+      "explanation": "UnknownHostException oznacza problem z rozwiązywaniem nazwy - najczęściej kontenery są w różnych sieciach albo baza nie istnieje pod tą nazwą. Sprawdza się więc przynależność do sieci."
+    },
+    {
+      "question": "Co najlepiej opisuje rolę Docker Compose względem kapstonu?",
+      "code": "# kapston: ~6 ręcznych poleceń docker + skrypt czekający na healthy",
+      "options": {
+        "A": "Compose zastępuje Dockera",
+        "B": "Compose służy do budowania JAR-ów",
+        "C": "Compose działa tylko w chmurze",
+        "D": "Compose opisuje ten sam system deklaratywnie w pliku YAML (usługi, sieć, wolumeny, zależności ze zdrowiem) i uruchamia go jednym poleceniem"
+      },
+      "correct": "D",
+      "explanation": "Pod spodem Compose używa tych samych mechanizmów, które poznałeś w tym rozdziale - sieci, wolumenów, zmiennych i healthchecków. Rozumienie ich ułatwia debugowanie Compose."
+    },
+    {
+      "question": "Który problem pozostaje przy ręcznej wymianie kontenera aplikacji (stop -> rm -> run nowej wersji)?",
+      "code": "$ docker stop tasks-api && docker rm tasks-api\n$ docker run -d --name tasks-api ... javaquest-tasks-api:1.1",
+      "options": {
+        "A": "Utrata danych bazy",
+        "B": "Krótka niedostępność usługi między zatrzymaniem starej a startem nowej wersji - rolling update bez przerwy zapewniają dopiero orkiestratory",
+        "C": "Konieczność przebudowania bazy",
+        "D": "Żaden"
+      },
+      "correct": "B",
+      "explanation": "Przy jednym kontenerze nie da się uniknąć przerwy. Orkiestratory (Kubernetes, rozdział _36) uruchamiają nową wersję obok starej i przełączają ruch dopiero, gdy nowa jest gotowa."
+    },
+    {
+      "question": "Hasło do bazy zmieniono w skrypcie, ale aplikacja nadal dostaje 'password authentication failed', mimo że obie strony mają nową wartość. Co jest przyczyną?",
+      "code": "$ docker rm -f baza\n$ docker run -d --name baza -v pgdata:/var/lib/postgresql/data \\n    -e POSTGRES_PASSWORD=noweHaslo postgres:16      # wolumen z danymi już istnieje",
+      "options": {
+        "A": "Obraz postgres ignoruje zmienne środowiskowe",
+        "B": "Aplikacja cache'uje hasło",
+        "C": "POSTGRES_PASSWORD jest stosowane tylko przy inicjalizacji pustego katalogu danych - w istniejącej bazie hasło trzeba zmienić poleceniem ALTER USER",
+        "D": "Trzeba usunąć sieć"
+      },
+      "correct": "C",
+      "explanation": "Skrypty inicjalizacyjne obrazu działają tylko przy pierwszym starcie z pustym wolumenem. Zmiana hasła w istniejącej bazie: docker exec -it baza psql -U postgres -c \"ALTER USER postgres PASSWORD '...';\"."
     }
   ]
 }
