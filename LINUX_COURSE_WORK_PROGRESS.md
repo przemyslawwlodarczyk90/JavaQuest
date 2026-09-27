@@ -48,8 +48,17 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_02_wirtualizacja`** (10 lekcji, źródło LN01, LN16 §2-8), potem
-kolejne rozdziały po kolei. Dla każdej lekcji pełne
+**Krok 2 — teoria, rozdział `_lx_02_wirtualizacja`** (10 lekcji, źródło LN01, LN16 §2-8) — w
+toku: gotowa lekcja `01_WhatIsVirtualization` (14 bloków). Dalej od `02_HypervisorTypes`.
+ROZDZIAŁ TEORETYCZNY (decyzja użytkownika, szczegóły w `LINUX_COURSE_STAGE_PROMPT.md`, sekcja
+„Specyfika treści”): polecenia z opisem efektu `# -> ...`, bez wymogu prawdziwych wyników.
+Plan faktów do pozostałych lekcji: VMware po przejęciu przez Broadcom — Workstation Pro darmowy
+(od 11.2024 także komercyjnie), Player wycofany; VirtualBox 7 (GPLv3, Extension Pack na PUEL);
+Hyper-V pod WSL2; KVM/QEMU; VT-x/AMD-V (flagi vmx/svm, sprawdzone: kontener widzi `vmx` i
+`hypervisor`), emulacja arm64 w Dockerze sprawdzona (`--platform linux/arm64` -> `aarch64`);
+formaty VDI/VMDK/VHDX/QCOW2, OVA; OSBoxes (zmień domyślne hasło); `VBoxManage modifymedium
+--resize` + GParted/growpart; migawki to nie kopia zapasowa, klony (machine-id, klucze SSH, MAC);
+Guest Additions (DKMS, grupa vboxsf, /media/sf_*). Potem kolejne rozdziały po kolei. Dla każdej lekcji pełne
 bloki teorii na podstawie wskazanych sekcji notatek, przykłady poleceń z wynikiem sprawdzonym
 w kontenerze (`ubuntu:24.04`). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z
 użytkownikiem). Commit po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

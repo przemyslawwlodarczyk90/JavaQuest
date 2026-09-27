@@ -51,6 +51,14 @@ Nie przeskakuj kroków bez wyraźnej decyzji użytkownika.
 
 ## Specyfika treści kursu Linux
 
+- **Rozdział 2 (`_lx_02_wirtualizacja`) jest TEORETYCZNY** (decyzja użytkownika, 2026-09-27:
+  „drugi rozdział ma być teoretyczny, ja mam pisać zadania, odpowiedzi i quiz, sucha wiedza”).
+  Teoria = sama wiedza: bloki kodu pokazują polecenia/ustawienia z opisem efektu w komentarzu
+  (`# -> ...`, jak w notatkach), BEZ wymogu wyników z prawdziwego uruchomienia (na komputerze nie
+  ma VirtualBoxa/VMware). W kroku 3 ćwiczenia tego rozdziału to pytania o wiedzę z odpowiedzią
+  pisemną, nie polecenia do wykonania. Zasada „żywych przykładów” poniżej dotyczy pozostałych
+  rozdziałów.
+
 - **Żywe przykłady** — każdy blok `CODE_BASIC`/`CODE_PRACTICAL` pokazuje polecenie ORAZ jego
   wynik (jak w notatkach: `polecenie` + `-> wynik`), a przykładowe wyjście musi pochodzić z
   PRAWDZIWEGO uruchomienia — weryfikuj w kontenerze, np.
