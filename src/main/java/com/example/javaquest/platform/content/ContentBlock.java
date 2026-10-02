@@ -10,7 +10,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
@@ -37,12 +36,17 @@ public class ContentBlock {
     @Column(nullable = false)
     private String heading;
 
-    @Lob
-    @Column(nullable = false)
+    // columnDefinition = "TEXT", NIE @Lob: Hibernate + PostgreSQL mapuje "@Lob String" na
+    // kolumne typu "oid" (Large Object), a zapis przez Postgresowe LO API (fastpath) wisial
+    // W NIESKONCZONOSC na pierwszym INSERCIE (potwierdzone jstack + pg_stat_activity -
+    // "idle in transaction" i watek zablokowany w LargeObjectManager.open) - zwykly TEXT
+    // (bez limitu dlugosci w Postgresie, wiec bez utraty mozliwosci wobec @Lob) uzywa
+    // normalnego setString, bez LO API.
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String body;
 
     /** Tylko dla {@link ContentBlockType#CODE_EXAMPLE} - moze byc null dla innych typow. */
-    @Lob
+    @Column(columnDefinition = "TEXT")
     private String code;
 
     protected ContentBlock() {

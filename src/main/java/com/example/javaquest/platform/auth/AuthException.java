@@ -43,6 +43,16 @@ class AuthException extends RuntimeException {
                 "Link potwierdzający wygasł - zarejestruj się ponownie, a wyślemy nowy.", null);
     }
 
+    static AuthException passwordResetTokenNotFound() {
+        return new AuthException(HttpStatus.NOT_FOUND,
+                "Link do resetu hasła jest nieprawidłowy lub został już użyty.", null);
+    }
+
+    static AuthException passwordResetTokenExpired() {
+        return new AuthException(HttpStatus.BAD_REQUEST,
+                "Link do resetu hasła wygasł - poproś o nowy.", null);
+    }
+
     static AuthException mailDeliveryFailed(Throwable cause) {
         return new AuthException(HttpStatus.SERVICE_UNAVAILABLE,
                 "Nie udało się wysłać maila z potwierdzeniem. Spróbuj ponownie za chwilę.", cause);

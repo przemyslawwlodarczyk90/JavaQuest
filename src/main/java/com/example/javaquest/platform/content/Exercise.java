@@ -8,7 +8,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
@@ -33,16 +32,15 @@ public class Exercise {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
 
-    @Lob
-    @Column(nullable = false)
+    // columnDefinition = "TEXT", NIE @Lob - patrz komentarz w ContentBlock.body (Hibernate +
+    // Postgres @Lob String -> kolumna "oid", zapis wisi w nieskoczonosc na Large Object API).
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String prompt;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String hint;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String solution;
 
     protected Exercise() {

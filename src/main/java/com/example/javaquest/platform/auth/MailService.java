@@ -22,12 +22,14 @@ import org.springframework.web.util.HtmlUtils;
 @Service
 class MailService {
 
-    private static final String TEMPLATE_PATH = "mail/registration-email.html";
+    private static final String REGISTRATION_TEMPLATE_PATH = "mail/registration-email.html";
+    private static final String RESET_PASSWORD_TEMPLATE_PATH = "mail/reset-password-email.html";
 
     private final JavaMailSender mailSender;
     private final String fromAddress;
     private final String fromName;
-    private final String template;
+    private final String registrationTemplate;
+    private final String resetPasswordTemplate;
 
     MailService(JavaMailSender mailSender,
                 @Value("${spring.mail.username:}") String fromAddress,
@@ -35,17 +37,33 @@ class MailService {
         this.mailSender = mailSender;
         this.fromAddress = fromAddress;
         this.fromName = fromName;
+        this.registrationTemplate = readTemplate(REGISTRATION_TEMPLATE_PATH);
+        this.resetPasswordTemplate = readTemplate(RESET_PASSWORD_TEMPLATE_PATH);
+    }
+
+    private static String readTemplate(String path) {
         try {
-            this.template = new ClassPathResource(TEMPLATE_PATH).getContentAsString(StandardCharsets.UTF_8);
+            return new ClassPathResource(path).getContentAsString(StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new UncheckedIOException("Nie mozna wczytac szablonu maila " + TEMPLATE_PATH, e);
+            throw new UncheckedIOException("Nie mozna wczytac szablonu maila " + path, e);
         }
     }
 
     void sendWelcomeEmail(String to, String firstName, String confirmationLink) {
-        String html = template
+        String html = registrationTemplate
                 .replace("{{firstName}}", HtmlUtils.htmlEscape(firstName, "UTF-8"))
                 .replace("{{confirmationLink}}", HtmlUtils.htmlEscape(confirmationLink, "UTF-8"));
+        send(to, "Witaj w JavaQuest - potwierdź swoje konto", html);
+    }
+
+    void sendPasswordResetEmail(String to, String firstName, String resetLink) {
+        String html = resetPasswordTemplate
+                .replace("{{firstName}}", HtmlUtils.htmlEscape(firstName, "UTF-8"))
+                .replace("{{resetLink}}", HtmlUtils.htmlEscape(resetLink, "UTF-8"));
+        send(to, "JavaQuest - reset hasła", html);
+    }
+
+    private void send(String to, String subject, String html) {
         try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, "UTF-8");
@@ -53,7 +71,7 @@ class MailService {
                 helper.setFrom(fromAddress, fromName);
             }
             helper.setTo(to);
-            helper.setSubject("Witaj w JavaQuest - potwierdź swoje konto");
+            helper.setSubject(subject);
             helper.setText(html, true);
             mailSender.send(message);
         } catch (MessagingException | MailException | IOException e) {

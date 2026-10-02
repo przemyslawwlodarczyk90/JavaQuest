@@ -3,8 +3,8 @@
 // jak i w buildzie produkcyjnym (ten sam origin, bo frontend jest serwowany przez ten
 // sam Spring Boot, ktory wystawia API).
 //
-// Caly /api/** (poza /api/auth/register|login|confirm) wymaga tokenu JWT - dolaczamy go
-// automatycznie do kazdego zapytania.
+// Caly /api/** (poza /api/auth/register|login|confirm|forgot-password|reset-password) wymaga
+// tokenu JWT - dolaczamy go automatycznie do kazdego zapytania.
 
 const TOKEN_KEY = 'javaquest.token'
 
@@ -88,6 +88,14 @@ export function register(firstName, lastName, email, password) {
 
 export function confirmAccount(token) {
   return request(`/api/auth/confirm?token=${encodeURIComponent(token)}`)
+}
+
+export function forgotPassword(email) {
+  return request('/api/auth/forgot-password', { method: 'POST', body: { email } })
+}
+
+export function resetPassword(token, newPassword) {
+  return request('/api/auth/reset-password', { method: 'POST', body: { token, newPassword } })
 }
 
 export function getMe() {

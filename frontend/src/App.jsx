@@ -6,6 +6,8 @@ import CriticalTopicsPage from './pages/CriticalTopicsPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ConfirmPage from './pages/ConfirmPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useAuth } from './useAuth'
 import './App.css'
@@ -80,6 +82,8 @@ function App() {
           <Route path="/logowanie" element={<LoginPage />} />
           <Route path="/rejestracja" element={<RegisterPage />} />
           <Route path="/potwierdz" element={<ConfirmPage />} />
+          <Route path="/zapomniane-haslo" element={<ForgotPasswordPage />} />
+          <Route path="/reset-hasla" element={<ResetPasswordPage />} />
           <Route element={<RequireAuth />}>
             <Route path="/" element={<ChapterListPage track="JAVA" />} />
             <Route path="/js" element={<ChapterListPage track="JAVASCRIPT" />} />

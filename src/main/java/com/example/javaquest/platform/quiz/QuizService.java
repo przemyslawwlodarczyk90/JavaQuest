@@ -41,7 +41,8 @@ class QuizService {
     record AnswerView(String selected, boolean correct, String correctOption, String explanation) {
     }
 
-    record QuestionView(int position, String question, Map<String, String> options, AnswerView answer) {
+    record QuestionView(int position, String question, String code, Map<String, String> options,
+                        AnswerView answer) {
     }
 
     record AttemptView(Long id, List<QuestionView> questions) {
@@ -223,7 +224,7 @@ class QuizService {
             AnswerView answer = aq.isAnswered()
                     ? new AnswerView(aq.getSelectedOption(), aq.getCorrect(), q.getCorrectOption(), q.getExplanation())
                     : null;
-            return new QuestionView(aq.getPosition(), q.getQuestion(), options, answer);
+            return new QuestionView(aq.getPosition(), q.getQuestion(), q.getCode(), options, answer);
         }).toList();
         return new AttemptView(attempt.getId(), questions);
     }

@@ -49,6 +49,9 @@ function LoginPage() {
             required
           />
         </label>
+        <Link to="/zapomniane-haslo" className="auth-forgot-link">
+          Zapomniałeś hasła?
+        </Link>
         {error && (
           <p className="auth-error" role="alert">
             {error}

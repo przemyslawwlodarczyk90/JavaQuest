@@ -14,8 +14,8 @@ import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Cale REST API platformy ({@code /api/**}) wymaga zalogowania - wyjatek to trzy publiczne endpointy
- * {@code /api/auth/*} (rejestracja, potwierdzenie konta, logowanie). Reszta (statyczny frontend React,
+ * Cale REST API platformy ({@code /api/**}) wymaga zalogowania - wyjatek to publiczne endpointy
+ * {@code /api/auth/*} (rejestracja, potwierdzenie konta, logowanie, reset hasla). Reszta (statyczny frontend React,
  * fallback SPA) jest otwarta, bo to sam kod aplikacji - tresc lekcji leci wylacznie przez /api.
  * Bramke widoczna dla uzytkownika (ekran logowania) robi frontend, ale to TEN plik jest realnym
  * zabezpieczeniem danych.
@@ -32,7 +32,8 @@ class SecurityConfig {
         http.csrf(AbstractHttpConfigurer::disable) // brak sesji/ciasteczek - token w naglowku, CSRF nie dotyczy
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/confirm").permitAll()
+                        .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/confirm",
+                                "/api/auth/forgot-password", "/api/auth/reset-password").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll())
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))

@@ -19,13 +19,15 @@ import java.util.Map;
  *     { "prompt": "...", "hint": "...", "solution": "..." }
  *   ],
  *   "quiz": [
- *     { "question": "...", "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+ *     { "question": "...", "code": "...", "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
  *       "correct": "B", "explanation": "..." }
  *   ]
  * }
  * }</pre>
  */
-public record LessonContentFile(
+public record
+
+LessonContentFile(
         List<TheoryBlockJson> theory,
         List<ExerciseJson> exercises,
         List<QuizQuestionJson> quiz) {
@@ -37,7 +39,8 @@ public record LessonContentFile(
     public record ExerciseJson(String prompt, String hint, String solution) {
     }
 
-    public record QuizQuestionJson(String question, Map<String, String> options, String correct,
+    /** {@code code} jest opcjonalny (null) - fragment kodu wyswietlany pod trescia pytania. */
+    public record QuizQuestionJson(String question, String code, Map<String, String> options, String correct,
                                     String explanation) {
     }
 }

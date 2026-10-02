@@ -16,8 +16,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * API logowania: rejestracja (mail powitalny), potwierdzenie konta, logowanie (JWT) i "kim jestem".
- * Publiczne sa tylko trzy pierwsze - patrz {@link SecurityConfig}.
+ * API logowania: rejestracja (mail powitalny), potwierdzenie konta, logowanie (JWT), reset hasla
+ * i "kim jestem". Publiczne sa wszystkie poza "/me" - patrz {@link SecurityConfig}.
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -36,6 +36,17 @@ class AuthController {
     record LoginRequest(
             @NotBlank(message = "Podaj adres e-mail.") @Email(message = "Nieprawidłowy adres e-mail.") String email,
             @NotBlank(message = "Podaj hasło.") String password) {
+    }
+
+    record ForgotPasswordRequest(
+            @NotBlank(message = "Podaj adres e-mail.") @Email(message = "Nieprawidłowy adres e-mail.") String email) {
+    }
+
+    record ResetPasswordRequest(
+            @NotBlank(message = "Brak tokenu.") String token,
+            // 72 = limit BCrypt, jak w RegisterRequest.
+            @NotBlank(message = "Podaj nowe hasło.")
+            @Size(min = 8, max = 72, message = "Hasło musi mieć od 8 do 72 znaków.") String newPassword) {
     }
 
     record UserSummary(Long id, String firstName, String lastName, String email) {
@@ -60,8 +71,11 @@ class AuthController {
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
     MessageResponse register(@Valid @RequestBody RegisterRequest request) {
-        authService.register(request.firstName(), request.lastName(), request.email(), request.password());
-        return new MessageResponse("Konto utworzone. Wysłaliśmy mail z linkiem aktywacyjnym.");
+        boolean accountActivatedImmediately = authService.register(
+                request.firstName(), request.lastName(), request.email(), request.password());
+        return new MessageResponse(accountActivatedImmediately
+                ? "Konto utworzone i aktywowane. Możesz się zalogować."
+                : "Konto utworzone. Wysłaliśmy mail z linkiem aktywacyjnym.");
     }
 
     @GetMapping("/confirm")
@@ -73,6 +87,21 @@ class AuthController {
     @PostMapping("/login")
     AuthResponse login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request.email(), request.password());
+    }
+
+    // Ten sam komunikat ZAWSZE, niezaleznie czy konto istnieje/jest aktywne - patrz javadoc
+    // AuthService.forgotPassword(). Inaczej odpowiedz sama zdradzalaby, ktore adresy sa zarejestrowane.
+    @PostMapping("/forgot-password")
+    MessageResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request.email());
+        return new MessageResponse("Jeśli konto z tym adresem e-mail istnieje, wysłaliśmy na niego link do "
+                + "zresetowania hasła.");
+    }
+
+    @PostMapping("/reset-password")
+    MessageResponse resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request.token(), request.newPassword());
+        return new MessageResponse("Hasło zostało zmienione. Możesz się zalogować.");
     }
 
     @GetMapping("/me")

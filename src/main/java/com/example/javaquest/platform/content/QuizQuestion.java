@@ -8,7 +8,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
@@ -28,43 +27,45 @@ public class QuizQuestion {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;
 
-    @Lob
-    @Column(nullable = false)
+    // columnDefinition = "TEXT", NIE @Lob - patrz komentarz w ContentBlock.body (Hibernate +
+    // Postgres @Lob String -> kolumna "oid", zapis wisi w nieskoczonosc na Large Object API).
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String question;
 
-    @Lob
-    @Column(nullable = false)
+    /** Opcjonalny fragment kodu, ktorego dotyczy pytanie (null = pytanie czysto tekstowe). */
+    @Column(columnDefinition = "TEXT")
+    private String code;
+
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String optionA;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String optionB;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String optionC;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String optionD;
 
     /** "A", "B", "C" albo "D". */
     @Column(name = "correct_option", nullable = false, length = 1)
     private String correctOption;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String explanation;
 
     protected QuizQuestion() {
         // wymagane przez JPA
     }
 
-    public QuizQuestion(Lesson lesson, int sortOrder, String question, String optionA, String optionB,
-                         String optionC, String optionD, String correctOption, String explanation) {
+    public QuizQuestion(Lesson lesson, int sortOrder, String question, String code, String optionA,
+                         String optionB, String optionC, String optionD, String correctOption,
+                         String explanation) {
         this.lesson = lesson;
         this.sortOrder = sortOrder;
         this.question = question;
+        this.code = code;
         this.optionA = optionA;
         this.optionB = optionB;
         this.optionC = optionC;
@@ -83,6 +84,10 @@ public class QuizQuestion {
 
     public String getQuestion() {
         return question;
+    }
+
+    public String getCode() {
+        return code;
     }
 
     public String getOptionA() {

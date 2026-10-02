@@ -156,6 +156,7 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
       </div>
 
       <p className="quiz-view__question">{question.question}</p>
+      {question.code && <pre className="quiz-view__code">{question.code}</pre>}
 
       <div className="quiz-view__options">
         {Object.entries(question.options).map(([key, text]) => {

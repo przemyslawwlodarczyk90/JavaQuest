@@ -5,6 +5,7 @@ import java.io.IOException;
 import com.example.javaquest.platform.chapter.Lesson;
 import com.example.javaquest.platform.chapter.LessonRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,29 +28,49 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 class LessonContentLoader {
 
+    // Co ile PRZETWORZONYCH (nie: pominietych przez "continue") lekcji odswiezyc sesje
+    // Hibernate - patrz komentarz przy load() ponizej.
+    private static final int SESSION_CLEAR_BATCH_SIZE = 20;
+
     private final LessonRepository lessonRepository;
     private final ContentBlockRepository contentBlockRepository;
     private final ExerciseRepository exerciseRepository;
     private final QuizQuestionRepository quizQuestionRepository;
     private final ObjectMapper objectMapper;
+    private final EntityManager entityManager;
 
     LessonContentLoader(LessonRepository lessonRepository, ContentBlockRepository contentBlockRepository,
                          ExerciseRepository exerciseRepository, QuizQuestionRepository quizQuestionRepository,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper, EntityManager entityManager) {
         this.lessonRepository = lessonRepository;
         this.contentBlockRepository = contentBlockRepository;
         this.exerciseRepository = exerciseRepository;
         this.quizQuestionRepository = quizQuestionRepository;
         this.objectMapper = objectMapper;
+        this.entityManager = entityManager;
     }
 
     // @Transactional trzyma sesje Hibernate otwarta przez CALA metode - bez tego
     // lesson.getChapter().getSlug() (LAZY) rzucalby LazyInitializationException, bo
     // sesja z lessonRepository.findAll() zamyka sie zaraz po zwroceniu wyniku (dokladnie
     // ta sama pulapka co udokumentowana w CLAUDE.md dla _23_spring_data_jpa/Lesson09).
+    //
+    // Zweryfikowane empirycznie (przy 850 lekcjach x ~15-20 wierszy tresci/lekcje, pierwszy
+    // realny przebieg tego loadera): BEZ okresowego entityManager.clear() sesja Hibernate
+    // rosnie przez CALA petle (nigdy nie jest czyszczona), a auto-flush WYKONYWANY PRZED
+    // KAZDYM zapytaniem existsByLessonId() (bo sesja ma "dirty" encje z poprzednich lekcji)
+    // skanuje WSZYSTKIE dotychczas zaladowane encje (StatefulPersistenceContext/Cascade) -
+    // koszt tego skanowania rosnie z kazda lekcja, dajac kwadratowe spowolnienie calej
+    // petli (jstack: main utrzymywal RUNNABLE/wysokie CPU w AbstractFlushingEventListener.
+    // prepareEntityFlushes/Cascade.cascadeToOne, NIE w I/O - realna, narastajaca praca, nie
+    // deadlock). "findAllWithChapter()" (fetch-join) + okresowe flush()+clear() utrzymuje
+    // rozmiar sesji OGRANICZONY (staly narzut per partia), zamiast rosnacym z kazda lekcja -
+    // "clear()" jest tu KLUCZOWY (nie tylko "flush()"): to on faktycznie USUWA encje z
+    // pamieci sesji, "flush()" sam w sobie tylko wysyla SQL, nie zwalnia PersistenceContext.
     @Transactional
     void load() throws IOException {
-        for (Lesson lesson : lessonRepository.findAll()) {
+        int processedSinceClear = 0;
+        for (Lesson lesson : lessonRepository.findAllWithChapter()) {
             if (contentBlockRepository.existsByLessonId(lesson.getId())) {
                 continue;
             }
@@ -60,6 +81,13 @@ class LessonContentLoader {
             }
             LessonContentFile file = objectMapper.readValue(resource.getInputStream(), LessonContentFile.class);
             persist(lesson, file);
+
+            processedSinceClear++;
+            if (processedSinceClear >= SESSION_CLEAR_BATCH_SIZE) {
+                entityManager.flush();
+                entityManager.clear();
+                processedSinceClear = 0;
+            }
         }
     }
 
@@ -80,7 +108,7 @@ class LessonContentLoader {
         order = 0;
         for (LessonContentFile.QuizQuestionJson question : file.quiz()) {
             quizQuestionRepository.save(new QuizQuestion(
-                    lesson, order++, question.question(),
+                    lesson, order++, question.question(), question.code(),
                     question.options().get("A"), question.options().get("B"),
                     question.options().get("C"), question.options().get("D"),
                     question.correct(), question.explanation()));
