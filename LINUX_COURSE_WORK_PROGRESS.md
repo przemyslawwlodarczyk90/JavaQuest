@@ -28,7 +28,10 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   na obrazach `debian:11`, `debian:12`, `alpine:3.20`, `rockylinux:9`; urządzenia blokowe z
   kontenera `--privileged`. Notatka LN03 bywa nieaktualna (`/lib` „32-bitowe”, `/bin` „do trybu
   ratunkowego”) — w lekcjach poprawione.
-  Pozostałe 400 lekcji (`_lx_05`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_05_operacje_na_plikach` (15 lekcji) — ZROBIONY (2026-10-02); katalog ćwiczebny
+  `~/lab` w `lxlab` (dokumenty/, sklep/ z projektem Maven, zdjecia/, start.sh, .ustawienia),
+  dodatkowe katalogi `~/glob`, `~/ln`, `~/typy`; drugi użytkownik `piotr` do demonstracji praw.
+  Pozostałe 385 lekcji (`_lx_06`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -77,8 +80,8 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_05_operacje_na_plikach`** (15 lekcji, źródło LN04, LN06 §1,
-LN07 §1, LN11 §12 + uzupełnienia), od `01_LsListingFiles`. Rozdział praktyczny: przykłady z wynikiem
+**Krok 2 — teoria, rozdział `_lx_06_przegladanie_tekstu`** (13 lekcji, źródło LN04 §5, §12-13 +
+uzupełnienia), od `01_CatTacAndNl`. Rozdział praktyczny: przykłady z wynikiem
 z prawdziwego uruchomienia w kontenerze `ubuntu:24.04` (`MSYS_NO_PATHCONV=1 docker run --rm
 ubuntu:24.04 bash -c '...'`; dla sesji interaktywnej `bash -i`). Potem kolejne rozdziały po
 kolei. Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit po
