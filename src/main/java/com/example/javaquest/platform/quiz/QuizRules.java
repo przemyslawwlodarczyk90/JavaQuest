@@ -21,30 +21,48 @@ final class QuizRules {
         return (total * passPercent + 99) / 100;
     }
 
+    /** Losowanie bez pytan "do poprawy" - patrz {@link #draw(List, Set, Set, int, int, Random)}. */
+    static List<Integer> draw(List<Integer> allQuestionNos, Set<Integer> seen, int drawSize, Random random) {
+        return draw(allQuestionNos, seen, Set.of(), drawSize, 0, random);
+    }
+
     /**
      * Losuje pytania do podejscia i zwraca ich numery w losowej kolejnosci.
      * <ul>
+     *   <li>Najpierw do {@code retryWrongMax} pytan "do poprawy" ({@code wrong} - ostatnia odpowiedz
+     *       uzytkownika byla bledna). Limit pilnuje, zeby quiz nie zamienil sie w "same moje bledy".</li>
+     *   <li>Reszta: najpierw sposrod jeszcze NIEWIDZIANYCH przez uzytkownika ({@code seen}); gdy ich
+     *       zabraknie, uzupelniamy losowo z juz widzianych. Powtorka dostaje wiec glownie nowe pytania.</li>
      *   <li>Pytan nie wiecej niz {@code drawSize} - bierzemy WSZYSTKIE, ale kazde podejscie ma nowa,
      *       przetasowana kolejnosc (zeby nie uczyc sie odpowiedzi "z pozycji").</li>
-     *   <li>Wiecej pytan - losujemy {@code drawSize}, najpierw sposrod jeszcze NIEWIDZIANYCH przez
-     *       uzytkownika ({@code seen}); gdy ich zabraknie, uzupelniamy losowo z juz widzianych.
-     *       Powtorka po niezdanym quizie dostaje wiec w pierwszej kolejnosc nowe pytania.</li>
      * </ul>
      */
-    static List<Integer> draw(List<Integer> allQuestionNos, Set<Integer> seen, int drawSize, Random random) {
+    static List<Integer> draw(List<Integer> allQuestionNos, Set<Integer> seen, Set<Integer> wrong, int drawSize,
+                              int retryWrongMax, Random random) {
+        List<Integer> retry = new ArrayList<>();
         List<Integer> unseen = new ArrayList<>();
         List<Integer> alreadySeen = new ArrayList<>();
         for (Integer no : allQuestionNos) {
-            (seen.contains(no) ? alreadySeen : unseen).add(no);
+            if (wrong.contains(no)) {
+                retry.add(no);
+            } else {
+                (seen.contains(no) ? alreadySeen : unseen).add(no);
+            }
         }
+        Collections.shuffle(retry, random);
         Collections.shuffle(unseen, random);
         Collections.shuffle(alreadySeen, random);
 
-        List<Integer> picked = new ArrayList<>(unseen);
+        int retryCount = Math.min(Math.min(retryWrongMax, drawSize), retry.size());
+        List<Integer> picked = new ArrayList<>(retry.subList(0, retryCount));
+        // Bledne, ktore nie zmiescily sie w limicie, wracaja do puli jako zwykle "widziane".
+        alreadySeen.addAll(retry.subList(retryCount, retry.size()));
+        Collections.shuffle(alreadySeen, random);
+        picked.addAll(unseen);
         picked.addAll(alreadySeen);
         picked = new ArrayList<>(picked.subList(0, Math.min(drawSize, picked.size())));
-        // Kolejnosc wyswietlania jest osobna od kolejnosci "kogo wzielismy": niewidziane nie moga isc
-        // zawsze na poczatku.
+        // Kolejnosc wyswietlania jest osobna od kolejnosci "kogo wzielismy": pytania do poprawy
+        // i niewidziane nie moga isc zawsze na poczatku.
         Collections.shuffle(picked, random);
         return picked;
     }

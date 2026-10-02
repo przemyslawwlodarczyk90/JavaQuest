@@ -4,7 +4,7 @@ import { getChapters } from '../api'
 import { useProgress } from '../useProgress'
 
 export default function ChapterListPage({ track = 'JAVA' }) {
-  const { countInChapter } = useProgress()
+  const { countInChapter, countMasteredInChapter } = useProgress()
   const [status, setStatus] = useState('loading')
   const [chapters, setChapters] = useState([])
   const [error, setError] = useState('')
@@ -39,6 +39,11 @@ export default function ChapterListPage({ track = 'JAVA' }) {
           <span className="chapter-card__count">
             {countInChapter(chapter.slug)} / {chapter.lessonCount} lekcji zrobionych
           </span>
+          {countMasteredInChapter(chapter.slug) > 0 && (
+            <span className="chapter-card__count">
+              ★ {countMasteredInChapter(chapter.slug)} / {chapter.lessonCount} z gwiazdką
+            </span>
+          )}
         </Link>
       ))}
     </div>

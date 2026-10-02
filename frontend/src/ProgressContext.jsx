@@ -21,14 +21,28 @@ export function ProgressProvider({ children }) {
   const { user } = useAuth()
   const userId = user?.id ?? null
   const [completed, setCompleted] = useState(() => new Set())
+  // Mastery (gwiazdki) - osobna informacja od checkboxa: checkbox to deklaracja "przerobilem",
+  // gwiazdki to potwierdzona quizem, starzejaca sie wiedza (liczona na serwerze, bez dat).
+  const [mastery, setMastery] = useState(() => new Map())
+
+  const refreshMastery = useCallback(() => {
+    return api
+      .getMastery()
+      .then((list) => setMastery(new Map(list.map((m) => [keyOf(m.chapterSlug, m.lessonSlug), m]))))
+      .catch(() => {
+        // brak gwiazdek nie moze blokowac nauki
+      })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     if (userId === null) {
       // wylogowanie/zmiana konta: nie pokazuj postepu poprzedniej osoby
       setCompleted(new Set())
+      setMastery(new Map())
       return undefined
     }
+    refreshMastery()
     api
       .getProgress()
       .then((list) => {
@@ -42,7 +56,7 @@ export function ProgressProvider({ children }) {
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, refreshMastery])
 
   const isCompleted = useCallback((chapterSlug, lessonSlug) => completed.has(keyOf(chapterSlug, lessonSlug)), [completed])
 
@@ -59,6 +73,24 @@ export function ProgressProvider({ children }) {
     [completed],
   )
 
+  const masteryOf = useCallback(
+    (chapterSlug, lessonSlug) => mastery.get(keyOf(chapterSlug, lessonSlug)) ?? { stars: 0, reviewSuggested: false },
+    [mastery],
+  )
+
+  const countMasteredInChapter = useCallback(
+    (chapterSlug) => {
+      let count = 0
+      for (const [key, m] of mastery) {
+        if (key.startsWith(`${chapterSlug}/`) && m.stars > 0) {
+          count += 1
+        }
+      }
+      return count
+    },
+    [mastery],
+  )
+
   // Optymistycznie: checkbox reaguje natychmiast, a przy bledzie serwera wraca do poprzedniego stanu.
   const setLessonCompleted = useCallback(async (chapterSlug, lessonSlug, value) => {
     const key = keyOf(chapterSlug, lessonSlug)
@@ -73,8 +105,8 @@ export function ProgressProvider({ children }) {
   }, [])
 
   const value = useMemo(
-    () => ({ isCompleted, countInChapter, setLessonCompleted }),
-    [isCompleted, countInChapter, setLessonCompleted],
+    () => ({ isCompleted, countInChapter, setLessonCompleted, masteryOf, countMasteredInChapter, refreshMastery }),
+    [isCompleted, countInChapter, setLessonCompleted, masteryOf, countMasteredInChapter, refreshMastery],
   )
   return <ProgressContext.Provider value={value}>{children}</ProgressContext.Provider>
 }

@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 /** Jedno wylosowane pytanie w podejsciu: pozycja w tym podejsciu + udzielona odpowiedz (jesli juz jest). */
 @Entity
@@ -35,6 +36,10 @@ public class QuizAttemptQuestion {
     private String selectedOption;
 
     private Boolean correct;
+
+    /** Dwie rownolegle odpowiedzi na to samo pytanie - druga dostaje konflikt (patrz QuizAttempt.version). */
+    @Version
+    private Long version;
 
     protected QuizAttemptQuestion() {
         // wymagane przez JPA

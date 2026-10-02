@@ -65,4 +65,31 @@ class QuizRulesTest {
         List<Integer> drawn = QuizRules.draw(pool, seen, 20, new Random(3));
         assertThat(drawn).hasSize(20).doesNotHaveDuplicates().contains(95, 96, 97, 98, 99);
     }
+
+    @Test
+    void previouslyWrongQuestionsComeBackUpToTheLimit() {
+        List<Integer> pool = IntStream.range(0, 100).boxed().toList();
+        Set<Integer> seen = new HashSet<>(IntStream.range(0, 20).boxed().toList());
+        Set<Integer> wrong = Set.of(1, 2, 3, 4, 5, 6, 7, 8);
+        List<Integer> drawn = QuizRules.draw(pool, seen, wrong, 20, 5, new Random(11));
+        assertThat(drawn).hasSize(20).doesNotHaveDuplicates();
+        assertThat(drawn.stream().filter(wrong::contains)).hasSize(5);
+        // reszta to pytania jeszcze niewidziane
+        assertThat(drawn.stream().filter(no -> !wrong.contains(no))).allMatch(no -> no >= 20);
+    }
+
+    @Test
+    void wrongQuestionsMissingFromPoolAreIgnored() {
+        List<Integer> pool = IntStream.range(0, 30).boxed().toList();
+        List<Integer> drawn = QuizRules.draw(pool, Set.of(), Set.of(500, 501), 20, 5, new Random(5));
+        assertThat(drawn).hasSize(20).doesNotHaveDuplicates().isSubsetOf(pool);
+    }
+
+    @Test
+    void wrongQuestionsOverTheLimitStayInPoolAsSeen() {
+        List<Integer> pool = IntStream.range(0, 10).boxed().toList();
+        Set<Integer> wrong = new HashSet<>(pool);
+        List<Integer> drawn = QuizRules.draw(pool, wrong, wrong, 20, 5, new Random(9));
+        assertThat(drawn).containsExactlyInAnyOrderElementsOf(pool);
+    }
 }

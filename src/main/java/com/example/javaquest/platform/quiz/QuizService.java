@@ -1,5 +1,8 @@
 package com.example.javaquest.platform.quiz;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -12,6 +15,8 @@ import com.example.javaquest.platform.chapter.Lesson;
 import com.example.javaquest.platform.chapter.LessonRepository;
 import com.example.javaquest.platform.content.QuizQuestion;
 import com.example.javaquest.platform.content.QuizQuestionRepository;
+import com.example.javaquest.platform.mastery.MasteryPolicy.LessonMastery;
+import com.example.javaquest.platform.mastery.MasteryService;
 import com.example.javaquest.platform.user.User;
 import com.example.javaquest.platform.user.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +30,10 @@ import org.springframework.web.server.ResponseStatusException;
  * pytan z puli lekcji, zapisuje je i podaje w losowej kolejnosci; poprawne odpowiedzi ujawnia dopiero
  * po udzieleniu odpowiedzi na dane pytanie. Podejscie jest zaliczone od {@code pass-percent}% poprawnych
  * (zaokraglone W GORE - patrz {@link QuizRules#requiredCorrect}); niezdane = uzytkownik startuje kolejne.
+ *
+ * <p>Quiz mozna rozwiazywac ZAWSZE. Zaliczenie to co innego niz wzrost mastery: gwiazdki liczy
+ * {@link MasteryService} z historii zaliczen (spacing) - odpowiedz konczaca podejscie zwraca tylko
+ * liczbe gwiazdek przed i po, zeby ekran wyniku mogl to pokazac (bez zadnych dat).
  */
 @Service
 class QuizService {
@@ -41,31 +50,49 @@ class QuizService {
     record ResultView(int correctCount, int total, int requiredCorrect, int percent, boolean passed) {
     }
 
-    record QuizStatus(int questionCount, int drawSize, int passPercent, int requiredCorrect, boolean passed,
-                      ResultView lastResult, AttemptView activeAttempt) {
+    record MasteryView(int stars, boolean reviewSuggested) {
+        static MasteryView of(LessonMastery mastery) {
+            return new MasteryView(mastery.stars(), mastery.reviewSuggested());
+        }
     }
 
-    record AnswerResponse(boolean correct, String correctOption, String explanation, ResultView result) {
+    /** {@code masteryAvailable} - czy ta lekcja ma dosc pytan, zeby zaliczenia dawaly gwiazdki. */
+    record QuizStatus(int questionCount, int drawSize, int passPercent, int requiredCorrect, boolean passed,
+                      ResultView lastResult, AttemptView activeAttempt, boolean masteryAvailable,
+                      MasteryView mastery) {
+    }
+
+    /** {@code masteryBefore/After} - gwiazdki przed i po; tylko w odpowiedzi konczacej podejscie. */
+    record AnswerResponse(boolean correct, String correctOption, String explanation, ResultView result,
+                          Integer masteryBefore, Integer masteryAfter) {
     }
 
     private final LessonRepository lessonRepository;
     private final QuizQuestionRepository quizQuestionRepository;
     private final QuizAttemptRepository attemptRepository;
     private final UserRepository userRepository;
+    private final MasteryService masteryService;
+    private final Clock clock;
     private final int drawSize;
     private final int passPercent;
+    private final int retryWrongMax;
     private final Random random = new Random();
 
     QuizService(LessonRepository lessonRepository, QuizQuestionRepository quizQuestionRepository,
                 QuizAttemptRepository attemptRepository, UserRepository userRepository,
+                MasteryService masteryService, Clock clock,
                 @Value("${platform.quiz.draw-size:20}") int drawSize,
-                @Value("${platform.quiz.pass-percent:80}") int passPercent) {
+                @Value("${platform.quiz.pass-percent:80}") int passPercent,
+                @Value("${platform.quiz.retry-wrong-max:5}") int retryWrongMax) {
         this.lessonRepository = lessonRepository;
         this.quizQuestionRepository = quizQuestionRepository;
         this.attemptRepository = attemptRepository;
         this.userRepository = userRepository;
+        this.masteryService = masteryService;
+        this.clock = clock;
         this.drawSize = drawSize;
         this.passPercent = passPercent;
+        this.retryWrongMax = retryWrongMax;
     }
 
     // Nie readOnly: przy okazji sprzata "nieaktualne" otwarte podejscie (patrz openAttempt).
@@ -83,7 +110,9 @@ class QuizService {
         boolean passed = attemptRepository.existsByUserAndChapterSlugAndLessonSlugAndPassedTrue(
                 user, chapterSlug, lessonSlug);
         return new QuizStatus(pool.size(), effectiveDraw, passPercent,
-                QuizRules.requiredCorrect(effectiveDraw, passPercent), passed, last, active);
+                QuizRules.requiredCorrect(effectiveDraw, passPercent), passed, last, active,
+                effectiveDraw >= masteryService.minQuestions(),
+                MasteryView.of(masteryService.forLesson(user, chapterSlug, lessonSlug)));
     }
 
     /** Wznawia otwarte podejscie, a jesli go nie ma - losuje nowe. Dzieki temu podwojny klik nie losuje dwa razy. */
@@ -100,8 +129,9 @@ class QuizService {
         }
 
         Set<Integer> seen = new HashSet<>(attemptRepository.findSeenQuestionNos(user, chapterSlug, lessonSlug));
-        List<Integer> drawn = QuizRules.draw(List.copyOf(pool.keySet()), seen, drawSize, random);
-        QuizAttempt attempt = new QuizAttempt(user, chapterSlug, lessonSlug);
+        Set<Integer> wrong = lastAnswerWrong(user, chapterSlug, lessonSlug);
+        List<Integer> drawn = QuizRules.draw(List.copyOf(pool.keySet()), seen, wrong, drawSize, retryWrongMax, random);
+        QuizAttempt attempt = new QuizAttempt(user, chapterSlug, lessonSlug, LocalDateTime.now(clock));
         drawn.forEach(attempt::addQuestion);
         return view(attemptRepository.save(attempt), pool);
     }
@@ -135,13 +165,19 @@ class QuizService {
         aq.answer(option, correct);
 
         ResultView result = null;
+        Integer masteryBefore = null;
+        Integer masteryAfter = null;
         if (attempt.getQuestions().stream().allMatch(QuizAttemptQuestion::isAnswered)) {
+            masteryBefore = masteryService.forLesson(user, chapterSlug, lessonSlug).stars();
             int correctCount = (int) attempt.getQuestions().stream().filter(QuizAttemptQuestion::getCorrect).count();
             int required = QuizRules.requiredCorrect(attempt.getQuestions().size(), passPercent);
-            attempt.finish(correctCount, correctCount >= required);
+            attempt.finish(correctCount, correctCount >= required, LocalDateTime.now(clock));
             result = result(attempt);
+            // Zapytanie o historie widzi juz to podejscie (Hibernate oproznia zmiany przed zapytaniem JPQL).
+            masteryAfter = masteryService.forLesson(user, chapterSlug, lessonSlug).stars();
         }
-        return new AnswerResponse(correct, question.getCorrectOption(), question.getExplanation(), result);
+        return new AnswerResponse(correct, question.getCorrectOption(), question.getExplanation(), result,
+                masteryBefore, masteryAfter);
     }
 
     /**
@@ -158,6 +194,21 @@ class QuizService {
             return Optional.empty();
         }
         return open;
+    }
+
+    /** Pytania "do poprawy": takie, na ktore OSTATNIA odpowiedz uzytkownika byla bledna. */
+    private Set<Integer> lastAnswerWrong(User user, String chapterSlug, String lessonSlug) {
+        Map<Integer, Boolean> lastAnswer = new HashMap<>();
+        for (Object[] row : attemptRepository.findAnswerHistory(user, chapterSlug, lessonSlug)) {
+            lastAnswer.put((Integer) row[0], (Boolean) row[1]);
+        }
+        Set<Integer> wrong = new HashSet<>();
+        lastAnswer.forEach((no, correct) -> {
+            if (!correct) {
+                wrong.add(no);
+            }
+        });
+        return wrong;
     }
 
     private AttemptView view(QuizAttempt attempt, Map<Integer, QuizQuestion> pool) {

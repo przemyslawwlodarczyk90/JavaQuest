@@ -5,6 +5,7 @@ import { useProgress } from '../useProgress'
 import TheoryView from '../components/TheoryView'
 import ExercisesView from '../components/ExercisesView'
 import QuizView from '../components/QuizView'
+import MasteryStars from '../components/MasteryStars'
 
 const TABS = [
   { key: 'theory', label: 'Teoria', loader: getTheory },
@@ -14,7 +15,8 @@ const TABS = [
 
 export default function LessonDetailPage() {
   const { chapterSlug, lessonSlug } = useParams()
-  const { isCompleted, setLessonCompleted } = useProgress()
+  const { isCompleted, setLessonCompleted, masteryOf } = useProgress()
+  const mastery = masteryOf(chapterSlug, lessonSlug)
   const [activeTab, setActiveTab] = useState('theory')
   const [status, setStatus] = useState('loading')
   const [data, setData] = useState([])
@@ -53,7 +55,9 @@ export default function LessonDetailPage() {
       <Link to={`/rozdzial/${chapterSlug}`} className="back-link">
         &larr; Lista lekcji
       </Link>
-      <h2>{lessonSlug}</h2>
+      <h2 className="lesson-detail__title">
+        {lessonSlug} <MasteryStars stars={mastery.stars} reviewSuggested={mastery.reviewSuggested} />
+      </h2>
 
       <label className="lesson-complete">
         <input

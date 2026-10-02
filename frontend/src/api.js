@@ -123,6 +123,16 @@ export function setLessonCompleted(chapterSlug, lessonSlug, completed) {
   return request(lessonPath(chapterSlug, lessonSlug, 'progress'), { method: 'PUT', body: { completed } })
 }
 
+// Mastery (gwiazdki 0-3) liczy serwer z historii zaliczonych quizow. Odpowiedz NIE zawiera zadnych dat -
+// tylko {chapterSlug, lessonSlug, stars, reviewSuggested}. Bez "track" - wszystkie tory naraz.
+export function getMastery(track) {
+  return getJson(track ? `/api/mastery?track=${encodeURIComponent(track)}` : '/api/mastery')
+}
+
+export function getMasteryReviews(track) {
+  return getJson(track ? `/api/mastery/reviews?track=${encodeURIComponent(track)}` : '/api/mastery/reviews')
+}
+
 // Quiz jest losowany i oceniany na serwerze: status -> start podejscia -> odpowiedzi pytanie po pytaniu.
 export function getQuizStatus(chapterSlug, lessonSlug) {
   return getJson(lessonPath(chapterSlug, lessonSlug, 'quiz'))

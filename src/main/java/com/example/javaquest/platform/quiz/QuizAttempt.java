@@ -17,6 +17,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 /**
  * Jedno podejscie uzytkownika do quizu lekcji: zapisuje KTORE pytania wylosowano (i w jakiej kolejnosci),
@@ -53,6 +54,14 @@ public class QuizAttempt {
 
     private Boolean passed;
 
+    /**
+     * Blokada optymistyczna: dwa rownolegle zadania konczace to samo podejscie (np. podwojne wyslanie
+     * ostatniej odpowiedzi) - drugie dostaje konflikt zamiast zapisac wynik drugi raz.
+     * Wiersze sprzed dodania kolumny uzupelnia {@link QuizVersionBackfill}.
+     */
+    @Version
+    private Long version;
+
     @OneToMany(mappedBy = "attempt", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("position ASC")
     private List<QuizAttemptQuestion> questions = new ArrayList<>();
@@ -61,19 +70,19 @@ public class QuizAttempt {
         // wymagane przez JPA
     }
 
-    public QuizAttempt(User user, String chapterSlug, String lessonSlug) {
+    public QuizAttempt(User user, String chapterSlug, String lessonSlug, LocalDateTime createdAt) {
         this.user = user;
         this.chapterSlug = chapterSlug;
         this.lessonSlug = lessonSlug;
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = createdAt;
     }
 
     void addQuestion(int questionNo) {
         questions.add(new QuizAttemptQuestion(this, questions.size(), questionNo));
     }
 
-    void finish(int correctCount, boolean passed) {
-        this.finishedAt = LocalDateTime.now();
+    void finish(int correctCount, boolean passed, LocalDateTime finishedAt) {
+        this.finishedAt = finishedAt;
         this.correctCount = correctCount;
         this.passed = passed;
     }

@@ -1,6 +1,12 @@
 package com.example.javaquest.platform.quiz;
 
+import java.util.Map;
+
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -36,6 +42,16 @@ class QuizController {
     QuizService.AttemptView startAttempt(@PathVariable String chapterSlug, @PathVariable String lessonSlug,
                                          Authentication authentication) {
         return quizService.startAttempt(authentication.getName(), chapterSlug, lessonSlug);
+    }
+
+    /**
+     * Dwa rownolegle zadania zmieniajace to samo podejscie (np. podwojne wyslanie ostatniej odpowiedzi) -
+     * wygrywa pierwsze, drugie dostaje 409 i niczego nie zapisuje (patrz {@code @Version} w encjach).
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    ResponseEntity<Map<String, String>> concurrentAnswer() {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", "Ta odpowiedz zostala juz zapisana."));
     }
 
     @PostMapping("/attempts/{attemptId}/answers")

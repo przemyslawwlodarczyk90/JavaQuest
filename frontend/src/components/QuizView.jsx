@@ -1,5 +1,17 @@
 import { useState } from 'react'
 import { answerQuizQuestion, startQuizAttempt } from '../api'
+import { useProgress } from '../useProgress'
+import MasteryStars from './MasteryStars'
+
+// Komunikat o mastery po zakonczonym podejsciu. Celowo bez dat i terminow: "quiz zaliczony" to nie to samo
+// co "nowa gwiazdka" - kolejne gwiazdki daja dopiero powtorki po przerwie (spacing liczy serwer).
+function masteryMessage(result, before, after) {
+  if (before == null || after == null) return null
+  if (after > before) return 'Zdobywasz gwiazdkę!'
+  if (!result.passed) return 'Nic nie tracisz — gwiazdek nie odejmujemy za błędy. Przejrzyj wyjaśnienia i spróbuj ponownie.'
+  if (after === 3) return 'Wiedza potwierdzona — masz komplet gwiazdek.'
+  return 'Wiedza potwierdzona. Kolejną gwiazdkę zdobędziesz powtórką po przerwie — wróć do tej lekcji za jakiś czas.'
+}
 
 function firstUnanswered(attempt) {
   const index = attempt.questions.findIndex((q) => !q.answer)
@@ -15,6 +27,8 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
   const [passed, setPassed] = useState(status.passed)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [mastery, setMastery] = useState(status.mastery ?? { stars: 0, reviewSuggested: false })
+  const { refreshMastery } = useProgress()
 
   if (status.questionCount === 0) {
     return <p className="placeholder">Quiz tej lekcji jest w przygotowaniu.</p>
@@ -43,6 +57,8 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
       setAttempt((prev) => ({
         ...prev,
         result: response.result ?? prev.result,
+        masteryBefore: response.masteryBefore ?? prev.masteryBefore,
+        masteryAfter: response.masteryAfter ?? prev.masteryAfter,
         questions: prev.questions.map((q) =>
           q.position === question.position
             ? {
@@ -60,6 +76,12 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
       if (response.result?.passed) {
         setPassed(true)
       }
+      if (response.result) {
+        if (response.masteryAfter != null) {
+          setMastery((prev) => ({ ...prev, stars: response.masteryAfter, reviewSuggested: false }))
+        }
+        refreshMastery()
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -72,6 +94,11 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
     const last = status.lastResult
     return (
       <div className="quiz-view__intro">
+        {status.masteryAvailable && (
+          <p className="quiz-view__mastery">
+            Twoje opanowanie: <MasteryStars stars={mastery.stars} reviewSuggested={mastery.reviewSuggested} />
+          </p>
+        )}
         {passed && <p className="quiz-view__badge quiz-view__badge--pass">Quiz zaliczony ✓</p>}
         <p>
           Quiz losuje <strong>{status.drawSize}</strong>
@@ -97,6 +124,7 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
   // --- Ekran wyniku (wszystkie pytania podejscia odpowiedziane) ---
   if (index >= attempt.questions.length) {
     const result = attempt.result
+    const message = status.masteryAvailable ? masteryMessage(result, attempt.masteryBefore, attempt.masteryAfter) : null
     return (
       <div className="quiz-view__result">
         <h3>{result.passed ? 'Quiz zaliczony!' : 'Quiz niezaliczony'}</h3>
@@ -104,6 +132,11 @@ export default function QuizView({ chapterSlug, lessonSlug, status }) {
           Wynik: {result.correctCount} / {result.total} ({result.percent}%). Wymagane: {result.requiredCorrect} /{' '}
           {result.total} (min. {status.passPercent}%).
         </p>
+        {message && (
+          <p className="quiz-view__mastery">
+            <MasteryStars stars={attempt.masteryAfter} showHint={false} /> {message}
+          </p>
+        )}
         <button type="button" onClick={start} disabled={busy}>
           {result.passed ? 'Rozwiąż ponownie (nowe losowanie)' : 'Powtórka — nowe losowanie'}
         </button>
