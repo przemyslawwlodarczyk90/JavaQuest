@@ -3,7 +3,7 @@
 Instrukcje: `LINUX_COURSE_STAGE_PROMPT.md`. Ten plik: aktualny stan, ostatnia czynność, następny
 krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (JavaScript).
 
-## Stan (2026-09-27)
+## Stan (2026-10-02)
 
 - **Krok 1 (struktura) — ZROBIONY i ROZBUDOWANY (2026-09-27, dyrektywa „kozak merytorycznie”).**
   46 rozdziałów (`_lx_01`…`_lx_46`) w 4 częściach, 437 lekcji. 234 lekcje mają źródło w
@@ -19,7 +19,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   (2026-09-27): każda lekcja 14 bloków (pełny standard 11 sekcji + CODE_WRONG/CODE_RIGHT + NOTE),
   wyniki poleceń z prawdziwych uruchomień w kontenerach `ubuntu:24.04`, `debian:12`,
   `alpine:3.20`, `rockylinux:9`, `fedora:40`, `archlinux`, `eclipse-temurin:21-jre`.
-  Pozostałe 429 lekcji (`_lx_02`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_02_wirtualizacja` (10 lekcji, teoretyczny) — ZROBIONY (2026-10-02): po 14 bloków,
+  polecenia z opisem efektu `# -> ...`; fragmenty sprawdzalne w kontenerze zweryfikowane
+  (flagi `vmx`/`hypervisor` w `/proc/cpuinfo`, emulacja `--platform linux/arm64` -> `aarch64`).
+  Pozostałe 419 lekcji (`_lx_03`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+- **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
+  projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
+  (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
+  `lx_build_theory.js` + `LessonContentFilesTest`.
+- **Pisanie `.txt` (nauczka z rozdziału 2):** każdy blok musi mieć choć jedno zdanie `body`
+  PRZED linią `@@code` — skrypt odrzuca bloki z pustym `body`.
 
 ## Konwencje ustalone przy rozdziale 1 (stosuj dalej)
 
@@ -48,17 +57,9 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_02_wirtualizacja`** (10 lekcji, źródło LN01, LN16 §2-8) — w
-toku: gotowa lekcja `01_WhatIsVirtualization` (14 bloków). Dalej od `02_HypervisorTypes`.
-ROZDZIAŁ TEORETYCZNY (decyzja użytkownika, szczegóły w `LINUX_COURSE_STAGE_PROMPT.md`, sekcja
-„Specyfika treści”): polecenia z opisem efektu `# -> ...`, bez wymogu prawdziwych wyników.
-Plan faktów do pozostałych lekcji: VMware po przejęciu przez Broadcom — Workstation Pro darmowy
-(od 11.2024 także komercyjnie), Player wycofany; VirtualBox 7 (GPLv3, Extension Pack na PUEL);
-Hyper-V pod WSL2; KVM/QEMU; VT-x/AMD-V (flagi vmx/svm, sprawdzone: kontener widzi `vmx` i
-`hypervisor`), emulacja arm64 w Dockerze sprawdzona (`--platform linux/arm64` -> `aarch64`);
-formaty VDI/VMDK/VHDX/QCOW2, OVA; OSBoxes (zmień domyślne hasło); `VBoxManage modifymedium
---resize` + GParted/growpart; migawki to nie kopia zapasowa, klony (machine-id, klucze SSH, MAC);
-Guest Additions (DKMS, grupa vboxsf, /media/sf_*). Potem kolejne rozdziały po kolei. Dla każdej lekcji pełne
-bloki teorii na podstawie wskazanych sekcji notatek, przykłady poleceń z wynikiem sprawdzonym
-w kontenerze (`ubuntu:24.04`). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z
-użytkownikiem). Commit po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
+**Krok 2 — teoria, rozdział `_lx_03_terminal_i_powloka`** (11 lekcji, źródło LN28 §1, LN07 §3-4 +
+uzupełnienia), od `01_TerminalShellAndConsole`. Rozdział praktyczny: przykłady z wynikiem
+z prawdziwego uruchomienia w kontenerze `ubuntu:24.04` (`MSYS_NO_PATHCONV=1 docker run --rm
+ubuntu:24.04 bash -c '...'`; dla sesji interaktywnej `bash -i`). Potem kolejne rozdziały po
+kolei. Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit po
+każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
