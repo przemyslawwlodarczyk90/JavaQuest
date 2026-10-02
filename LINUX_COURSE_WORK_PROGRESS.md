@@ -24,7 +24,11 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   (flagi `vmx`/`hypervisor` w `/proc/cpuinfo`, emulacja `--platform linux/arm64` -> `aarch64`).
   Rozdział `_lx_03_terminal_i_powloka` (11 lekcji) — ZROBIONY (2026-10-02): po 14 bloków, wyniki
   z prawdziwych sesji w kontenerze `lxlab` (patrz „Laboratorium” niżej).
-  Pozostałe 408 lekcji (`_lx_04`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_04_hierarchia_katalogow` (8 lekcji) — ZROBIONY (2026-10-02); porównanie usrmerge
+  na obrazach `debian:11`, `debian:12`, `alpine:3.20`, `rockylinux:9`; urządzenia blokowe z
+  kontenera `--privileged`. Notatka LN03 bywa nieaktualna (`/lib` „32-bitowe”, `/bin` „do trybu
+  ratunkowego”) — w lekcjach poprawione.
+  Pozostałe 400 lekcji (`_lx_05`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -68,13 +72,13 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `~/.cache/tealdeer/tldr-pages` (stary adres archiwum już nie działa).
 - Transkrypty sesji interaktywnej (prompt `$ `, prawdziwy pseudoterminal, działa historia `!!`,
   Tab): polecenia na stdin do `docker exec -i -u anna ... lxlab script -qfc "bash -i" /dev/null`
-  (skrypt pomocniczy był w scratchpadzie sesji: `sess.sh [rc|norc]`). Uwaga: `sudo` w takiej
+  (skrypt pomocniczy: `scripts/content-migration/lx_session.sh [rc|norc]`). Uwaga: `sudo` w takiej
   sesji „zjada” resztę wejścia — polecenia z sudo uruchamiaj osobno, bez `script`.
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_04_hierarchia_katalogow`** (8 lekcji, źródło LN03, LN04 §2),
-od `01_EverythingIsAFile`. Rozdział praktyczny: przykłady z wynikiem
+**Krok 2 — teoria, rozdział `_lx_05_operacje_na_plikach`** (15 lekcji, źródło LN04, LN06 §1,
+LN07 §1, LN11 §12 + uzupełnienia), od `01_LsListingFiles`. Rozdział praktyczny: przykłady z wynikiem
 z prawdziwego uruchomienia w kontenerze `ubuntu:24.04` (`MSYS_NO_PATHCONV=1 docker run --rm
 ubuntu:24.04 bash -c '...'`; dla sesji interaktywnej `bash -i`). Potem kolejne rozdziały po
 kolei. Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit po
