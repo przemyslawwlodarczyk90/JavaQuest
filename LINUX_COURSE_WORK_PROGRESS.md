@@ -78,7 +78,11 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   purge/autoremove, .deb, repozytoria z Signed-By (Adoptium), hold/pinning, unattended-upgrades.
   Rozdział `_lx_19_pakiety_inne_dystrybucje` (6 lekcji) — ZROBIONY (2026-10-04): dnf (Rocky 9), rpm,
   apk (Alpine, musl vs glibc), pacman (Arch), Snap/Flatpak/AppImage, SDKMAN.
-  Pozostałe lekcje (`_lx_20`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_20_kompilacja_ze_zrodel` (7 lekcji) — ZROBIONY (2026-10-04): po co źródła, gcc/make/
+  build-essential, configure/make/install (GNU Hello 2.12.1, Nginx 1.28 z PCRE2), biblioteki .so
+  (libpowitanie.so.1 w ~/kompilacja), ldd/ldconfig, moduły Apache + apxs (mod_naglowek), usuwanie
+  (make uninstall, /opt, Stow, checkinstall).
+  Pozostałe lekcje (`_lx_21`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -133,7 +137,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_20_kompilacja_ze_zrodel`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_21_procesy`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
