@@ -31,7 +31,11 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   Rozdział `_lx_05_operacje_na_plikach` (15 lekcji) — ZROBIONY (2026-10-02); katalog ćwiczebny
   `~/lab` w `lxlab` (dokumenty/, sklep/ z projektem Maven, zdjecia/, start.sh, .ustawienia),
   dodatkowe katalogi `~/glob`, `~/ln`, `~/typy`; drugi użytkownik `piotr` do demonstracji praw.
-  Pozostałe 385 lekcji (`_lx_06`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_06_przegladanie_tekstu` (13 lekcji) — ZROBIONY (2026-10-04); dane w `~/tekst`
+  (app.log 120 linii, sprzedaz.csv, pracownicy/dzialy, app-v1/v2.properties, pliki kodowań).
+  Ekrany programów pełnoekranowych (less, more) zbierane skryptem
+  `scripts/content-migration/lx_screen.sh` (tmux w `lxlab`, prawdziwy zrzut ekranu).
+  Pozostałe lekcje (`_lx_07`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -77,12 +81,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   Tab): polecenia na stdin do `docker exec -i -u anna ... lxlab script -qfc "bash -i" /dev/null`
   (skrypt pomocniczy: `scripts/content-migration/lx_session.sh [rc|norc]`). Uwaga: `sudo` w takiej
   sesji „zjada” resztę wejścia — polecenia z sudo uruchamiaj osobno, bez `script`.
+- Od rozdziału 6: w `~/.bashrc` anny `export LANG=C.UTF-8` (oba skrypty też ustawiają `LANG`;
+  kolejność sortowania jak w `C`, ale znaki wielobajtowe działają). Zainstalowany `tmux` —
+  `lx_screen.sh KOL WIER 'polecenie' [klawisze... @=zrzut]` daje prawdziwy ekran programów
+  pełnoekranowych. Polecenia z `cat > plik` + Ctrl+D zawieszają `lx_session.sh` — omijać.
+  W polu `code` nie wolno polskich liter — przykłady ze znakami spoza ASCII robić na czeskim
+  tekście (`Příliš žluťoučký kůň`) lub `café`.
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_06_przegladanie_tekstu`** (13 lekcji, źródło LN04 §5, §12-13 +
-uzupełnienia), od `01_CatTacAndNl`. Rozdział praktyczny: przykłady z wynikiem
-z prawdziwego uruchomienia w kontenerze `ubuntu:24.04` (`MSYS_NO_PATHCONV=1 docker run --rm
-ubuntu:24.04 bash -c '...'`; dla sesji interaktywnej `bash -i`). Potem kolejne rozdziały po
-kolei. Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit po
-każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
+**Krok 2 — teoria, rozdział `_lx_07_strumienie_i_potoki`** (12 lekcji), potem kolejne rozdziały
+po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
+rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
+po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
