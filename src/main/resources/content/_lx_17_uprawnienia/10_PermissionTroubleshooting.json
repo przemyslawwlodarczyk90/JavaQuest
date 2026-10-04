@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "„Permission denied” — metodycznie, nie na oślep",
+      "body": "Komunikat `Permission denied` to jeden z najczęstszych błędów na serwerze — i jeden z najczęściej „naprawianych” źle. Odruchowe `chmod -R 777` czasem pomaga (otwierając przy okazji dziurę), a czasem nie pomaga wcale, bo przyczyna leży gdzie indziej: w katalogu nadrzędnym, w grupach procesu, w ACL, w atrybucie `i`, w opcji montowania `noexec` albo w module bezpieczeństwa (AppArmor, SELinux). Notatki kursu kończą temat praw zbiorem praktycznych przykładów — w tej lekcji złożysz z całego rozdziału **procedurę diagnozy**.\n\nPrzejdziesz kolejno przez pytania: kto naprawdę wykonuje operację (jaki proces, jaki UID i grupy), jaka jest pełna ścieżka i prawa każdego jej elementu, czy w grę wchodzą ACL, atrybuty i opcje montowania, a na końcu przećwiczysz trzy typowe scenariusze: aplikacja Spring Boot nie czyta konfiguracji, skrypt w `/tmp` nie chce się uruchomić i SSH odrzuca klucz po „poprawieniu” praw katalogu domowego."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Warstwy kontroli dostępu w Linuksie",
+      "body": "- **Tożsamość procesu** — efektywny UID, GID i grupy dodatkowe **procesu**, a nie użytkownika w bazie: `ps -o user,group,cmd -p PID`, `grep -E 'Uid|Gid|Groups' /proc/PID/status`.\n- **Ścieżka** — `x` na każdym katalogu od `/` do pliku; `namei -l /ścieżka` pokazuje wszystkie poziomy.\n- **Prawa pliku** — trójka właściwa dla procesu (właściciel → grupa → inni, lekcja 1).\n- **ACL** — `+` w `ls -l`, `getfacl` i `#effective:` (lekcja 8).\n- **Atrybuty** — `lsattr` (`i`, `a`) — „Operation not permitted” także u roota (lekcja 9).\n- **Opcje montowania** — `ro` (tylko odczyt: `Read-only file system`), `noexec` (nie uruchomisz programu mimo `x`), `nosuid`: `findmnt -T /ścieżka` (rozdział 19).\n- **Moduły bezpieczeństwa (LSM)** — AppArmor (Ubuntu, Debian) i SELinux (RHEL, Fedora) mogą odmówić mimo poprawnych praw; ślady w `dmesg`/`journalctl` (`apparmor=\"DENIED\"`, `avc: denied`) — rozdział 39.\n- **Narzędzia testu „jako ktoś”** — `sudo -u user test -r plik`, `sudo -u user cat plik`, `sudo -u user ls katalog`.\n- **„Permission denied” a „Operation not permitted”** — pierwszy (`EACCES`) zwykle oznacza prawa/ścieżkę/ACL/LSM; drugi (`EPERM`) — operację niedozwoloną niezależnie od praw: atrybut `i`, `chown` przez nie-roota, usunięcie pliku w katalogu ze sticky bitem."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Kontrola na lotnisku",
+      "body": "Diagnoza praw przypomina **kontrolę na lotnisku**, gdzie pasażer (proces) przechodzi przez kilka bramek: kontrola dokumentu (kim jest proces), kolejne bramki na drodze do samolotu (katalogi ścieżki — każda musi przepuścić), karta pokładowa (prawa pliku), lista specjalnych zezwoleń (ACL), zaplombowany bagaż (atrybuty), zamknięty terminal (opcje montowania) i dodatkowa kontrola służb (AppArmor/SELinux). „Brak wstępu” może paść przy każdej bramce — i nie ma sensu otwierać na oścież samolotu, jeśli pasażer utknął przy drugiej bramce."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kolejność sprawdzania",
+      "body": "Procedura od najczęstszych do najrzadszych przyczyn:",
+      "code": " \"Permission denied\" / \"Operation not permitted\"\n   |\n   1. KTO?        ps -o user,group -p PID; /proc/PID/status (Groups:)\n   2. SCIEZKA?    namei -l /pelna/sciezka   (x na kazdym katalogu)\n   3. PLIK?       ls -l plik                (wlasciwa trojka)\n   4. GRUPY?      id user vs Groups procesu (relogin/restart uslugi po usermod)\n   5. ACL?        \"+\" w ls -l -> getfacl    (#effective, mask)\n   6. ATRYBUTY?   lsattr plik               (i, a)\n   7. MONTOWANIE? findmnt -T plik           (ro, noexec, nosuid)\n   8. LSM?        journalctl -k | grep -i -e apparmor -e avc\n   |\n   test: sudo -u user <operacja>  -> po poprawce ten sam test"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Aplikacja nie czyta konfiguracji",
+      "body": "Usługa `faktury` (konto `faktury`) przy starcie zgłasza brak dostępu do `application-prod.properties`. Najpierw ustalamy tożsamość procesu, potem idziemy ścieżką (przykładowy wynik):",
+      "code": "$ pgrep -u faktury -a java\n5120 java -jar /opt/faktury/faktury.jar --spring.config.additional-location=/etc/faktury/\n$ grep -E '^(Uid|Gid|Groups)' /proc/5120/status\nUid:\t995\t995\t995\t995\nGid:\t994\t994\t994\t994\nGroups:\t994\n$ journalctl -u faktury -n 3 --no-pager\n(...fragment wyniku)\nOct 04 21:31:07 lubuntu-nauka java[5120]: Caused by: java.io.FileNotFoundException: /etc/faktury/application-prod.properties (Permission denied)\n$ namei -l /etc/faktury/application-prod.properties\nf: /etc/faktury/application-prod.properties\ndrwxr-xr-x root root /\ndrwxr-xr-x root root etc\ndrwxr-x--- root root faktury\n-rw-r----- root root application-prod.properties\n$ sudo chgrp faktury /etc/faktury /etc/faktury/application-prod.properties\n$ sudo -u faktury test -r /etc/faktury/application-prod.properties && echo \"odczyt OK\"\nodczyt OK"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "noexec, grupa sesji i atrybut",
+      "body": "Trzy inne przyczyny: skrypt w `/tmp`, który na tym serwerze (utwardzonym jak w rozdziale 39) jest montowany z `noexec` — komunikat „Permission denied” mimo `x`; proces uruchomiony przed dodaniem konta do grupy; atrybut `a` ustawiony kiedyś na logu aplikacji (przykładowy wynik):",
+      "code": "$ ls -l /tmp/instaluj.sh\n-rwxr-xr-x 1 anna anna 120 Oct  4 21:35 /tmp/instaluj.sh\n$ /tmp/instaluj.sh\n-bash: /tmp/instaluj.sh: Permission denied\n$ findmnt -T /tmp -o TARGET,SOURCE,FSTYPE,OPTIONS\nTARGET SOURCE FSTYPE OPTIONS\n/tmp   tmpfs  tmpfs  rw,nosuid,nodev,noexec,relatime,size=1024000k\n$ bash /tmp/instaluj.sh\nInstaluje...\n$ sudo usermod -aG adm faktury\n$ grep Groups /proc/5120/status\nGroups:\t994\n$ sudo systemctl restart faktury\n$ grep Groups /proc/$(pgrep -u faktury java)/status\nGroups:\t4 994\n$ sudo touch /var/log/faktury/app.log\ntouch: setting times of '/var/log/faktury/app.log': Operation not permitted\n$ lsattr /var/log/faktury/app.log\n-----a--------e------- /var/log/faktury/app.log"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Procedura diagnozy uprawnień",
+      "body": "1. **Przeczytaj dokładnie komunikat** — jaka operacja (open, rename, exec, connect), jaka ścieżka, `EACCES` czy `EPERM`.\n2. **Ustal tożsamość procesu** — `ps`/`pgrep -a`, `/proc/PID/status` (Uid, Gid, Groups), a dla usług — `User=`/`Group=` w jednostce systemd.\n3. **Przejdź ścieżkę** — `namei -l /pełna/ścieżka`; brakujące `x` na katalogu to najczęstsza przyczyna.\n4. **Sprawdź prawa i właściciela pliku** — właściwa trójka dla UID/grup procesu.\n5. **Sprawdź ACL, atrybuty, montowanie** — `getfacl`, `lsattr`, `findmnt -T`.\n6. **Sprawdź AppArmor/SELinux** — `sudo journalctl -k | grep -i -e apparmor -e avc`.\n7. **Popraw najwęższym środkiem** — właściciel (`chown`), grupa (`chgrp` + `g+r`), wpis ACL — nigdy `777`.\n8. **Przetestuj jako docelowe konto** — `sudo -u konto ...`, a usługę zrestartuj (nowe grupy!)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Programy, które same sprawdzają prawa",
+      "body": "Niektóre programy celowo **odmawiają działania**, gdy prawa są zbyt szerokie — i wtedy `chmod 777` psuje działający system. Klient SSH nie użyje klucza prywatnego, który inni mogą czytać (`UNPROTECTED PRIVATE KEY FILE!`, wymaga `600`); serwer SSH (opcja `StrictModes yes`) odrzuca logowanie kluczem, jeśli katalog domowy, `~/.ssh` lub `authorized_keys` są zapisywalne dla grupy lub innych; `sudo` ignoruje pliki w `/etc/sudoers.d` zapisywalne dla innych; PostgreSQL nie wystartuje, gdy katalog danych ma prawa szersze niż `700`/`750`; `cron` pomija pliki w `/etc/cron.d` zapisywalne dla grupy. Logika jest wspólna: plik, który może zmienić ktokolwiek, nie może decydować o bezpieczeństwie."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Typowe scenariusze z praktyki",
+      "body": "- **Usługa nie czyta konfiguracji / nie pisze logów** — właściciel lub grupa katalogu (`chown`, `chgrp`), ścieżka.\n- **Nginx 403** — `x` na katalogach ścieżki dla `www-data` (`namei -l`), ewentualnie AppArmor/SELinux.\n- **Skrypt nie startuje mimo `x`** — `noexec` na `/tmp`, końce linii CRLF (`bad interpreter`, rozdział 6), brak `r` dla skryptu.\n- **Członek grupy dalej bez dostępu** — sesja/usługa sprzed `usermod` (relogin, restart).\n- **Root dostaje „Operation not permitted”** — `lsattr`, opcja `ro`, plik na NFS z `root_squash`.\n- **SSH nie przyjmuje klucza** — prawa `~`, `~/.ssh`, `authorized_keys` (rozdział 33)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "chmod 777 jako „naprawa”",
+      "body": "Klucz SSH Kuby przestał działać, więc ktoś „na wszelki wypadek” daje `chmod -R 777 /home/kuba`. Efekt jest odwrotny: serwer SSH od tej chwili **całkowicie** odrzuca klucz, bo katalog domowy i `.ssh` są zapisywalne dla wszystkich (każdy mógłby dopisać swój klucz do `authorized_keys`). Przy okazji wszystkie pliki Kuby — w tym klucz prywatny i historia poleceń — są czytelne i zmienialne dla każdego konta na serwerze. `777` nie jest narzędziem diagnostycznym: zmienia dziesiątki rzeczy naraz i usuwa ślad pierwotnej przyczyny."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "777 na katalogu domowym blokuje logowanie kluczem",
+      "body": "Po „naprawie” logowanie kluczem przestaje działać, a dziennik sshd mówi dlaczego (przykładowy wynik):",
+      "code": "$ sudo chmod -R 777 /home/kuba\n$ ssh -i ~/.ssh/kuba_ed25519 kuba@192.168.56.10 true\nkuba@192.168.56.10: Permission denied (publickey).\n$ sudo journalctl -u ssh -n 2 --no-pager\nOct 04 21:40:12 lubuntu-nauka sshd[5302]: Authentication refused: bad ownership or modes for directory /home/kuba\nOct 04 21:40:12 lubuntu-nauka sshd[5302]: Connection closed by authenticating user kuba 192.168.56.1 port 51234 [preauth]"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Przywrócenie właściwych praw",
+      "body": "Katalogi `750`/`700`, pliki prywatne `600` — i logowanie działa (przykładowy wynik):",
+      "code": "$ sudo find /home/kuba -type d -exec chmod 750 {} +\n$ sudo find /home/kuba -type f -exec chmod 640 {} +\n$ sudo chmod 700 /home/kuba/.ssh\n$ sudo chmod 600 /home/kuba/.ssh/authorized_keys /home/kuba/.bash_history\n$ namei -l /home/kuba/.ssh/authorized_keys | tail -3\ndrwxr-x--- kuba kuba kuba\ndrwx------ kuba kuba .ssh\n-rw------- kuba kuba authorized_keys\n$ ssh -i ~/.ssh/kuba_ed25519 kuba@192.168.56.10 'echo zalogowany'\nzalogowany"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Narzędzie do pytania",
+      "body": "- **Jako kto działa proces?** — `ps -o user,group`, `/proc/PID/status`.\n- **Który katalog blokuje?** — `namei -l`.\n- **Czy dane konto ma dostęp?** — `sudo -u konto test -r/-w/-x`.\n- **Czy są wyjątki?** — `getfacl`, `lsattr`.\n- **Czy system plików pozwala?** — `findmnt -T` (`ro`, `noexec`).\n- **Czy blokuje AppArmor/SELinux?** — `journalctl -k`, `aa-status`, `ausearch -m avc`.\n- **Naprawa** — `chown`/`chgrp`/`chmod` najwęższy możliwy, ACL na wyjątki; nigdy `777`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Diagnozę zaczynaj od tożsamości **procesu** (UID, grupy z `/proc/PID/status`), nie użytkownika z bazy.\n- Sprawdź całą ścieżkę (`namei -l`), potem prawa pliku, ACL, atrybuty, opcje montowania i AppArmor/SELinux.\n- `Permission denied` (EACCES) to zwykle prawa; `Operation not permitted` (EPERM) — atrybuty, `chown`, sticky bit.\n- Po zmianie grup zrestartuj usługę lub zaloguj się ponownie; testuj przez `sudo -u konto`.\n- `chmod 777` nie naprawia, tylko psuje — SSH, sudo, PostgreSQL i cron odrzucają zbyt szerokie prawa."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
