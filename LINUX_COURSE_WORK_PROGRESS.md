@@ -3,7 +3,7 @@
 Instrukcje: `LINUX_COURSE_STAGE_PROMPT.md`. Ten plik: aktualny stan, ostatnia czynność, następny
 krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (JavaScript).
 
-## Stan (2026-10-02)
+## Stan (2026-10-04)
 
 - **Krok 1 (struktura) — ZROBIONY i ROZBUDOWANY (2026-09-27, dyrektywa „kozak merytorycznie”).**
   46 rozdziałów (`_lx_01`…`_lx_46`) w 4 częściach, 437 lekcji. 234 lekcje mają źródło w
@@ -60,7 +60,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   5 MB zróżnicowanego logu wygenerowanego awk, sklep z losowym sklep.jar); doinstalowane bzip2, xz,
   zstd, zip/unzip; pomiary kompresorów z `time` w lekcji 6.
   Rozdział `_lx_15_wget_i_curl` (6 lekcji) — ZROBIONY (2026-10-04): wget (pobieranie, -c, rekursja), curl (podstawy, metody/nagłówki/body, testowanie REST na sklep-api Spring Boot 4.1.1), sumy SHA-256/512. Lab: kontenery httpbin i sklep-api w sieci lxnet, serwer python na porcie 8000 (~/www), dane w ~/pobrane.
-  Pozostałe lekcje (`_lx_16`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_16_uzytkownicy_i_grupy` (12 lekcji) — ZROBIONY (2026-10-04): passwd/shadow/group,
+  useradd/adduser, usermod/userdel/gpasswd, passwd/chage, logowanie (NSS, PAM), powłoki i nologin,
+  su/sudo, sudoers/visudo, who/w/last. Ciągła historia przykładów: konta kuba (1003), ola→onowak
+  (1004), marek (usunięty), faktury (systemowe 995, /opt/faktury), deploy (sudoers NOPASSWD dla
+  restartu `sklep`), grupa wdrozenia; sesje SSH z 192.168.56.1 na maszynie Lubuntu.
+  **Dyrektywa użytkownika (2026-10-04): „skup się na pisaniu samych lekcji, nie wczuwaj się w
+  dockera, nie jest potrzebny”** — od rozdziału 16 wyniki NIE są zbierane w kontenerze; przykłady
+  są realistyczne (spójne ze stanem laboratorium), opisane jako „przykładowy wynik”, nie „wynik z
+  prawdziwego uruchomienia”.
+  Pozostałe lekcje (`_lx_17`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -115,7 +124,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_16_uzytkownicy_i_grupy`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_17_uprawnienia`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
