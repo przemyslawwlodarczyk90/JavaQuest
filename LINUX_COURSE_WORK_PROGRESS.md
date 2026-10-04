@@ -51,6 +51,8 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   /usr/share/common-licenses, app.log, access.log w formacie Nginx, przykładowy auth.log, wyjatek.log
   z wyjątkiem Javy, projekt sklep jako repo Git z .gitignore); w `lxlab` doinstalowane
   `openssh-server` (prawdziwy sshd_config, usługa NIE działa) i `ripgrep`.
+  Rozdział `_lx_12_sed` — W TOKU: lekcje 01-06 ZROBIONE (2026-10-04), dane w `~/sed`;
+  BRAKUJE 07_MultipleCommandsAndScripts i 08_EditingConfigFilesWithSed (puste).
   Pozostałe lekcje (`_lx_12`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
