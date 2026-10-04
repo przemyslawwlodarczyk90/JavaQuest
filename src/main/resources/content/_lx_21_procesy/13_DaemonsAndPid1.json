@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Procesy, które działają cały czas",
+      "body": "Większość procesów na serwerze nie została uruchomiona przez człowieka z terminala. `sshd` czeka na połączenia, `cron` odlicza czas do zadań, `nginx` obsługuje ruch WWW, `postgres` — zapytania, `systemd-journald` zbiera logi. To **demony** (*daemons*): procesy działające w tle przez cały czas pracy systemu, bez terminala (`TTY ?`), zwykle uruchamiane przy starcie. Na szczycie drzewa stoi **systemd — proces numer 1**, który uruchamia demony, pilnuje ich, adoptuje sieroty i zamyka system. Notatki kursu opisują demony i rolę systemd jako „rodzica wszystkich procesów”, którego nie można zabić.\n\nW tej lekcji rozpoznasz demony na liście procesów, zobaczysz, czym różni się demon „starego typu” (podwójny `fork`, plik PID) od usługi zarządzanej przez systemd, przyjrzysz się PID 1 i jego obowiązkom, poznasz `systemctl status` jako most między procesem a usługą oraz cgroups, w których systemd trzyma procesy każdej usługi. To wprowadzenie do rozdziału 22."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Demony i PID 1",
+      "body": "- **Demon** — proces działający w tle, bez terminala sterującego, zwykle przez cały czas pracy systemu; nazwy często kończą się na `d` (`sshd`, `crond`, `journald`, `httpd`).\n- **Demon klasyczny (SysV)** — „sam się demonizuje”: `fork`, `setsid`, drugi `fork`, zmiana katalogu na `/`, zamknięcie stdin/stdout/stderr, zapis PID do pliku `/run/nazwa.pid`; zarządzany skryptami `/etc/init.d/nazwa start|stop`.\n- **Usługa systemd** — proces może działać „na pierwszym planie” (bez demonizacji, `Type=simple`/`exec`/`notify`); to systemd odłącza go od terminala, przekierowuje wyjście do dziennika, pilnuje i restartuje (rozdział 22).\n- **PID 1 (systemd)** — pierwszy proces przestrzeni użytkownika uruchamiany przez jądro (`/sbin/init` → `/lib/systemd/systemd`); uruchamia usługi wg zależności, adoptuje i odbiera sieroty/zombie, obsługuje zamykanie systemu, zarządza cgroups.\n- **Niezabijalność PID 1** — jądro nie dostarcza do PID 1 sygnałów, których nie obsługuje (nawet `SIGKILL` od roota); gdyby PID 1 się zakończył, jądro zgłasza panikę (*Attempted to kill init!*).\n- **Wcześniejsze systemy init** — SysV init (skrypty w `/etc/init.d`, poziomy pracy), Upstart (dawne Ubuntu), OpenRC (Alpine, Gentoo); dziś prawie wszędzie systemd.\n- **cgroups** — systemd umieszcza każdą usługę w osobnej grupie kontrolnej (`/sys/fs/cgroup/system.slice/nazwa.service`) — zna dzięki temu wszystkie jej procesy i może je zatrzymać razem.\n- **`systemctl status PID`** — do której usługi należy proces; **`systemd-cgls`** — drzewo cgroups z procesami; **`ps -o unit`** — kolumna z nazwą jednostki."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Ochrona budynku i kierownik obiektu",
+      "body": "Demony to **służby budynku**: portier (sshd) przy wejściu, ochrona (fail2ban), konserwator (cron) z harmonogramem przeglądów, recepcja (nginx). Pracują przez całą dobę, nikt nie siedzi im nad głową z klawiaturą. systemd to **kierownik obiektu**: rano otwiera budynek i wpuszcza służby w ustalonej kolejności, pilnuje, czy każdy jest na stanowisku (i wzywa zastępstwo po awarii — restart), przejmuje opiekę nad osobami, których przełożony wyszedł (sieroty), a wieczorem zamyka budynek. Bez kierownika budynek nie działa — dlatego nie można go „zwolnić” (`kill 1`)."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Demon klasyczny a usługa systemd",
+      "body": "Dwa sposoby działania tego samego programu w tle:",
+      "code": " DEMON KLASYCZNY (SysV)                     USLUGA SYSTEMD\n /etc/init.d/app start                      systemctl start app\n   fork -> setsid -> fork                     systemd: fork + exec ExecStart=\n   cd /, zamknij 0/1/2                        stdout/stderr -> journald\n   zapisz /run/app.pid                        PID znany z cgroup (bez pliku PID)\n stop: kill $(cat /run/app.pid)             stop: SIGTERM do calej cgroup, potem SIGKILL\n awaria: nikt nie restartuje                awaria: Restart=on-failure\n logi: wlasny plik                          logi: journalctl -u app\n\n systemd(1)\n   |-- system.slice/sshd.service      sshd(912)\n   |-- system.slice/nginx.service     nginx(1543), nginx(1544), nginx(1545)\n   |-- system.slice/sklep.service     java(5210)\n   `-- user.slice/user-1001.slice     sesje anny: sshd, bash, ..."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Demony na liście procesów",
+      "body": "Procesy bez terminala, ich rodzic i usługi, do których należą (przykładowy wynik):",
+      "code": "$ ps -o pid,ppid,user,tty,cmd -p 1\n    PID    PPID USER     TT       CMD\n      1       0 root     ?        /sbin/init splash\n$ readlink -f /sbin/init\n/usr/lib/systemd/systemd\n$ ps -eo pid,ppid,tty,user,comm | awk '$3 == \"?\" && $2 == 1' | head -6\n    498       1 ?        root     systemd-journal\n    540       1 ?        root     systemd-udevd\n    611       1 ?        root     cron\n    612       1 ?        root     snapd\n    912       1 ?        root     sshd\n   1203       1 ?        postgres postgres\n$ ps -o pid,unit,cmd -p 912,1543,5210\n    PID UNIT                         CMD\n    912 ssh.service                  sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups\n   1543 nginx.service                nginx: master process /usr/sbin/nginx -g daemon on; master_process on;\n   5210 sklep.service                /usr/lib/jvm/java-21-openjdk-amd64/bin/java -jar /home/anna/sklep/sklep.jar"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Proces a usługa: systemctl status i cgroups",
+      "body": "Od PID do usługi: status, cgroup z procesami i plik PID demona klasycznego (przykładowy wynik):",
+      "code": "$ systemctl status 5210 --no-pager | head -9\n● sklep.service - Aplikacja sklep (Spring Boot)\n     Loaded: loaded (/etc/systemd/system/sklep.service; enabled; preset: enabled)\n     Active: active (running) since Mon 2026-10-05 00:58:12 CEST; 6min ago\n   Main PID: 5210 (java)\n      Tasks: 39 (limit: 4598)\n     Memory: 196.4M (peak: 201.0M)\n        CPU: 14.882s\n     CGroup: /system.slice/sklep.service\n             └─5210 /usr/lib/jvm/java-21-openjdk-amd64/bin/java -jar /home/anna/sklep/sklep.jar\n$ cat /proc/5210/cgroup\n0::/system.slice/sklep.service\n$ systemd-cgls --no-pager -u nginx.service\nUnit nginx.service (/system.slice/nginx.service):\n├─1543 \"nginx: master process /usr/sbin/nginx -g daemon on; master_process on;\"\n├─1544 \"nginx: worker process\"\n└─1545 \"nginx: worker process\"\n$ cat /run/nginx.pid\n1543\n$ sudo kill -9 1; echo \"kod: $?\"; ps -o pid,cmd -p 1\nkod: 0\n    PID CMD\n      1 /sbin/init splash"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Do jakiej usługi należy ten proces?",
+      "body": "1. Znajdź PID: `pgrep -af nazwa`.\n2. Sprawdź rodzica i terminal: `ps -o pid,ppid,tty,user,cmd -p PID` — `TTY ?` i PPID 1 sugerują demona.\n3. Zobacz jednostkę: `ps -o unit -p PID` lub `cat /proc/PID/cgroup`.\n4. Szczegóły usługi: `systemctl status PID` (plik jednostki, stan, czas działania, wszystkie procesy w cgroup).\n5. Zarządzaj przez systemd, nie sygnałami: `sudo systemctl restart nazwa` (rozdział 22).\n6. Jeśli proces nie należy do żadnej usługi (`user.slice`, sesja) — został uruchomiony ręcznie (np. `nohup`); rozważ przeniesienie go do usługi."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Nie demonizuj aplikacji samodzielnie",
+      "body": "Dawniej każdy program serwerowy musiał umieć się „zdemonizować” i zapisać plik PID, a skrypt startowy na tej podstawie go zatrzymywał. Pod systemd ten model jest zbędny i bywa szkodliwy: systemd sam odłącza proces od terminala, zna jego PID z cgroup, zbiera jego wyjście do dziennika. Aplikację Spring Boot uruchamiaj w usłudze **na pierwszym planie** — `ExecStart=/usr/bin/java -jar app.jar` z `Type=simple` lub `exec`, bez `&`, `nohup` ani skryptów, które wypuszczają Javę w tło i kończą się (wtedy systemd uzna, że usługa się zakończyła, i może ubić jej procesy). Logi wypisuj na standardowe wyjście — trafią do `journalctl -u sklep` (rozdział 24). Dawne „w pełni wykonywalne jary” Spring Boot z wbudowanym skryptem `init.d` zostały usunięte z nowych wersji frameworka właśnie z tego powodu."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie spotkasz demony i PID 1",
+      "body": "- **Usługi serwera** — `sshd`, `nginx`, `postgres`, `cron`, aplikacja `sklep` jako usługa.\n- **Diagnoza** — który proces należy do której usługi (`systemctl status PID`).\n- **Starsze systemy i obrazy** — skrypty `/etc/init.d`, pliki PID w `/run`.\n- **Kontenery** — PID 1 to aplikacja lub `tini`, nie systemd (rozdział 45).\n- **WSL** — systemd jako PID 1 trzeba włączyć (rozdział 44).\n- **Zamykanie i restart systemu** — PID 1 kończy usługi w odpowiedniej kolejności (rozdział 22)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Skrypt startowy, który wypuszcza aplikację w tło",
+      "body": "Usługa systemd z `ExecStart=/opt/sklep/start.sh`, gdzie skrypt robi `nohup java -jar sklep.jar &` i kończy się. Dla systemd (domyślny `Type=simple`) proces główny usługi to skrypt — skoro się zakończył, usługa jest „zakończona”: systemd zatrzymuje pozostałe procesy w jej cgroup (zabija Javę) albo — przy innych ustawieniach — pokazuje stan `inactive`, choć Java działa poza kontrolą. `Restart=on-failure` nie zadziała, logi nie trafią do dziennika."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "ExecStart ze skryptem demonizującym",
+      "body": "Skrypt kończy się od razu, a systemd zabija aplikację uruchomioną w tle (przykładowy wynik):",
+      "code": "$ cat /opt/sklep/start.sh\n#!/bin/bash\ncd /home/anna/sklep\nnohup java -jar sklep.jar > sklep.log 2>&1 &\n$ grep ExecStart /etc/systemd/system/sklep.service\nExecStart=/opt/sklep/start.sh\n$ sudo systemctl restart sklep; sleep 5; systemctl is-active sklep\ninactive\n$ journalctl -u sklep -n 3 --no-pager | cut -c17-\nlubuntu-nauka systemd[1]: Started sklep.service - Aplikacja sklep (Spring Boot).\nlubuntu-nauka systemd[1]: sklep.service: Deactivated successfully.\nlubuntu-nauka systemd[1]: sklep.service: Consumed 1.204s CPU time."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Java na pierwszym planie w ExecStart",
+      "body": "Proces główny usługi to Java — systemd ją nadzoruje, a wyjście trafia do dziennika (przykładowy wynik):",
+      "code": "$ grep -E 'ExecStart|WorkingDirectory' /etc/systemd/system/sklep.service\nWorkingDirectory=/home/anna/sklep\nExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java -jar /home/anna/sklep/sklep.jar\n$ sudo systemctl daemon-reload && sudo systemctl restart sklep; sleep 5; systemctl is-active sklep\nactive\n$ systemctl show -p MainPID --value sklep\n5210\n$ journalctl -u sklep -n 1 --no-pager | grep -o 'Started SklepApplication.*'\nStarted SklepApplication in 4.812 seconds (process running for 5.391)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak uruchamiać procesy działające stale",
+      "body": "- **Usługi i aplikacje na serwerze** — jednostka systemd, proces na pierwszym planie.\n- **Sprawdzenie, czym jest proces w tle** — `ps -o unit`, `systemctl status PID`.\n- **Zatrzymanie/restart** — `systemctl stop/restart`, nie `kill` na PID usługi.\n- **Stary program, który sam się demonizuje** — `Type=forking` + `PIDFile=` (rozdział 22).\n- **Kontener** — aplikacja jako PID 1 z `--init`, bez systemd.\n- **Diagnoza całego drzewa usług** — `systemd-cgls`, `systemctl list-units --type=service`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Demony to procesy działające w tle bez terminala (`TTY ?`), zwykle przez cały czas pracy systemu.\n- systemd jako PID 1 uruchamia usługi, adoptuje sieroty, odbiera zombie, zamyka system; nie da się go zabić.\n- Każda usługa systemd ma własną cgroup — `systemctl status PID`, `ps -o unit`, `/proc/PID/cgroup` łączą proces z usługą.\n- Klasyczne demonizowanie (podwójny `fork`, plik PID) jest pod systemd zbędne.\n- Aplikację w usłudze uruchamiaj na pierwszym planie (`ExecStart=java -jar ...`), bez `nohup` i `&`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

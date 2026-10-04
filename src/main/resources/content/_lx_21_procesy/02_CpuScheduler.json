@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Setki procesów, kilka rdzeni",
+      "body": "W systemie działa naraz kilkaset procesów i kilka tysięcy wątków, a procesor ma 2, 4 czy 16 rdzeni. Wrażenie jednoczesności daje **planista (scheduler)** jądra: dzieli czas procesora na krótkie odcinki, przełącza się między zadaniami setki razy na sekundę i decyduje, kto teraz dostanie rdzeń. Notatki kursu opisują planistę CFS (*Completely Fair Scheduler*), który przydziela procesom sprawiedliwe udziały w czasie CPU, faworyzuje zadania interaktywne i rozkłada pracę między rdzenie. Od jądra 6.6 (Ubuntu 24.04 ma 6.8) CFS zastąpił jego następca **EEVDF** — idea „sprawiedliwego udziału” pozostała ta sama.\n\nW tej lekcji zobaczysz planistę w działaniu: kolejkę gotowych zadań, przełączanie kontekstu, przydział rdzeni, **średnie obciążenie** (*load average*) i jego poprawną interpretację, wpływ priorytetu `nice` na podział CPU (szczegóły w lekcji 9) oraz przypisanie procesu do rdzeni (`taskset`). Dowiesz się też, jak liczba rdzeni wpływa na zachowanie JVM."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Planista procesora",
+      "body": "- **Planista (scheduler)** — część jądra wybierająca, który gotowy wątek (`R`) dostanie rdzeń i na jak długo; każdy rdzeń ma własną **kolejkę uruchomieniową** (*run queue*).\n- **CFS / EEVDF** — planiści „sprawiedliwi”: każde zadanie ma wagę (zależną od `nice`), a czas CPU dzieli się proporcjonalnie do wag; EEVDF (od jądra 6.6) lepiej obsługuje zadania wymagające małych opóźnień.\n- **Przełączenie kontekstu (context switch)** — zapisanie stanu jednego wątku i wczytanie drugiego; tysiące na sekundę to norma (kolumna `cs` w `vmstat`).\n- **Zadania CPU-bound i I/O-bound** — liczące (zużywają cały przydział) i czekające na dysk/sieć (szybko oddają procesor; dostają go od razu po wybudzeniu).\n- **Load average** — średnia liczba zadań gotowych do działania (`R`) **i** czekających nieprzerywalnie (`D`) z ostatnich 1, 5 i 15 minut (`uptime`, `/proc/loadavg`); porównuj z liczbą rdzeni (`nproc`).\n- **Migracja i powinowactwo (affinity)** — planista przenosi zadania między rdzeniami; `taskset -c 0 program` / `taskset -cp 0 PID` ogranicza proces do wybranych rdzeni (kolumna `PSR` w `ps` — rdzeń, na którym ostatnio działał).\n- **Polityki planowania** — `SCHED_OTHER` (domyślna), `SCHED_BATCH`, `SCHED_IDLE`, a także czasu rzeczywistego `SCHED_FIFO`/`SCHED_RR` (`chrt`); podgląd: `ps -o cls` lub `chrt -p PID`.\n- **Limity CPU w cgroups** — systemd (`CPUQuota=`, `CPUWeight=`) i kontenery (`--cpus`) ograniczają udział grupy procesów (rozdziały 22, 45)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Kolejka do kasy z bardzo szybkimi kasjerami",
+      "body": "Rdzenie to **kasy w sklepie**, a planista to **kierownik zmiany**. Klienci (zadania) z pełnymi koszykami obsługiwani są partiami — kasjer skanuje kilka produktów jednego klienta, potem następnego, tak szybko, że każdy ma wrażenie ciągłej obsługi. Klient, który odszedł po zapomniany produkt (czeka na dysk), nie blokuje kasy, a po powrocie jest obsłużony od razu. Load average to **średnia liczba osób przy kasach i w kolejce** — 4 osoby przy 4 kasach to pełne, ale płynne obłożenie, 12 osób przy 4 kasach to już kolejka."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Podział CPU i load average",
+      "body": "Dwa procesy liczące na jednym rdzeniu (z równym i różnym `nice`) oraz odczyt obciążenia na maszynie z 4 rdzeniami:",
+      "code": " rdzen 0, nice 0 i 0:     [A][B][A][B][A][B][A][B]   -> A ~50%, B ~50%\n rdzen 0, nice 0 i 10:    [A][A][A][A][A][A][A][A][A][B]  -> A ~90%, B ~10%\n                          (waga nice 0 = 1024, nice 10 = 110)\n\n uptime:  load average: 3.92, 2.10, 0.85        nproc: 4\n                        1 min  5 min  15 min\n          3.92 / 4 rdzenie ~ 0.98 -> rdzenie zajete prawie w 100%, bez kolejki\n          trend 0.85 -> 2.10 -> 3.92 : obciazenie ROSNIE\n          8.00 na 4 rdzeniach -> srednio 4 zadania czekaja na procesor (lub na dysk - stan D)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Rdzenie, obciążenie i przełączanie kontekstu",
+      "body": "Maszyna wirtualna laboratorium z 4 procesorami wirtualnymi (przykładowy wynik):",
+      "code": "$ nproc\n4\n$ uptime\n 23:50:12 up  7:57,  2 users,  load average: 0.12, 0.18, 0.15\n$ cat /proc/loadavg\n0.12 0.18 0.15 1/412 4520\n$ vmstat 1 3\nprocs -----------memory---------- ---swap-- -----io---- -system-- -------cpu-------\n r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu\n 1  0      0 1524880  64312 1210044    0    0    12    18  152  287  1  1 98  0  0  0\n 0  0      0 1524880  64312 1210044    0    0     0     0  198  356  0  0 100 0  0  0\n 0  0      0 1524880  64312 1210044    0    0     0    24  203  371  1  0 99  0  0  0\n$ grep -m1 'model name' /proc/cpuinfo\nmodel name\t: Intel(R) Core(TM) i7-10750H CPU @ 2.60GHz"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Dwa procesy na jednym rdzeniu",
+      "body": "Dwie pętle liczące przypięte `taskset` do rdzenia 0: najpierw dzielą się po połowie, po zmianie `nice` drugiej — mniej więcej 90/10 (przykładowy wynik):",
+      "code": "$ taskset -c 0 sh -c 'while :; do :; done' &\n[1] 4531\n$ taskset -c 0 sh -c 'while :; do :; done' &\n[2] 4532\n$ sleep 10; ps -o pid,ni,psr,pcpu,stat,cmd -p 4531,4532\n    PID  NI PSR %CPU STAT CMD\n   4531   0   0 50.1 R    sh -c while :; do :; done\n   4532   0   0 49.8 R    sh -c while :; do :; done\n$ renice -n 10 -p 4532\n4532 (process ID) old priority 0, new priority 10\n$ top -b -n 2 -d 5 -p 4531,4532 | tail -3\n    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n   4531 anna      20   0    2800   1536   1408 R  90.6   0.0   0:13.95 sh\n   4532 anna      30  10    2800   1408   1280 R   9.6   0.0   0:06.51 sh\n$ uptime\n 23:51:40 up  7:58,  2 users,  load average: 1.71, 0.58, 0.29\n$ kill %1 %2"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Czy serwer jest przeciążony procesorem?",
+      "body": "1. Sprawdź liczbę rdzeni: `nproc`.\n2. Odczytaj obciążenie: `uptime` — porównaj wartości z `nproc` i zobacz trend (1 → 5 → 15 minut).\n3. Rozróżnij CPU od dysku: `vmstat 1 5` — kolumna `r` (czekają na CPU) i `b` (stan `D`, czekają na I/O), `us`/`sy` (praca CPU), `wa` (czekanie na dysk).\n4. Znajdź winowajcę: `top` posortowany po `%CPU` (lekcja 6) — ewentualnie `top -H` dla wątków JVM.\n5. Wysokie `wa` i dużo procesów w `b` → problem z dyskiem, nie z procesorem (rozdział 25).\n6. Na maszynach wirtualnych zobacz `st` (*steal*) — czas zabrany przez hipernadzorcę innym maszynom.\n7. Zadania w tle (kopie, raporty) uruchamiaj z niższym priorytetem (`nice`, lekcja 9) lub z limitem `CPUQuota` (rozdział 22)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "JVM a liczba procesorów",
+      "body": "JVM przy starcie pyta system o liczbę dostępnych procesorów (`Runtime.getRuntime().availableProcessors()`) i na tej podstawie dobiera m.in. liczbę wątków GC, wątków kompilatora JIT i wielkość wspólnej puli `ForkJoinPool` (używanej przez strumienie równoległe). Od Javy 10 JVM uwzględnia też ograniczenia cgroups (kontenery, `CPUQuota` w systemd) — kontener z `--cpus=2` na hoście z 32 rdzeniami „widzi” 2 procesory. Wartość można wymusić opcją `-XX:ActiveProcessorCount=N`. Ograniczenie przez `taskset` jest również respektowane. Złe dopasowanie (np. 32 wątki GC przy limicie 1 CPU) objawia się długimi pauzami GC i dławieniem (*throttling*) procesu."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przyda Ci się wiedza o planiście",
+      "body": "- **Ocena obciążenia serwera** — `uptime`, `vmstat` w kontekście `nproc`.\n- **Zadania w tle** — `nice`, `SCHED_IDLE` (`chrt -i 0`), `CPUWeight` dla kopii i raportów.\n- **Izolacja aplikacji** — `taskset`, `CPUAffinity=` w systemd, limity cgroups.\n- **Strojenie JVM w kontenerach** — liczba procesorów widziana przez Javę.\n- **Diagnoza „wolnego” serwera** — CPU czy I/O (`r` kontra `b` i `wa`).\n- **Maszyny wirtualne i chmura** — czas `st` (*steal*) przy przeciążonym hoście."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Load average bez liczby rdzeni",
+      "body": "Load average to liczba bezwzględna, a nie procent. Wartość `3.9` na laptopie z jednym rdzeniem oznacza dramat (średnio prawie 3 zadania czekają w kolejce), a na serwerze z 16 rdzeniami — jedną czwartą mocy. Druga pułapka: w Linuksie load average obejmuje też procesy w stanie `D` (czekające na dysk lub zawieszony zasób NFS) — wysoki load przy niskim użyciu CPU wskazuje na problem z wejściem-wyjściem, a nie na „za słaby procesor”. Na tej podstawie zespoły kupują niepotrzebnie większe maszyny."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Wniosek z samej liczby",
+      "body": "Alarm „serwer przeciążony” podniesiony na podstawie jednej wartości (przykładowy wynik):",
+      "code": "$ uptime\n 10:15:02 up 12 days,  3:41,  1 user,  load average: 7.85, 7.40, 6.90\n# -> \"load prawie 8 - trzeba wiekszej maszyny!\" (bez sprawdzenia rdzeni i przyczyny)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Obciążenie na rdzeń i rozbicie na CPU oraz I/O",
+      "body": "Na tym serwerze jest 16 rdzeni, a większość „obciążenia” to procesy czekające na dysk (przykładowy wynik):",
+      "code": "$ nproc\n16\n$ vmstat 2 3 | awk 'NR<=2 || NR>3'\nprocs -----------memory---------- ---swap-- -----io---- -system-- -------cpu-------\n r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu\n 2  6      0 4012332 210044 18200112    0    0 48210  1204 5120 9310  6  3 61 30  0  0\n 1  6      0 4009120 210044 18240716    0    0 51004   980 5302 9655  5  3 62 30  0  0\n$ ps -eo stat,pid,cmd | awk '$1 ~ /^D/' | head -3\nD     3120 /usr/bin/rsync -a /srv/dane/ /mnt/kopia/\nD     3121 [kworker/u32:2+flush-8:16]\nD     4410 java -jar sklep.jar"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Narzędzia do obserwacji planisty",
+      "body": "- **Ile rdzeni** — `nproc`, `lscpu`.\n- **Obciążenie i trend** — `uptime`, `/proc/loadavg`.\n- **Kolejka CPU i czekanie na I/O** — `vmstat 1` (`r`, `b`, `wa`, `cs`, `st`).\n- **Na którym rdzeniu i z jakim priorytetem** — `ps -o pid,ni,psr,pcpu`.\n- **Przypisanie do rdzeni** — `taskset -c`, `CPUAffinity=` (systemd).\n- **Polityka planowania** — `chrt -p PID`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Planista jądra (CFS, od jądra 6.6 EEVDF) dzieli czas rdzeni między gotowe zadania proporcjonalnie do ich wag (`nice`).\n- Każdy rdzeń ma kolejkę zadań; przełączanie kontekstu odbywa się tysiące razy na sekundę.\n- Load average to średnia liczba zadań `R` i `D` z 1, 5 i 15 minut — zawsze porównuj z `nproc`.\n- `vmstat` odróżnia przeciążenie CPU (`r`, `us`/`sy`) od czekania na dysk (`b`, `wa`).\n- JVM dobiera liczbę wątków do widocznych procesorów (z uwzględnieniem cgroups i `taskset`)."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Procesy, które umarły, i procesy bez rodziców",
+      "body": "W wyniku `top` czasem widać `1 zombie`, a w `ps` — wpisy `[sleep] <defunct>` ze stanem `Z`. Brzmi groźnie, a `kill -9` nic nie daje. Z drugiej strony bywają procesy, których rodzic dawno się zakończył, a one działają dalej z PPID 1. To dwa różne zjawiska wynikające z relacji rodzic–dziecko (lekcja 4): **zombie** to dziecko, które już się zakończyło, ale rodzic nie odebrał jego kodu wyjścia; **sierota** to dziecko, które wciąż działa, choć jego rodzic się zakończył. Notatki kursu wspominają o sierotach przy opisie systemd: „jeśli proces rodzic umiera, proces staje się sierotą — systemd adoptuje go”.\n\nW tej lekcji wywołasz oba zjawiska celowo, zobaczysz je w `ps` i `pstree`, zrozumiesz rolę sygnału `SIGCHLD` i wywołania `wait()`, dowiesz się, dlaczego zombie nie da się zabić i jak się go pozbyć, a także czym jest problem „PID 1 w kontenerze” — ważny dla każdego, kto uruchamia Javę w Dockerze."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Zombie i sieroty",
+      "body": "- **Zakończenie procesu** — jądro zwalnia pamięć i pliki procesu, ale zostawia mały wpis w tabeli procesów (PID, kod wyjścia, czasy), dopóki rodzic go nie **odbierze** wywołaniem `wait()`/`waitpid()`; rodzic dostaje o tym sygnał **`SIGCHLD`**.\n- **Zombie (stan `Z`, `<defunct>`)** — proces zakończony, którego rodzic jeszcze (lub nigdy) nie wywołał `wait()`; nie zużywa CPU ani pamięci, zajmuje tylko numer PID i wpis w tabeli.\n- **Zombie nie da się zabić** — on już nie żyje; sygnały (także `SIGKILL`) nie mają na niego wpływu. Usuwa go dopiero odebranie przez rodzica lub **zakończenie rodzica** (wtedy zombie adoptuje i odbiera PID 1).\n- **Krótkotrwałe zombie** są normalne (ułamek sekundy między końcem dziecka a `wait()` rodzica); problemem są zombie trwałe i liczne — błąd w programie-rodzicu.\n- **Sierota (orphan)** — działający proces, którego rodzic się zakończył; jądro przypisuje mu nowego rodzica: **PID 1** (systemd) lub najbliższego przodka oznaczonego jako **subreaper** (np. `systemd --user`, menedżery kontenerów).\n- **Celowa sierota** — tak działają `nohup`/`setsid`/demony starego typu (podwójny `fork`): proces „uciekający” od terminala (lekcje 11, 13).\n- **PID 1 w kontenerze** — pierwszy proces w kontenerze (np. `java`) pełni rolę „init”: adoptuje sieroty i powinien odbierać zombie; aplikacja zwykle tego nie robi. Rozwiązanie: `docker run --init` (tini) lub `ENTRYPOINT [\"tini\", \"--\", ...]`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Akt zgonu i adopcja",
+      "body": "Zombie to **pracownik, który już odszedł, ale kierownik nie podpisał jego obiegówki** — w systemie kadrowym wisi wpis z numerem ewidencyjnym, choć biurko jest puste. Wołanie go (`kill`) nic nie da — nikogo tam nie ma; trzeba, żeby kierownik (rodzic) podpisał papiery (`wait()`), albo żeby kierownik sam odszedł, a sprawy przejęła dyrekcja (PID 1), która podpisuje wszystko na bieżąco. Sierota to **pracownik, którego kierownik odszedł** — pracuje dalej, a formalnie przejmuje go dyrekcja."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Zombie a sierota",
+      "body": "Dwie różne sytuacje w drzewie procesów:",
+      "code": " ZOMBIE: dziecko skonczone, rodzic nie wywolal wait()\n   bash(2201)───sleep(5010)───sleep(5011) <defunct>   stan Z\n                ^ rodzic zyje, ale nie odbiera kodu wyjscia dziecka\n   naprawa: rodzic wywola wait()  albo  zakonczenie rodzica -> PID 1 odbiera zombie\n\n SIEROTA: dziecko zyje, rodzic sie zakonczyl\n   przed:  bash(2201)───bash(5020)───sleep(5021)\n   po:     systemd(1)───sleep(5021)        PPID zmieniony na 1 (adopcja)\n\n w kontenerze:  java (PID 1)  -> nie odbiera zombie potomkow (np. skryptow)\n                tini (PID 1) -> java  -> tini odbiera zombie i przekazuje sygnaly"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Wywołanie zombie",
+      "body": "Rodzicem jest `sleep 120`, który zastąpił powłokę (`exec`) i nigdy nie wywoła `wait()`; jego dziecko kończy się po sekundzie i zostaje zombie (przykładowy wynik):",
+      "code": "$ (sleep 1 & exec sleep 120) &\n[1] 5010\n$ sleep 2; ps -o pid,ppid,stat,cmd --ppid 5010\n    PID    PPID STAT CMD\n   5011    5010 Z    [sleep] <defunct>\n$ top -b -n 1 | sed -n '2p'\nTasks: 216 total,   1 running, 214 sleeping,   0 stopped,   1 zombie\n$ kill -9 5011; ps -o pid,stat,cmd -p 5011\n    PID STAT CMD\n   5011 Z    [sleep] <defunct>\n$ kill 5010; sleep 1; ps -p 5011 || echo \"zombie odebrany przez PID 1\"\n    PID TTY          TIME CMD\nzombie odebrany przez PID 1"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Sierota i adopcja przez PID 1",
+      "body": "Powłoka uruchamia proces w tle i kończy się; dziecko działa dalej z nowym rodzicem (przykładowy wynik):",
+      "code": "$ bash -c 'sleep 300 & echo \"rodzic $$, dziecko $!\"'\nrodzic 5020, dziecko 5021\n$ ps -o pid,ppid,stat,cmd -p 5021\n    PID    PPID STAT CMD\n   5021       1 S    sleep 300\n$ pstree -p -s 5021\nsystemd(1)───sleep(5021)\n$ ps -eo ppid= | sort | uniq -c | sort -rn | head -3\n    187 2\n     41 1\n      9 1543"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "W systemie są zombie — co robić",
+      "body": "1. Policz i znajdź je: `ps -eo pid,ppid,stat,cmd | awk '$3 ~ /^Z/'`.\n2. Ustal rodzica (kolumna `PPID`) i co to za program: `ps -o pid,cmd -p PPID`.\n3. Pojedyncze, krótkotrwałe zombie — zignoruj (znikną po chwili).\n4. Trwałe i rosnące — błąd w programie-rodzicu: zgłoś go / popraw kod (obsługa `SIGCHLD`, `wait()`).\n5. Doraźnie: **zrestartuj rodzica** (`systemctl restart usługa`, `kill PPID`) — zombie zostaną odebrane przez PID 1.\n6. Nie próbuj zabijać samych zombie — to nic nie da.\n7. W kontenerach z procesami potomnymi (skrypty, `ProcessBuilder` w Javie) uruchamiaj kontener z `--init`."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Java jako PID 1 w kontenerze",
+      "body": "W obrazie Dockera z `ENTRYPOINT [\"java\", \"-jar\", \"app.jar\"]` JVM jest procesem numer 1 w przestrzeni nazw kontenera. Ma to dwie konsekwencje. Po pierwsze, jądro nie stosuje wobec PID 1 domyślnych akcji sygnałów — sygnał bez zarejestrowanej obsługi jest ignorowany (JVM obsługuje `SIGTERM`, więc `docker stop` działa, ale np. skrypt bash jako PID 1 bez `trap` zignoruje `SIGTERM` i zostanie zabity po 10 s). Po drugie, jeśli aplikacja uruchamia procesy zewnętrzne (`ProcessBuilder`, `Runtime.exec`) i te tworzą własne dzieci, osierocone wnuki trafią do JVM, która ich nie odbiera — w kontenerze gromadzą się zombie. Rozwiązanie to mały „init”: `docker run --init` lub `tini` w obrazie (rozdział 45). Uruchamiaj też Javę przez `exec` w skryptach startowych (`exec java -jar app.jar`), żeby to ona dostawała sygnały, a nie powłoka."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie spotkasz zombie i sieroty",
+      "body": "- **`top` pokazuje zombie** — szukanie wadliwego rodzica.\n- **Demony i `nohup`** — celowe sieroty adoptowane przez systemd.\n- **Kontenery** — problem PID 1, `--init`/`tini`.\n- **Aplikacje uruchamiające procesy zewnętrzne** — Java z `ProcessBuilder` musi wywołać `waitFor()` (odpowiednik `wait()`).\n- **Wyczerpanie PID-ów** — tysiące zombie mogą zablokować tworzenie nowych procesów (`fork: Resource temporarily unavailable`).\n- **Analiza drzewa procesów** — dlaczego proces ma PPID 1."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Polowanie na zombie z kill -9",
+      "body": "Monitoring zgłasza 200 procesów zombie, więc administrator pisze pętlę `for p in $(ps ... | awk '/Z/{print $2}'); do kill -9 $p; done`. Nic się nie zmienia — zombie są już martwe i sygnały ich nie dotyczą. Liczba rośnie dalej, bo przyczyna (rodzic, który nie odbiera dzieci) działa w najlepsze. Tymczasem jedno polecenie — restart rodzica — usuwa je wszystkie naraz."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "SIGKILL do zombie",
+      "body": "Sygnały do procesów `Z` nie mają efektu (przykładowy wynik):",
+      "code": "$ ps -eo pid,ppid,stat,cmd | awk '$3 ~ /^Z/' | head -3\n   5101    5100 Z    [raport.sh] <defunct>\n   5104    5100 Z    [raport.sh] <defunct>\n   5107    5100 Z    [raport.sh] <defunct>\n$ ps -eo stat | grep -c '^Z'\n214\n$ ps -eo pid,stat | awk '$2 ~ /^Z/ {print $1}' | xargs sudo kill -9\n$ ps -eo stat | grep -c '^Z'\n214"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Restart rodzica",
+      "body": "Wszystkie zombie mają tego samego rodzica — usługę `raporty`; jej restart pozwala PID 1 je odebrać (przykładowy wynik):",
+      "code": "$ ps -eo ppid,stat | awk '$2 ~ /^Z/ {print $1}' | sort | uniq -c\n    214 5100\n$ ps -o pid,user,cmd -p 5100\n    PID USER     CMD\n   5100 raporty  /usr/bin/python3 /opt/raporty/serwer.py\n$ systemctl status 5100 --no-pager | head -1\n● raporty.service - Serwer raportow\n$ sudo systemctl restart raporty\n$ ps -eo stat | grep -c '^Z'\n0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Co zrobić w danej sytuacji",
+      "body": "- **Pojedyncze zombie na chwilę** — nic, to normalne.\n- **Trwałe zombie** — znajdź `PPID`, zrestartuj rodzica, zgłoś błąd w programie.\n- **Proces z PPID 1** — sierota lub demon; sprawdź `systemctl status PID`.\n- **Kontener uruchamiający podprocesy** — `docker run --init` / `tini`.\n- **Skrypt startowy aplikacji** — `exec java ...`, żeby Java dostawała sygnały.\n- **Java uruchamiająca procesy** — zawsze `Process.waitFor()` i obsługa strumieni."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Zombie (`Z`, `<defunct>`) to zakończony proces czekający, aż rodzic odbierze jego kod wyjścia (`wait()` po `SIGCHLD`).\n- Zombie nie da się zabić — znika po odebraniu przez rodzica lub po zakończeniu rodzica (odbiera go PID 1).\n- Sierota to działający proces, którego rodzic się zakończył — adoptuje go PID 1 lub subreaper.\n- Trwałe zombie oznaczają błąd programu-rodzica; doraźnie pomaga jego restart.\n- W kontenerach PID 1 (np. JVM) powinien mieć wsparcie init (`--init`, `tini`), a skrypty startowe — używać `exec`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

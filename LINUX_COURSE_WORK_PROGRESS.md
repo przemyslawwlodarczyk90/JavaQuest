@@ -82,7 +82,12 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   build-essential, configure/make/install (GNU Hello 2.12.1, Nginx 1.28 z PCRE2), biblioteki .so
   (libpowitanie.so.1 w ~/kompilacja), ldd/ldconfig, moduły Apache + apxs (mod_naglowek), usuwanie
   (make uninstall, /opt, Stow, checkinstall).
-  Pozostałe lekcje (`_lx_21`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_21_procesy` (13 lekcji) — ZROBIONY (2026-10-05): proces, planista (EEVDF od 6.6), ps,
+  rodzice/dzieci, /proc/PID, top/htop (+ top -H i jstack — w Javie 19+ nid dziesiętnie), sygnały
+  (graceful shutdown Spring Boot 4: logger o.s.boot.tomcat.GracefulShutdown), kill/pkill/killall,
+  nice/ionice, zadania w tle, nohup/disown/setsid, zombie/sieroty, demony i PID 1. Aplikacja `sklep`
+  w ~/sklep (application.properties, sekrety.env); pod koniec rozdziału jako sklep.service (PID 5210).
+  Pozostałe lekcje (`_lx_22`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -137,7 +142,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_21_procesy`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_22_systemd`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
