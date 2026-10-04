@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "sed w codziennej pracy administratora",
+      "body": "Ta lekcja zbiera rozdział w praktyce. Typowe zadania przy przygotowaniu serwera i wdrożeniach to: wyłączenie logowania roota przez SSH, zmiana portu, odkomentowanie ustawienia, podmiana adresu bazy na produkcyjny, dopisanie brakującej opcji. Każde z nich da się zrobić jednym poleceniem `sed -i` — ale dobre polecenie musi spełniać trzy warunki: działać niezależnie od tego, czy linia jest zakomentowana, dawać ten sam wynik przy ponownym uruchomieniu (**idempotentność**) i nie psuć się, gdy wartość zawiera znaki specjalne, np. `/` i `&` w adresie JDBC.\n\nNa prawdziwym `/etc/ssh/sshd_config` z Ubuntu 24.04 (kopia w katalogu ćwiczebnym) i pliku `application.properties` poznasz wzorce „ustaw opcję niezależnie od komentarza”, „zmień albo dopisz” oraz bezpieczne wstawianie zmiennych do skryptu `sed`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Wzorce edycji konfiguracji",
+      "body": "- **Ustaw opcję niezależnie od komentarza** — `sed -i -E 's/^#?Opcja .*/Opcja wartosc/' plik`: pasuje i `#Opcja ...`, i `Opcja ...`.\n- **Odkomentuj** — `s/^#\\(klucz=\\)/\\1/` lub `s/^#klucz=/klucz=/`.\n- **Zakomentuj** — `s/^klucz=/#&/`.\n- **Idempotentność** — ponowne uruchomienie nie zmienia już poprawnego pliku; polecenia `s/^klucz=.*/klucz=wartosc/` są idempotentne, a `$a tekst` — **nie** (dopisuje za każdym razem).\n- **„Zmień albo dopisz”** — `grep -q \"^klucz=\" plik && sed -i 's/^klucz=.*/klucz=wartosc/' plik || echo \"klucz=wartosc\" >> plik`.\n- **Zmienne w skrypcie `sed`** — skrypt w cudzysłowie (`\"s/.../$ZMIENNA/\"`) pozwala wstawić wartość, ale jej znaki `/`, `&`, `\\` (oraz wybrany separator) trzeba **ucieczkować**: `printf '%s' \"$w\" | sed 's/[&/\\]/\\\\&/g'`.\n- **Wzorzec z klucza** — znaki `.`, `[`, `*`, `^`, `$`, `/` w kluczu również trzeba ucieczkować, żeby był dosłowny.\n- **Weryfikacja** — po zmianie: `grep -n`, `diff` z kopią, a dla usług — test składni (`sshd -t`, `nginx -t`)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Instrukcja montażu, którą można wykonać dwa razy",
+      "body": "Dobre polecenie konfiguracyjne przypomina **instrukcję „ustaw termostat na 21 stopni”**, a nie „podnieś temperaturę o dwa stopnie”. Pierwszą można wykonać dowolnie wiele razy — wynik zawsze ten sam (idempotentność). Druga wykonana dwukrotnie przegrzewa mieszkanie. `s/^Port .*/Port 2222/` to „ustaw na 2222”, a `$a Port 2222` to „dołóż jeszcze jedną linię” — po trzech wdrożeniach plik ma trzy porty."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Ustawianie opcji SSH niezależnie od stanu",
+      "body": "Trzy stany linii w `sshd_config` i jedno polecenie, które daje ten sam wynik:",
+      "code": " polecenie:  sed -i -E 's/^#?PermitRootLogin .*/PermitRootLogin no/'\n\n przed                                   po\n #PermitRootLogin prohibit-password  ->  PermitRootLogin no     (domyslna, zakomentowana)\n PermitRootLogin yes                 ->  PermitRootLogin no     (aktywna, inna wartosc)\n PermitRootLogin no                  ->  PermitRootLogin no     (juz poprawna - bez zmian)\n\n wartosc ze znakami specjalnymi:  jdbc:postgresql://db.prod:5432/sklep?ssl=true&sslmode=require\n                                       ^^                 ^              ^\n                                   \"/\" koliduje z separatorem   \"&\" = cale dopasowanie w zamienniku"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Zabezpieczenie SSH na kopii sshd_config",
+      "body": "Kopia prawdziwego `/etc/ssh/sshd_config` w `~/sed`. Opcje są zakomentowane (`#`), polecenia działają mimo to, a ponowne uruchomienie nie tworzy duplikatów (wyniki z prawdziwego uruchomienia):",
+      "code": "$ cd ~/sed\n$ grep -nE \"^#?(PermitRootLogin|PasswordAuthentication|Port) \" sshd_config\n23:#Port 22\n42:#PermitRootLogin prohibit-password\n66:#PasswordAuthentication yes\n$ sed -i -E 's/^#?PermitRootLogin .*/PermitRootLogin no/' sshd_config\n$ sed -i -E 's/^#?PasswordAuthentication .*/PasswordAuthentication no/' sshd_config\n$ sed -i -E 's/^#?Port .*/Port 2222/' sshd_config\n$ grep -nE \"^#?(PermitRootLogin|PasswordAuthentication|Port) \" sshd_config\n23:Port 2222\n42:PermitRootLogin no\n66:PasswordAuthentication no\n$ sed -i -E 's/^#?Port .*/Port 2222/' sshd_config\n$ grep -c \"^Port 2222\" sshd_config\n1\n$ sed -i 's/^#spring.datasource.password=/spring.datasource.password=/' konf.properties\n$ grep password konf.properties\nspring.datasource.password=haslo-testowe"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Skrypt „zmień albo dopisz” z ucieczką znaków",
+      "body": "`ustaw.sh` zamienia istniejący klucz albo dopisuje nowy, ucieczkując znaki specjalne klucza i wartości; dwukrotne ustawienie `context-path` nie tworzy duplikatu (wyniki z prawdziwego uruchomienia):",
+      "code": "$ cat ustaw.sh\n#!/bin/bash\n# ustaw.sh PLIK KLUCZ WARTOSC - ustawia klucz=wartosc (zmienia albo dopisuje)\nplik=$1; klucz=$2; wartosc=$3\nk=$(printf '%s' \"$klucz\" | sed 's/[.[*^$/]/\\\\&/g')     # klucz jako doslowny wzorzec\nw=$(printf '%s' \"$wartosc\" | sed 's/[&/\\]/\\\\&/g')     # wartosc bezpieczna w zamienniku\nif grep -q \"^${k}=\" \"$plik\"; then\n  sed -i \"s/^${k}=.*/${k}=${w}/\" \"$plik\"\nelse\n  printf '%s=%s\\n' \"$klucz\" \"$wartosc\" >> \"$plik\"\nfi\n$ NOWY_URL=\"jdbc:postgresql://db.prod:5432/sklep?ssl=true&sslmode=require\"\n$ ./ustaw.sh konf.properties spring.datasource.url \"$NOWY_URL\"\n$ ./ustaw.sh konf.properties server.port 9090\n$ ./ustaw.sh konf.properties server.servlet.context-path /api\n$ ./ustaw.sh konf.properties server.servlet.context-path /api\n$ grep -nE \"^(server|spring.datasource.url)\" konf.properties\n2:server.port=9090\n5:spring.datasource.url=jdbc:postgresql://db.prod:5432/sklep?ssl=true&sslmode=require\n11:server.servlet.context-path=/api"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Zabezpieczenie SSH na prawdziwym serwerze",
+      "body": "1. Zrób kopię: `sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.$(date +%F)`.\n2. Zastosuj zmiany idempotentnymi poleceniami: `sudo sed -i -E 's/^#?PermitRootLogin .*/PermitRootLogin no/; s/^#?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config`.\n3. Sprawdź, czy ustawienia nie są nadpisywane w plikach dołączanych: `grep -r \"PasswordAuthentication\" /etc/ssh/sshd_config.d/` (Ubuntu w chmurze często ma tam `PasswordAuthentication yes`).\n4. Przetestuj składnię: `sudo sshd -t` — brak komunikatu oznacza poprawną konfigurację.\n5. **Zanim** przeładujesz usługę, upewnij się, że masz działające logowanie kluczem i otwartą drugą sesję SSH (rozdział 33).\n6. Przeładuj: `sudo systemctl reload ssh` i sprawdź logowanie w nowej sesji."
+    },
+    {
+      "type": "NOTE",
+      "heading": "sed a konfiguracja strukturalna",
+      "body": "`sed` świetnie radzi sobie z plikami „linia = ustawienie”: `sshd_config`, `.properties`, pliki `.env`, `sysctl.conf`. Przy formatach strukturalnych — YAML (`application.yml`), JSON, XML (`pom.xml`, konfiguracja Tomcata) — znaczenie linii zależy od wcięć i zagnieżdżenia, a ten sam klucz (`port:`) może wystąpić w kilku sekcjach. Wtedy bezpieczniejsze są narzędzia rozumiejące format: `yq '.server.port = 9090' -i application.yml`, `jq`, `xmlstarlet`. W większej infrastrukturze zmiany konfiguracji wykonuje się narzędziami zarządzania konfiguracją (Ansible: moduły `lineinfile`, `replace`, `template`), które same dbają o idempotentność — ale pod spodem robią dokładnie to, czego nauczyłeś się w tej lekcji."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie te wzorce przydają się na co dzień",
+      "body": "- **Hartowanie serwera** — `PermitRootLogin no`, `PasswordAuthentication no`, zmiana portu (rozdziały 33 i 39).\n- **Konfiguracja aplikacji w skryptach wdrożeniowych** — adres bazy, profil, port.\n- **Dockerfile i obrazy** — odkomentowanie i zmiana opcji w plikach pakietów (`/etc/...`).\n- **Parametry jądra i limity** — `sysctl.conf`, `limits.conf` (rozdziały 28-29).\n- **Szablony** — podstawianie wartości ze zmiennych środowiskowych z ucieczką znaków."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Wartość ze zmiennej z / lub & w zamienniku",
+      "body": "Wstawienie zmiennej do skryptu `sed` w cudzysłowie działa, dopóki wartość jest „grzeczna”. Adres JDBC zawiera `/` (koliduje z separatorem — `unknown option to s`), a często także `&` w parametrach. Zmiana separatora na `|` rozwiązuje tylko połowę problemu: `&` w zamienniku oznacza **całe dopasowanie**, więc zostaje zastąpione całą starą linią. Wynik wygląda na poprawny na pierwszy rzut oka, a aplikacja nie łączy się z bazą."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Zmienna z / i & wstawiona bez ucieczki",
+      "body": "Separator `/` zgłasza błąd; po zmianie na `|` znak `&` wstawił w środek wartości całą dopasowaną linię (wyniki z prawdziwego uruchomienia):",
+      "code": "$ NOWY_URL=\"jdbc:postgresql://db.prod:5432/sklep?ssl=true&sslmode=require\"\n$ sed -i \"s/^spring.datasource.url=.*/spring.datasource.url=$NOWY_URL/\" konf.properties\nsed: -e expression #1, char 68: unknown option to `s'\n$ sed \"s|^spring.datasource.url=.*|spring.datasource.url=$NOWY_URL|\" konf.properties | grep url\nspring.datasource.url=jdbc:postgresql://db.prod:5432/sklep?ssl=truespring.datasource.url=jdbc:postgresql://db.prod:5432/sklep?ssl=true&sslmode=requiresslmode=require"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Ucieczka znaków przed wstawieniem",
+      "body": "Skrypt `ustaw.sh` ucieczkuje `&`, `/` i `\\` w wartości (`sed 's/[&/\\]/\\\\&/g'`), więc adres trafia do pliku dokładnie w takiej postaci, w jakiej go podano (wynik z prawdziwego uruchomienia):",
+      "code": "$ ./ustaw.sh konf.properties spring.datasource.url \"$NOWY_URL\"\n$ grep -n \"^spring.datasource.url\" konf.properties\n5:spring.datasource.url=jdbc:postgresql://db.prod:5432/sklep?ssl=true&sslmode=require"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Które podejście wybrać",
+      "body": "- **Opcja może być zakomentowana lub mieć inną wartość** — `s/^#\\?Opcja .*/Opcja wartosc/` (lub `-E` i `#?`).\n- **Klucz może nie istnieć** — „zmień albo dopisz” (`grep -q ... && sed -i ... || echo ... >>`).\n- **Wartość ze zmiennej** — ucieczka `[&/\\]` (i wybranego separatora) przed wstawieniem.\n- **Pliki YAML, JSON, XML** — `yq`, `jq`, `xmlstarlet`.\n- **Wiele serwerów i powtarzalność** — Ansible (`lineinfile`, `template`) lub inne narzędzie do zarządzania konfiguracją.\n- **Zawsze** — kopia przed zmianą, `diff` po zmianie, test składni usługi przed przeładowaniem."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `s/^#\\?Opcja .*/Opcja wartosc/` ustawia opcję niezależnie od tego, czy była zakomentowana i jaką miała wartość.\n- Dobre polecenia konfiguracyjne są idempotentne: `s/^klucz=.*/.../` tak, `$a ...` nie.\n- „Zmień albo dopisz” łączy `grep -q` z `sed -i` i dopisaniem `>>`.\n- Wartości ze zmiennych wymagają ucieczki `/`, `&`, `\\` — inaczej błąd `unknown option to s` albo zniekształcona wartość.\n- Po zmianie: `grep -n`, `diff`, test składni (`sshd -t`, `nginx -t`); formaty strukturalne edytuj `yq`/`jq`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
