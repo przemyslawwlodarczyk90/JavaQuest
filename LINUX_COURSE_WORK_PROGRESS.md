@@ -115,7 +115,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_08_edytory_nano_i_vim`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_16_uzytkownicy_i_grupy`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
