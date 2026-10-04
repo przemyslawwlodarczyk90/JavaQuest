@@ -59,7 +59,8 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   Rozdział `_lx_14_archiwizacja` (8 lekcji) — ZROBIONY (2026-10-04); dane w `~/archiwa` (logi/app.log —
   5 MB zróżnicowanego logu wygenerowanego awk, sklep z losowym sklep.jar); doinstalowane bzip2, xz,
   zstd, zip/unzip; pomiary kompresorów z `time` w lekcji 6.
-  Pozostałe lekcje (`_lx_15`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_15_wget_i_curl` (6 lekcji) — ZROBIONY (2026-10-04): wget (pobieranie, -c, rekursja), curl (podstawy, metody/nagłówki/body, testowanie REST na sklep-api Spring Boot 4.1.1), sumy SHA-256/512. Lab: kontenery httpbin i sklep-api w sieci lxnet, serwer python na porcie 8000 (~/www), dane w ~/pobrane.
+  Pozostałe lekcje (`_lx_16`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
