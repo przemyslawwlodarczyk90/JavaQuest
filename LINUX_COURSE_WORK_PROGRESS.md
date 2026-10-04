@@ -53,7 +53,10 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `openssh-server` (prawdziwy sshd_config, usługa NIE działa) i `ripgrep`.
   Rozdział `_lx_12_sed` (8 lekcji) — ZROBIONY (2026-10-04); dane w `~/sed` (app.properties,
   nginx.conf, kopia sshd_config, prod.sed, ustaw.sh — zmień-albo-dopisz z ucieczką znaków).
-  Pozostałe lekcje (`_lx_13`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_13_awk` (11 lekcji) — ZROBIONY (2026-10-04); dane w `~/awk`; domyślny `awk` w Ubuntu to
+  mawk 1.3.4 — doinstalowany też `gawk` 5.2 (alternatywa `awk` przestawiona z powrotem na mawk:
+  `update-alternatives --set awk /usr/bin/mawk`); `raport.awk` — przykładowy raport z logu Nginx.
+  Pozostałe lekcje (`_lx_14`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
