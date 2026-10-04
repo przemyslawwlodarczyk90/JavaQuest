@@ -73,7 +73,10 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   symboliczny, prawa katalogów, umask (Ubuntu: użytkownik 002, root/systemd 022), chown/chgrp/install,
   SUID/SGID/sticky (/srv/wspolne = 3775 root:programisci), ACL (u:kuba na /var/log/faktury), chattr,
   diagnoza. Katalog ćwiczebny `~/prawa`; konfiguracja aplikacji w `/etc/faktury`.
-  Pozostałe lekcje (`_lx_18`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_18_pakiety_debian` (11 lekcji) — ZROBIONY (2026-10-04): APT/dpkg, update/upgrade/
+  full-upgrade, źródła deb822 (ubuntu.sources), wyszukiwanie, apt-cache policy, zależności, remove/
+  purge/autoremove, .deb, repozytoria z Signed-By (Adoptium), hold/pinning, unattended-upgrades.
+  Pozostałe lekcje (`_lx_19`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -128,7 +131,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_18_pakiety_debian`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_19_pakiety_inne_dystrybucje`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
