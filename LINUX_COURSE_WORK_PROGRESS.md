@@ -38,7 +38,10 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   Rozdział `_lx_07_strumienie_i_potoki` (12 lekcji) — ZROBIONY (2026-10-04); katalogi ćwiczebne
   `~/strumienie`, `~/xargs` (200 000 plików do „Argument list too long” — usunięte), `~/fifo`;
   przykład Javy (System.out/err) w kontenerze `eclipse-temurin:21-jdk`.
-  Pozostałe lekcje (`_lx_08`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_08_edytory_nano_i_vim` (10 lekcji) — ZROBIONY (2026-10-04); w `lxlab` doinstalowany
+  pełny `vim` 9.1; pliki ćwiczebne `~/edycja` (app.properties, Zamowienie.java); wszystkie ekrany
+  nano/Vima to zrzuty z tmux (`lx_screen.sh`; średnik w klawiszach tmux trzeba podać jako `'\;'`).
+  Pozostałe lekcje (`_lx_09`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
