@@ -106,7 +106,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   wyłączanie (shutdown, molly-guard). W `/etc/fstab` jest drugi dysk: `UUID=b52e7c90-1d3f-4a8e-bc61-
   0f9e2d7a4c13 /srv/dane ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2` (w lekcji 6 dysk
   odłączony — rozdział 24 może go „podłączyć z powrotem” jako /dev/sdb1).
-  Pozostałe lekcje (`_lx_24`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_24_dyski_i_montowanie` (10 lekcji) — ZROBIONY (2026-10-06): nazwy urządzeń, UUID/
+  PARTUUID (sdb1 LABEL=dane, PARTUUID 2d7e1b5a-...), MBR/GPT, fdisk/parted, mkfs, mount, fstab, swap,
+  fsck, powiększanie. Stan laboratorium: trzeci dysk `sdc` (kopie.vdi, najpierw 10 GiB, w lekcji 10
+  powiększony do 15 GiB), GPT, `sdc1` ext4 LABEL=kopie UUID e3a91f57-2c4d-4b8e-9a16-7d5c0b2f8e41
+  (`-m 1`), montowany w `/srv/kopie` (fstab: defaults,noatime,nofail,x-systemd.automount,
+  x-systemd.idle-timeout=10min,noexec,nosuid,nodev 0 2); kopie bazy przeniesione do `/srv/kopie/sklep`
+  (drop-in `kopia-sklep.service.d/dysk.conf` z `RequiresMountsFor=/srv/kopie`, skrypt sprawdza
+  `mountpoint`); swap: `/swap.img` zastąpiony `/swapfile` 4 GiB (600), `vm.swappiness=10`
+  (`/etc/sysctl.d/90-swappiness.conf`). RAM maszyny 4 GiB (3.8Gi w free).
+  Pozostałe lekcje (`_lx_25`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -161,7 +170,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_24_dyski_i_montowanie`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_25_systemy_plikow_lvm_luks`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
