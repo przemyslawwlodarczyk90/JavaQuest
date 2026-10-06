@@ -98,7 +98,15 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   JDK z APT `/usr/lib/jvm/java-21-openjdk-amd64`; timer `kopia-sklep.timer` (2:30, pg_dump do
   `/var/backups/sklep`); domyślny cel maszyny = `multi-user.target`. Przy okazji poprawione
   odwołania „rozdział 24” → 26 (logi) w lekcjach 16/08, 21/07, 21/13.
-  Pozostałe lekcje (`_lx_23`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_23_start_systemu` (7 lekcji) — ZROBIONY (2026-10-06): sekwencja startu, BIOS/UEFI
+  (VM z UEFI + Secure Boot, ESP `/dev/sda1` 1 GB FAT32 UUID 4A1B-7C2D, `/dev/sda2` ext4 29 GB UUID
+  8c1f2d4e-6b7a-4e3d-9f12-5a0c7e9b3d21), GRUB (drop-in `/etc/default/grub.d/90-serwer.cfg`: menu 5 s,
+  bez quiet splash; `GRUB_CMDLINE_LINUX` z console=ttyS0), jądro 6.8.0-48 (+45 zapasowe) i initramfs,
+  start w systemd (blame/critical-chain), tryby rescue/emergency (`init=/bin/bash`, root zablokowany),
+  wyłączanie (shutdown, molly-guard). W `/etc/fstab` jest drugi dysk: `UUID=b52e7c90-1d3f-4a8e-bc61-
+  0f9e2d7a4c13 /srv/dane ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2` (w lekcji 6 dysk
+  odłączony — rozdział 24 może go „podłączyć z powrotem” jako /dev/sdb1).
+  Pozostałe lekcje (`_lx_24`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -153,7 +161,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_23_start_systemu`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_24_dyski_i_montowanie`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

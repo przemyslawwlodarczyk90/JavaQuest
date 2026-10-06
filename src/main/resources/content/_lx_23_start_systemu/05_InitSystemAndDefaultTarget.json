@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Od PID 1 do ekranu logowania",
+      "body": "Po `switch_root` jądro uruchamia `/sbin/init` — w Ubuntu to systemd. Od tej chwili start systemu to już nie łańcuch kolejnych programów, ale **graf zależności** jednostek, który systemd rozwija od celu domyślnego w dół i uruchamia równolegle wszystko, co może. W rozdziale 22 poznałeś cele (`multi-user.target`, `graphical.target`) i ich przełączanie; teraz zobaczysz, co dokładnie dzieje się w pierwszych sekundach po starcie PID 1 i jak to mierzyć.\n\nW tej lekcji prześledzisz kolejne etapy pracy systemd przy starcie: **generatory** (zamieniające `/etc/fstab` i inne pliki w jednostki), `sysinit.target` (montowanie, `udev`, `fsck`, przemontowanie `/` do zapisu), `basic.target`, sieć i usługi aż do `default.target`. Nauczysz się wskazać, skąd systemd bierze cel domyślny (dowiązanie lub parametr jądra) i jak znaleźć wąskie gardło startu poleceniami `systemd-analyze blame`, `critical-chain` i `plot`. Na koniec — miejsce na własne polecenia startowe: dawny `/etc/rc.local` a usługa `oneshot`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Start w wykonaniu systemd",
+      "body": "- **Wybór celu** — parametr jądra `systemd.unit=CEL` (lub skróty `rescue`, `emergency`, `single`, `1`, `3`, `5`) ma pierwszeństwo; w przeciwnym razie `default.target` (dowiązanie w `/etc/systemd/system/` lub `/usr/lib/systemd/system/`, ustawiane `systemctl set-default`).\n- **Generatory** — małe programy uruchamiane na samym początku i przy `daemon-reload`, tworzące jednostki w `/run/systemd/generator*/`: `systemd-fstab-generator` (`/etc/fstab` → `.mount`, `.swap`), `systemd-getty-generator` (konsole), `systemd-sysv-generator` (skrypty `/etc/init.d`), `systemd-gpt-auto-generator`, `systemd-cryptsetup-generator` (`/etc/crypttab`).\n- **`sysinit.target`** — wczesna inicjalizacja: `systemd-udevd` (urządzenia), `systemd-fsck@`, `systemd-remount-fs` (przemontowanie `/` do zapisu wg fstab), `local-fs.target` (montowania), `swap.target`, `systemd-tmpfiles-setup`, `systemd-sysctl` (parametry jądra), `systemd-journald`.\n- **`basic.target`** — `sockets.target`, `timers.target`, `paths.target`: system gotowy na zwykłe usługi.\n- **`multi-user.target` / `graphical.target`** — usługi z `WantedBy=`; `getty@tty1` (logowanie tekstowe), menedżer wyświetlania (graficzne).\n- **Zadania (*jobs*)** — systemd zamienia graf na listę zadań start/stop; `systemctl list-jobs` w trakcie startu; komunikat *A start job is running for X (1min 12s / 1min 30s)* — oczekiwanie na jednostkę (często urządzenie z fstab lub sieć).\n- **Analiza** — `systemd-analyze` (czas), `blame` (czas startu każdej jednostki), `critical-chain [jednostka]` (najdłuższa ścieżka zależności), `plot > start.svg` (wykres), `dot` (graf).\n- **`/etc/rc.local`** — skrypt zgodności z SysV; w Ubuntu wykonywany przez `rc-local.service`, jeśli istnieje i jest wykonywalny. Zalecana alternatywa: własna usługa `Type=oneshot`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Kuchnia restauracji przed otwarciem",
+      "body": "systemd przy starcie to **szef kuchni przed otwarciem**, który ma listę dań na dziś (cel domyślny). Najpierw pomocnicy przepisują zamówienia z różnych karteczek do jednego systemu (generatory: fstab, crypttab). Potem obowiązki, bez których nic nie ruszy: prąd, gaz, woda, lodówki (sysinit: urządzenia, dyski, pamięć wymiany). Następnie stanowiska gotowe na zamówienia (basic: gniazda, timery). Wreszcie kucharze przy poszczególnych daniach pracują **równolegle** — zupa nie czeka na deser — chyba że deser potrzebuje bitej śmietany z innego stanowiska (zależność). `systemd-analyze blame` to lista, kto przygotowywał się najdłużej, a `critical-chain` — która sekwencja „jedno czeka na drugie” opóźniła otwarcie restauracji."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kolejne cele startu i generatory",
+      "body": "Uproszczony obraz pierwszych sekund pracy PID 1:",
+      "code": " jadro -> /sbin/init (systemd, PID 1)\n   |\n   | 1. odczyt konfiguracji, wybor celu:\n   |      systemd.unit= z /proc/cmdline ?  -> ten cel\n   |      inaczej default.target -> multi-user.target (serwer)\n   | 2. generatory -> /run/systemd/generator/\n   |      /etc/fstab    -> -.mount, boot-efi.mount, srv-dane.mount, swap.img.swap\n   |      /etc/crypttab -> systemd-cryptsetup@...service\n   v\n sysinit.target   udevd, fsck, remount-fs (/ do zapisu), local-fs.target,\n   |              swap.target, tmpfiles, sysctl, journald\n basic.target     sockets.target (ssh.socket, dbus.socket), timers.target\n   |\n network.target -> network-online.target\n   |\n multi-user.target  cron, nginx, postgresql@16-main, sklep, getty@tty1, rc-local\n   |\n graphical.target   sddm (tylko jesli default = graphical)\n\n czasy:  systemd-analyze           calosc\n         systemd-analyze blame     kazda jednostka osobno (rownolegle!)\n         systemd-analyze critical-chain   najdluzsza sciezka \"czeka na\""
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Cel domyślny i jednostki z generatorów",
+      "body": "Skąd systemd wziął cel i które jednostki powstały z `/etc/fstab` (przykładowy wynik):",
+      "code": "$ systemctl get-default\nmulti-user.target\n$ grep -o 'systemd.unit=[^ ]*' /proc/cmdline || echo \"brak systemd.unit= w parametrach jadra\"\nbrak systemd.unit= w parametrach jadra\n$ grep -v '^#' /etc/fstab\nUUID=8c1f2d4e-6b7a-4e3d-9f12-5a0c7e9b3d21 /               ext4    errors=remount-ro 0       1\nUUID=4A1B-7C2D  /boot/efi       vfat    umask=0077      0       1\n/swap.img\tnone\tswap\tsw\t0\t0\nUUID=b52e7c90-1d3f-4a8e-bc61-0f9e2d7a4c13 /srv/dane ext4 defaults 0 2\n$ ls /run/systemd/generator/\n-.mount  boot-efi.mount  local-fs.target.requires  srv-dane.mount  swap.img.swap  swap.target.requires  systemd-fsck-root.service.d\n$ systemctl status boot-efi.mount --no-pager | sed -n '1,4p'\n● boot-efi.mount - /boot/efi\n     Loaded: loaded (/etc/fstab; generated)\n     Active: active (mounted) since Tue 2026-10-06 12:51:08 CEST; 3min ago\n      Where: /boot/efi"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Co spowalnia start serwera",
+      "body": "`blame` pokazuje czas każdej jednostki, a `critical-chain` — łańcuch, który faktycznie opóźnił osiągnięcie celu (przykładowy wynik):",
+      "code": "$ systemd-analyze\nStartup finished in 1.874s (firmware) + 1.290s (loader) + 2.402s (kernel) + 7.115s (userspace) = 12.683s\nmulti-user.target reached after 7.098s in userspace.\n$ systemd-analyze blame --no-pager | head -6\n5.431s NetworkManager-wait-online.service\n1.398s postgresql@16-main.service\n 902ms snapd.seeded.service\n 611ms apt-daily-upgrade.service\n 409ms dev-sda2.device\n 287ms systemd-udev-trigger.service\n$ systemd-analyze critical-chain --no-pager\nThe time when unit became active or started is printed after the \"@\" character.\nThe time the unit took to start is printed after the \"+\" character.\n\nmulti-user.target @7.098s\n└─sklep.service @7.081s +16ms\n  └─postgresql.service @7.064s +5ms\n    └─postgresql@16-main.service @5.664s +1.398s\n      └─network-online.target @5.652s\n        └─NetworkManager-wait-online.service @219ms +5.431s\n          └─NetworkManager.service @180ms +36ms\n            └─basic.target @171ms\n$ systemd-analyze plot > ~/start.svg && ls -lh ~/start.svg\n-rw-rw-r-- 1 anna anna 162K Oct  6 12:58 /home/anna/start.svg"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Skrócenie czasu startu",
+      "body": "1. Zmierz całość: `systemd-analyze` — oceń, który etap (firmware, loader, kernel, userspace) dominuje.\n2. Znajdź najdłuższy łańcuch: `systemd-analyze critical-chain` — tylko jednostki na tej ścieżce opóźniają osiągnięcie celu.\n3. Uzupełnij obraz listą `systemd-analyze blame` — pamiętaj, że jednostki startują równolegle, więc długi czas nie zawsze opóźnia całość.\n4. Sprawdź, czy długa jednostka jest potrzebna: `systemctl disable --now` dla zbędnych (np. `cups`, `ModemManager` na serwerze).\n5. Sprawdź zależności: czy usługa naprawdę musi czekać na `network-online.target`? Czy montowanie z `fstab` może dostać `nofail`/`x-systemd.automount`?\n6. Wygeneruj wykres `systemd-analyze plot > start.svg` i obejrzyj w przeglądarce — widać równoległość i oczekiwania.\n7. Zmierz ponownie po restarcie i porównaj."
+    },
+    {
+      "type": "NOTE",
+      "heading": "NetworkManager-wait-online i network-online.target",
+      "body": "W prawie każdym wyniku `blame` na górze jest `NetworkManager-wait-online.service` (lub `systemd-networkd-wait-online.service` na Ubuntu Server). To usługa, która blokuje `network-online.target`, dopóki sieć nie zostanie skonfigurowana — sama nic nie robi, tylko czeka. Uruchamia się wyłącznie wtedy, gdy jakaś jednostka ciągnie `network-online.target` (`Wants=`) — u nas `sklep.service` z rozdziału 22 i PostgreSQL. Często jest to uzasadnione (aplikacja łącząca się na starcie z inną maszyną), ale gdy sieć jest wolna (DHCP bez odpowiedzi, nieużywana karta), czeka do limitu (domyślnie 30 s lub 2 min) i wydłuża start. Rozwiązaniem nie jest wyłączanie `wait-online` „na ślepo”, tylko sprawdzenie, która jednostka go potrzebuje (`systemctl list-dependencies --reverse network-online.target`), i konfiguracja nieużywanych interfejsów jako opcjonalnych (Netplan: `optional: true`, rozdział 32)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przyda się znajomość startu systemd",
+      "body": "- **Długi start serwera lub maszyny wirtualnej** — `blame`, `critical-chain`, `plot`.\n- **Montowania z fstab** — jednostki `.mount` z generatora, `daemon-reload` po edycji fstab (rozdział 24).\n- **Polecenia przy każdym starcie** — usługa `oneshot` z `WantedBy=multi-user.target` zamiast `rc.local`.\n- **Wybór celu na jeden start** — `systemd.unit=` w GRUB (lekcja 6).\n- **Zawieszenie na *A start job is running*** — identyfikacja jednostki, na którą czeka start.\n- **Kolejność usług aplikacji** — `After=`, `Wants=` (rozdział 22, lekcja 9)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Długie zadania w rc.local",
+      "body": "Administrator dopisuje do `/etc/rc.local` polecenia uruchamiane przy starcie: montowanie udziału sieciowego, pobranie konfiguracji z serwera, uruchomienie aplikacji przez `java -jar ... &`. `rc-local.service` ma `Type=forking` i brak wyraźnych zależności od sieci — skrypt może ruszyć, zanim sieć będzie gotowa, błędy nie mają gdzie się zapisać, a aplikacja uruchomiona z `&` nie jest nadzorowana przez systemd (brak restartu, brak `journalctl -u`). Gdy polecenie się zawiesza, start blokuje się aż do przekroczenia limitu czasu."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Polecenia startowe w rc.local",
+      "body": "Skrypt rusza przed siecią, pobieranie się nie udaje, a aplikacja w tle działa poza kontrolą systemd (przykładowy wynik):",
+      "code": "$ cat /etc/rc.local\n#!/bin/sh\ncurl -fsS -o /etc/sklep/flagi.json http://konfig.firma.example/sklep/flagi.json\ncd /opt/raporty && java -jar raporty.jar > /var/log/raporty.log 2>&1 &\nexit 0\n$ journalctl -b -u rc-local --no-pager -o cat\nStarting rc-local.service - /etc/rc.local Compatibility...\ncurl: (6) Could not resolve host: konfig.firma.example\nStarted rc-local.service - /etc/rc.local Compatibility.\n$ systemctl status rc-local --no-pager | grep -E 'Active|CGroup' -A1 | head -3\n     Active: active (running) since Tue 2026-10-06 12:51:14 CEST; 9min ago\n     CGroup: /system.slice/rc-local.service\n             └─812 java -jar raporty.jar"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Usługa oneshot z zależnością od sieci",
+      "body": "Zadanie startowe jako osobna usługa: czeka na sieć, ma własny dziennik i status, a aplikacja dostaje własną jednostkę (przykładowy wynik):",
+      "code": "$ cat /etc/systemd/system/pobierz-flagi.service\n[Unit]\nDescription=Pobranie flag konfiguracji sklepu\nWants=network-online.target\nAfter=network-online.target\nBefore=sklep.service\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/curl -fsS --retry 5 --retry-connrefused -o /etc/sklep/flagi.json http://konfig.firma.example/sklep/flagi.json\n\n[Install]\nWantedBy=multi-user.target\n$ sudo systemctl daemon-reload && sudo systemctl enable pobierz-flagi raporty\nCreated symlink /etc/systemd/system/multi-user.target.wants/pobierz-flagi.service → /etc/systemd/system/pobierz-flagi.service.\nCreated symlink /etc/systemd/system/multi-user.target.wants/raporty.service → /etc/systemd/system/raporty.service.\n$ sudo reboot\n(...po restarcie)\n$ systemctl status pobierz-flagi --no-pager | sed -n '3p'\n     Active: active (exited) since Tue 2026-10-06 13:04:51 CEST; 1min 2s ago"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak wpływać na start systemu",
+      "body": "- **Zmiana celu na stałe** — `systemctl set-default`; **na jeden start** — `systemd.unit=` w GRUB.\n- **Polecenie przy każdym starcie** — usługa `oneshot` z odpowiednim `After=`; `rc.local` tylko w starych systemach.\n- **Aplikacja startująca z systemem** — własna usługa (rozdział 22), nie `rc.local` ani `cron @reboot`.\n- **Diagnoza długiego startu** — `critical-chain` przed `blame`.\n- **Montowania, które mogą się nie udać** — `nofail` w fstab (lekcja 6, rozdział 24).\n- **Podgląd jednostek generowanych** — `/run/systemd/generator/`, `systemctl status x.mount` (*generated*)."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- systemd wybiera cel z parametru `systemd.unit=` lub z `default.target` i rozwija graf zależności.\n- Generatory zamieniają `/etc/fstab`, `/etc/crypttab` i skrypty `init.d` w jednostki (`/run/systemd/generator/`).\n- Kolejne etapy: `sysinit.target` → `basic.target` → sieć → `multi-user.target` → (`graphical.target`); jednostki startują równolegle.\n- `systemd-analyze blame` mierzy jednostki, `critical-chain` pokazuje ścieżkę, która faktycznie opóźniła start, `plot` rysuje wykres.\n- Polecenia startowe umieszczaj w usłudze `oneshot`, nie w `/etc/rc.local`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
