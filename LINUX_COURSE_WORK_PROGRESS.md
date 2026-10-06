@@ -172,7 +172,12 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   NetworkManager, połączenie „hostonly” na enp0s8: 192.168.56.10/24 + fd00:56::10/64, never-default,
   DNS 192.168.56.20, search lab.local; zapis `/etc/netplan/90-NM-6f1c2a7e-....yaml`), ping/tracepath/mtr,
   dig/host/nslookup. Po migracji sklep.firma.example = 203.0.113.40 (AAAA 2001:db8:4c2a:10::40), TTL 60.
-  Pozostałe lekcje (`_lx_32`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_32_diagnostyka_sieci` — CZĘŚCIOWO (2026-10-07): gotowe lekcje 01-06 (netstat, -plnt, potoki
+  i uprawnienia, ss, lsof -i, podstawy nmap — skany tylko własnego laboratorium i scanme.nmap.org).
+  Lekcje 07-12 PUSTE. Lekcje 07-09 (rodzaje skanów TCP/UDP, wykrywanie usług i systemu, skrypty NSE)
+  wstrzymane — generowanie treści o technikach skanowania zostało zatrzymane przez filtr bezpieczeństwa;
+  wymagają decyzji użytkownika co do zakresu (np. wersja czysto defensywna/koncepcyjna).
+  Pozostałe lekcje (`_lx_33`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -227,7 +232,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_32_diagnostyka_sieci`**, potem kolejne rozdziały
+**Krok 2 — teoria: dokończyć `_lx_32` (lekcje 10-12; 07-09 po decyzji użytkownika), potem `_lx_33_ssh`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
