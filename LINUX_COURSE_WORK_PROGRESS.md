@@ -230,6 +230,15 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   W polu `code` nie wolno polskich liter — przykłady ze znakami spoza ASCII robić na czeskim
   tekście (`Příliš žluťoučký kůň`) lub `café`.
 
+## Krok 3 (ćwiczenia i quiz) — ustalenia (2026-10-07)
+
+- Decyzja użytkownika: **30 ćwiczeń i 100 pytań na lekcję**, dużo praktycznych poleceń i przykładów;
+  **najpierw dokończyć teorię wszystkich rozdziałów, dopiero potem ćwiczenia** (polecenie z 2026-10-07).
+- Narzędzie: `scripts/content-migration/lx_build_practice.js <plik.txt> <lekcja.json>` (format `#EX` P:/H:/S:,
+  `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
+  poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
+- Stan: `_lx_01/01_WhatIsLinux` — 30/100 GOTOWE (pilotaż). Pozostałe lekcje — 0/0.
+
 ## Następny krok
 
 **Krok 2 — teoria: dokończyć `_lx_32` (lekcje 10-12; 07-09 po decyzji użytkownika), potem `_lx_33_ssh`**, potem kolejne rozdziały
