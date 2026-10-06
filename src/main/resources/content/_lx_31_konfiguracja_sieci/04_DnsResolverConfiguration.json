@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Kogo system pyta o nazwy",
+      "body": "W rozdziale 30 widziałeś drogę zapytania DNS: `/etc/nsswitch.conf` → `/etc/hosts` → resolver z `/etc/resolv.conf`. W klasycznym Linuksie `/etc/resolv.conf` zawierał po prostu listę serwerów DNS (`nameserver 8.8.8.8`) i administrator edytował go ręcznie. W Ubuntu (i wielu innych dystrybucjach z systemd) ten plik wskazuje dziś na **lokalny resolver `systemd-resolved`** pod adresem `127.0.0.53`, a prawdziwe serwery DNS są skonfigurowane osobno — **dla każdego interfejsu** (z DHCP, Netplanu, NetworkManagera, VPN-u) i globalnie. Dzięki temu VPN może kierować zapytania o domenę firmową do firmowego DNS, a resztę — do resolvera operatora; lokalny bufor przyspiesza powtarzane zapytania.\n\nW tej lekcji poznasz budowę `/etc/resolv.conf` (dowiązanie do pliku zarządzanego przez systemd-resolved), polecenie **`resolvectl`** (`status`, `dns`, `domain`, `query`, `statistics`, `flush-caches`), konfigurację globalną w `/etc/systemd/resolved.conf` (najlepiej w drop-inie), domeny wyszukiwania (`search`), routing zapytań według domen, a także szyfrowany DNS (DNS-over-TLS) i DNSSEC. Zobaczysz, dlaczego ręczna edycja `/etc/resolv.conf` „działa do jutra”."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Resolver w systemie",
+      "body": "- **`/etc/resolv.conf`** — konfiguracja resolvera biblioteki C: `nameserver ADRES` (do 3), `search domena1 domena2` (domeny dopisywane do krótkich nazw), `options` (`ndots:`, `timeout:`, `edns0`).\n- **W Ubuntu** — dowiązanie `/etc/resolv.conf → ../run/systemd/resolve/stub-resolv.conf` z `nameserver 127.0.0.53` (stub resolvera); alternatywa: `/run/systemd/resolve/resolv.conf` z prawdziwymi serwerami (dla programów, które nie mogą używać stubu).\n- **systemd-resolved** — usługa resolvera: bufor, serwery DNS per interfejs (*per-link*), routing zapytań według domen, DNSSEC, DNS-over-TLS, LLMNR/mDNS; nasłuch `127.0.0.53:53` (stub) i `127.0.0.54` (tryb proxy bez lokalnej logiki).\n- **Źródła serwerów DNS** — DHCP (adres DNS od routera), Netplan (`nameservers: addresses: [...]` — lekcja 5), NetworkManager (`nmcli` — lekcja 6), VPN (WireGuard, OpenVPN), globalnie `/etc/systemd/resolved.conf` (`DNS=`, `FallbackDNS=`, `Domains=`).\n- **`resolvectl`** — `status` (serwery i domeny globalne i per interfejs), `dns IFACE ADRES...` (tymczasowo), `domain IFACE domena`, `query NAZWA` (zapytanie przez resolved, z informacją, skąd odpowiedź), `statistics` (bufor, trafienia), `flush-caches`, `reset-server-features`.\n- **Domeny wyszukiwania** — `search lab.local firma.example` → `ping srv-test` próbuje `srv-test.lab.local`, potem `srv-test.firma.example`; domena z prefiksem `~` (`~firma.example`) w resolved oznacza tylko routing zapytań (bez dopisywania).\n- **DNS-over-TLS / DNSSEC** — `DNSOverTLS=yes|opportunistic`, `DNSSEC=yes|allow-downgrade` w `resolved.conf` (szyfrowanie zapytań do serwera / weryfikacja podpisów).\n- **Inne dystrybucje** — RHEL: NetworkManager zapisuje `/etc/resolv.conf` sam (resolved opcjonalny); Debian bez systemd-resolved — zwykły plik; kontenery Dockera — własna kopia `/etc/resolv.conf` (lub DNS Dockera `127.0.0.11` w sieciach użytkownika)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Sekretariat z centralą telefoniczną",
+      "body": "Dawniej w każdym biurze był **notes z numerami biur numerów** (`/etc/resolv.conf` z `nameserver`), który każdy mógł poprawić długopisem. Dziś jest **sekretariat** (`systemd-resolved` pod `127.0.0.53`): wszyscy pytają sekretarkę, a ona wie, że w sprawach firmowych (`firma.example`) dzwoni się do centrali firmy (DNS z VPN-u), w pozostałych — do ogólnego biura numerów (DNS z DHCP), i zapamiętuje ostatnie odpowiedzi (bufor). Notes przy telefonie mówi już tylko „pytaj sekretarkę”. Jeśli dopiszesz w nim długopisem inny numer, sekretarka przy najbliższej okazji (restart, nowe połączenie) wymieni notes na świeży egzemplarz — a twoja poprawka zniknie. Zmiany zgłasza się sekretarce (`resolvectl`, Netplan, `resolved.conf`)."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Konfiguracja DNS w Ubuntu z systemd-resolved",
+      "body": "Skąd biorą się serwery DNS i dokąd trafiają zapytania:",
+      "code": " aplikacja -> glibc -> /etc/resolv.conf -> nameserver 127.0.0.53 (stub)\n                        |\n                        `-> dowiazanie do /run/systemd/resolve/stub-resolv.conf (generowany!)\n                                    |\n                            systemd-resolved\n                            |-- bufor odpowiedzi (flush-caches)\n                            |-- globalnie:      /etc/systemd/resolved.conf(.d)  DNS=  FallbackDNS=  Domains=\n                            |-- Link enp0s3:    DNS 10.0.2.3      (z DHCP VirtualBox)   Domains: ~.\n                            |-- Link enp0s8:    DNS 192.168.56.20 (z Netplanu)          Domains: lab.local\n                            `-- Link wg0 (VPN): DNS 10.20.0.53                          Domains: ~firma.example\n\n ROUTING ZAPYTAN:\n   srv-docker.lab.local   -> enp0s8 -> 192.168.56.20  (dnsmasq w laboratorium)\n   intranet.firma.example -> wg0    -> 10.20.0.53     (DNS firmowy przez VPN)\n   archive.ubuntu.com     -> enp0s3 -> 10.0.2.3       (domyslna trasa zapytan ~.)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Stan resolvera",
+      "body": "Dowiązanie `resolv.conf`, serwery DNS globalne i per interfejs oraz zapytanie z informacją o źródle (przykładowy wynik):",
+      "code": "$ ls -l /etc/resolv.conf\nlrwxrwxrwx 1 root root 39 Sep 28 14:02 /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf\n$ grep -v '^#' /etc/resolv.conf | grep .\nnameserver 127.0.0.53\noptions edns0 trust-ad\nsearch lab.local\n$ resolvectl status | sed -n '1,4p;/Link 2/,/DNS Servers/p;/Link 3/,/DNS Domain/p'\nGlobal\n         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported\n  resolv.conf mode: stub\n\nLink 2 (enp0s3)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported\nCurrent DNS Server: 10.0.2.3\n       DNS Servers: 10.0.2.3\nLink 3 (enp0s8)\n    Current Scopes: DNS\n         Protocols: -DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported\n       DNS Servers: 192.168.56.20\n        DNS Domain: lab.local\n$ resolvectl query srv-docker.lab.local\nsrv-docker.lab.local: 192.168.56.30            -- link: enp0s8\n\n-- Information acquired via protocol DNS in 1.9ms.\n-- Data is authenticated: no; Data was acquired via local or encrypted transport: no\n-- Data from: network"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Globalny DNS, statystyki bufora i DNS-over-TLS",
+      "body": "Zapasowe serwery DNS i szyfrowanie w drop-inie `resolved.conf.d`, statystyki bufora i jego czyszczenie (przykładowy wynik):",
+      "code": "$ sudo mkdir -p /etc/systemd/resolved.conf.d\n$ sudo tee /etc/systemd/resolved.conf.d/90-dns.conf > /dev/null <<'EOF'\n[Resolve]\nFallbackDNS=1.1.1.1#cloudflare-dns.com 9.9.9.9#dns.quad9.net\nDNSOverTLS=opportunistic\nEOF\n$ sudo systemctl restart systemd-resolved\n$ resolvectl status | sed -n '2p;/Fallback/p'\n         Protocols: -LLMNR -mDNS DNSOverTLS=opportunistic DNSSEC=no/unsupported\nFallback DNS Servers: 1.1.1.1#cloudflare-dns.com 9.9.9.9#dns.quad9.net\n$ resolvectl query archive.ubuntu.com > /dev/null; resolvectl query archive.ubuntu.com | tail -1\n-- Data from: cache\n$ resolvectl statistics | sed -n '/Cache/,/Misses/p'\nCache\n                  Current Cache Size: 214\n                          Cache Hits: 1843\n                        Cache Misses: 902\n$ sudo resolvectl flush-caches && resolvectl statistics | grep 'Current Cache Size'\n                  Current Cache Size: 0"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Zmiana serwerów DNS na stałe",
+      "body": "1. Sprawdź stan: `resolvectl status` — skąd pochodzą obecne serwery (interfejs, DHCP).\n2. Dla konkretnego interfejsu (najczęściej) — ustaw DNS w Netplanie (`nameservers:`) lub NetworkManagerze (`nmcli con mod ... ipv4.dns`) — lekcje 5-6.\n3. Globalnie (dla wszystkich interfejsów) lub zapasowo — drop-in `/etc/systemd/resolved.conf.d/90-dns.conf` (`DNS=`, `FallbackDNS=`, `Domains=`), potem `sudo systemctl restart systemd-resolved`.\n4. Domeny wyszukiwania — `search:` w Netplanie lub `Domains=` w resolved; routing zapytań dla domeny firmowej — `Domains=~firma.example` na interfejsie VPN.\n5. Test: `resolvectl query NAZWA` (który link i serwer), `getent hosts NAZWA`.\n6. Nie edytuj `/etc/resolv.conf` ręcznie — jest generowany.\n7. Do testu tymczasowego: `sudo resolvectl dns enp0s3 1.1.1.1` (znika przy ponownej konfiguracji interfejsu)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "resolv.conf w kontenerach i aplikacjach",
+      "body": "Adres `127.0.0.53` ma sens tylko na hoście, gdzie działa systemd-resolved. Docker przy starcie kontenera kopiuje `/etc/resolv.conf` hosta, ale wykrywa adres pętli zwrotnej i zamiast niego wpisuje serwery z `/run/systemd/resolve/resolv.conf` (prawdziwe serwery z interfejsów) albo publiczne `8.8.8.8` — stąd sytuacje, w których host rozwiązuje nazwy firmowe (przez VPN), a kontener nie. Rozwiązania: `--dns` przy `docker run`, `\"dns\": [...]` w `/etc/docker/daemon.json` albo sieci użytkownika Dockera z wbudowanym DNS. Podobna pułapka dotyczy obrazów JVM i narzędzi, które same czytają `/etc/resolv.conf` (np. niektóre klienty DNS w Netty, biblioteki Go z własnym resolverem) — ignorują wtedy routing per-domena systemd-resolved. Java przez `InetAddress` korzysta z resolvera systemowego (glibc → `127.0.0.53`), więc działa zgodnie z konfiguracją hosta."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się konfiguracja resolvera",
+      "body": "- **Serwery z własnym DNS** — firmowe serwery DNS, laboratorium z `dnsmasq`.\n- **VPN** — kierowanie zapytań o domenę firmową do firmowego DNS (`Domains=~firma.example`).\n- **Diagnoza „nie rozwiązuje nazwy”** — `resolvectl status`, `resolvectl query`, bufor.\n- **Prywatność i bezpieczeństwo** — DNS-over-TLS, DNSSEC.\n- **Kontenery** — DNS w Dockerze różny od DNS hosta (`daemon.json`).\n- **Krótkie nazwy w sieci firmowej** — domeny wyszukiwania (`search`)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Ręczna edycja /etc/resolv.conf",
+      "body": "Administrator chce, żeby serwer korzystał z firmowego DNS, i — zgodnie ze starym poradnikiem — edytuje `/etc/resolv.conf`, wpisując `nameserver 10.20.0.53`. W pierwszej chwili zdaje się działać. Przy pierwszym ponownym połączeniu interfejsu, odnowieniu DHCP, restarcie systemd-resolved albo restarcie serwera plik wraca do postaci generowanej (`nameserver 127.0.0.53`), a nazwy firmowe znów się nie rozwiązują. Jeszcze gorzej, gdy ktoś „naprawi” to, usuwając dowiązanie i tworząc zwykły plik — DNS działa, ale z pominięciem resolved: bez bufora, bez routingu per-domena, a VPN przestaje poprawnie ustawiać swoje serwery."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Serwer DNS wpisany ręcznie do resolv.conf",
+      "body": "Zmiana znika po restarcie usługi lub serwera (przykładowy wynik):",
+      "code": "anna@app-02:~$ sudo sed -i 's/^nameserver .*/nameserver 10.20.0.53/' /etc/resolv.conf\nanna@app-02:~$ getent hosts intranet.firma.example\n10.20.5.10      intranet.firma.example\nanna@app-02:~$ sudo systemctl restart systemd-resolved\nanna@app-02:~$ grep nameserver /etc/resolv.conf\nnameserver 127.0.0.53\nanna@app-02:~$ getent hosts intranet.firma.example; echo \"kod: $?\"\nkod: 2"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "DNS w konfiguracji interfejsu (Netplan) lub resolved.conf",
+      "body": "Serwer firmowy i domena w konfiguracji interfejsu — przetrwa restart; resolved kieruje zapytania właściwie (przykładowy wynik):",
+      "code": "anna@app-02:~$ sudo grep -A4 nameservers /etc/netplan/50-cloud-init.yaml\n      nameservers:\n        addresses: [10.20.0.53, 10.20.0.54]\n        search: [firma.example]\nanna@app-02:~$ sudo netplan apply\nanna@app-02:~$ resolvectl dns ens18\nLink 2 (ens18): 10.20.0.53 10.20.0.54\nanna@app-02:~$ sudo systemctl restart systemd-resolved; getent hosts intranet\n10.20.5.10      intranet.firma.example"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Gdzie ustawiać DNS",
+      "body": "- **Serwer DNS dla konkretnego interfejsu** — Netplan (`nameservers:`) lub `nmcli` (lekcje 5-6).\n- **Domyślne/zapasowe serwery dla całego systemu** — `/etc/systemd/resolved.conf.d/*.conf`.\n- **Domena firmowa przez VPN** — `Domains=~firma.example` na interfejsie VPN.\n- **Test chwilowy** — `resolvectl dns IFACE ADRES` (znika).\n- **Szyfrowanie zapytań** — `DNSOverTLS=` w resolved.\n- **Nigdy** — ręczna edycja `/etc/resolv.conf` w systemie z systemd-resolved."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- W Ubuntu `/etc/resolv.conf` to dowiązanie do generowanego pliku z `nameserver 127.0.0.53` — lokalnego stubu systemd-resolved.\n- Prawdziwe serwery DNS są ustawiane per interfejs (DHCP, Netplan, NetworkManager, VPN) i globalnie w `resolved.conf`.\n- `resolvectl status|query|statistics|flush-caches` pokazuje konfigurację, źródło odpowiedzi i bufor.\n- Domeny wyszukiwania (`search`) i routing per-domena (`~firma.example`) kierują zapytania do właściwych serwerów.\n- Ręczne zmiany w `/etc/resolv.conf` są nadpisywane — konfiguruj DNS w Netplanie, NetworkManagerze lub `resolved.conf.d`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

@@ -164,7 +164,15 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `192.168.56.20 srv-test`. Od lekcji 30/07 sklep nasłuchuje `server.address=127.0.0.1:8080` za Nginx
   (`/etc/nginx/sites-available/sklep`: listen 80 + [::]:80, proxy_pass 127.0.0.1:8080), nowy PID 15210.
   PostgreSQL nasłuchuje tylko localhost; pg_hba ma wpis dla 192.168.56.0/24 (do rozdziału 37).
-  Pozostałe lekcje (`_lx_31`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_31_konfiguracja_sieci` (9 lekcji) — ZROBIONY (2026-10-07): ip, net-tools, hostname/hosts
+  (`127.0.1.1 lubuntu-nauka.lab.local lubuntu-nauka`, wpisy srv-test i srv-docker), resolver
+  (`/etc/systemd/resolved.conf.d/90-dns.conf`: FallbackDNS 1.1.1.1/9.9.9.9, DNSOverTLS=opportunistic),
+  Netplan (srv-test: networkd, `/etc/netplan/60-hostonly.yaml`, DNS 127.0.0.1 — na srv-test działa dnsmasq
+  dla lab.local z pulą DHCP .100-.200 i rezerwacją srv-docker 08:00:27:c4:18:a2 → .30), nmcli (lubuntu-nauka:
+  NetworkManager, połączenie „hostonly” na enp0s8: 192.168.56.10/24 + fd00:56::10/64, never-default,
+  DNS 192.168.56.20, search lab.local; zapis `/etc/netplan/90-NM-6f1c2a7e-....yaml`), ping/tracepath/mtr,
+  dig/host/nslookup. Po migracji sklep.firma.example = 203.0.113.40 (AAAA 2001:db8:4c2a:10::40), TTL 60.
+  Pozostałe lekcje (`_lx_32`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -219,7 +227,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_31_konfiguracja_sieci`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_32_diagnostyka_sieci`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
