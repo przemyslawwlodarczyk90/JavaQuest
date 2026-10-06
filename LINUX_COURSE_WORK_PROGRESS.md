@@ -147,7 +147,14 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `worker_rlimit_nofile 65536`, `worker_connections 16384`), narzędzia JDK (doinstalowany
   openjdk-21-jdk-headless; `sudo -u sklep jcmd 6120 ...`; JFR do /var/lib/sklep), sysstat/sar (włączony,
   /var/log/sysstat). Ubuntu: postgres UID 114.
-  Pozostałe lekcje (`_lx_29`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_29_jadro_i_sprzet` (6 lekcji) — ZROBIONY (2026-10-06): uname (jądro GA 6.8.0-48, 6.8.0-49
+  czeka na restart), moduły (`/etc/modules-load.d/kubernetes.conf`: overlay, br_netfilter; blokada
+  usb-storage — tylko przykład), sysctl (`/etc/sysctl.d/80-serwer-aplikacji.conf`: somaxconn 8192,
+  ip_local_port_range, inotify), /proc i /sys, sprzęt (VirtualBox: i7-12700H, 2 vCPU, 4 GB, e1000 enp0s3
+  MAC 08:00:27:3a:5c:1e, SATA 00:0d.0, xHCI 00:0c.0), udev (`/etc/udev/rules.d/99-kopia-usb.rules` dla
+  pendrive'a SanDisk 4C530001240915112472 → /dev/kopia-usb, grupa kopie GID 1009,
+  `kopia-na-usb.service`).
+  Pozostałe lekcje (`_lx_30`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -202,7 +209,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_29_jadro_i_sprzet`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_30_podstawy_sieci`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
