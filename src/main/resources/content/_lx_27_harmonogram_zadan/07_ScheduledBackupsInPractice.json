@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Kopia, która naprawdę się przyda",
+      "body": "Wszystkie elementy rozdziałów 22-27 składają się w jedno z najważniejszych zadań administratora: **automatyczną kopię zapasową**. Notatki kursu pokazują ją w najprostszej postaci — codzienny `rsync -avh --delete ~/dane/ /mnt/backup/dane/` uruchamiany z crona o 2:00 (`0 2 * * * rsync ...`) — i od razu dodają ostrzeżenie: rsync **nie jest migawką**, bo nadpisuje i usuwa; do historii wersji służą narzędzia takie jak `rsnapshot`, Btrfs czy ZFS. To trafna uwaga, od której zaczniemy: kopia, która co noc wiernie odwzorowuje bieżący stan, wiernie odwzoruje też przypadkowe usunięcie czy zaszyfrowanie plików przez ransomware.\n\nW tej lekcji zbudujesz pełną kopię zapasową aplikacji `sklep`: zrzut bazy PostgreSQL (`pg_dump`) z weryfikacją, kopię plików użytkowników jako **dzienne migawki** rsynca z `--link-dest` (każdy dzień wygląda jak pełna kopia, a niezmienione pliki zajmują miejsce tylko raz), retencję (usuwanie najstarszych), wysyłkę poza serwer i uruchamianie przez timer systemd z `Persistent=true`, wymaganiem zamontowanego dysku i powiadomieniem przy błędzie. Na koniec — test odtworzenia, bo kopia, której nigdy nie odtworzono, jest tylko nadzieją."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Elementy automatycznej kopii",
+      "body": "- **Zasada 3-2-1** — trzy kopie danych (oryginał + 2), na dwóch różnych nośnikach, jedna poza siedzibą (inny serwer, chmura); plus: przynajmniej jedna kopia niedostępna do modyfikacji z serwera źródłowego (*immutable*, *offline*).\n- **Kopia bazy** — `pg_dump --format=custom` (spójny zrzut działającej bazy, odtwarzanie `pg_restore`), weryfikacja `pg_restore --list` (czy plik jest czytelny); dla dużych baz — `pg_basebackup` + archiwizacja WAL (rozdział 37).\n- **rsync** — synchronizacja plików: `-a` (archiwum: prawa, czasy, dowiązania), `-v`, `-h`, `--delete` (**usuwa w celu pliki, których nie ma w źródle** — kopia staje się lustrem), `--dry-run` (`-n`, podgląd bez zmian). Szczegóły — rozdział 34.\n- **Migawki z `--link-dest=POPRZEDNIA`** — nowy katalog dzienny; pliki niezmienione od poprzedniej kopii są tworzone jako **dowiązania twarde** do niej (zero dodatkowego miejsca), zmienione — kopiowane; każdy katalog dzienny to kompletny stan z danego dnia; usunięcie starego katalogu nie narusza pozostałych.\n- **Retencja** — ile kopii trzymać (np. 14 dziennych, 8 tygodniowych); `find ... -mtime +14 -delete` dla plików, `rm -rf` najstarszych katalogów migawek; narzędzia: `rsnapshot`, `restic`, `borg` (deduplikacja, szyfrowanie, retencja wbudowana).\n- **Uruchamianie** — timer systemd (`OnCalendar=`, `Persistent=true`, `RandomizedDelaySec=`), usługa `oneshot` z `RequiresMountsFor=/srv/kopie`, `Nice=`, `IOSchedulingClass=idle`, `OnFailure=powiadom@%n.service`.\n- **Weryfikacja i test odtworzenia** — po każdej kopii: sprawdzenie rozmiaru, sumy, `pg_restore --list`; okresowo: pełne odtworzenie na serwerze testowym."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Album ze zdjęciami zamiast lustra",
+      "body": "Kopia `rsync --delete` to **lustro** postawione naprzeciw pokoju: pokazuje dokładnie to, co jest teraz. Jeśli ktoś wyniesie z pokoju szafę, w lustrze też jej nie będzie — i nie da się jej z lustra „wyjąć” z powrotem. Migawki z `--link-dest` to **album ze zdjęciami robionymi codziennie**: na zdjęciu z wtorku szafa nadal stoi, choć w środę zniknęła. Album nie zajmuje dużo miejsca, bo przedmioty, które się nie zmieniły, są tylko wklejone jako odnośnik do wcześniejszego zdjęcia. A kopia poza siedzibą to **drugi egzemplarz albumu u rodziny w innym mieście** — na wypadek pożaru domu."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Architektura kopii aplikacji sklep",
+      "body": "Co, gdzie i kiedy:",
+      "code": " kopia-sklep.timer   OnCalendar=*-*-* 02:30, Persistent=true, RandomizedDelaySec=10min\n        |\n kopia-sklep.service (oneshot, User=root, Nice=10, IOSchedulingClass=idle,\n        |             RequiresMountsFor=/srv/kopie, OnFailure=powiadom@%n.service)\n        v\n /usr/local/bin/kopia-sklep.sh\n   1. pg_dump (jako postgres)  -> /srv/kopie/sklep/baza/sklep-2026-10-07.dump\n      pg_restore --list        -> weryfikacja czytelnosci\n   2. rsync -a --delete --link-dest=../2026-10-06  /srv/dane/sklep/upload/\n                               -> /srv/kopie/sklep/pliki/2026-10-07/\n   3. retencja: baza > 14 dni, pliki > 14 katalogow  -> usun\n   4. rsync na serwer kopii (ssh)  -> kopie@backup.firma.example:/kopie/sklep/\n   5. logger -t kopia-sklep \"OK ...\"      (blad -> exit 1 -> OnFailure -> powiadomienie)\n\n /srv/kopie/sklep/pliki/\n   2026-10-05/  faktura-1001.pdf (i-wezel 524301)  ---.\n   2026-10-06/  faktura-1001.pdf (i-wezel 524301)  ---+-- to SAMO dane na dysku (link twardy)\n   2026-10-07/  faktura-1001.pdf (i-wezel 524301)  ---'\n                faktura-1002.pdf (nowy, skopiowany)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Skrypt kopii: baza i migawki plików",
+      "body": "Zrzut bazy z weryfikacją i dzienna migawka plików z `--link-dest` (przykładowy wynik):",
+      "code": "$ cat /usr/local/bin/kopia-sklep.sh\n#!/bin/bash\nset -euo pipefail\ndzien=$(date +%F)\ncel=/srv/kopie/sklep\nmountpoint -q /srv/kopie || { echo \"BLAD: /srv/kopie niezamontowany\" >&2; exit 1; }\ninstall -d -o postgres -g postgres -m 750 \"$cel/baza\"\nrunuser -u postgres -- pg_dump --format=custom --file=\"$cel/baza/sklep-$dzien.dump\" sklep\nrunuser -u postgres -- pg_restore --list \"$cel/baza/sklep-$dzien.dump\" > /dev/null\npoprzednia=$(ls -1d \"$cel\"/pliki/20* 2>/dev/null | tail -1 || true)\nrsync -a --delete ${poprzednia:+--link-dest=\"$poprzednia\"} /srv/dane/sklep/upload/ \"$cel/pliki/$dzien/\"\nfind \"$cel/baza\" -name 'sklep-*.dump' -mtime +14 -delete\nls -1d \"$cel\"/pliki/20* | head -n -14 | xargs -r rm -rf\necho \"OK baza=$(du -h \"$cel/baza/sklep-$dzien.dump\" | cut -f1) pliki=$(du -sh \"$cel/pliki/$dzien\" | cut -f1)\"\n$ sudo /usr/local/bin/kopia-sklep.sh\nOK baza=1.8M pliki=412M\n$ ls /srv/kopie/sklep/pliki/\n2026-10-05  2026-10-06  2026-10-07\n$ sudo du -sh /srv/kopie/sklep/pliki/*\n412M\t/srv/kopie/sklep/pliki/2026-10-05\n3.1M\t/srv/kopie/sklep/pliki/2026-10-06\n2.7M\t/srv/kopie/sklep/pliki/2026-10-07\n$ stat -c '%i %h %n' /srv/kopie/sklep/pliki/*/faktura-1001.pdf\n524301 3 /srv/kopie/sklep/pliki/2026-10-05/faktura-1001.pdf\n524301 3 /srv/kopie/sklep/pliki/2026-10-06/faktura-1001.pdf\n524301 3 /srv/kopie/sklep/pliki/2026-10-07/faktura-1001.pdf"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Timer, powiadomienie o błędzie i test odtworzenia",
+      "body": "Jednostki z wymaganym montowaniem i niskim priorytetem, usługa powiadomienia uruchamiana przy awarii oraz odtworzenie bazy na próbę (przykładowy wynik):",
+      "code": "$ systemctl cat kopia-sklep.service --no-pager | grep -vE '^#|^$'\n[Unit]\nDescription=Kopia zapasowa sklepu (baza + pliki)\nAfter=postgresql.service\nRequiresMountsFor=/srv/kopie /srv/dane\nOnFailure=powiadom@%n.service\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/kopia-sklep.sh\nNice=10\nIOSchedulingClass=idle\n$ systemctl cat powiadom@.service --no-pager | grep ExecStart\nExecStart=/usr/local/bin/powiadom.sh \"Blad uslugi %i na %H\"\n$ grep -E 'OnCalendar|Persistent|Randomized' /etc/systemd/system/kopia-sklep.timer\nOnCalendar=*-*-* 02:30\nPersistent=true\nRandomizedDelaySec=10min\n$ systemctl list-timers kopia-sklep.timer --no-pager | sed -n 2p | cut -c1-80\nThu 2026-10-08 02:34:12 CEST 6h left Wed 2026-10-07 02:36:51 CEST 17h ago kopia-sklep.tim\n$ sudo -u postgres createdb sklep_test\n$ sudo -u postgres pg_restore --dbname=sklep_test /srv/kopie/sklep/baza/sklep-2026-10-07.dump\n$ sudo -u postgres psql -d sklep_test -tAc 'select count(*) from produkty'\n214\n$ sudo -u postgres dropdb sklep_test"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Wdrożenie automatycznej kopii",
+      "body": "1. Ustal, co kopiować (baza, pliki użytkowników, konfiguracja `/etc/sklep`, jednostki systemd) i jak długo trzymać (retencja).\n2. Napisz skrypt z `set -euo pipefail`, sprawdzeniem montowania, zrzutem bazy z weryfikacją i migawką plików (`--link-dest`).\n3. Przetestuj ręcznie, potem z `--dry-run` dla rsynca przy każdej zmianie ścieżek (`--delete` w złym miejscu usuwa dane!).\n4. Utwórz usługę `oneshot` z `RequiresMountsFor=`, `OnFailure=`, `Nice=`, `IOSchedulingClass=idle` i timer z `Persistent=true`.\n5. Dodaj kopię poza serwer (rsync przez SSH z kluczem na dedykowane konto, restic/borg do chmury) — zasada 3-2-1.\n6. Monitoruj: powiadomienie przy błędzie oraz alarm, gdy kopia **nie powstała** (wiek najnowszego pliku > 26 h).\n7. Co miesiąc odtwórz kopię na serwerze testowym (baza + pliki) i zapisz czas odtworzenia."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kopia lokalna to dopiero początek",
+      "body": "Kopia na dysku `/srv/kopie` w tym samym serwerze chroni przed pomyłkami (usunięty plik, zła migracja) i awarią dysku z danymi — ale nie przed awarią całej maszyny, pożarem serwerowni, kradzieżą czy atakiem, w którym intruz z uprawnieniami roota usuwa również kopie. Dlatego druga kopia musi trafić **poza serwer**, a idealnie — w miejsce, do którego serwer źródłowy może tylko dopisywać, ale nie może usuwać (konto na serwerze kopii z ograniczeniem `rrsync`/`--append`, kosz z blokadą obiektów w S3 — *Object Lock*, kopie wykonywane „od strony” serwera kopii, który sam pobiera dane). Narzędzia takie jak **restic** i **BorgBackup** łączą wszystko, co w tej lekcji robiliśmy ręcznie: deduplikację (każdy fragment danych zapisany raz), szyfrowanie po stronie klienta, retencję (`forget --keep-daily 14 --keep-weekly 8`), weryfikację (`check`) i wiele miejsc docelowych (SSH, S3, Backblaze). Na produkcji zwykle warto po nie sięgnąć — tu zbudowaliśmy wersję ręczną, żeby zrozumieć mechanizm (rozdziały 34 i 46)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta praktyka",
+      "body": "- **Każdy serwer z danymi** — baza, pliki użytkowników, konfiguracja.\n- **Projekt końcowy** — logi, monitorowanie i kopie zapasowe (rozdział 46).\n- **Komputer programisty** — migawki katalogu z projektami i dokumentami (`--link-dest`, restic).\n- **Migracje i aktualizacje** — świeża kopia przed zmianą + test odtworzenia.\n- **Wymogi audytu i RODO** — udokumentowana retencja i regularne testy odtwarzania.\n- **Odporność na ransomware** — kopie poza serwerem, niemodyfikowalne."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Lustro z --delete zamiast historii",
+      "body": "Kopia z notatek kursu — `rsync -avh --delete ~/dane/ /mnt/backup/dane/` co noc — tworzy **lustro**. Gdy użytkownik przypadkiem usunie katalog z fakturami (albo błąd aplikacji wyczyści katalog, albo ransomware zaszyfruje pliki), najbliższa nocna kopia **wiernie powtórzy tę zmianę**: usunie faktury z kopii (`--delete`) lub nadpisze je zaszyfrowanymi wersjami. Jeśli problem zostanie zauważony dopiero po kilku dniach, kopia nie zawiera już niczego, co dałoby się odzyskać. To jeden z najczęstszych scenariuszy „mieliśmy kopie, a i tak straciliśmy dane”."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Usunięcie przeniesione do kopii przez --delete",
+      "body": "Katalog usunięty w ciągu dnia znika z kopii przy najbliższej synchronizacji (przykładowy wynik):",
+      "code": "$ crontab -l | grep rsync\n0 2 * * * rsync -avh --delete /srv/dane/sklep/upload/ /mnt/backup/upload/ 2>&1 | logger -t lustro\n$ ls /mnt/backup/upload/ | grep -c faktury\n1\n$ rm -rf /srv/dane/sklep/upload/faktury\n(...noc, rsync o 2:00)\n$ journalctl -t lustro --since \"02:00\" --no-pager -o cat | grep -m2 deleting\ndeleting faktury/2026-09/faktura-0998.pdf\ndeleting faktury/2026-09/faktura-0997.pdf\n$ ls /mnt/backup/upload/ | grep -c faktury\n0"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Migawki z --link-dest — każdy dzień osobno",
+      "body": "Katalog usunięty 7 października nadal istnieje w migawkach z 5 i 6 października; odtworzenie to zwykłe kopiowanie (przykładowy wynik):",
+      "code": "$ ls /srv/kopie/sklep/pliki/\n2026-10-05  2026-10-06  2026-10-07\n$ ls /srv/kopie/sklep/pliki/2026-10-07/ | grep -c faktury\n0\n$ ls /srv/kopie/sklep/pliki/2026-10-06/faktury/ | head -2\n2026-09\n2026-10\n$ sudo rsync -a /srv/kopie/sklep/pliki/2026-10-06/faktury/ /srv/dane/sklep/upload/faktury/\n$ sudo chown -R sklep:sklep /srv/dane/sklep/upload/faktury && ls /srv/dane/sklep/upload/faktury/2026-09 | wc -l\n146"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak planować kopie",
+      "body": "- **Baza danych** — `pg_dump` (mniejsze bazy) lub `pg_basebackup` + WAL (duże, z odtwarzaniem do punktu w czasie).\n- **Pliki z historią wersji** — migawki `rsync --link-dest`, `rsnapshot`, restic/borg, migawki Btrfs/ZFS wysyłane na inny dysk.\n- **Lustro (`rsync --delete`)** — tylko jako jedna z warstw, nigdy jako jedyna kopia.\n- **Uruchamianie** — timer z `Persistent=true`, `RequiresMountsFor=`, `OnFailure=`.\n- **Poza serwerem** — zawsze (3-2-1), najlepiej bez możliwości usunięcia z serwera źródłowego.\n- **Weryfikacja** — po każdej kopii automatycznie, pełne odtworzenie okresowo."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Automatyczna kopia łączy zrzut bazy (`pg_dump` z weryfikacją), kopię plików, retencję i wysyłkę poza serwer.\n- `rsync --delete` tworzy lustro — powiela usunięcia i uszkodzenia; nie jest migawką (jak ostrzegają notatki kursu).\n- `rsync --link-dest` tworzy dzienne migawki: każdy katalog to pełny stan, niezmienione pliki to dowiązania twarde.\n- Timer systemd z `Persistent=true`, `RequiresMountsFor=` i `OnFailure=` uruchamia kopię niezawodniej niż cron.\n- Zasada 3-2-1 i regularny test odtworzenia — kopia nieodtworzona to tylko nadzieja."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

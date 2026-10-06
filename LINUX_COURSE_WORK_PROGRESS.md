@@ -130,7 +130,17 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   (`/etc/logrotate.d/sklep`, `raporty` z copytruncate), dmesg (dmesg_restrict=1, kuba w grupie adm), logi
   Javy (sklep: `LogsDirectory=sklep`, `Environment=LOGGING_LEVEL_*`, Logback do `/var/log/sklep/aplikacja.log`
   z rotacją, gc.log, HeapDump do /var/lib/sklep, `ExitOnOutOfMemoryError`, logback-spring.xml w /etc/sklep).
-  Pozostałe lekcje (`_lx_27`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_27_harmonogram_zadan` (7 lekcji) — ZROBIONY (2026-10-06): cron (crontab anny: sprawdz-sklep
+  co 5 min → potem przeniesione do timera użytkownika `~/.config/systemd/user/sprawdz-sklep.timer`,
+  `loginctl enable-linger anna`; alias `crontab -i`), składnia (reguła LUB dni), `/etc/cron.d/sklep-zadania`
+  (konto sklep: przelicz-rabaty co 10 min, usun-porzucone-koszyki 1:30), `/etc/cron.daily/porzadki`,
+  pułapki środowiska (`%`, PATH, flock), at/atd (zainstalowany, enable), timery vs cron, kopia zapasowa:
+  `/usr/local/bin/kopia-sklep.sh` (pg_dump + weryfikacja, migawki `rsync --link-dest` w
+  `/srv/kopie/sklep/pliki/RRRR-MM-DD`, retencja 14), `kopia-sklep.service` (root, `RequiresMountsFor=/srv/kopie
+  /srv/dane`, `OnFailure=powiadom@%n.service`, Nice/IOSchedulingClass), timer 2:30 Persistent.
+  Przy okazji poprawione odwołanie Netplan → rozdział 31 (lekcja 23/05). Numeracja dalej: 28 monitorowanie,
+  29 jądro, 30-32 sieć, 33 SSH, 34 rsync/scp, 35 zapora, 36 WWW, 37 bazy, 38 Java, 39 bezpieczeństwo.
+  Pozostałe lekcje (`_lx_28`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -185,7 +195,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_27_harmonogram_zadan`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_28_monitorowanie_wydajnosci`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

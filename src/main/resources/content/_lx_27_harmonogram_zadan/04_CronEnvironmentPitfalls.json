@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "„U mnie działa, w cronie nie”",
+      "body": "To zdanie słyszał każdy administrator. Skrypt uruchomiony ręcznie z terminala działa bez zarzutu, a dodany do crona — nie robi nic, robi coś innego albo kończy się błędem, którego nikt nie widzi. Przyczyna prawie zawsze leży w **środowisku**: cron uruchamia polecenie przez `/bin/sh` (nie `bash`), z ubogą zmienną `PATH`, bez wczytywania `~/.bashrc` i `~/.profile`, w katalogu domowym zamiast bieżącego, bez terminala, a wynik — zamiast na ekran — wysyła pocztą, której na serwerze zwykle nie ma. Do tego dochodzi specjalne znaczenie znaku `%` w linii crontaba i brak ochrony przed tym, że kolejne uruchomienie startuje, zanim poprzednie się skończyło.\n\nW tej lekcji przejdziesz przez wszystkie te pułapki po kolei, zobaczysz, jak odtworzyć środowisko crona w terminalu, żeby testować skrypty w tych samych warunkach, jak zapewnić, by błędy zawsze zostawiały ślad (`logger`, przekierowania, `MAILTO`), i jak blokadą `flock` zapobiec nakładaniu się uruchomień. To wiedza przydatna także przy timerach systemd (rozdział 22) i usługach — tam środowisko jest równie ubogie."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Pułapki środowiska crona",
+      "body": "- **Powłoka** — domyślnie `/bin/sh` (w Ubuntu `dash`): brak konstrukcji basha (`[[ ]]`, tablice, `{1..5}`, `source`); rozwiązanie: skrypt z `#!/bin/bash` albo `SHELL=/bin/bash` w tabeli.\n- **`PATH`** — tylko `/usr/bin:/bin`; programy z `/usr/local/bin`, `/usr/sbin`, `~/.local/bin`, SDKMAN (`java`, `mvn`) nie zostaną znalezione — *command not found*; rozwiązanie: pełne ścieżki lub `PATH=` w tabeli/skrypcie.\n- **Brak plików startowych** — nie są wczytywane `~/.bashrc`, `~/.profile`, `/etc/profile.d/*` — brak `JAVA_HOME`, aliasów, zmiennych z `export`.\n- **Katalog bieżący** — `HOME` użytkownika; ścieżki względne w skrypcie wskazują nie tam, gdzie przy ręcznym uruchomieniu; rozwiązanie: `cd /katalog || exit 1` lub ścieżki bezwzględne.\n- **Znak `%`** — w linii crontaba oznacza **nową linię**: wszystko po pierwszym `%` trafia do polecenia jako standardowe wejście; w poleceniach `date +%F` trzeba pisać `date +\\%F` (albo przenieść polecenie do skryptu).\n- **Wynik i błędy** — stdout/stderr wysyłane pocztą do `MAILTO` (domyślnie właściciel); bez agenta poczty (MTA) giną; rozwiązania: `>> plik 2>&1`, `2>&1 | logger -t nazwa`, `MAILTO=adres` z działającą pocztą.\n- **Brak terminala** — programy pytające o hasło lub potwierdzenie (`sudo`, `ssh` bez klucza, `apt` bez `-y`) zawieszają się lub kończą błędem.\n- **Nakładanie się uruchomień** — cron nie czeka na zakończenie poprzedniego uruchomienia; zadanie co 5 minut, które trwa 7 minut, ma wiele równoległych instancji. Blokada: `flock -n /run/lock/nazwa.lock polecenie` (pomija uruchomienie, gdy poprzednie trwa).\n- **Uprawnienia** — zadanie działa z prawami właściciela tabeli (lub pola użytkownika w `/etc/cron.d`); pliki muszą być dla niego dostępne, skrypt — wykonywalny."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Zastępca w obcym biurze",
+      "body": "Uruchomienie skryptu przez crona przypomina **wysłanie zastępcy do pracy w twoim imieniu, ale w obcym, pustym biurze**. Nie ma twoich notatek na biurku (`.bashrc`), skrótów na pulpicie (aliasy, `PATH`), nie wie, w której szafie co leży (katalog bieżący), mówi innym dialektem (`sh` zamiast `bash`), a pewne słowa w instrukcji rozumie inaczej (`%`). Nie ma telefonu, więc nie zadzwoni z pytaniem (brak terminala), a raport z pracy wrzuca do skrzynki, której nikt nie opróżnia (poczta). Jeśli wyślesz go co pięć minut, a praca trwa siedem — w biurze robi się tłok kilku zastępców robiących to samo naraz (brak blokady). Instrukcja dla zastępcy musi więc być kompletna i jednoznaczna."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Terminal a cron — porównanie środowiska",
+      "body": "To samo polecenie `env` w dwóch światach:",
+      "code": " TERMINAL (bash, sesja anny)                    CRON (zadanie anny)\n SHELL=/bin/bash                                SHELL=/bin/sh            (dash)\n PATH=/home/anna/.sdkman/candidates/java/       PATH=/usr/bin:/bin\n      current/bin:/home/anna/.local/bin:\n      /usr/local/sbin:/usr/local/bin:/usr/sbin:\n      /usr/bin:/sbin:/bin\n JAVA_HOME=/home/anna/.sdkman/.../current       (brak)\n PWD=/home/anna/projekty/sklep                  PWD=/home/anna\n LANG=C.UTF-8                                   (brak -> POSIX)\n TERM=xterm-256color                            (brak)\n aliasy z .bashrc: ll, gs, ...                  (brak)\n\n LINIA CRONTABA:  0 2 * * * tar czf /srv/kopie/projekt-$(date +%F).tgz projekt\n cron widzi:      polecenie: \"tar czf /srv/kopie/projekt-$(date +\"\n                  stdin:     \"F).tgz projekt\"           <- % = nowa linia!\n poprawnie:       ... $(date +\\%F) ...   albo cala logika w skrypcie"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Środowisko crona na własne oczy",
+      "body": "Zadanie zapisujące `env` do pliku pokazuje, z czym naprawdę pracuje skrypt; potem odtworzenie tych warunków w terminalu (przykładowy wynik):",
+      "code": "$ crontab -l | grep env\n* * * * * env > /tmp/cron-env.txt\n$ sleep 60; cat /tmp/cron-env.txt\nHOME=/home/anna\nLOGNAME=anna\nPATH=/usr/bin:/bin\nLANG=C.UTF-8\nSHELL=/bin/sh\nPWD=/home/anna\n$ crontab -l | grep -v 'env >' | crontab -\n$ env -i HOME=/home/anna LOGNAME=anna PATH=/usr/bin:/bin SHELL=/bin/sh /bin/sh -c 'cd ~ && ./bin/zbuduj-sklep.sh'\n./bin/zbuduj-sklep.sh: line 4: mvn: command not found\n$ grep -n mvn ~/bin/zbuduj-sklep.sh\n4:mvn -q -f /home/anna/projekty/sklep/pom.xml package -DskipTests"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Skrypt odporny na środowisko crona i blokada flock",
+      "body": "Pełne ścieżki, własny `PATH`, `cd`, logowanie przez `logger` i `flock`, który pomija uruchomienie, gdy poprzednie jeszcze trwa (przykładowy wynik):",
+      "code": "$ cat ~/bin/zbuduj-sklep.sh\n#!/bin/bash\nset -euo pipefail\nexport JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64\nexport PATH=/opt/maven/bin:$JAVA_HOME/bin:/usr/local/bin:/usr/bin:/bin\ncd /home/anna/projekty/sklep\nmvn -q package -DskipTests\necho \"Zbudowano: $(ls -1 target/*.jar)\"\n$ crontab -l | grep zbuduj\n*/30 * * * * flock -n /tmp/zbuduj-sklep.lock /home/anna/bin/zbuduj-sklep.sh 2>&1 | logger -t zbuduj-sklep\n$ journalctl -t zbuduj-sklep --since \"-1h\" --no-pager -o short-iso\n2026-10-06T19:00:41+0200 lubuntu-nauka zbuduj-sklep: Zbudowano: target/sklep-1.4.2.jar\n2026-10-06T19:30:44+0200 lubuntu-nauka zbuduj-sklep: Zbudowano: target/sklep-1.4.2.jar\n$ flock -n /tmp/zbuduj-sklep.lock sleep 120 & sleep 1; flock -n /tmp/zbuduj-sklep.lock echo \"drugie uruchomienie\"; echo \"kod: $?\"\n[1] 10442\nkod: 1"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Lista kontrolna zadania crona",
+      "body": "1. Skrypt zaczyna się od `#!/bin/bash` (lub zgodny z `sh`) i ma prawo wykonania.\n2. Na początku skryptu: `set -euo pipefail`, własny `PATH`, potrzebne zmienne (`JAVA_HOME`), `cd /katalog`.\n3. Wszystkie polecenia i pliki — pełne ścieżki lub w ustalonym `PATH`.\n4. W linii crontaba: żadnych `%` bez `\\` (lepiej — logika w skrypcie), wynik do `logger -t nazwa` lub pliku (`>> log 2>&1`).\n5. Zadania, które mogą trwać dłużej niż odstęp — `flock -n /run/lock/nazwa.lock` (lub `/tmp` dla zwykłego użytkownika).\n6. Brak interakcji: `apt-get -y`, `ssh -o BatchMode=yes` z kluczem, żadnego `sudo` z hasłem (zadanie roota → `/etc/cron.d` z polem `root`).\n7. Przetestuj w środowisku crona: `env -i HOME=... PATH=/usr/bin:/bin /bin/sh -c 'skrypt'`.\n8. Po pierwszym uruchomieniu: `journalctl -u cron` (czy uruchomiono) i `journalctl -t nazwa` (czy zadziałało)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Poczta z crona i powiadomienia o błędach",
+      "body": "Tradycyjnie cron wysyła wynik każdego zadania (jeśli coś wypisało) pocztą lokalną do właściciela — na dawnych serwerach administrator czytał ją poleceniem `mail`. Na współczesnym serwerze zwykle nie ma skonfigurowanego agenta poczty (`postfix`, `msmtp`), więc w `/var/log/syslog` pojawia się tylko *(CRON) info (No MTA installed, discarding output)* — a wraz z nim przepada informacja o błędzie. Masz trzy rozsądne wyjścia: **logować** (`2>&1 | logger -t nazwa` — wpisy trafią do dziennika z możliwością filtrowania i alertów), **skonfigurować wysyłkę** (`msmtp-mta` z przekazaniem przez firmowy serwer SMTP i `MAILTO=zespol@firma.example` — dostaniesz maila przy każdym wyniku, więc skrypty powinny milczeć, gdy wszystko jest w porządku), albo **zgłaszać stan aktywnie** — na końcu skryptu sygnał do systemu monitorowania (np. „heartbeat” w Healthchecks.io, Uptime Kuma, Prometheus Pushgateway), który zaalarmuje, gdy sygnał nie nadejdzie. Ta ostatnia metoda wykrywa też sytuację, w której zadanie w ogóle się nie uruchomiło."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta wiedza",
+      "body": "- **Każde zadanie w cronie** — pełne ścieżki, logowanie, test w środowisku crona.\n- **Timery i usługi systemd** — podobnie ubogie środowisko (rozdział 22).\n- **Skrypty kopii zapasowych** — `flock`, logowanie, powiadomienia o błędach (lekcja 7).\n- **Zadania z Javą i Mavenem** — `JAVA_HOME` i `PATH` ustawiane w skrypcie.\n- **CI i automatyzacja** — te same zasady dla skryptów uruchamianych przez agentów bez terminala.\n- **Diagnoza „nie działa w cronie”** — porównanie `env` z crona i z terminala."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Znak % w linii crontaba",
+      "body": "Zadanie ma tworzyć archiwum z datą w nazwie: `0 2 * * * tar czf /srv/kopie/projekt-$(date +%F).tgz -C /home/anna projekty`. W terminalu polecenie działa. W cronie znak `%` kończy polecenie i zaczyna standardowe wejście — powłoka dostaje niedokończoną linię `tar czf /srv/kopie/projekt-$(date +` i kończy się błędem składni. Błąd idzie na stderr, czyli do poczty, której nie ma — archiwum nie powstaje, a jedynym śladem jest informacja crona o odrzuconym wyniku."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Niezabezpieczony % w crontabie",
+      "body": "Polecenie zostaje ucięte na pierwszym `%` (przykładowy wynik):",
+      "code": "$ crontab -l | grep tar\n0 2 * * * tar czf /srv/kopie/projekt-$(date +%F).tgz -C /home/anna projekty\n$ ls /srv/kopie/ | grep -c projekt\n0\n$ journalctl -u cron --since \"02:00\" --until \"02:01\" --no-pager -o cat\n(anna) CMD (tar czf /srv/kopie/projekt-$(date +)\n(CRON) info (No MTA installed, discarding output)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Ucieczka \\% i wynik do dziennika",
+      "body": "`\\%` przekazuje znak procentu do powłoki, a błędy trafiają do dziennika zamiast do nieistniejącej poczty (przykładowy wynik):",
+      "code": "$ crontab -l | grep tar\n0 2 * * * tar czf /srv/kopie/projekt-$(date +\\%F).tgz -C /home/anna projekty 2>&1 | logger -t archiwum-projektow\n$ ls /srv/kopie/ | grep projekt\nprojekt-2026-10-07.tgz\n$ journalctl -u cron --since \"02:00\" --until \"02:01\" --no-pager -o cat | head -1\n(anna) CMD (tar czf /srv/kopie/projekt-$(date +%F).tgz -C /home/anna projekty 2>&1 | logger -t archiwum-projektow)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak uniknąć pułapek",
+      "body": "- **Logika dłuższa niż jedno polecenie** — w skrypcie, nie w linii crontaba.\n- **Programy spoza `/usr/bin:/bin`** — pełne ścieżki lub `PATH=` w skrypcie/tabeli.\n- **Data w nazwie pliku w linii crontaba** — `\\%` (lub przenieś do skryptu).\n- **Wynik zadania** — `logger -t` lub plik; poczta tylko z działającym MTA.\n- **Zadania potencjalnie długie** — `flock -n`.\n- **Zadania wymagające roota** — `/etc/cron.d` z polem `root`, nie `sudo` w crontabie użytkownika."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- cron uruchamia polecenia przez `/bin/sh` z `PATH=/usr/bin:/bin`, bez `.bashrc`, w katalogu domowym, bez terminala.\n- `%` w linii crontaba oznacza nową linię — pisz `\\%` albo przenieś polecenie do skryptu.\n- Wynik zadania idzie pocztą; bez MTA przepada — przekierowuj do `logger` lub pliku.\n- `flock -n plik.lock` zapobiega nakładaniu się kolejnych uruchomień.\n- Testuj skrypty w środowisku crona: `env -i HOME=... PATH=/usr/bin:/bin /bin/sh -c '...'`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
