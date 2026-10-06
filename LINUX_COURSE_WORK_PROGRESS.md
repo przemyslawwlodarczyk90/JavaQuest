@@ -154,7 +154,17 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   MAC 08:00:27:3a:5c:1e, SATA 00:0d.0, xHCI 00:0c.0), udev (`/etc/udev/rules.d/99-kopia-usb.rules` dla
   pendrive'a SanDisk 4C530001240915112472 → /dev/kopia-usb, grupa kopie GID 1009,
   `kopia-na-usb.service`).
-  Pozostałe lekcje (`_lx_30`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_30_podstawy_sieci` (10 lekcji) — ZROBIONY (2026-10-06). USTALONA SIEĆ LABORATORIUM (dopisane
+  też do lekcji 23/06 i 29/04): lubuntu-nauka ma 2 karty — `enp0s3` NAT 10.0.2.15/24 (brama 10.0.2.2, DNS
+  VirtualBox 10.0.2.3, MAC 08:00:27:3a:5c:1e, jedyna trasa domyślna) i `enp0s8` host-only 192.168.56.10/24
+  statycznie BEZ bramy (MAC 08:00:27:91:4d:07, IPv6 ULA fd00:56::10/64); gospodarz (laptop) 192.168.56.1 na
+  host-only, 192.168.1.10 w LAN, router domowy 192.168.1.1, adres publiczny 198.51.100.77; srv-test
+  192.168.56.20 (fd00:56::20, MAC 08:00:27:5e:b2:31), srv-docker (tylko NAT + przekierowania, potem
+  host-only 192.168.56.30); sklep.firma.example A 198.51.100.77 / AAAA 2001:db8:4c2a:10::77; /etc/hosts:
+  `192.168.56.20 srv-test`. Od lekcji 30/07 sklep nasłuchuje `server.address=127.0.0.1:8080` za Nginx
+  (`/etc/nginx/sites-available/sklep`: listen 80 + [::]:80, proxy_pass 127.0.0.1:8080), nowy PID 15210.
+  PostgreSQL nasłuchuje tylko localhost; pg_hba ma wpis dla 192.168.56.0/24 (do rozdziału 37).
+  Pozostałe lekcje (`_lx_31`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -209,7 +219,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_30_podstawy_sieci`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_31_konfiguracja_sieci`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

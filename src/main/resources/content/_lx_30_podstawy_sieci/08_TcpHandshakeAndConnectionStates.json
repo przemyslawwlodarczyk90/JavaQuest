@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Jak rodzi się i umiera połączenie TCP",
+      "body": "TCP jest protokołem połączeniowym: zanim aplikacje wymienią choćby bajt danych, oba końce muszą się **uzgodnić** (*three-way handshake*: SYN, SYN-ACK, ACK), a po zakończeniu — uporządkowanie się **rozłączyć** (FIN, ACK z obu stron). Po drodze każde połączenie przechodzi przez szereg **stanów**, które widać w `ss` i `netstat`. Notatki kursu wymieniają najważniejsze: `LISTEN` (serwer czeka na połączenia), `ESTABLISHED` (aktywne połączenie), `TIME_WAIT` (zamknięte, czeka na posprzątanie), `CLOSE_WAIT` (druga strona zamknęła), `SYN_SENT`/`SYN_RECV` (trwa uzgadnianie).\n\nW tej lekcji zobaczysz uzgadnianie i zamknięcie połączenia w zapisie `tcpdump`, poznasz pełny cykl stanów i nauczysz się, co który stan mówi o problemie: wiele `SYN_SENT` — cel nie odpowiada (zapora porzuca pakiety), `RST` — port zamknięty (*Connection refused*), tysiące `TIME_WAIT` — dużo krótkich połączeń (brak *keep-alive* lub puli), rosnąca liczba `CLOSE_WAIT` — **aplikacja nie zamyka połączeń** (błąd w kodzie). Ta wiedza pozwala odróżnić problem sieci od problemu aplikacji na podstawie jednego polecenia."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Uzgadnianie i stany TCP",
+      "body": "- **Uzgadnianie (3-way handshake)** — klient → `SYN` (numer sekwencyjny), serwer → `SYN-ACK`, klient → `ACK`; połączenie `ESTABLISHED`. Trwa jeden czas obiegu (RTT) — przy połączeniach przez ocean to dziesiątki-setki ms przed pierwszym bajtem.\n- **Zamknięcie** — strona kończąca wysyła `FIN`, druga odpowiada `ACK`, potem wysyła własny `FIN`, pierwsza — `ACK`; **`RST`** — natychmiastowe zerwanie (port zamknięty, odrzucenie, przekroczony czas).\n- **Stany po stronie serwera** — `LISTEN` → (`SYN_RECV`) → `ESTABLISHED` → po `FIN` od klienta `CLOSE_WAIT` (czeka, aż **aplikacja** wywoła `close()`) → `LAST_ACK` → zamknięte.\n- **Stany po stronie klienta/zamykającego** — `SYN_SENT` → `ESTABLISHED` → `FIN_WAIT_1` → `FIN_WAIT_2` → **`TIME_WAIT`** (2×MSL, w Linuksie 60 s — chroni przed pomyleniem opóźnionych pakietów z nowym połączeniem) → zamknięte.\n- **Interpretacja** — dużo `SYN_SENT` u klienta: cel lub zapora nie odpowiada (pakiety porzucane → *timeout*); `RST` po `SYN`: nikt nie nasłuchuje (*Connection refused*); `SYN_RECV` w dużej liczbie na serwerze: atak SYN flood lub przeciążenie (`net.ipv4.tcp_syncookies`); tysiące `TIME_WAIT`: wiele krótkich połączeń (zwykle normalne, ale wyczerpują porty efemeryczne); rosnące `CLOSE_WAIT`: wyciek połączeń w aplikacji.\n- **Keep-alive** — utrzymywanie połączenia między żądaniami (HTTP keep-alive, pule połączeń JDBC/HTTP) — oszczędza uzgadnianie i `TIME_WAIT`; TCP keepalive (`net.ipv4.tcp_keepalive_time`, domyślnie 7200 s) — sondy dla bezczynnych połączeń.\n- **Narzędzia** — `ss -tan` (wszystkie połączenia TCP ze stanami), `ss -tan state time-wait`, `ss -s` (podsumowanie), `ss -tanp` (z procesami), `tcpdump -n 'tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0'` (rozdział 32)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Rozmowa telefoniczna z dobrymi manierami",
+      "body": "Uzgadnianie TCP to początek rozmowy: „Halo, słyszysz mnie?” (SYN) — „Tak, słyszę, a ty mnie?” (SYN-ACK) — „Słyszę” (ACK). Dopiero potem zaczyna się właściwa rozmowa. Zakończenie jest równie uprzejme: „To ja kończę” (FIN) — „Dobrze” (ACK) — „Ja też kończę” (FIN) — „Pa” (ACK). `TIME_WAIT` to chwila, w której dzwoniący nie odkłada jeszcze słuchawki na wypadek, gdyby do rozmówcy doszło spóźnione słowo. `CLOSE_WAIT` to sytuacja, w której rozmówca powiedział „kończę”, a ty **trzymasz słuchawkę i nic nie mówisz** — linia jest zajęta, dopóki ktoś nie odłoży słuchawki (aplikacja nie wywoła `close()`). `RST` to rzucenie słuchawką."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Cykl życia połączenia TCP",
+      "body": "Pakiety i stany po obu stronach połączenia klient → sklep:",
+      "code": " KLIENT 192.168.56.20:50114                       SERWER 192.168.56.10:8080\n CLOSED                                           LISTEN\n SYN_SENT     ---- SYN seq=100 --------------->\n                                                  SYN_RECV\n ESTABLISHED  <--- SYN,ACK seq=500 ack=101 ----\n              ---- ACK ack=501 --------------->    ESTABLISHED\n              ==== dane: GET /api/produkty ===>\n              <=== dane: HTTP/1.1 200 OK ======\n FIN_WAIT_1   ---- FIN ----------------------->    CLOSE_WAIT   (aplikacja musi wywolac close()!)\n FIN_WAIT_2   <--- ACK ------------------------\n              <--- FIN ------------------------    LAST_ACK\n TIME_WAIT    ---- ACK ----------------------->    CLOSED\n (60 s)\n CLOSED\n\n PORT ZAMKNIETY:  SYN ---> ; <--- RST          -> \"Connection refused\" (natychmiast)\n ZAPORA DROP:     SYN ---> ; (cisza) ; SYN ---> -> \"Connection timed out\" (po kilkudziesieciu s)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Stany połączeń na serwerze",
+      "body": "Podsumowanie, połączenia według stanów i połączenia aplikacji z bazą danych (przykładowy wynik):",
+      "code": "$ ss -s | sed -n '1,3p'\nTotal: 512\nTCP:   61 (estab 18, closed 31, orphaned 0, timewait 29)\n\n$ ss -tan | awk 'NR>1 {print $1}' | sort | uniq -c | sort -rn\n     29 TIME-WAIT\n     18 ESTAB\n      9 LISTEN\n      2 CLOSE-WAIT\n$ ss -tan state established '( sport = :5432 or dport = :5432 )' | head -4\nRecv-Q Send-Q Local Address:Port  Peer Address:Port\n0      0          127.0.0.1:5432      127.0.0.1:43122\n0      0          127.0.0.1:43122     127.0.0.1:5432\n0      0          127.0.0.1:5432      127.0.0.1:43130\n$ ss -tan state time-wait | head -3\nRecv-Q Send-Q   Local Address:Port      Peer Address:Port\n0      0      192.168.56.10:80       192.168.56.1:51902\n0      0      192.168.56.10:80       192.168.56.1:51904"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Uzgadnianie i zamknięcie w tcpdump",
+      "body": "Pakiety z flagami SYN, ACK, FIN i RST: udane połączenie z portem 8080 i próba połączenia z portem zamkniętym (przykładowy wynik):",
+      "code": "$ sudo tcpdump -n -i lo 'tcp port 8080 and tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0' &\n$ curl -s -o /dev/null http://127.0.0.1:8080/actuator/health\n10:12:01.402112 IP 127.0.0.1.50388 > 127.0.0.1.8080: Flags [S], seq 1840211934, win 65495, length 0\n10:12:01.402131 IP 127.0.0.1.8080 > 127.0.0.1.50388: Flags [S.], seq 2210487741, ack 1840211935, win 65483, length 0\n10:12:01.418904 IP 127.0.0.1.50388 > 127.0.0.1.8080: Flags [F.], seq 79, ack 412, win 512, length 0\n10:12:01.419211 IP 127.0.0.1.8080 > 127.0.0.1.50388: Flags [F.], seq 412, ack 80, win 512, length 0\n$ sudo tcpdump -n -i lo 'tcp port 9999' -c 2 & curl -s http://127.0.0.1:9999; echo \"kod curl: $?\"\n10:12:44.118302 IP 127.0.0.1.50390 > 127.0.0.1.9999: Flags [S], seq 3021551208, win 65495, length 0\n10:12:44.118319 IP 127.0.0.1.9999 > 127.0.0.1.50390: Flags [R.], seq 0, ack 3021551209, win 0, length 0\nkod curl: 7"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Diagnoza po stanach połączeń",
+      "body": "1. Policz stany: `ss -tan | awk 'NR>1{print $1}' | sort | uniq -c` (na kliencie i serwerze).\n2. **`SYN-SENT` u klienta, który nie przechodzi w `ESTAB`** — cel nie odpowiada: zapora porzuca, trasa, host wyłączony (`tcpdump` — czy wraca cokolwiek).\n3. **Natychmiastowe *Connection refused*** — `RST`: nic nie nasłuchuje na tym adresie/porcie (`ss -tlnp` na serwerze) lub zapora odrzuca z `reject`.\n4. **Dużo `TIME-WAIT`** — wiele krótkich połączeń: włącz keep-alive/pule po stronie klienta; przy wyczerpaniu portów efemerycznych — `net.ipv4.tcp_tw_reuse=1` i szerszy `ip_local_port_range`.\n5. **Rosnące `CLOSE-WAIT`** — aplikacja nie zamyka połączeń: `ss -tanp state close-wait` (który proces), analiza kodu (try-with-resources, oddawanie połączeń do puli).\n6. **Dużo `SYN-RECV` na serwerze** — przeciążenie lub SYN flood: `net.ipv4.tcp_syncookies=1`, `net.core.somaxconn`, ochrona na brzegu sieci."
+    },
+    {
+      "type": "NOTE",
+      "heading": "CLOSE_WAIT a aplikacje Javy",
+      "body": "Stan `CLOSE_WAIT` jest szczególny, bo **nigdy nie znika sam**: jądro czeka, aż proces wywoła `close()` na gnieździe. Każde takie gniazdo zajmuje deskryptor pliku (rozdział 28, lekcja 5), a ich liczba rośnie, aż aplikacja zgłosi *Too many open files* albo pula połączeń przestanie wydawać połączenia. W aplikacjach Javy typowe przyczyny to: odpowiedź HTTP z klienta (`HttpURLConnection`, Apache HttpClient, `RestTemplate` z własną fabryką) czytana, ale nie zamknięta — strumień `InputStream` bez `close()`/try-with-resources; połączenie JDBC pobrane ręcznie z `DataSource` i nieoddane do puli; serwer po drugiej stronie zamykający bezczynne połączenia z puli (np. load balancer po 350 s), a pula, która o tym nie wie. Diagnoza: `ss -tanp state close-wait` (proces i adres drugiej strony — która usługa?), zrzut wątków i przegląd kodu klienta; w pulach — `maxLifetime`/`idleTimeout` krótsze niż limit bezczynności po stronie serwera lub load balancera."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się znajomość stanów TCP",
+      "body": "- **Diagnoza „timeout” vs „refused”** — zapora/trasa vs brak nasłuchu.\n- **Wycieki połączeń w aplikacji** — rosnące `CLOSE_WAIT`.\n- **Wydajność** — `TIME_WAIT` i keep-alive, pule połączeń, wyczerpanie portów efemerycznych.\n- **Ochrona przed przeciążeniem** — `SYN_RECV`, `tcp_syncookies`, `somaxconn` (rozdział 29).\n- **Load balancery i proxy** — limity bezczynności i zamykanie połączeń z pul.\n- **Analiza ruchu** — flagi SYN/FIN/RST w `tcpdump` (rozdział 32)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Rosnąca liczba CLOSE_WAIT „to problem sieci”",
+      "body": "Po kilku dniach działania aplikacja `sklep` zaczyna zwracać błędy przy pobieraniu kursów walut z zewnętrznego API, a `ss` pokazuje setki połączeń `CLOSE-WAIT` do tego API. Zespół uznaje, że to problem sieci lub dostawcy API, i zgłasza go do operatora, a „tymczasowym” rozwiązaniem jest codzienny restart aplikacji. Tymczasem `CLOSE-WAIT` oznacza dokładnie to, że **druga strona poprawnie zamknęła połączenie**, a **nasza aplikacja** tego nie zrobiła — błąd jest w kodzie klienta HTTP (nieczytana do końca i niezamknięta odpowiedź)."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Wyciek połączeń zrzucony na sieć",
+      "body": "Setki gniazd w `CLOSE-WAIT` należących do JVM — liczba rośnie z każdą godziną (przykładowy wynik):",
+      "code": "$ ss -tanp state close-wait | awk 'NR>1 {print $4, $NF}' | sort | uniq -c | sort -rn | head -2\n    412 203.0.113.80:443 users:((\"java\",pid=15210,fd=318))\n$ sleep 3600; ss -tan state close-wait | wc -l\n498\n$ sudo ls /proc/15210/fd | wc -l\n1914\n(...decyzja: \"codzienny restart aplikacji, zgloszenie do dostawcy API\")"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Zamykanie odpowiedzi w kodzie klienta",
+      "body": "Poprawka w kodzie (try-with-resources na odpowiedzi) i kontrola po wdrożeniu — `CLOSE-WAIT` nie narasta (przykładowy wynik):",
+      "code": "$ git -C ~/projekty/sklep show --stat HEAD | sed -n '5,6p'\n    Zamykanie odpowiedzi HTTP w KursyWalutKlient (try-with-resources)\n src/main/java/pl/firma/sklep/kursy/KursyWalutKlient.java | 9 +++++----\n$ git -C ~/projekty/sklep show HEAD | grep -A2 '^+.*try ('\n+        try (InputStream in = polaczenie.getInputStream()) {\n+            return mapper.readValue(in, KursyWalut.class);\n+        }\n$ sleep 3600; ss -tan state close-wait | wc -l\n1\n$ sudo ls /proc/$(systemctl show -p MainPID --value sklep)/fd | wc -l\n191"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Co mówi stan połączenia",
+      "body": "- **`LISTEN`** — usługa gotowa; brak = nic nie nasłuchuje (`Connection refused`).\n- **`SYN-SENT` (długo)** — cel/zapora nie odpowiada → sprawdź trasę i zaporę.\n- **`ESTAB`** — działające połączenia (pule, keep-alive) — monitoruj liczbę.\n- **`TIME-WAIT` (dużo)** — wiele krótkich połączeń → keep-alive, pule; zwykle nieszkodliwe.\n- **`CLOSE-WAIT` (rośnie)** — błąd aplikacji: nie zamyka gniazd → kod, nie sieć.\n- **`SYN-RECV` (dużo na serwerze)** — przeciążenie lub atak → syncookies, ochrona brzegowa."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Połączenie TCP zaczyna się uzgadnianiem SYN → SYN-ACK → ACK, a kończy wymianą FIN/ACK z obu stron; RST zrywa je natychmiast.\n- Stany: `LISTEN`, `SYN_SENT`, `SYN_RECV`, `ESTABLISHED`, `FIN_WAIT`, `CLOSE_WAIT`, `LAST_ACK`, `TIME_WAIT`.\n- *Connection refused* = RST (brak nasłuchu); *timeout* = brak odpowiedzi na SYN (zapora porzuca, trasa).\n- `TIME_WAIT` to normalny skutek zamykania połączeń; `CLOSE_WAIT`, które rośnie, to błąd aplikacji.\n- `ss -tan`, `ss -s`, `ss -tanp state ...` i `tcpdump` z filtrem flag pokazują stany i pakiety."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
