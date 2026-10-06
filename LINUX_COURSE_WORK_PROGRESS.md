@@ -123,7 +123,14 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   LV `aplikacja` 4 GiB → `/srv/aplikacja`), RAID 1 `/dev/md0` (sdh + sdj po wymianie sdi) → `/srv/raid`,
   NFS (`/srv/dane/wspolne` 2775 anna:programisci, eksport dla 192.168.56.0/24, klient srv-test
   `/mnt/wspolne`), Samba (udział `[wspolne]`, `@programisci`). GID programisci = 1003.
-  Pozostałe lekcje (`_lx_26`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_26_logi` (7 lekcji) — ZROBIONY (2026-10-06): /var/log (rsyslog + journald równolegle,
+  znaczniki ISO w plikach Ubuntu 24.04), journalctl (trwały dziennik, drop-iny `journald.conf.d/limity.conf`:
+  SystemMaxUse=500M, MaxRetentionSec=1month), filtrowanie, rsyslog (`/etc/rsyslog.d/30-sklep.conf`: local0 →
+  `/var/log/sklep/zadania.log`; `90-centralny.conf` → TCP logi.firma.example:514 z kolejką), logrotate
+  (`/etc/logrotate.d/sklep`, `raporty` z copytruncate), dmesg (dmesg_restrict=1, kuba w grupie adm), logi
+  Javy (sklep: `LogsDirectory=sklep`, `Environment=LOGGING_LEVEL_*`, Logback do `/var/log/sklep/aplikacja.log`
+  z rotacją, gc.log, HeapDump do /var/lib/sklep, `ExitOnOutOfMemoryError`, logback-spring.xml w /etc/sklep).
+  Pozostałe lekcje (`_lx_27`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -178,7 +185,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_26_logi`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_27_harmonogram_zadan`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

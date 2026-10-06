@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Gdzie powinny trafiać logi aplikacji",
+      "body": "Aplikacja `sklep` działa jako usługa systemd (rozdział 22) i wszystko, co wypisuje na standardowe wyjście, ląduje w dzienniku: `journalctl -u sklep`. To dobry punkt wyjścia, ale na serwerze produkcyjnym pojawia się szereg pytań: czy logować do dziennika, czy do plików? Jak sprawić, by błędy aplikacji miały w dzienniku priorytet `err`, a nie `info`? Jak nie zgubić logów, gdy aplikacja w pętli wypisze tysiące linii na sekundę? Gdzie trzymać pliki, jeśli są potrzebne, i kto je rotuje? Co z logami GC i zrzutami pamięci przy `OutOfMemoryError`?\n\nW tej lekcji zestawisz dwie strategie — **stdout → journald** i **pliki z rotacją Logbacka** — z ich zaletami i wadami, ustawisz poziomy logowania przez zmienne środowiskowe w jednostce systemd, nadasz wpisom właściwe priorytety (prefiksy `<3>` lub logowanie strukturalne), skonfigurujesz katalog `/var/log/sklep` przez `LogsDirectory=`, włączysz logi GC i zrzut sterty przy błędzie pamięci, a w pułapce zobaczysz ograniczenie szybkości dziennika (*rate limiting*), które potrafi po cichu wyrzucić tysiące wpisów."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Logowanie aplikacji Java na serwerze",
+      "body": "- **stdout/stderr → journald** — domyślne dla usług systemd (`StandardOutput=journal`); każda linia to wpis z polami `_SYSTEMD_UNIT`, `_PID`; rotacja i limity po stronie journald; odczyt `journalctl -u sklep`. Priorytet: domyślnie `info` zarówno dla stdout, jak i stderr (`SyslogLevel=info`), chyba że linia zaczyna się od prefiksu `<N>`, np. `<3>` = `err` (`SyslogLevelPrefix=yes`, domyślnie włączone), lub aplikacja używa natywnego protokołu journald.\n- **Pliki** — Spring Boot: `logging.file.name=/var/log/sklep/aplikacja.log`; rotacja Logbacka: `logging.logback.rollingpolicy.max-file-size`, `max-history`, `total-size-cap`, `clean-history-on-start`.\n- **`LogsDirectory=sklep`** — systemd tworzy `/var/log/sklep` z właścicielem `User=` usługi (działa też z `ProtectSystem=strict`); analogicznie `StateDirectory=`, `CacheDirectory=`.\n- **Poziomy przez środowisko** — `Environment=LOGGING_LEVEL_ROOT=INFO`, `LOGGING_LEVEL_PL_FIRMA_SKLEP=DEBUG` (Spring Boot mapuje zmienne na `logging.level.*`); zmiana w locie: endpoint Actuatora `/actuator/loggers`.\n- **Logowanie strukturalne** — Spring Boot 3.4+: `logging.structured.format.console=ecs` (lub `logstash`, `gelf`) — jedna linia JSON na zdarzenie, stos wyjątku w polu; łatwe do zbierania (Loki, Elasticsearch).\n- **Ograniczenie szybkości journald** — `RateLimitIntervalSec=30s`, `RateLimitBurst=10000` (globalnie w `journald.conf`); na usługę: `LogRateLimitIntervalSec=`, `LogRateLimitBurst=` w jednostce; nadmiarowe wpisy są odrzucane z komunikatem *Suppressed N messages from sklep.service*.\n- **Logi GC i diagnostyka JVM** — `-Xlog:gc*:file=/var/log/sklep/gc.log:time,uptime,level,tags:filecount=5,filesize=20m` (wbudowana rotacja), `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep/`, `-XX:+ExitOnOutOfMemoryError` (zakończ JVM, systemd uruchomi ponownie)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Rozmowa przez radio",
+      "body": "Logowanie na standardowe wyjście to **mówienie do radia dyspozytorskiego**: aplikacja tylko mówi, a dyspozytor (journald) nagrywa, opisuje kto i kiedy, archiwizuje i kasuje stare nagrania. Pliki z rotacją Logbacka to **prowadzenie własnego notesu**: aplikacja sama pilnuje, kiedy zacząć nowy zeszyt i które stare wyrzucić — dyspozytor nic o nich nie wie. Rate limiting to **dyspozytor, który przy zalewie meldunków przestaje nagrywać** i tylko notuje „pominięto 12 345 meldunków”. Logowanie strukturalne to **formularz zamiast wolnej mowy** — każdy meldunek ma pola: czas, jednostka, waga, treść, szczegóły — więc komputer zrozumie go bez zgadywania."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Dwie strategie logowania",
+      "body": "Porównanie drogi logów aplikacji `sklep`:",
+      "code": " A) STDOUT -> JOURNALD  (domyslne, zalecane na pojedynczym serwerze)\n   java (Logback ConsoleAppender) -> stdout -> journald -> /var/log/journal\n                                                  |\n                         journalctl -u sklep -p err --since ...   (filtry, starty, czas)\n                         rotacja i limity: journald.conf (SystemMaxUse=)\n                         agent (Alloy/Vector) -> Loki / Elasticsearch\n\n B) PLIKI (gdy wymagane: osobna retencja, narzedzia czytajace pliki)\n   java (RollingFileAppender) -> /var/log/sklep/aplikacja.log\n                                  aplikacja.log.2026-10-05.0.gz ... (rotacja Logbacka)\n   + nadal stdout -> journald  (komunikaty startu, bledy przed inicjalizacja logowania)\n\n NIE ROB OBU W PELNYM ZAKRESIE: te same wpisy w pliku i w dzienniku = 2x miejsca\n\n OSOBNO:  gc.log (-Xlog:gc*, wlasna rotacja)    zrzut sterty .hprof (HeapDumpOnOutOfMemoryError)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Poziomy, priorytety i dziennik",
+      "body": "Poziom logowania ze zmiennej środowiskowej, prefiks priorytetu w formacie konsoli i efekt w filtrze `-p err` (przykładowy wynik):",
+      "code": "$ systemctl cat sklep --no-pager | grep -E 'Environment|LogsDirectory'\nEnvironmentFile=/etc/sklep/sklep.env\nEnvironment=LOGGING_LEVEL_ROOT=INFO\nEnvironment=LOGGING_LEVEL_PL_FIRMA_SKLEP=DEBUG\nLogsDirectory=sklep\n$ grep -A3 'CONSOLE' /etc/sklep/logback-spring.xml | grep pattern\n      <pattern>%replace(%replace(%level){'ERROR','&lt;3&gt;ERROR'}){'WARN','&lt;4&gt;WARN'} %logger{36} - %msg%n</pattern>\n$ journalctl -u sklep -p err --since today --no-pager -o short-iso | tail -1\n2026-10-06T17:18:12+0200 lubuntu-nauka java[6120]: ERROR o.s.web.servlet.DispatcherServlet - Request processing failed: org.springframework.dao.DataAccessResourceFailureException: Unable to acquire JDBC Connection\n$ journalctl -u sklep -n 1 -o verbose --no-pager | grep -E 'PRIORITY|MESSAGE'\n    PRIORITY=6\n    MESSAGE=INFO pl.firma.sklep.web.ProduktController - GET /api/produkty -> 200 (14 ms)"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Pliki z rotacją, logi GC i zrzut sterty",
+      "body": "Katalog logów od systemd, rotacja Logbacka, logi GC z własną rotacją i diagnostyka błędu pamięci (przykładowy wynik):",
+      "code": "$ grep -E '^logging' /etc/sklep/application.properties\nlogging.file.name=/var/log/sklep/aplikacja.log\nlogging.logback.rollingpolicy.max-file-size=50MB\nlogging.logback.rollingpolicy.max-history=14\nlogging.logback.rollingpolicy.total-size-cap=1GB\n$ grep JAVA_OPTS /etc/sklep/sklep.env\nJAVA_OPTS=-Xms256m -Xmx512m -Xlog:gc*:file=/var/log/sklep/gc.log:time,level,tags:filecount=5,filesize=20m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep -XX:+ExitOnOutOfMemoryError\n$ sudo systemctl restart sklep\n$ ls -l /var/log/sklep/\ntotal 2164\n-rw-r--r-- 1 sklep sklep  1218334 Oct  6 18:21 aplikacja.log\n-rw-r--r-- 1 sklep sklep   893110 Oct  5 23:59 aplikacja.log.2026-10-05.0.gz\n-rw-r--r-- 1 sklep sklep    96412 Oct  6 18:21 gc.log\n-rw-r----- 1 syslog adm       82 Oct  6 17:48 zadania.log\n$ tail -2 /var/log/sklep/gc.log\n[2026-10-06T18:21:40.118+0200][info][gc] GC(41) Pause Young (Normal) (G1 Evacuation Pause) 187M->62M(256M) 6.204ms\n[2026-10-06T18:21:52.902+0200][info][gc] GC(42) Pause Young (Normal) (G1 Evacuation Pause) 190M->63M(256M) 5.871ms\n$ sudo du -sh /var/log/sklep\n2.2M\t/var/log/sklep"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Konfiguracja logów aplikacji na serwerze",
+      "body": "1. Zdecyduj o strategii: stdout → journald (domyślnie) albo pliki z rotacją Logbacka — nie oba w pełnym zakresie.\n2. Poziomy ustaw przez środowisko w jednostce (`Environment=LOGGING_LEVEL_...`) lub `application.properties` w `/etc/sklep`; na produkcji `INFO`, `DEBUG` tylko czasowo i dla wybranego pakietu.\n3. Dla journald — nadaj priorytety (prefiks `<3>`/`<4>` w formacie konsoli lub logowanie strukturalne), by działało `journalctl -p err`.\n4. Dla plików — `LogsDirectory=sklep` w jednostce, `logging.file.name`, limity `max-file-size`, `max-history`, `total-size-cap`.\n5. Włącz logi GC z wbudowaną rotacją i `HeapDumpOnOutOfMemoryError` z katalogiem o wystarczającej ilości miejsca (zrzut ma rozmiar sterty).\n6. Ustal limity szybkości dla usługi (`LogRateLimitIntervalSec=`, `LogRateLimitBurst=`) zgodne z jej normalnym wolumenem.\n7. Sprawdź: `journalctl -u sklep -p err`, `ls -l /var/log/sklep`, `du -sh` po kilku dniach."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Zasada dwunastu czynników i kontenery",
+      "body": "Metodologia *twelve-factor app* mówi: aplikacja nie zarządza plikami logów — wypisuje strumień zdarzeń na standardowe wyjście, a środowisko (systemd, Docker, Kubernetes) zajmuje się ich zbieraniem, rotacją i wysyłką. To podejście dobrze pasuje do Linuksa z systemd: ten sam jar uruchomiony jako usługa loguje do journald, w kontenerze — do `docker logs`, w Kubernetesie — do zbieracza węzła, bez zmian w konfiguracji. Pliki logów mają sens, gdy wymagają tego procedury (np. osobna retencja logów audytowych przez 5 lat), narzędzia zewnętrzne czytają konkretny plik albo gdy wolumen logów przekracza możliwości dziennika. Niezależnie od wyboru: nie loguj haseł, tokenów ani pełnych danych osobowych (numery kart, PESEL) — logi trafiają do wielu miejsc, mają szerszy krąg czytelników niż baza danych i długo żyją w kopiach."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta wiedza",
+      "body": "- **Wdrożenie aplikacji Spring Boot na serwer** — jednostka z `LogsDirectory=`, poziomy w `Environment=` (rozdział 38).\n- **Diagnoza błędów** — `journalctl -u sklep -p err` wymaga poprawnych priorytetów.\n- **Problemy z pamięcią** — logi GC, zrzut sterty, `ExitOnOutOfMemoryError`.\n- **Centralne logowanie** — format JSON (ECS/Logstash) dla Loki/Elasticsearch.\n- **Kontrola miejsca** — limity Logbacka i journald, `du -sh /var/log/sklep`.\n- **Projekt końcowy** — logi, monitorowanie i kopie (rozdział 46)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Rate limiting dziennika i zgubione logi",
+      "body": "Programista włącza `DEBUG` dla całej aplikacji, żeby zdiagnozować problem, a aplikacja w szczycie ruchu wypisuje kilkadziesiąt tysięcy linii na sekundę. journald ma domyślny limit: **10 000 wpisów na 30 sekund na usługę** (`RateLimitBurst=10000`, `RateLimitIntervalSec=30s`). Po jego przekroczeniu odrzuca kolejne wpisy aż do końca okna i zostawia tylko informację o liczbie pominiętych. W efekcie w dzienniku brakuje dokładnie tych linii, dla których włączono `DEBUG` — w tym, przypadkiem, komunikatów o błędach z tego samego okna czasowego."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "DEBUG dla wszystkiego i pominięte wpisy",
+      "body": "Dziennik odrzuca nadmiar — w tym linie z błędem, którego szukasz (przykładowy wynik):",
+      "code": "$ systemctl show sklep -p Environment --value | tr ' ' '\\n' | grep LEVEL\nLOGGING_LEVEL_ROOT=DEBUG\n$ journalctl -u sklep --since \"-5min\" --no-pager -o cat | grep -c Suppressed\n9\n$ journalctl -u sklep --since \"-5min\" --no-pager -o cat | grep Suppressed | head -2\nSuppressed 48211 messages from sklep.service\nSuppressed 51904 messages from sklep.service\n$ journalctl -u sklep --since \"-5min\" -p err --no-pager | wc -l\n0"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "DEBUG tylko dla jednego pakietu, czasowo i przez Actuator",
+      "body": "Zmiana poziomu w locie dla wybranego pakietu, bez restartu i bez zalewu dziennika; po diagnozie — powrót (przykładowy wynik):",
+      "code": "$ systemctl show sklep -p Environment --value | tr ' ' '\\n' | grep LEVEL\nLOGGING_LEVEL_ROOT=INFO\n$ curl -s -X POST -H 'Content-Type: application/json' -d '{\"configuredLevel\":\"DEBUG\"}' http://localhost:8080/actuator/loggers/pl.firma.sklep.zamowienia\n$ curl -s http://localhost:8080/actuator/loggers/pl.firma.sklep.zamowienia\n{\"configuredLevel\":\"DEBUG\",\"effectiveLevel\":\"DEBUG\"}\n$ journalctl -u sklep --since \"-5min\" --no-pager -o cat | grep -c Suppressed\n0\n$ curl -s -X POST -H 'Content-Type: application/json' -d '{\"configuredLevel\":null}' http://localhost:8080/actuator/loggers/pl.firma.sklep.zamowienia"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak logować w różnych sytuacjach",
+      "body": "- **Pojedynczy serwer, usługa systemd** — stdout → journald, priorytety, limity journald.\n- **Wymagana osobna retencja lub narzędzia czytające pliki** — pliki z rotacją Logbacka w `LogsDirectory=`.\n- **Centralne zbieranie** — logowanie strukturalne JSON + agent.\n- **Diagnoza w produkcji** — `DEBUG` dla jednego pakietu przez `/actuator/loggers`, czasowo.\n- **Problemy z pamięcią i GC** — `-Xlog:gc*` z rotacją, `HeapDumpOnOutOfMemoryError`.\n- **Bardzo duży wolumen logów** — limity `LogRateLimit*` świadomie dobrane albo pliki/agent zamiast dziennika."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Aplikacja jako usługa systemd loguje na stdout do journald (`journalctl -u sklep`) — to domyślna i zwykle najlepsza strategia.\n- Priorytety wpisów (`<3>`, `<4>` lub logowanie strukturalne) pozwalają filtrować `-p err`.\n- Pliki logów: `LogsDirectory=`, rotacja Logbacka (`max-file-size`, `max-history`, `total-size-cap`), bez dodatkowego logrotate.\n- Poziomy ustawiaj przez `Environment=` lub w locie przez `/actuator/loggers`; `DEBUG` tylko punktowo.\n- journald ogranicza szybkość (`Suppressed N messages`) — nadmiar wpisów przepada.\n- Logi GC i zrzut sterty (`-Xlog:gc*`, `HeapDumpOnOutOfMemoryError`) to niezbędna diagnostyka pamięci JVM."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

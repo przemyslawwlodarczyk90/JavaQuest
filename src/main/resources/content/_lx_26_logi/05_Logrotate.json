@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Logi, które nie zapełnią dysku",
+      "body": "Logi rosną bez przerwy. Nginx przy umiarkowanym ruchu dopisuje do `access.log` kilkaset megabajtów dziennie, aplikacja z poziomem `DEBUG` — gigabajty. Bez sprzątania dysk w końcu się zapełni, a wraz z nim przestaną działać baza danych i sama aplikacja. Za porządek w plikach logów odpowiada **logrotate**: okresowo „obraca” plik (`access.log` → `access.log.1`), starsze wersje kompresuje (`access.log.2.gz`), najstarsze usuwa, a usłudze daje znać, by zaczęła pisać do nowego pliku. Dziennik journald ma własne limity (lekcja 2) — logrotate dotyczy plików tekstowych.\n\nW tej lekcji poznasz konfigurację (`/etc/logrotate.conf` i pliki w `/etc/logrotate.d/` dostarczane przez pakiety), dyrektywy określające częstotliwość, liczbę kopii, kompresję i tworzenie nowego pliku, skrypty `postrotate`, tryb testowy (`-d`) i wymuszony (`-f`), uruchamianie przez timer systemd — i najważniejszą kwestię: jak usługa dowiaduje się o rotacji. Napiszesz konfigurację dla plików `/var/log/sklep/`, a w pułapce zobaczysz aplikację, która po rotacji dalej pisze do starego pliku."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "logrotate i jego dyrektywy",
+      "body": "- **Uruchamianie** — `logrotate.timer` (Ubuntu 24.04: codziennie o północy, `Persistent=true`) wywołuje `logrotate /etc/logrotate.conf`; stan ostatnich rotacji: `/var/lib/logrotate/status`.\n- **Konfiguracja** — `/etc/logrotate.conf` (ustawienia domyślne, `include /etc/logrotate.d`) i pliki `/etc/logrotate.d/nazwa` (blok `ścieżka|wzorzec { dyrektywy }`).\n- **Częstotliwość i warunki** — `daily`, `weekly`, `monthly`, `yearly`; `size 100M` (rotuj po przekroczeniu rozmiaru, niezależnie od czasu); `maxsize`/`minsize` (łączone z częstotliwością); `notifempty` (pomiń pusty), `missingok` (brak pliku to nie błąd).\n- **Kopie** — `rotate 14` (ile starych wersji trzymać), `maxage 30` (usuwaj starsze niż N dni), `dateext` (nazwy z datą zamiast numerów), `olddir` (stare wersje w innym katalogu).\n- **Kompresja** — `compress` (gzip), `delaycompress` (nie kompresuj najnowszej starej wersji — przydaje się, gdy usługa jeszcze do niej dopisuje), `compresscmd` (np. `zstd`).\n- **Nowy plik** — `create 0640 właściciel grupa` (utwórz pusty plik po przeniesieniu starego) lub **`copytruncate`** (skopiuj zawartość i wyzeruj oryginał — dla programów, których nie da się poprosić o ponowne otwarcie pliku; ryzyko utraty wpisów z chwili kopiowania).\n- **Skrypty** — `postrotate ... endscript` (np. `systemctl reload nginx`, `kill -USR1`), `prerotate`, `sharedscripts` (skrypt raz dla wszystkich plików wzorca), `su użytkownik grupa` (rotacja w katalogu należącym do innego użytkownika).\n- **Testy** — `logrotate -d plik` (tylko pokaż, co by zrobił), `logrotate -v -f plik` (wymuś rotację teraz, z opisem)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Segregatory w archiwum biura",
+      "body": "logrotate to **archiwista**, który raz dziennie przechodzi po biurze. Pełny segregator z bieżącymi dokumentami (`access.log`) odstawia na półkę z numerem 1, segregator z półki 1 przesuwa na półkę 2 i pakuje go w karton (kompresja), z półki 14 — wynosi do niszczarki. Na biurku zostawia **nowy, pusty segregator** (`create`) i — to najważniejsze — **mówi pracownikowi**, że ma teraz pisać do nowego (`postrotate`: reload, sygnał). Jeśli tego nie zrobi, pracownik dalej dopisuje dokumenty do segregatora, który właśnie trafił na półkę. `copytruncate` to wyjątek: archiwista kserokopiuje zawartość i wyrywa kartki z segregatora pracownika — pracownik nic nie musi wiedzieć, ale kartki pisane w trakcie kserowania mogą przepaść."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Rotacja plików logu krok po kroku",
+      "body": "Stan katalogu `/var/log/nginx/` przed i po rotacji (`daily`, `rotate 14`, `compress`, `delaycompress`):",
+      "code": " PRZED (06.10, 23:59)                 PO (07.10, 00:00:05)\n access.log       (dzisiejszy)  ---> access.log        nowy, pusty  (create 0640 www-data adm)\n access.log.1     (05.10)       ---> access.log.1      dzisiejszy, NIESKOMPRESOWANY (delaycompress)\n access.log.2.gz  (04.10)       ---> access.log.2.gz   05.10 skompresowany teraz\n ...                                 ...\n access.log.14.gz (23.09)       ---> USUNIETY           (rotate 14)\n\n postrotate: invoke-rc.d nginx rotate   -> nginx (USR1) ponownie otwiera pliki logow\n                                           i pisze do nowego access.log\n\n BEZ postrotate / copytruncate:\n   proces trzyma deskryptor do pliku przeniesionego jako access.log.1\n   -> nowe wpisy laduja w access.log.1, access.log zostaje pusty"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Konfiguracja domyślna i test rotacji",
+      "body": "Konfiguracja Nginx dostarczona przez pakiet, uruchamianie przez timer i podgląd decyzji logrotate (przykładowy wynik):",
+      "code": "$ cat /etc/logrotate.d/nginx\n/var/log/nginx/*.log {\n\tdaily\n\tmissingok\n\trotate 14\n\tcompress\n\tdelaycompress\n\tnotifempty\n\tcreate 0640 www-data adm\n\tsharedscripts\n\tprerotate\n\t\tif [ -d /etc/logrotate.d/httpd-prerotate ]; then \\\n\t\t\trun-parts /etc/logrotate.d/httpd-prerotate; \\\n\t\tfi \\\n\tendscript\n\tpostrotate\n\t\tinvoke-rc.d nginx rotate >/dev/null 2>&1\n\tendscript\n}\n$ systemctl list-timers logrotate.timer --no-pager | sed -n 2p | cut -c1-60\nWed 2026-10-07 00:00:00 CEST      6h Tue 2026-10-06 00:00:05\n$ ls /var/log/nginx/\naccess.log  access.log.1  access.log.2.gz  access.log.3.gz  error.log  error.log.1  error.log.2.gz\n$ sudo logrotate -d /etc/logrotate.d/nginx 2>&1 | grep -E 'considering|needs|does not'\nconsidering log /var/log/nginx/access.log\n  log does not need rotating (log has been rotated at 2026-10-06 00:00, which is less than a day ago)\nconsidering log /var/log/nginx/error.log\n  log does not need rotating (log has been rotated at 2026-10-06 00:00, which is less than a day ago)"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Rotacja logów sklepu",
+      "body": "Konfiguracja dla plików w `/var/log/sklep/` (plik zadań z rsysloga z lekcji 4), wymuszona rotacja i efekt (przykładowy wynik):",
+      "code": "$ sudo tee /etc/logrotate.d/sklep > /dev/null <<'EOF'\n/var/log/sklep/zadania.log {\n\tweekly\n\trotate 8\n\tmissingok\n\tnotifempty\n\tcompress\n\tdelaycompress\n\tcreate 0640 syslog adm\n\tpostrotate\n\t\t/usr/lib/rsyslog/rsyslog-rotate\n\tendscript\n}\nEOF\n$ sudo logrotate -d /etc/logrotate.d/sklep 2>&1 | grep -E '^rotating pattern|considering'\nrotating pattern: /var/log/sklep/zadania.log  weekly (8 rotations)\nconsidering log /var/log/sklep/zadania.log\n$ sudo logrotate -v -f /etc/logrotate.d/sklep 2>&1 | grep -E 'renaming|creating|running postrotate'\nrenaming /var/log/sklep/zadania.log to /var/log/sklep/zadania.log.1\ncreating new /var/log/sklep/zadania.log mode = 0640 uid = 104 gid = 4\nrunning postrotate script\n$ logger -t kopia -p local0.info \"po rotacji\"; ls -l /var/log/sklep/\ntotal 8\n-rw-r----- 1 syslog adm   82 Oct  6 17:48 zadania.log\n-rw-r----- 1 syslog adm 1964 Oct  6 17:44 zadania.log.1"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Rotacja dla nowego pliku logu",
+      "body": "1. Ustal, kto pisze do pliku i jak dowiaduje się o rotacji: sygnał (`USR1`, `HUP`), `systemctl reload`, ponowne otwarcie przy każdym zapisie — albo wcale (wtedy `copytruncate`).\n2. Utwórz `/etc/logrotate.d/nazwa` z blokiem dla pliku lub wzorca (`/var/log/nazwa/*.log`).\n3. Ustaw częstotliwość (`daily`/`weekly` lub `size`), liczbę kopii (`rotate`), `compress` + `delaycompress`, `missingok`, `notifempty`.\n4. Dodaj `create tryb właściciel grupa` i `postrotate` z powiadomieniem programu — lub `copytruncate`.\n5. Jeśli katalog należy do innego użytkownika niż root — dodaj `su użytkownik grupa`.\n6. Sprawdź: `sudo logrotate -d /etc/logrotate.d/nazwa`, potem `sudo logrotate -v -f ...` i upewnij się, że nowe wpisy trafiają do nowego pliku."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kto rotuje logi aplikacji Java",
+      "body": "Aplikacja Spring Boot z `logging.file.name` korzysta z Logbacka, który ma **własną rotację** (`RollingFileAppender`): `logging.logback.rollingpolicy.max-file-size=100MB`, `max-history=14`, `total-size-cap=2GB`, nazwy `aplikacja.log.2026-10-06.0.gz`. Jeśli taki plik obejmie dodatkowo logrotate, dwa mechanizmy zaczną się wzajemnie przeszkadzać: logrotate przeniesie plik, a Logback dalej pisze do przeniesionego (trzyma otwarty deskryptor), albo obie rotacje utworzą konkurencyjne nazwy. Zasada: **jeden mechanizm na plik**. Dla aplikacji Java są dwa sensowne warianty: logi na standardowe wyjście → journald (rotacja i limity journald, lekcja 2 i 7) albo plik z rotacją Logbacka (bez logrotate). logrotate z `copytruncate` stosuj tylko dla programów, które nie mają własnej rotacji i nie reagują na sygnały. Pamiętaj też, że `copytruncate` przy bardzo intensywnym zapisie może zgubić wpisy z ułamka sekundy między kopiowaniem a wyzerowaniem pliku."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się logrotate",
+      "body": "- **Logi usług z plikami** — Nginx, Apache, PostgreSQL, rsyslog (konfiguracje z pakietów w `/etc/logrotate.d/`).\n- **Własne pliki logów skryptów i reguł rsysloga** — `/var/log/sklep/zadania.log`.\n- **Programy bez rotacji i bez obsługi sygnałów** — `copytruncate`.\n- **Kontrola zajętości `/var/log`** — `rotate`, `maxage`, `size`.\n- **Archiwizacja** — `olddir`, `dateext`, `postrotate` z kopiowaniem na serwer.\n- **Diagnoza „log zniknął / jest pusty”** — `logrotate -d`, `/var/lib/logrotate/status`."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Rotacja bez powiadomienia programu",
+      "body": "Narzędzie raportowe (`raporty.jar` z rozdziału 23, uruchamiane jako usługa) pisze do `/var/log/raporty/raporty.log` własnym kodem, otwierając plik raz przy starcie. Administrator dodaje dla niego konfigurację logrotate z `create`, ale bez `postrotate` i bez `copytruncate`. Po rotacji plik `raporty.log` jest nowy i pusty, a program dalej pisze do `raporty.log.1` — przez deskryptor otwarty przed rotacją. Następnej nocy `raporty.log.1` zostaje skompresowany (bez `delaycompress`) albo przesunięty dalej, a po czternastu dniach — usunięty, choć program nadal do niego pisze; miejsce na dysku nie wraca (lekcja 4 rozdziału 25)."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Program pisze do zrotowanego pliku",
+      "body": "Nowy plik jest pusty, a wpisy trafiają do `.1` (przykładowy wynik):",
+      "code": "$ cat /etc/logrotate.d/raporty\n/var/log/raporty/raporty.log {\n\tdaily\n\trotate 14\n\tcreate 0640 raporty raporty\n}\n$ sudo logrotate -f /etc/logrotate.d/raporty; sleep 60\n$ ls -l /var/log/raporty/\ntotal 5120\n-rw-r----- 1 raporty raporty       0 Oct  6 17:55 raporty.log\n-rw-r----- 1 raporty raporty 5238104 Oct  6 17:56 raporty.log.1\n$ sudo ls -l /proc/$(pgrep -f raporty.jar)/fd | grep raporty.log\nl-wx------ 1 raporty raporty 64 Oct  6 17:55 3 -> /var/log/raporty/raporty.log.1"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "copytruncate dla programu bez obsługi rotacji",
+      "body": "Zawartość kopiowana do `.1`, oryginał zerowany — program pisze dalej do tego samego, otwartego pliku (przykładowy wynik):",
+      "code": "$ cat /etc/logrotate.d/raporty\n/var/log/raporty/raporty.log {\n\tdaily\n\trotate 14\n\tmissingok\n\tnotifempty\n\tcompress\n\tdelaycompress\n\tcopytruncate\n}\n$ sudo systemctl restart raporty\n$ sudo logrotate -f /etc/logrotate.d/raporty; sleep 60\n$ ls -l /var/log/raporty/ | tail -2\n-rw-r----- 1 raporty raporty   18342 Oct  6 18:01 raporty.log\n-rw-r----- 1 raporty raporty 5301877 Oct  6 18:00 raporty.log.1\n$ sudo ls -l /proc/$(pgrep -f raporty.jar)/fd | grep raporty.log\nl-wx------ 1 raporty raporty 64 Oct  6 17:59 3 -> /var/log/raporty/raporty.log"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak rotować w różnych sytuacjach",
+      "body": "- **Usługa obsługuje sygnał lub reload** — `create` + `postrotate` (`systemctl reload`, `kill -USR1`).\n- **Program bez obsługi rotacji** — `copytruncate`.\n- **Duże, szybko rosnące logi** — `size`/`maxsize` + `daily`, `compress`, `delaycompress`.\n- **Aplikacja Java z Logbackiem** — rotacja w Logbacku, bez logrotate (lub stdout → journald).\n- **Katalog logów należący do usługi** — dyrektywa `su`.\n- **Test przed wdrożeniem** — `logrotate -d`, potem `-v -f`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- logrotate (uruchamiany przez `logrotate.timer`) przenosi, kompresuje i usuwa stare wersje plików logów.\n- Konfiguracja: `/etc/logrotate.conf` i `/etc/logrotate.d/*`; dyrektywy `daily`/`weekly`/`size`, `rotate`, `compress`, `delaycompress`, `missingok`, `notifempty`, `create`.\n- Program musi zacząć pisać do nowego pliku: `postrotate` (reload/sygnał) albo `copytruncate`.\n- `logrotate -d` pokazuje decyzje bez zmian, `-v -f` wymusza rotację.\n- Jeden mechanizm rotacji na plik — Logback z własną rotacją nie potrzebuje logrotate."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
