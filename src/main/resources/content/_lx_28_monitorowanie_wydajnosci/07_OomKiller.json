@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Gdy pamięci zabraknie naprawdę",
+      "body": "Swap (rozdział 24) i pamięć podręczna (lekcja 2) dają systemowi bufor, ale bufor też się kończy. Gdy procesy potrzebują więcej pamięci, niż jest RAM-u i swapu, jądro nie może po prostu odmówić — strony już obiecano (Linux domyślnie przydziela pamięć „na kredyt”, *overcommit*). Wkracza wtedy **OOM killer** (*Out Of Memory killer*): wybiera jeden proces według punktacji i zabija go sygnałem `SIGKILL`, żeby uratować resztę systemu. W rozdziale 26 widziałeś jego ślad w dzienniku jądra (*Out of memory: Killed process 5210 (java)*), a w rozdziale 24 — wpływ swapu na JVM. Tu zajmiesz się mechanizmem dokładnie.\n\nW tej lekcji poznasz zasadę *overcommit* (`vm.overcommit_memory`), sposób wyboru ofiary (`oom_score`, `oom_score_adj`, `OOMScoreAdjust=` w systemd), różnicę między OOM całego systemu a OOM w obrębie **cgroup** (`MemoryMax=` usługi), mechanizm `MemoryHigh=` (dławienie przed zabiciem), demona **systemd-oomd**, który reaguje wcześniej na podstawie presji pamięci, i nauczysz się czytać pełny raport OOM w dzienniku. Na koniec — dlaczego „ochrona” aplikacji przed OOM killerem przez `oom_score_adj=-1000` jest złym pomysłem."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "OOM killer i ochrona pamięci",
+      "body": "- **Overcommit** — `malloc`/`mmap` zwykle się udają, nawet gdy fizycznej pamięci nie ma; strony są przydzielane dopiero przy pierwszym użyciu. `vm.overcommit_memory`: `0` (heurystyka, domyślnie), `1` (zawsze zgódź się), `2` (ścisłe limity: `CommitLimit` = swap + `overcommit_ratio`% RAM).\n- **OOM killer** — przy braku pamięci jądro wylicza dla każdego procesu **`oom_score`** (głównie RSS + swap + tablice stron, w promilach pamięci) skorygowany o **`oom_score_adj`** (−1000…+1000) i zabija proces z najwyższym wynikiem (`SIGKILL`, bez możliwości obsługi).\n- **`/proc/PID/oom_score`**, **`/proc/PID/oom_score_adj`** — bieżący wynik i korekta; `-1000` = nigdy nie zabijaj, `+1000` = zabij w pierwszej kolejności.\n- **W systemd** — `OOMScoreAdjust=` (korekta dla usługi), `OOMPolicy=` (`stop` — po zabiciu procesu zatrzymaj całą usługę, `continue`, `kill`), wynik usługi `oom-kill` w `systemctl status`.\n- **OOM w cgroup** — `MemoryMax=1G` w jednostce: gdy usługa przekroczy limit, OOM killer działa **tylko w obrębie jej cgroup** — reszta systemu jest bezpieczna; **`MemoryHigh=`** — próg miękki: powyżej niego jądro agresywnie odzyskuje pamięć usługi i ją spowalnia, zanim dojdzie do zabicia; `MemorySwapMax=` — limit swapu usługi.\n- **systemd-oomd** — demon przestrzeni użytkownika (Ubuntu 22.04+ na pulpicie), który na podstawie **presji pamięci** (PSI, lekcja 1) i użycia swapu zabija całe cgroupy wcześniej niż jądrowy OOM killer; konfiguracja `ManagedOOMMemoryPressure=kill`, `ManagedOOMSwap=kill`; `oomctl` — stan.\n- **Raport OOM w dzienniku** — linia *X invoked oom-killer*, stos wywołań, tabela pamięci (`Mem-Info`), lista procesów z `rss`, `oom_score_adj`, na końcu *Out of memory: Killed process PID (nazwa)* lub *Memory cgroup out of memory: Killed process ...*.\n- **JVM** — `java.lang.OutOfMemoryError` zgłasza sama JVM (sterta pełna); OOM killer zabija proces bez wyjątku i bez logu aplikacji; `-XX:+ExitOnOutOfMemoryError` i `HeapDumpOnOutOfMemoryError` (rozdział 26) dotyczą tylko pierwszego przypadku."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Szalupy ratunkowe na przepełnionym statku",
+      "body": "Overcommit to **sprzedawanie biletów na statek ponad liczbę miejsc** — linia zakłada, że nie wszyscy pasażerowie przyjdą naraz na pokład. Zwykle się udaje. Gdy jednak wszyscy się zjawią, a statek zaczyna tonąć (brak pamięci), kapitan (OOM killer) musi kogoś wysadzić na ląd — wybiera **pasażera z największym bagażem** (najwyższy `oom_score`), chyba że ktoś ma specjalną naklejkę (`oom_score_adj`). Limit `MemoryMax=` to **osobna łódź dla każdej firmy** — jeśli jedna przeładuje swoją łódź, wysiada ktoś z jej załogi, a pozostałe firmy płyną dalej. systemd-oomd to **oficer, który obserwuje zanurzenie** i reaguje, zanim statek zacznie nabierać wody. A naklejka „nietykalny” na największym bagażu oznacza, że wysiąść muszą inni — także ci, bez których statek nie popłynie."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kto zginie przy braku pamięci",
+      "body": "Wybór ofiary na serwerze `lubuntu-nauka` (4 GiB RAM + 4 GiB swap):",
+      "code": " PROCES          RSS+SWAP   oom_score_adj   oom_score   KTO ZGINIE\n java (sklep)    3.1 GiB        0              812        <- pierwszy (najwiekszy)\n postgres        0.4 GiB        0              104\n nginx           12 MiB         0                3\n sshd            8 MiB          0                2\n systemd-journal 40 MiB      -250                0\n systemd (PID 1)             -1000            nigdy\n\n BEZ LIMITU USLUGI (OOM calego systemu):\n   cala pamiec zajeta -> jadro zabija proces z najwyzszym oom_score w CALYM systemie\n   (zwykle java; ale przy oom_score_adj=-1000 dla javy -> postgres, potem nginx, sshd ...)\n\n Z LIMITEM  MemoryMax=1200M  w sklep.service:\n   java przekracza 1200M -> OOM tylko w cgroup sklep.service -> zabita java\n   postgres, nginx, sshd - nietkniete;  systemd: Result: oom-kill -> Restart=on-failure\n\n MemoryHigh=1000M  -> powyzej 1000M: jadro dlawi i odzyskuje pamiec uslugi (wolniej, ale zyje)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Punktacja OOM i ustawienia",
+      "body": "Wynik i korekta dla procesów, tryb overcommit i kwota przydzielonej pamięci (przykładowy wynik):",
+      "code": "$ for p in $(pgrep -o java) $(pgrep -o postgres) $(pgrep -o nginx) $(pgrep -x sshd | head -1) 1; do\n>   printf '%-8s %-12s score=%-4s adj=%s\\n' $p \"$(ps -o comm= -p $p)\" \"$(cat /proc/$p/oom_score)\" \"$(cat /proc/$p/oom_score_adj)\"; done\n6120     java         score=812  adj=0\n5844     postgres     score=104  adj=0\n1543     nginx        score=3    adj=0\n912      sshd         score=2    adj=-1000\n1        systemd      score=0    adj=0\n$ sysctl vm.overcommit_memory vm.overcommit_ratio\nvm.overcommit_memory = 0\nvm.overcommit_ratio = 50\n$ grep -E 'CommitLimit|Committed_AS' /proc/meminfo\nCommitLimit:     6199188 kB\nCommitted_AS:    7841220 kB\n$ systemctl show sklep -p MemoryMax -p MemoryHigh -p OOMScoreAdjust -p OOMPolicy\nMemoryMax=infinity\nMemoryHigh=infinity\nOOMScoreAdjust=0\nOOMPolicy=stop"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Raport OOM w dzienniku i limit pamięci usługi",
+      "body": "Odczyt raportu z poprzedniego startu, ustawienie limitów dla `sklep` i kontrola zużycia względem limitu (przykładowy wynik):",
+      "code": "$ journalctl -k -b -1 --no-pager -o cat | grep -E 'invoked oom-killer|Mem-Info|^\\[ *pid|Killed process' | cut -c1-110\njava invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0\nMem-Info:\n[  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name\nOut of memory: Killed process 5210 (java) total-vm:5839212kB, anon-rss:3104512kB, file-rss:0kB, shmem-rss:0kB,\n$ sudo systemctl edit sklep --drop-in=pamiec\n(...edytor: zapis i wyjscie)\n[Service]\nMemoryHigh=1000M\nMemoryMax=1200M\n$ sudo systemctl restart sklep\n$ systemctl status sklep --no-pager | grep Memory\n     Memory: 734.2M (high: 1000.0M max: 1.1G available: 265.7M peak: 741.0M)\n$ cat /sys/fs/cgroup/system.slice/sklep.service/memory.events\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Po zabiciu procesu przez OOM killera",
+      "body": "1. Potwierdź przyczynę: `journalctl -k -g 'Killed process|oom-kill'` (także `-b -1` po restarcie), `systemctl status usluga` (`Result: oom-kill`).\n2. Z raportu odczytaj: kto wywołał OOM, który proces zabito, ile miał `anon-rss`, czy to OOM systemu, czy cgroup (*Memory cgroup out of memory*).\n3. Sprawdź, czy zużycie było normalne (wzrost ruchu), czy to wyciek (rosnący `VmRSS` w czasie — lekcja 4, `sar -r` — lekcja 10).\n4. Dla JVM: sprawdź `-Xmx` i pamięć poza stertą (lekcja 9) — RSS = sterta + metaspace + wątki + bufory + kod JIT.\n5. Ogranicz usługę: `MemoryMax=` (twardy limit — OOM w obrębie usługi) i `MemoryHigh=` (wcześniejsze dławienie), dopasuj `-Xmx` do limitu (ok. 70-75%).\n6. Upewnij się, że usługa wstanie: `Restart=on-failure` (rozdział 22).\n7. Długofalowo: alarm na `MemAvailable` i PSI pamięci, więcej RAM-u lub podział usług na maszyny."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Limit cgroup a ustawienia JVM",
+      "body": "Od Javy 10 JVM rozpoznaje, że działa w cgroup z limitem pamięci (*container awareness*), i dobiera domyślną wielkość sterty względem **limitu cgroup**, a nie całego RAM-u: domyślnie `-XX:MaxRAMPercentage=25` (sterta = 25% limitu). Dotyczy to także usług systemd z `MemoryMax=` — nie tylko kontenerów Dockera. Dlatego zamiast twardo wpisanego `-Xmx512m` na serwerze z limitem często stosuje się `-XX:MaxRAMPercentage=70` — sterta rośnie i maleje razem z limitem w jednostce. Pozostałe ~30% musi pomieścić metaspace, stosy wątków (domyślnie do 1 MiB każdy, Tomcat ma ich 200), bufory bezpośrednie (Netty, NIO), kod skompilowany przez JIT i pamięć GC. Sprawdzisz to w `jcmd PID VM.native_memory summary` (z `-XX:NativeMemoryTracking=summary`, lekcja 9). Jeśli limit jest za ciasny, zamiast `OutOfMemoryError` z czytelnym stosem dostaniesz cichy `SIGKILL` od OOM killera w cgroup."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta wiedza",
+      "body": "- **Nagłe zniknięcia aplikacji Javy** — raport OOM w dzienniku jądra (rozdział 26).\n- **Serwer z kilkoma usługami** — `MemoryMax=` chroni bazę i SSH przed zachłanną aplikacją.\n- **Dobór pamięci JVM** — `-Xmx`/`MaxRAMPercentage` względem limitu usługi.\n- **Kontenery i Kubernetes** — `resources.limits.memory` to ten sam mechanizm cgroup (`OOMKilled`).\n- **Pulpity z Ubuntu** — systemd-oomd zamyka przeglądarkę lub IDE przy presji pamięci.\n- **Monitorowanie** — `memory.events` (`oom_kill`), `MemAvailable`, PSI pamięci."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "„Ochrona” aplikacji przez oom_score_adj=-1000",
+      "body": "Po kilku nocnych zabiciach Javy przez OOM killera administrator dodaje do jednostki `OOMScoreAdjust=-1000`, żeby aplikacja „nigdy nie była zabijana”. Problem pamięci nie znika — znika tylko najbardziej logiczna ofiara. Przy następnym niedoborze jądro wybiera kolejne procesy: najpierw PostgreSQL (aplikacja traci bazę), potem Nginx, `cron`, a w skrajnym przypadku gdy nie ma już kogo zabić — system staje się niezdolny do pracy lub jądro zgłasza panikę. Do serwera nie da się nawet zalogować, bo nowe procesy SSH nie dostają pamięci."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Nietykalna aplikacja, zabijana baza",
+      "body": "OOM killer omija Javę i zabija PostgreSQL — aplikacja działa, ale bez bazy (przykładowy wynik):",
+      "code": "$ systemctl show sklep -p OOMScoreAdjust\nOOMScoreAdjust=-1000\n$ journalctl -k --since \"03:00\" --no-pager -o cat | grep 'Killed process'\nOut of memory: Killed process 5844 (postgres) total-vm:226140kB, anon-rss:9412kB, file-rss:4180kB, shmem-rss:131072kB, UID:114 pgtables:212kB oom_score_adj:0\nOut of memory: Killed process 1543 (nginx) total-vm:55332kB, anon-rss:1408kB, file-rss:2316kB, shmem-rss:0kB, UID:0 pgtables:84kB oom_score_adj:0\n$ journalctl -u sklep --since \"03:00\" -p err --no-pager -o cat | head -1\nHikariPool-1 - Connection is not available, request timed out after 30005ms (total=0, active=0, idle=0, waiting=10)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Limit pamięci usługi zamiast nietykalności",
+      "body": "Usługa ma twardy limit — przy jego przekroczeniu OOM dotyczy tylko jej cgroup, a systemd uruchamia ją ponownie; baza i Nginx są bezpieczne (przykładowy wynik):",
+      "code": "$ systemctl show sklep -p OOMScoreAdjust -p MemoryMax -p Restart\nOOMScoreAdjust=0\nMemoryMax=1258291200\nRestart=on-failure\n$ journalctl -k --since \"03:00\" --no-pager -o cat | grep 'Killed process'\nMemory cgroup out of memory: Killed process 13021 (java) total-vm:5912204kB, anon-rss:1212418kB, file-rss:0kB, shmem-rss:0kB, UID:994 pgtables:2716kB oom_score_adj:0\n$ journalctl -u sklep --since \"03:00\" --no-pager -o cat | grep -E 'oom|Scheduled|Started Sklep'\nsklep.service: A process of this unit has been killed by the OOM killer.\nsklep.service: Scheduled restart job, restart counter is at 1.\nStarted SklepApplication in 5.102 seconds (process running for 5.744)\n$ systemctl is-active postgresql@16-main nginx\nactive\nactive"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak chronić system przed brakiem pamięci",
+      "body": "- **Każda usługa aplikacyjna na wspólnym serwerze** — `MemoryMax=` (+ `MemoryHigh=`), `Restart=on-failure`.\n- **Krytyczne procesy systemowe (sshd, journald)** — mają ujemne `oom_score_adj` z pakietów; nie zmieniaj ich bez potrzeby.\n- **Aplikacja Javy** — `-Xmx` lub `MaxRAMPercentage` dopasowane do limitu, monitorowanie RSS.\n- **Ścisła kontrola przydziałów (bazy z własnym zarządzaniem pamięcią)** — rozważ `vm.overcommit_memory=2` (ostrożnie).\n- **Pulpit/laptop** — systemd-oomd z domyślną konfiguracją.\n- **Nigdy** — `oom_score_adj=-1000` dla dużej aplikacji jako sposób na problemy z pamięcią."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Linux przydziela pamięć z nadmiarem (overcommit); gdy RAM i swap się kończą, OOM killer zabija proces z najwyższym `oom_score`.\n- `oom_score_adj` (−1000…1000) i `OOMScoreAdjust=` korygują wybór; −1000 = nigdy nie zabijaj.\n- `MemoryMax=` ogranicza usługę i zamyka OOM w jej cgroup; `MemoryHigh=` dławi ją wcześniej.\n- systemd-oomd reaguje na presję pamięci (PSI) przed jądrowym OOM killerem.\n- Raport OOM jest w dzienniku jądra; proces zabity przez OOM nie zostawia wyjątku w logach aplikacji.\n- JVM dobiera stertę względem limitu cgroup (`MaxRAMPercentage`); pamięć poza stertą musi zmieścić się w reszcie."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

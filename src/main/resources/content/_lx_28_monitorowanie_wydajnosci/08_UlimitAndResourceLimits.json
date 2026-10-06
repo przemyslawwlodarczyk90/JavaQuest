@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Ile procesowi wolno",
+      "body": "Jądro ogranicza zasoby, z których może korzystać pojedynczy proces: liczbę otwartych plików, liczbę procesów i wątków użytkownika, rozmiar pliku zrzutu pamięci (*core dump*), wielkość stosu, ilość zablokowanej pamięci. To **limity zasobów** (*rlimits*), ustawiane poleceniem powłoki `ulimit`, plikiem `/etc/security/limits.conf` dla sesji użytkowników i dyrektywami `Limit*=` dla usług systemd. Gdy aplikacja je przekracza, objawy są charakterystyczne: *Too many open files* (EMFILE), *Resource temporarily unavailable* przy tworzeniu wątku (`java.lang.OutOfMemoryError: unable to create native thread`), brak pliku `core` po awarii.\n\nW tej lekcji poznasz limity miękkie i twarde, polecenie `ulimit -a`/`-n`/`-u`, plik `/proc/PID/limits` (limity działającego procesu), polecenie `prlimit` (zmiana w locie), konfigurację w `limits.conf` i — co najważniejsze dla serwera — fakt, że **usługi systemd nie korzystają z `limits.conf`**: ich limity ustawia się w jednostce (`LimitNOFILE=`, `LimitNPROC=`, `TasksMax=`). Zobaczysz też, jak JVM sama podnosi limit plików i gdzie mimo to można trafić na ograniczenie."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Limity zasobów",
+      "body": "- **Limit miękki (*soft*)** — obowiązujący; proces może go sam podnieść do wartości twardej. **Limit twardy (*hard*)** — sufit; podnieść go może tylko root (`CAP_SYS_RESOURCE`).\n- **Najważniejsze limity** — `nofile` (otwarte deskryptory: pliki, gniazda; `ulimit -n`), `nproc` (procesy i wątki **użytkownika** łącznie; `-u`), `core` (rozmiar zrzutu pamięci; `-c`), `stack` (stos; `-s`), `memlock` (pamięć zablokowana; `-l`), `fsize` (maks. rozmiar pliku), `as` (przestrzeń adresowa; `-v`).\n- **`ulimit -a`** — wszystkie limity bieżącej powłoki (miękkie); `-H` — twarde; `ulimit -n 4096` — zmiana dla powłoki i jej potomków.\n- **`/proc/PID/limits`** — limity działającego procesu (`Soft Limit`, `Hard Limit`, `Units`); **`prlimit --pid PID --nofile=8192:524288`** — zmiana w locie.\n- **`/etc/security/limits.conf`, `/etc/security/limits.d/*.conf`** — limity dla sesji logowania przez PAM (`pam_limits`): `użytkownik|@grupa|* soft|hard nofile 65536`; działają przy logowaniu (SSH, konsola, `su`, `sudo`) — **nie** dla usług systemd ani zadań uruchamianych przez nie.\n- **systemd** — w jednostce: `LimitNOFILE=`, `LimitNPROC=`, `LimitCORE=`, `LimitMEMLOCK=`, `LimitSTACK=` (format `miękki:twardy`); domyślne dla usług: `nofile` 1024 miękki / 524288 twardy (`DefaultLimitNOFILE=` w `/etc/systemd/system.conf`); **`TasksMax=`** — limit zadań (procesów+wątków) w cgroup usługi (domyślnie 15% `pid_max` lub 4915 — „Tasks: 39 (limit: 4598)” w `status`).\n- **Limity globalne jądra** — `fs.file-max`/`fs.nr_open` (wszystkie deskryptory w systemie / maks. na proces), `kernel.pid_max`, `kernel.threads-max` (rozdział 29, `sysctl`).\n- **JVM** — HotSpot na Linuksie przy starcie podnosi miękki limit `nofile` do twardego (opcja `-XX:+MaxFDLimit`, domyślnie włączona); każdy wątek Javy to wątek systemowy liczony do `nproc` i `TasksMax=`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Karta biblioteczna z limitem wypożyczeń",
+      "body": "Limit `nofile` to **limit wypożyczeń na karcie bibliotecznej**: ile książek (plików, połączeń) możesz mieć jednocześnie. Limit miękki to **twój osobisty limit**, który sam możesz podnieść w automacie — ale tylko do **limitu twardego** ustalonego przez dyrekcję. `limits.conf` to regulamin dla **czytelników przychodzących przez główne wejście** (logowanie). Usługi systemd wchodzą jednak **wejściem służbowym**, gdzie obowiązuje osobny regulamin — zapisany w umowie danej usługi (`LimitNOFILE=` w jednostce). `TasksMax=` to limit **liczby pracowników firmy** w budynku — przekroczysz go, a nowy pracownik (wątek) nie zostanie wpuszczony."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Skąd proces dostaje limity",
+      "body": "Dwie ścieżki — sesja użytkownika i usługa systemd:",
+      "code": " LOGOWANIE (ssh, konsola, su, sudo)            USLUGA SYSTEMD (nginx, sklep, postgres)\n sshd -> PAM -> pam_limits.so                   systemd (PID 1)\n   /etc/security/limits.conf                      /etc/systemd/system.conf  DefaultLimitNOFILE=1024:524288\n   /etc/security/limits.d/*.conf                  jednostka: LimitNOFILE=65536\n          |                                                 |\n   bash anny:  ulimit -n -> 1024 / 524288          nginx:  /proc/PID/limits -> 65536 / 65536\n   procesy uruchomione z tej powloki dziedzicza    procesy uslugi dziedzicza\n                                                    + TasksMax= (cgroup: procesy+watki uslugi)\n limits.conf NIE dotyczy uslug systemd!\n\n cat /proc/6120/limits   (java, sklep.service)\n Limit                     Soft Limit           Hard Limit           Units\n Max processes             15283                15283                processes\n Max open files            524288               524288               files   <- JVM podniosla soft do hard\n Max core file size        0                    unlimited            bytes"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Limity powłoki i procesu",
+      "body": "Limity bieżącej powłoki, twarde wartości, limity działającej usługi i zmiana w locie (przykładowy wynik):",
+      "code": "$ ulimit -n; ulimit -Hn\n1024\n524288\n$ ulimit -a | grep -E 'open files|max user processes|core file|stack'\ncore file size              (blocks, -c) 0\nmax user processes                  (-u) 15283\nopen files                          (-n) 1024\nstack size                  (kbytes, -s) 8192\n$ cat /proc/$(systemctl show -p MainPID --value nginx)/limits | grep -E 'Limit|open files|processes'\nLimit                     Soft Limit           Hard Limit           Units\nMax processes             15283                15283                processes\nMax open files            1024                 524288               files\n$ grep 'open files' /proc/6120/limits\nMax open files            524288               524288               files\n$ sudo prlimit --pid $(pgrep -o -x nginx) --nofile=65536:524288\n$ grep 'open files' /proc/$(pgrep -o -x nginx)/limits\nMax open files            65536                524288               files"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Limity usługi w jednostce i TasksMax",
+      "body": "Trwałe podniesienie limitu plików dla Nginx przez drop-in, limit zadań aplikacji i kontrola (przykładowy wynik):",
+      "code": "$ sudo systemctl edit nginx --drop-in=limity\n(...edytor: zapis i wyjscie)\n[Service]\nLimitNOFILE=65536\n$ sudo systemctl restart nginx\n$ systemctl show nginx -p LimitNOFILE -p LimitNOFILESoft\nLimitNOFILE=65536\nLimitNOFILESoft=65536\n$ for p in $(pgrep -x nginx); do grep 'open files' /proc/$p/limits; done | sort -u\nMax open files            65536                65536                files\n$ systemctl status sklep --no-pager | grep Tasks\n      Tasks: 41 (limit: 4598)\n$ systemctl show sklep -p TasksMax -p TasksCurrent\nTasksMax=4598\nTasksCurrent=41\n$ grep -E 'worker_(rlimit|connections)' /etc/nginx/nginx.conf\n\tworker_connections 768;"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Błąd „Too many open files” w usłudze",
+      "body": "1. Ustal proces i limit: `grep 'open files' /proc/PID/limits`, liczba otwartych: `ls /proc/PID/fd | wc -l`.\n2. Sprawdź, czy to wyciek (liczba rośnie stale — lekcja 5), czy realne zapotrzebowanie (wiele połączeń).\n3. Dla usługi systemd ustaw limit w jednostce: `sudo systemctl edit nazwa` → `[Service]` `LimitNOFILE=65536`.\n4. `sudo systemctl restart nazwa` — limity obowiązują od startu procesu.\n5. Sprawdź efekt: `systemctl show nazwa -p LimitNOFILE` i `/proc/PID/limits`.\n6. Jeśli program ma własne ustawienie (Nginx `worker_rlimit_nofile`, PostgreSQL `max_files_per_process`) — dopasuj je.\n7. Dla sesji użytkowników (procesy uruchamiane ręcznie, np. testy obciążeniowe) — `/etc/security/limits.d/90-nazwa.conf` i ponowne zalogowanie."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Limity a aplikacje Javy",
+      "body": "JVM sama podnosi miękki limit plików do twardego, więc pod systemd (twardy 524288) problem *Too many open files* w Javie pojawia się zwykle dopiero przy realnym wycieku deskryptorów. Częstszym ograniczeniem dla aplikacji Javy są **wątki**: każdy wątek JVM (Tomcat — do 200 domyślnie, pule `ExecutorService`, wątki wirtualne nie — te działają na kilku wątkach nośnych) to wątek systemowy, liczony do `nproc` użytkownika i do `TasksMax=` usługi. Gdy limit zostanie osiągnięty, JVM zgłasza `java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached` — mylące, bo pamięci zwykle nie brakuje. Przy aplikacjach z dużą liczbą wątków (stare blokujące klienty HTTP, duże pule) sprawdź `TasksCurrent` w `systemctl show` i w razie potrzeby podnieś `TasksMax=` albo — lepiej — ogranicz pule wątków lub przejdź na wątki wirtualne (Java 21, Spring Boot `spring.threads.virtual.enabled=true`). Limit `core` (domyślnie 0) decyduje, czy po awarii JVM powstanie plik zrzutu — przydatny przy błędach w kodzie natywnym."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydają się limity",
+      "body": "- **Serwery WWW i proxy** — Nginx, HAProxy: tysiące połączeń = tysiące deskryptorów.\n- **Bazy i brokery** — PostgreSQL, Elasticsearch, Kafka (wymagają wysokich `nofile`, `memlock`).\n- **Aplikacje Javy** — wątki a `TasksMax=`, wycieki deskryptorów.\n- **Testy obciążeniowe** — narzędzia (JMeter, Gatling, `wrk`) uruchamiane z sesji użytkownika — `limits.conf`.\n- **Zrzuty pamięci po awarii** — `LimitCORE=infinity` + `systemd-coredump` (`coredumpctl`).\n- **Ochrona przed „bombą fork”** — `nproc` dla użytkowników, `TasksMax=` dla usług."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "limits.conf dla usługi systemd",
+      "body": "Zanim powstał drop-in z tej lekcji, Nginx przy dużym ruchu zaczął zgłaszać w `error.log` *accept4() failed (24: Too many open files)*. Administrator, zgodnie z wieloma poradnikami, dopisuje do `/etc/security/limits.conf` linie `www-data soft nofile 65536` i `www-data hard nofile 65536`, restartuje Nginx — i błąd wraca. `limits.conf` jest wczytywany przez PAM **przy logowaniu**; Nginx uruchamia systemd bez żadnej sesji PAM, więc te linie nie mają na usługę żadnego wpływu. Proces nadal ma limit miękki 1024."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Limity w limits.conf dla Nginx",
+      "body": "Wpis w `limits.conf` nie zmienia limitów procesu uruchomionego przez systemd (przykładowy wynik):",
+      "code": "$ grep www-data /etc/security/limits.conf\nwww-data soft nofile 65536\nwww-data hard nofile 65536\n$ sudo systemctl restart nginx\n$ grep 'open files' /proc/$(pgrep -n -x nginx)/limits\nMax open files            1024                 524288               files\n$ sudo tail -1 /var/log/nginx/error.log\n2026/10/06 21:12:44 [crit] 14012#14012: *88213 accept4() failed (24: Too many open files)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "LimitNOFILE w jednostce i worker_rlimit_nofile",
+      "body": "Limit ustawiony w drop-inie jednostki i w konfiguracji Nginx — procesy robocze mają nowy limit (przykładowy wynik):",
+      "code": "$ sudo sed -i '/^www-data .* nofile/d' /etc/security/limits.conf\n$ systemctl cat nginx --no-pager | grep -A2 'limity.conf'\n# /etc/systemd/system/nginx.service.d/limity.conf\n[Service]\nLimitNOFILE=65536\n$ grep -E 'worker_rlimit_nofile|worker_connections' /etc/nginx/nginx.conf\nworker_rlimit_nofile 65536;\n\tworker_connections 16384;\n$ sudo nginx -t -q && sudo systemctl restart nginx\n$ grep 'open files' /proc/$(pgrep -n -x nginx)/limits\nMax open files            65536                65536                files"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Gdzie ustawiać limity",
+      "body": "- **Usługa systemd** — `LimitNOFILE=`, `LimitNPROC=`, `LimitCORE=` w drop-inie jednostki; `TasksMax=` dla wątków i procesów.\n- **Wszystkie usługi domyślnie** — `DefaultLimitNOFILE=` w `/etc/systemd/system.conf` (rzadko potrzebne).\n- **Sesje użytkowników (SSH, konsola)** — `/etc/security/limits.d/*.conf`.\n- **Jedno uruchomienie z powłoki** — `ulimit -n 65536` przed poleceniem (do wartości twardej).\n- **Działający proces bez restartu** — `prlimit --pid` (do następnego restartu).\n- **Kontrola** — zawsze `/proc/PID/limits` procesu, nie `ulimit` w swojej powłoce."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Limity zasobów (rlimits) ograniczają proces: `nofile`, `nproc`, `core`, `stack`, `memlock`; miękki ≤ twardy.\n- `ulimit -a` pokazuje limity powłoki, `/proc/PID/limits` — działającego procesu, `prlimit` zmienia je w locie.\n- `/etc/security/limits.conf` działa przez PAM tylko dla sesji logowania — **nie** dla usług systemd.\n- Usługom ustawia się limity w jednostce: `LimitNOFILE=`, `LimitNPROC=`, a liczbę procesów i wątków — `TasksMax=`.\n- JVM sama podnosi miękki limit plików do twardego; częstszym problemem Javy jest limit wątków (`unable to create native thread`)."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

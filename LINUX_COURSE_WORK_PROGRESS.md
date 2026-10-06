@@ -140,7 +140,14 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   /srv/dane`, `OnFailure=powiadom@%n.service`, Nice/IOSchedulingClass), timer 2:30 Persistent.
   Przy okazji poprawione odwołanie Netplan → rozdział 31 (lekcja 23/05). Numeracja dalej: 28 monitorowanie,
   29 jądro, 30-32 sieć, 33 SSH, 34 rsync/scp, 35 zapora, 36 WWW, 37 bazy, 38 Java, 39 bezpieczeństwo.
-  Pozostałe lekcje (`_lx_28`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_28_monitorowanie_wydajnosci` (10 lekcji) — ZROBIONY (2026-10-06): uptime/load/PSI (2 CPU),
+  free/page cache, vmstat/iostat (analiza nocnej kopii 2:40 — sdb/sdc wysycone), pidstat/iotop/systemd-cgtop/
+  smem, lsof (+L1, -b -w przy NFS), strace (+ eBPF tcpconnect), OOM (drop-in `sklep.service.d/pamiec.conf`:
+  MemoryHigh=1000M, MemoryMax=1200M), ulimit (drop-in `nginx.service.d/limity.conf` LimitNOFILE=65536,
+  `worker_rlimit_nofile 65536`, `worker_connections 16384`), narzędzia JDK (doinstalowany
+  openjdk-21-jdk-headless; `sudo -u sklep jcmd 6120 ...`; JFR do /var/lib/sklep), sysstat/sar (włączony,
+  /var/log/sysstat). Ubuntu: postgres UID 114.
+  Pozostałe lekcje (`_lx_29`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -195,7 +202,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_28_monitorowanie_wydajnosci`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_29_jadro_i_sprzet`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

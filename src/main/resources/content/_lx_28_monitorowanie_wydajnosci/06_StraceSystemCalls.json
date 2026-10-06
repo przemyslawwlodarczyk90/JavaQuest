@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Podsłuchiwanie rozmowy programu z jądrem",
+      "body": "Każdy program — `ls`, Nginx, JVM — wszystko, co dotyczy świata zewnętrznego, robi przez **wywołania systemowe** (*system calls*): `openat` otwiera plik, `read` i `write` czytają i piszą, `connect` łączy się z serwerem, `execve` uruchamia program, `clone` tworzy wątek lub proces. Gdy program kończy się lakonicznym „błąd konfiguracji” albo po prostu wisi bez żadnego komunikatu, a logi milczą, można podejrzeć, **o co prosi jądro i co dostaje w odpowiedzi**. Służy do tego **`strace`** — jedno z najskuteczniejszych narzędzi diagnostycznych w Linuksie.\n\nW tej lekcji nauczysz się czytać wynik `strace` (wywołanie, argumenty, wynik, kod błędu `ENOENT`, `EACCES`, `ECONNREFUSED`), uruchamiać program pod `strace` i podłączać się do działającego procesu (`-p`), śledzić procesy potomne i wątki (`-f`), filtrować wywołania (`-e trace=file`, `network`, `process`), mierzyć czas (`-T`, `-r`) i robić podsumowanie (`-c`). Zobaczysz też koszt: `strace` potrafi spowolnić śledzony proces kilkudziesięciokrotnie — na produkcji trzeba go używać rozważnie."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "strace i wywołania systemowe",
+      "body": "- **Wywołanie systemowe** — jedyny sposób, w jaki proces prosi jądro o usługę: pliki (`openat`, `read`, `write`, `close`, `stat`/`newfstatat`), procesy (`clone`, `execve`, `wait4`, `exit_group`), sieć (`socket`, `connect`, `accept`, `sendto`, `recvfrom`), pamięć (`mmap`, `brk`), synchronizacja (`futex`), oczekiwanie (`epoll_wait`, `poll`).\n- **Format linii** — `openat(AT_FDCWD, \"/etc/sklep/sklep.env\", O_RDONLY) = -1 ENOENT (No such file or directory)`: nazwa, argumenty, `=` wynik (deskryptor, liczba bajtów albo `-1` i kod błędu).\n- **Typowe błędy** — `ENOENT` (brak pliku), `EACCES`/`EPERM` (brak uprawnień), `ECONNREFUSED` (nikt nie nasłuchuje), `ETIMEDOUT`, `EAGAIN` (spróbuj ponownie — często normalne przy nieblokującym I/O), `EMFILE` (limit deskryptorów).\n- **Uruchamianie** — `strace polecenie` (od startu), `strace -p PID` (podłączenie do działającego; Ctrl+C odłącza bez zatrzymania procesu).\n- **Opcje** — `-f` (śledź procesy potomne i wątki), `-e trace=file|network|process|memory|%file` (klasy wywołań) lub `-e trace=openat,connect`, `-e status=failed` (tylko nieudane, strace 5.2+), `-o plik` (zapis do pliku), `-s 200` (dłuższe napisy), `-y` (pokaż ścieżki zamiast numerów deskryptorów), `-T` (czas trwania wywołania), `-t`/`-tt` (czas zegarowy), `-r` (czas względny), `-c` (tabela podsumowania: liczba wywołań, czas, błędy).\n- **Uprawnienia** — śledzenie własnych procesów potomnych zawsze; podłączanie do istniejącego procesu ogranicza `kernel.yama.ptrace_scope` (Ubuntu: `1` — tylko do własnych procesów potomnych) — w praktyce `sudo strace -p`.\n- **Koszt** — każde wywołanie zatrzymuje proces dwa razy (wejście i wyjście); spowolnienie od kilku do ponad stu razy przy programach wykonujących dużo wywołań; `-c` i filtry `-e` zmniejszają narzut tylko częściowo.\n- **Pokrewne** — `ltrace` (wywołania bibliotek), `perf trace` (mniejszy narzut), narzędzia eBPF (`bpftrace`, `opensnoop`, `execsnoop` z `bpfcc-tools`) — praktycznie bez narzutu, bezpieczniejsze na produkcji."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Podsłuch rozmów z urzędem",
+      "body": "Program to **petent**, a jądro — **urząd**, przez którego okienka (wywołania systemowe) załatwia się wszystko: „proszę o dostęp do akt X” (`openat`), „proszę o połączenie z firmą Y” (`connect`), „proszę o zatrudnienie pomocnika” (`clone`). `strace` to **protokolant przy okienku**, który zapisuje każde zgłoszenie i odpowiedź: „akta X — brak w archiwum” (`ENOENT`), „firma Y — nikt nie odbiera” (`ECONNREFUSED`). Gdy petent wychodzi z urzędu z niczym i nie umie wyjaśnić dlaczego, protokół pokazuje to czarno na białym. Ale protokolant zapisujący odręcznie każde słowo **spowalnia kolejkę** — w godzinach szczytu nie posadzisz go przy każdym okienku."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jak czytać wynik strace",
+      "body": "Fragment śledzenia polecenia i znaczenie elementów:",
+      "code": " strace -f -e trace=openat,connect -y  curl -s http://localhost:8080/actuator/health\n\n openat(AT_FDCWD, \"/etc/ssl/openssl.cnf\", O_RDONLY) = 3</etc/ssl/openssl.cnf>\n |      |          |                      |          | `- -y: sciezka deskryptora\n |      |          |                      |          `--- wynik: deskryptor 3\n |      |          `- argumenty           `- flagi\n `- nazwa wywolania\n openat(AT_FDCWD, \"/home/anna/.curlrc\", O_RDONLY) = -1 ENOENT (No such file or directory)\n                                                    `- blad: plik nie istnieje (tu: normalne)\n connect(5<TCPv6:[48902]>, {sa_family=AF_INET6, sin6_port=htons(8080), ...}, 28) = -1 EINPROGRESS\n connect(6<TCP:[48903]>, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr(\"127.0.0.1\")}, 16) = -1 EINPROGRESS (Operation now in progress)\n +++ exited with 0 +++\n\n strace -c  (podsumowanie)\n % time     seconds  usecs/call     calls    errors syscall\n ------ ----------- ----------- --------- --------- ----------------\n  41.22    0.000512          18        28           mmap\n  ...                                       12        openat  <- 12 bledow (ENOENT)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Dlaczego program nie widzi pliku",
+      "body": "Skrypt zgłasza ogólny błąd; `strace` z filtrem plików pokazuje, którego pliku szuka i gdzie (przykładowy wynik):",
+      "code": "$ /opt/sklep/bin/przelicz-rabaty.sh\nBLAD: nie mozna wczytac konfiguracji\n$ strace -f -e trace=%file -e status=failed /opt/sklep/bin/przelicz-rabaty.sh 2>&1 | grep -v ENOENT.*locale | tail -4\n[pid 11402] openat(AT_FDCWD, \"/etc/sklep/rabaty.properties\", O_RDONLY) = -1 EACCES (Permission denied)\nBLAD: nie mozna wczytac konfiguracji\n[pid 11402] +++ exited with 1 +++\n+++ exited with 1 +++\n$ ls -l /etc/sklep/rabaty.properties\n-rw-r----- 1 root sklep 214 Oct  6 20:41 /etc/sklep/rabaty.properties\n$ sudo -u sklep /opt/sklep/bin/przelicz-rabaty.sh\nPrzeliczono rabaty: 214 produktow, 0 zmian"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Podłączenie do działającego procesu i podsumowanie",
+      "body": "Zawieszony proces czeka na sieć; podsumowanie `-c` pokazuje, na co program zużywa czas wywołań (przykładowy wynik):",
+      "code": "$ pgrep -af synchronizuj-cennik\n11530 /bin/bash /home/anna/bin/synchronizuj-cennik.sh\n11533 curl -s https://dostawca.example/api/cennik.csv -o /tmp/cennik.csv\n$ sudo strace -p 11533 -T -tt\nstrace: Process 11533 attached\n20:48:12.418201 poll([{fd=5, events=POLLIN}], 1, 1000) = 0 (Timeout) <1.001211>\n20:48:13.419581 poll([{fd=5, events=POLLIN}], 1, 1000) = 0 (Timeout) <1.001158>\n^Cstrace: Process 11533 detached\n <detached ...>\n$ sudo ls -l /proc/11533/fd/5\nlrwx------ 1 anna anna 64 Oct  6 20:48 /proc/11533/fd/5 -> socket:[52219]\n$ sudo ss -tnp | grep 11533\nSYN-SENT 0      1      192.168.56.10:51804 198.51.100.20:443 users:((\"curl\",pid=11533,fd=5))\n$ strace -c -f ls -R /usr/share/doc > /dev/null 2> ~/strace-ls.txt; head -8 ~/strace-ls.txt\n% time     seconds  usecs/call     calls    errors syscall\n------ ----------- ----------- --------- --------- ------------------\n 38.71    0.031872           4      7108           getdents64\n 24.07    0.019815           2      7690           write\n 17.52    0.014424           3      3908           openat\n 10.11    0.008321           2      3908           close\n  6.42    0.005286           1      3954           newfstatat"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Diagnoza z użyciem strace",
+      "body": "1. Spróbuj najpierw tańszych źródeł: logi programu, `journalctl`, opcje `-v`/`--debug`.\n2. Program, który kończy się błędem: `strace -f -e trace=%file -e status=failed polecenie` — szukaj `ENOENT`, `EACCES` przy plikach, które powinny istnieć.\n3. Problem z siecią: `strace -f -e trace=network polecenie` — `connect` z `ECONNREFUSED`/`ETIMEDOUT`, adres i port.\n4. Proces wiszący: `sudo strace -p PID -T` — na czym czeka (`poll`/`epoll_wait`, `read` z gniazda, `futex`, `wait4` na dziecko); deskryptor sprawdź w `/proc/PID/fd/N`, gniazdo w `ss -tnp`.\n5. Wydajność: `strace -c -f polecenie` — które wywołania i ile razy.\n6. Zapisuj do pliku (`-o plik -tt -T -s 200`) i analizuj `grep`-em zamiast czytać na ekranie.\n7. Na produkcji: krótko, z filtrem `-e`, poza szczytem — albo narzędzia eBPF (`opensnoop`, `execsnoop`, `tcpconnect`)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "strace a JVM",
+      "body": "Śledzenie procesu Javy `strace` jest możliwe, ale ma swoją specyfikę. JVM to dziesiątki wątków (GC, kompilator JIT, wątki Tomcata), więc bez `-f` zobaczysz tylko wątek główny, który zwykle śpi w `futex`, a z `-f` — potok tysięcy wywołań `futex`, `epoll_wait` i `mmap` niezwiązanych z twoim problemem. Do tego narzut `strace` spowalnia wątki aplikacji tak, że zmieniają się czasy i zachowanie (problemy z wyścigami potrafią zniknąć). Dla Javy `strace` jest przydatny w wąskich przypadkach: z jakimi plikami i adresami JVM się łączy przy starcie (`-f -e trace=openat,connect` na czas uruchomienia), czy aplikacja w ogóle próbuje czytać spodziewany plik konfiguracyjny, dlaczego JVM nie startuje (brak biblioteki natywnej). Do analizy działającej aplikacji lepsze są narzędzia JVM: `jcmd Thread.print`, JFR, `async-profiler` (lekcja 9)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się strace",
+      "body": "- **Programy kończące się bez czytelnego błędu** — brakujący plik, brak uprawnień.\n- **Procesy wiszące** — na czym czekają (sieć, plik, blokada, proces potomny).\n- **Problemy z siecią** — dokąd program naprawdę się łączy.\n- **Odkrywanie konfiguracji** — jakie pliki program czyta i w jakiej kolejności.\n- **Analiza wydajności** — liczba i czas wywołań (`-c`).\n- **Usługi systemd** — `strace` na PID usługi (`systemctl show -p MainPID --value nazwa`)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "strace -f na produkcyjnym procesie w szczycie ruchu",
+      "body": "Aplikacja `sklep` zwalnia w godzinach szczytu, więc administrator podłącza się `sudo strace -f -p 6120 -o /tmp/sklep.trace`, żeby „zobaczyć, co robi”. Każde z setek tysięcy wywołań na sekundę (40 wątków Tomcata, GC, pula połączeń) jest teraz zatrzymywane i zapisywane. Czasy odpowiedzi rosną z kilkudziesięciu milisekund do kilku sekund, load balancer uznaje instancję za niezdrową, a plik śledzenia w kilka minut ma gigabajty i zapełnia `/tmp`. Diagnoza przerodziła się w awarię."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Pełne śledzenie wielowątkowej JVM",
+      "body": "Narzut `strace -f` dramatycznie spowalnia aplikację (przykładowy wynik):",
+      "code": "$ curl -s -o /dev/null -w '%{time_total}\\n' http://localhost:8080/api/produkty\n0.041\n$ sudo strace -f -p 6120 -o /tmp/sklep.trace &\n[1] 11702\n$ curl -s -o /dev/null -w '%{time_total}\\n' http://localhost:8080/api/produkty\n3.874\n$ ls -lh /tmp/sklep.trace\n-rw-r--r-- 1 root root 1.2G Oct  6 20:56 /tmp/sklep.trace\n$ sudo kill %1"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Krótko, z filtrem — albo narzędzie bez narzutu",
+      "body": "Wąski filtr na krótki czas albo `opensnoop`/`tcpconnect` z eBPF i zrzut wątków JVM (przykładowy wynik):",
+      "code": "$ sudo timeout 5 strace -f -p 6120 -e trace=connect -e status=failed 2>&1 | tail -2\n[pid  6198] connect(87, {sa_family=AF_INET, sin_port=htons(6379), sin_addr=inet_addr(\"127.0.0.1\")}, 16) = -1 ECONNREFUSED (Connection refused)\nstrace: Process 6120 detached\n$ sudo tcpconnect-bpfcc -P 6379 -p 6120 &\n$ sleep 3; sudo kill %1\nPID     COMM         IP SADDR            DADDR            DPORT\n6198    http-nio-808 4  127.0.0.1        127.0.0.1        6379\n6201    http-nio-808 4  127.0.0.1        127.0.0.1        6379\n$ curl -s -o /dev/null -w '%{time_total}\\n' http://localhost:8080/api/produkty\n0.044\n(...wniosek: aplikacja probuje laczyc sie z Redisem na 6379, ktory nie dziala)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy strace, a kiedy coś innego",
+      "body": "- **Krótko działające polecenia i skrypty** — `strace` bez ograniczeń (`-f`, `-e`, `-c`).\n- **Proces wiszący** — `strace -p PID` na kilka sekund.\n- **Działająca usługa produkcyjna** — `strace` tylko z filtrem i `timeout`; lepiej eBPF (`opensnoop`, `execsnoop`, `tcpconnect`).\n- **Aplikacja Javy** — `jcmd`, JFR, `async-profiler`; `strace` tylko przy starcie lub dla wąskiego pytania.\n- **Wywołania bibliotek, nie jądra** — `ltrace`.\n- **Profilowanie CPU** — `perf top`, `perf record` (nie `strace`)."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `strace` pokazuje wywołania systemowe procesu: nazwę, argumenty, wynik i kod błędu (`ENOENT`, `EACCES`, `ECONNREFUSED`).\n- `strace polecenie` śledzi od startu, `sudo strace -p PID` podłącza się do działającego procesu.\n- Najważniejsze opcje: `-f` (wątki i dzieci), `-e trace=...` (filtr), `-e status=failed`, `-y`, `-T`, `-tt`, `-c`, `-o`.\n- Najczęstsze zastosowania: brakujące pliki i uprawnienia, procesy wiszące, problemy z połączeniami.\n- `strace` mocno spowalnia śledzony proces — na produkcji krótko, z filtrem, albo narzędzia eBPF."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
