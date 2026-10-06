@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Co ma się stać, gdy usługa padnie — i na co ma czekać",
+      "body": "Notatki kursu podkreślają dwie zalety systemd: „restart po crashu” (`Restart=always` — „jeśli Apache padnie, systemd go uruchomi ponownie”) i „kontrolę zależności” (`After=network.target` — „Apache wystartuje PO sieci”). Obie wyglądają prosto, ale kryją niuanse, na których potyka się wielu administratorów. `Restart=always` uruchomi usługę także po `systemctl stop`? Nie. A po `kill`? Zależy od sygnału. Co się stanie, gdy aplikacja pada co sekundę? systemd w końcu się podda. A `After=postgresql.service` — czy uruchomi bazę, jeśli nie działa? Też nie: `After=` mówi tylko o kolejności, nie o tym, *czy* coś uruchomić.\n\nW tej lekcji poznasz wszystkie polityki `Restart=`, opóźnienie `RestartSec=`, limit `StartLimitBurst=`/`StartLimitIntervalSec=` i stan *start request repeated too quickly*, a potem dwie niezależne osie zależności: **wymagania** (`Wants=`, `Requires=`, `BindsTo=`, `PartOf=`, `Conflicts=`) i **kolejność** (`After=`, `Before=`). Na koniec połączysz `sklep.service` z PostgreSQL tak, żeby baza startowała pierwsza."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Polityki restartu i zależności",
+      "body": "- **`Restart=`** — `no` (domyślnie), `on-success` (tylko po czystym zakończeniu), `on-failure` (kod ≠ 0 lub spoza `SuccessExitStatus=`, zabicie sygnałem innym niż czyste, przekroczenie czasu, watchdog), `on-abnormal` (sygnał, czas, watchdog — bez niezerowego kodu), `on-abort` (tylko nieobsłużony sygnał), `on-watchdog`, `always` (zawsze). **Nigdy** po `systemctl stop` ani `restart`.\n- **`RestartSec=`** — przerwa przed ponownym uruchomieniem (domyślnie 100 ms); od systemd 254 także `RestartSteps=` i `RestartMaxDelaySec=` — rosnące opóźnienie.\n- **Limit uruchomień** — w `[Unit]`: `StartLimitIntervalSec=` (domyślnie 10 s) i `StartLimitBurst=` (domyślnie 5); więcej startów w tym oknie → usługa `failed` z wynikiem `start-limit-hit`. `StartLimitIntervalSec=0` wyłącza limit. Reset: `systemctl reset-failed`.\n- **Wymagania (czy uruchomić)** — `Wants=` (uruchom też tamtą; jej awaria nie przeszkadza), `Requires=` (uruchom; jeśli tamta się nie uruchomi lub zostanie zatrzymana — zatrzymaj też mnie), `Requisite=` (tamta musi już działać), `BindsTo=` (jak `Requires`, ale także gdy tamta zniknie nagle), `PartOf=` (restart/stop tamtej przenosi się na mnie), `Conflicts=` (nie mogą działać razem).\n- **Kolejność (kiedy)** — `After=X` (uruchom mnie po X, zatrzymaj przed X), `Before=X` (odwrotnie). Bez `After=`/`Before=` jednostki startują **równolegle**, nawet przy `Requires=`.\n- **`network.target` vs `network-online.target`** — pierwszy: stos sieciowy podniesiony (adres mógł jeszcze nie zostać przydzielony); drugi: sieć skonfigurowana — używany z parą `Wants=` + `After=`, gdy usługa łączy się na starcie z innym hostem.\n- **`OnFailure=`** — jednostka uruchamiana po przejściu w `failed` (np. powiadomienie).\n- **Podgląd** — `systemctl list-dependencies nazwa` (drzewo wymagań), `--reverse` (kto wymaga mnie), `systemctl show -p After -p Wants -p Requires`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Kuchnia w restauracji",
+      "body": "`Wants=` to prośba „przy okazji włącz też ekspres” — jeśli się zepsuje, kuchnia działa dalej. `Requires=` to „bez gazu nie gotujemy” — gdy gaz zostanie odcięty, kucharz też kończy pracę. `After=` to kolejność czynności: najpierw rozpalić piec, potem wstawić chleb — samo zdanie „po rozpaleniu pieca” nie rozpala go jednak, trzeba osobno poprosić (`Wants=`/`Requires=`). `Restart=on-failure` to zasada „jak spalisz danie, zrób je jeszcze raz”, `RestartSec=` — chwila na przewietrzenie kuchni, a limit `StartLimitBurst=` to szef kuchni, który po pięciu spalonych daniach w ciągu minuty mówi „stop, coś jest nie tak z przepisem” i wyłącza stanowisko, zamiast przypalać kolejne."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kiedy Restart= uruchamia ponownie",
+      "body": "Tabela z `man systemd.service` (`v` = restart) i dwie osie zależności:",
+      "code": " PRZYCZYNA ZAKONCZENIA        no  always  on-success  on-failure  on-abnormal  on-abort\n kod wyjscia 0 (czysto)        -    v         v           -            -           -\n kod wyjscia != 0              -    v         -           v            -           -\n nieczysty sygnal (kill -9)    -    v         -           v            v           v\n przekroczony czas             -    v         -           v            v           -\n watchdog                      -    v         -           v            v           -\n systemctl stop / restart     nigdy\n\n ZALEZNOSCI: dwie niezalezne osie\n   Wants=/Requires=  -> CZY uruchomic postgresql razem ze sklepem\n   After=            -> KIEDY: sklep czeka na koniec startu postgresql\n\n   Requires=postgresql.service  (bez After=)    sklep i postgres startuja ROWNOCZESNIE\n   After=postgresql.service     (bez Wants=)    kolejnosc, ale postgres nie zostanie uruchomiony\n   Wants= + After=                              uruchom baze i poczekaj na nia   <- typowo"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Restart po awarii w praktyce",
+      "body": "`sklep.service` ma `Restart=on-failure` i `RestartSec=5s`; zabicie procesu sygnałem `SIGKILL` (symulacja awarii) uruchamia go ponownie, a `stop` — nie (przykładowy wynik):",
+      "code": "$ systemctl show sklep -p Restart -p RestartUSec -p NRestarts\nRestart=on-failure\nRestartUSec=5s\nNRestarts=0\n$ sudo kill -9 $(systemctl show -p MainPID --value sklep)\n$ systemctl status sklep --no-pager -n 0 | sed -n '3p'\n     Active: activating (auto-restart) (Result: signal) since Tue 2026-10-06 11:21:07 CEST; 2s ago\n$ sleep 10; systemctl is-active sklep; systemctl show sklep -p NRestarts -p MainPID\nactive\nNRestarts=1\nMainPID=6472\n$ journalctl -u sklep --no-pager -o cat | grep -E '^sklep.service: (Main|Failed|Scheduled)' | tail -3\nsklep.service: Main process exited, code=killed, status=9/KILL\nsklep.service: Failed with result 'signal'.\nsklep.service: Scheduled restart job, restart counter is at 1.\n$ sudo systemctl stop sklep; sleep 7; systemctl is-active sklep\ninactive\n$ sudo systemctl start sklep"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Zależność sklep → PostgreSQL",
+      "body": "Usługa aplikacji pociąga za sobą bazę i czeka na nią; drzewo zależności w obie strony (przykładowy wynik):",
+      "code": "$ systemctl cat sklep --no-pager | grep -E '^(Wants|After)='\nAfter=network-online.target postgresql.service\nWants=network-online.target\n$ sudo systemctl edit sklep --drop-in=baza\n(...edytor: zapis i wyjscie)\n[Unit]\nWants=postgresql.service\n$ systemctl list-dependencies sklep --no-pager | head -6\nsklep.service\n● ├─-.mount\n● ├─postgresql.service\n○ ├─network-online.target\n● ├─system.slice\n● └─sysinit.target\n$ systemctl list-dependencies --reverse postgresql --no-pager\npostgresql.service\n● ├─multi-user.target\n● │ └─graphical.target\n● └─sklep.service\n$ sudo systemctl stop postgresql sklep && sudo systemctl start sklep\n$ systemctl is-active postgresql@16-main sklep\nactive\nactive"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak dobrać restart i zależności dla aplikacji",
+      "body": "1. Ustaw `Restart=on-failure` (nie `always`) — usługa wstanie po awarii, ale nie po celowym, czystym zakończeniu.\n2. Dodaj `RestartSec=5s` (lub więcej) — daj czas zależnościom (baza, sieć) na powrót.\n3. Upewnij się, że normalne zatrzymanie nie jest „awarią”: `SuccessExitStatus=143` dla Javy.\n4. Wymień usługi, bez których aplikacja nie wystartuje (baza na tym samym serwerze) — `Wants=` + `After=`. `Requires=` tylko wtedy, gdy zatrzymanie bazy ma zatrzymać aplikację.\n5. Jeśli aplikacja łączy się przy starcie z innym hostem — `Wants=network-online.target` + `After=network-online.target`.\n6. Sprawdź: `systemctl list-dependencies nazwa`, `systemctl show -p After -p Wants`.\n7. Przetestuj awarię: `sudo systemctl kill -s KILL nazwa` i obserwuj `NRestarts` oraz dziennik."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Restart nie naprawia przyczyny, a Spring Boot ma własne ponawianie",
+      "body": "Polityka restartu to siatka bezpieczeństwa na rzadkie, losowe awarie (`OutOfMemoryError`, zabicie przez OOM killer, błąd natywny), nie sposób na błędną konfigurację. Jeśli aplikacja pada przy każdym starcie (zły adres bazy, zajęty port), restarty tylko zaśmiecają dziennik, aż zadziała limit uruchomień. Zależność `After=postgresql.service` działa tylko dla bazy **na tym samym serwerze** — gdy baza jest na innej maszynie lub w chmurze, systemd nic o niej nie wie i aplikacja musi sama poradzić sobie z jej chwilową niedostępnością (pula HikariCP ponawia połączenia, `spring.datasource.hikari.initialization-fail-timeout`). Uwaga też na `Restart=always` w notatkach kursu: dla Apache z `Type=forking` działa poprawnie, ale dla usług `oneshot` jest niedozwolone, a dla aplikacji, która celowo kończy się kodem 0 (np. po migracji), oznacza niekończące się ponowne uruchamianie."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydają się restarty i zależności",
+      "body": "- **Aplikacje Java** — `Restart=on-failure` po awariach JVM i zabiciu przez OOM killera.\n- **Aplikacja i baza na jednym serwerze** — `Wants=`/`After=postgresql.service`.\n- **Usługi zależne od sieci** — `network-online.target` dla klientów zdalnych API, montowań NFS.\n- **Usługi powiązane** — `PartOf=` dla procesów pomocniczych restartowanych razem z główną usługą.\n- **Wzajemnie wykluczające się usługi** — `Conflicts=` (np. dwa serwery na porcie 80).\n- **Powiadomienia o awarii** — `OnFailure=powiadom@%n.service` (e-mail, komunikator)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Pętla restartów bez przerwy",
+      "body": "`Restart=always` z domyślnym `RestartSec=100ms` i aplikacją, która pada przy starcie (np. zajęty port 8080 albo złe hasło do bazy). systemd uruchamia ją pięć razy w ciągu sekundy, osiąga `StartLimitBurst=5` i oddaje się: usługa przechodzi w `failed` z wynikiem `start-limit-hit` i **nie będzie już ponawiana** — nawet gdy przyczyna zniknie sekundę później (np. baza w końcu wstała). Dziennik jest pełen identycznych stosów wyjątków, a właściwa przyczyna ginie w szumie."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Restart=always z domyślnym odstępem",
+      "body": "Pięć prób w ułamku sekundy i koniec — usługa zostaje wyłączona przez limit (przykładowy wynik):",
+      "code": "$ systemctl show sklep -p Restart -p RestartUSec\nRestart=always\nRestartUSec=100ms\n$ sudo systemctl restart sklep; sleep 15; systemctl is-active sklep\nfailed\n$ journalctl -u sklep --no-pager -o cat | grep -E 'Scheduled|repeated|Failed to start' | tail -3\nsklep.service: Scheduled restart job, restart counter is at 5.\nsklep.service: Start request repeated too quickly.\nFailed to start sklep.service - Aplikacja sklep (Spring Boot).\n$ journalctl -u sklep --no-pager -o cat | grep -m1 'APPLICATION FAILED' -A4 | tail -1\nWeb server failed to start. Port 8080 was already in use."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "on-failure z odstępem, limitem i resetem",
+      "body": "Rozsądny odstęp i okno limitu; po usunięciu przyczyny — `reset-failed` i start (przykładowy wynik):",
+      "code": "$ systemctl cat sklep --no-pager | grep -E '^(Restart|StartLimit)'\nStartLimitIntervalSec=300\nStartLimitBurst=5\nRestart=on-failure\nRestartSec=10s\n$ sudo ss -tlnp | grep ':8080 '\nLISTEN 0      100                *:8080            *:*    users:((\"java\",pid=6390,fd=12))\n$ ps -o user,args -p 6390 | cut -c1-60\nUSER     COMMAND\nanna     java -jar /home/anna/sklep/sklep.jar\n$ kill 6390\n$ sudo systemctl reset-failed sklep && sudo systemctl start sklep && systemctl is-active sklep\nactive"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Która polityka i która zależność",
+      "body": "- **Aplikacja serwerowa** — `Restart=on-failure`, `RestartSec=5s`-`10s`, rozsądny `StartLimitBurst=`.\n- **Demon, który nie powinien kończyć się nigdy** — `Restart=always` (z odstępem).\n- **Zadanie jednorazowe (`oneshot`)** — bez `Restart=` lub `on-failure` z limitem.\n- **Usługa potrzebna, ale nie krytyczna** — `Wants=` + `After=`.\n- **Usługa bez której nie ma sensu działać** — `Requires=`/`BindsTo=` + `After=`.\n- **Zależność od zdalnej sieci** — `network-online.target`; zależność od zdalnej bazy — obsługa w aplikacji, nie w systemd."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `Restart=` określa, po jakim zakończeniu systemd wznawia usługę; nigdy po `systemctl stop`.\n- `RestartSec=` i `StartLimitIntervalSec=`/`StartLimitBurst=` chronią przed pętlą restartów; `reset-failed` czyści stan.\n- Wymagania (`Wants=`, `Requires=`, `BindsTo=`, `PartOf=`) mówią, *czy* uruchomić inne jednostki; kolejność (`After=`, `Before=`) — *kiedy*.\n- Typowa para dla bazy na tym samym serwerze: `Wants=postgresql.service` + `After=postgresql.service`.\n- `network-online.target` (z `Wants=`) dla usług łączących się przy starcie z innymi hostami.\n- `systemctl list-dependencies` pokazuje drzewo zależności, `--reverse` — kto zależy od danej jednostki."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

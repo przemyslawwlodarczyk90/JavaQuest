@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Aplikacja sklep jako porządna usługa",
+      "body": "W rozdziale 21 aplikacja `sklep` trafiła do systemd w najprostszej postaci: `User=anna`, jar w katalogu domowym, `ExecStart=java -jar`. Działa — ale na produkcji to za mało. Aplikacja ma uprawnienia osoby, która ją wdrożyła (i dostęp do jej plików, kluczy SSH, historii poleceń), hasła leżą obok jara, a zatrzymanie przez `systemctl stop` kończy się stanem `failed`, bo Java zwraca kod 143. Notatki kursu pokazują schemat tworzenia własnego pliku w `/etc/systemd/system/` (sekcje `[Unit]`, `[Service]`, `[Install]`, `Restart=`, `daemon-reload`, `enable`) — w tej lekcji wykorzystasz go do napisania jednostki od zera, tak jak robi się to na prawdziwym serwerze.\n\nPo kolei: osobne konto systemowe `sklep` bez powłoki, katalog aplikacji `/opt/sklep`, konfiguracja i sekrety w `/etc/sklep/sklep.env` dostępne tylko dla roota i grupy `sklep`, plik jednostki z `Type=exec`, `SuccessExitStatus=143`, limitem czasu na łagodne zamknięcie i podstawowymi zabezpieczeniami (`NoNewPrivileges=`, `ProtectSystem=`, `PrivateTmp=`), a na końcu kontrola: `systemd-analyze verify`, `enable --now`, `status`, `/actuator/health`. Rozdział 38 rozwinie ten plik o ustawienia pamięci JVM i procedurę wdrożenia, a rozdział 46 — o Nginx i HTTPS."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Dyrektywy własnej usługi Java",
+      "body": "- **`User=` / `Group=`** — konto, z którego działa proces; dla aplikacji — dedykowane konto systemowe (`useradd --system --no-create-home --shell /usr/sbin/nologin sklep`, rozdział 16). Bez `User=` usługa działa jako **root**.\n- **`WorkingDirectory=`** — katalog bieżący procesu (tu szuka m.in. `config/application.properties`); bez niej `/`.\n- **`EnvironmentFile=`** — plik `KLUCZ=wartość` wczytywany do środowiska (np. `SPRING_DATASOURCE_PASSWORD`); prefiks `-` = brak pliku nie jest błędem. **`Environment=`** — pojedyncze zmienne w samej jednostce.\n- **`ExecStart=`** — pełna ścieżka do `java` (systemd nie czyta `~/.bashrc`, `PATH` usługi to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin`); zmienne rozwijane jako `${ZMIENNA}` (jedno słowo) lub `$ZMIENNA` (dzielona na słowa).\n- **`Type=exec`** — usługa gotowa po udanym uruchomieniu `java`; zły plik wykonywalny zgłaszany od razu przez `systemctl start`.\n- **`SuccessExitStatus=143`** — JVM zakończona sygnałem `SIGTERM` zwraca 128+15=143; bez tej linii każdy `systemctl stop` kończy się stanem `failed`.\n- **`TimeoutStopSec=`** — ile systemd czeka po `SIGTERM` przed `SIGKILL` (domyślnie 90 s); ustaw trochę więcej niż `spring.lifecycle.timeout-per-shutdown-phase` (domyślnie 30 s).\n- **Zabezpieczenia (*sandboxing*)** — `NoNewPrivileges=true` (proces nie zyska uprawnień przez SUID), `ProtectSystem=full` (`/usr`, `/boot`, `/etc` tylko do odczytu), `ProtectHome=true` (brak dostępu do `/home`), `PrivateTmp=true` (własny `/tmp`), `ReadWritePaths=` (wyjątki do zapisu). Ocena: `systemd-analyze security nazwa`.\n- **`StateDirectory=` / `LogsDirectory=`** — systemd tworzy `/var/lib/nazwa` / `/var/log/nazwa` z właścicielem `User=`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Najemca w biurowcu",
+      "body": "Pierwsza wersja usługi to **wpuszczenie firmy do własnego mieszkania**: aplikacja działa z kluczami właściciela (konto `anna`), ma wgląd we wszystkie szafki (katalog domowy), a umowa z hasłami leży na stole obok. Porządna usługa to **wynajęcie lokalu w biurowcu**: osobny najemca z własnym identyfikatorem (konto `sklep`), lokal tylko dla niego (`/opt/sklep`, `/var/lib/sklep`), dokumenty poufne w sejfie administracji, do którego ma dostęp tylko on (`/etc/sklep/sklep.env`, prawa `640`), regulamin budynku zabraniający wchodzenia do cudzych pomieszczeń (`ProtectHome=`, `ProtectSystem=`) i procedura ewakuacji z określonym czasem na wyjście (`TimeoutStopSec=`). Administrator budynku (systemd) wie, kto wynajmuje który lokal, i w razie awarii przywraca zasilanie (`Restart=`)."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Układ plików usługi sklep",
+      "body": "Gdzie co leży i kto ma do tego dostęp:",
+      "code": " /opt/sklep/                      root:sklep  755   kod aplikacji (tylko odczyt dla uslugi)\n   `-- sklep.jar                  root:sklep  644\n /etc/sklep/                      root:sklep  750\n   |-- application.properties     root:sklep  640   konfiguracja (porty, URL bazy)\n   `-- sklep.env                  root:sklep  640   sekrety: haslo bazy, klucz API\n /var/lib/sklep/                  sklep:sklep 755   dane zapisywane przez aplikacje\n                                                    (StateDirectory=sklep)\n /etc/systemd/system/sklep.service                  plik jednostki\n\n systemctl start sklep\n   -> konto sklep, katalog roboczy /var/lib/sklep\n   -> srodowisko z /etc/sklep/sklep.env\n   -> /usr/lib/jvm/java-21-openjdk-amd64/bin/java ... -jar /opt/sklep/sklep.jar\n   -> stdout/stderr -> journalctl -u sklep\n systemctl stop sklep\n   -> SIGTERM -> graceful shutdown Spring Boot (do 30 s) -> kod 143 = sukces\n   -> po 45 s bez zakonczenia: SIGKILL"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Konto, katalogi i sekrety",
+      "body": "Przygotowanie wszystkiego, czego usługa potrzebuje, zanim powstanie plik jednostki (przykładowy wynik):",
+      "code": "$ sudo systemctl disable --now sklep && sudo systemctl revert sklep\nRemoved \"/etc/systemd/system/multi-user.target.wants/sklep.service\".\nRemoved \"/etc/systemd/system/sklep.service.d/override.conf\".\nRemoved \"/etc/systemd/system/sklep.service.d\".\n$ sudo useradd --system --no-create-home --home-dir /var/lib/sklep --shell /usr/sbin/nologin sklep\n$ id sklep\nuid=994(sklep) gid=994(sklep) groups=994(sklep)\n$ sudo install -d -o root -g sklep -m 755 /opt/sklep\n$ sudo install -o root -g sklep -m 644 ~/sklep/sklep.jar /opt/sklep/sklep.jar\n$ sudo install -d -o root -g sklep -m 750 /etc/sklep\n$ sudo install -o root -g sklep -m 640 ~/sklep/application.properties /etc/sklep/\n$ sudo install -o root -g sklep -m 640 ~/sklep/sekrety.env /etc/sklep/sklep.env\n$ sudo ls -l /etc/sklep /opt/sklep\n/etc/sklep:\ntotal 8\n-rw-r----- 1 root sklep 412 Oct  6 11:05 application.properties\n-rw-r----- 1 root sklep  97 Oct  6 11:05 sklep.env\n\n/opt/sklep:\ntotal 24576\n-rw-r--r-- 1 root sklep 25159432 Oct  6 11:05 sklep.jar\n$ sudo cat /etc/sklep/sklep.env\nSPRING_DATASOURCE_PASSWORD=Zm1ana-Ha5la-2026\nSKLEP_API_KEY=7f3c9a1e5b2d4f60\nJAVA_OPTS=-Xms256m -Xmx512m"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Plik jednostki, weryfikacja i uruchomienie",
+      "body": "Jednostka napisana od zera, sprawdzona przed użyciem i uruchomiona z autostartem (przykładowy wynik):",
+      "code": "$ cat /etc/systemd/system/sklep.service\n[Unit]\nDescription=Aplikacja sklep (Spring Boot)\nDocumentation=https://git.firma.example/sklep\nAfter=network-online.target postgresql.service\nWants=network-online.target\n\n[Service]\nType=exec\nUser=sklep\nGroup=sklep\nWorkingDirectory=/var/lib/sklep\nStateDirectory=sklep\nEnvironmentFile=/etc/sklep/sklep.env\nExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java $JAVA_OPTS \\\n    -jar /opt/sklep/sklep.jar \\\n    --spring.config.additional-location=file:/etc/sklep/\nSuccessExitStatus=143\nTimeoutStopSec=45\nRestart=on-failure\nRestartSec=5s\nNoNewPrivileges=true\nProtectSystem=full\nProtectHome=true\nPrivateTmp=true\n\n[Install]\nWantedBy=multi-user.target\n$ systemd-analyze verify /etc/systemd/system/sklep.service && echo OK\nOK\n$ sudo systemctl daemon-reload && sudo systemctl enable --now sklep\nCreated symlink /etc/systemd/system/multi-user.target.wants/sklep.service → /etc/systemd/system/sklep.service.\n$ systemctl status sklep --no-pager -n 0 | sed -n '1,5p'\n● sklep.service - Aplikacja sklep (Spring Boot)\n     Loaded: loaded (/etc/systemd/system/sklep.service; enabled; preset: enabled)\n     Active: active (running) since Tue 2026-10-06 11:09:26 CEST; 18s ago\n       Docs: https://git.firma.example/sklep\n   Main PID: 6120 (java)\n$ ps -o user,pid,args -p 6120 | cut -c1-90\nUSER         PID COMMAND\nsklep       6120 /usr/lib/jvm/java-21-openjdk-amd64/bin/java -Xms256m -Xmx512m -jar /opt/sklep/s\n$ curl -s http://localhost:8080/actuator/health\n{\"status\":\"UP\"}\n$ sudo systemctl stop sklep; systemctl is-failed sklep; sudo systemctl start sklep\ninactive"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Własna usługa od zera — lista kroków",
+      "body": "1. Utwórz konto systemowe bez powłoki: `useradd --system --no-create-home --shell /usr/sbin/nologin nazwa`.\n2. Rozmieść pliki: kod w `/opt/nazwa` (właściciel root, aplikacja tylko czyta), konfiguracja i sekrety w `/etc/nazwa` (`640 root:nazwa`), dane — `StateDirectory=`.\n3. Ustal pełną ścieżkę do programu: `readlink -f \"$(command -v java)\"` — nie polegaj na `PATH` i `~/.bashrc`.\n4. Napisz `/etc/systemd/system/nazwa.service`: `[Unit]` (opis, `After=`/`Wants=`), `[Service]` (`Type=exec`, `User=`, `WorkingDirectory=`, `EnvironmentFile=`, `ExecStart=`, `SuccessExitStatus=143`, `TimeoutStopSec=`, `Restart=`), `[Install]` (`WantedBy=multi-user.target`).\n5. Sprawdź: `systemd-analyze verify plik`.\n6. Wczytaj i uruchom: `sudo systemctl daemon-reload && sudo systemctl enable --now nazwa`.\n7. Skontroluj: `systemctl status`, `ps -o user`, `journalctl -u nazwa -n 50`, test HTTP; zatrzymaj i sprawdź, że stan to `inactive`, a nie `failed`.\n8. Oceń zabezpieczenia: `systemd-analyze security nazwa` i dodawaj kolejne ograniczenia, testując aplikację po każdym."
+    },
+    {
+      "type": "NOTE",
+      "heading": "systemd-analyze security i dalsze utwardzanie",
+      "body": "`systemd-analyze security sklep` ocenia jednostkę w skali od 0 (najlepiej) do 10 i wypisuje dyrektywy, których brakuje. Usługa bez żadnych zabezpieczeń dostaje ok. 9.6 (*UNSAFE*), nasza wersja — ok. 7 (*MEDIUM*). Kolejne kroki: `ProtectSystem=strict` z `ReadWritePaths=` dla katalogów zapisu, `PrivateDevices=true`, `ProtectKernelTunables=true`, `ProtectControlGroups=true`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `CapabilityBoundingSet=` (pusty — aplikacja na porcie 8080 nie potrzebuje żadnych uprawnień jądra), `MemoryDenyWriteExecute=` — **tego ostatniego nie włączaj dla Javy**: kompilator JIT potrzebuje pamięci zapisywalnej i wykonywalnej, JVM się nie uruchomi. Każde ograniczenie dodawaj pojedynczo i testuj aplikację. Zauważ też, że przy `ProtectHome=true` stara lokalizacja `/home/anna/sklep` jest dla usługi niewidoczna — to dobra kontrola, że nic już z niej nie korzysta."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przyda się własna jednostka",
+      "body": "- **Aplikacje Spring Boot, Quarkus, Micronaut** na maszynie wirtualnej lub serwerze fizycznym.\n- **Narzędzia wewnętrzne** — agent monitoringu, kolejka, serwer plików, bot.\n- **Projekt końcowy kursu** — `sklep.service` za Nginx z HTTPS (rozdział 46).\n- **Wiele instancji** — szablon `sklep@.service` z `--server.port=%i` (np. `sklep@8081`, `sklep@8082`).\n- **Usługi użytkownika bez roota** — `~/.config/systemd/user/` i `systemctl --user` (z `loginctl enable-linger`).\n- **CI i środowiska testowe** — jednostka wgrywana przez Ansible razem z jarem (rozdział 46)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "ExecStart polegający na środowisku powłoki",
+      "body": "Najczęstszy błąd pierwszej usługi: `ExecStart=java -jar ...` albo ścieżka do Javy zainstalowanej przez SDKMAN w `~/.sdkman` (rozdział 19). W terminalu `java` działa, bo `PATH` i `JAVA_HOME` ustawia `~/.bashrc` — ale systemd **nie uruchamia powłoki logowania** i nie czyta żadnych plików startowych. Usługa ma minimalne środowisko, a przy `ProtectHome=true` lub innym `User=` katalog domowy jest dla niej niedostępny. Efekt: status `203/EXEC` i usługa w pętli restartów."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Java z SDKMAN w katalogu domowym",
+      "body": "Plik istnieje w terminalu anny, ale dla usługi jest niewidoczny (przykładowy wynik):",
+      "code": "$ command -v java\n/home/anna/.sdkman/candidates/java/current/bin/java\n$ grep ExecStart /etc/systemd/system/sklep.service\nExecStart=/home/anna/.sdkman/candidates/java/current/bin/java $JAVA_OPTS -jar /opt/sklep/sklep.jar\n$ sudo systemctl daemon-reload && sudo systemctl restart sklep\nJob for sklep.service failed because the control process exited with error code.\nSee \"systemctl status sklep.service\" and \"journalctl -xeu sklep.service\" for details.\n$ journalctl -u sklep -n 3 --no-pager | cut -c17-\nlubuntu-nauka (java)[6301]: sklep.service: Unable to locate executable '/home/anna/.sdkman/candidates/java/current/bin/java': Permission denied\nlubuntu-nauka (java)[6301]: sklep.service: Failed at step EXEC spawning /home/anna/.sdkman/candidates/java/current/bin/java: Permission denied\nlubuntu-nauka systemd[1]: sklep.service: Main process exited, code=exited, status=203/EXEC"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Java z pakietu systemowego",
+      "body": "JDK zainstalowany przez APT leży w `/usr/lib/jvm` — dostępny dla każdego konta i niezależny od powłoki (przykładowy wynik):",
+      "code": "$ sudo apt install -y openjdk-21-jre-headless > /dev/null 2>&1\n$ readlink -f /usr/bin/java\n/usr/lib/jvm/java-21-openjdk-amd64/bin/java\n$ sudo -u sklep /usr/lib/jvm/java-21-openjdk-amd64/bin/java -version 2>&1 | head -1\nopenjdk version \"21.0.8\" 2025-07-15\n$ grep ExecStart /etc/systemd/system/sklep.service\nExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java $JAVA_OPTS \\\n$ sudo systemctl daemon-reload && sudo systemctl restart sklep && systemctl is-active sklep\nactive"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Decyzje przy pisaniu własnej usługi",
+      "body": "- **Jak uruchamiać Javę** — `Type=exec`, pełna ścieżka z `/usr/lib/jvm`, na pierwszym planie.\n- **Jako kto** — dedykowane konto systemowe, nigdy root ani konto osobiste.\n- **Gdzie trzymać sekrety** — `EnvironmentFile=` z prawami `640 root:nazwa` (albo menedżer sekretów, rozdział 38).\n- **Jak zatrzymywać** — `SuccessExitStatus=143`, `TimeoutStopSec=` dłuższy niż graceful shutdown.\n- **Co przy awarii** — `Restart=on-failure` z `RestartSec=` (lekcja 9).\n- **Ile zabezpieczeń** — podstawowy zestaw zawsze; więcej po ocenie `systemd-analyze security` i testach."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Własną jednostkę piszesz w `/etc/systemd/system/nazwa.service`, sprawdzasz `systemd-analyze verify`, wczytujesz `daemon-reload` i włączasz `enable --now`.\n- Aplikacja działa z dedykowanego konta systemowego (`User=`), kod w `/opt`, konfiguracja i sekrety w `/etc` z prawami `640`.\n- `Type=exec` i pełna ścieżka do `java` — systemd nie czyta `~/.bashrc` ani `PATH` z powłoki.\n- `SuccessExitStatus=143` sprawia, że `stop` nie kończy się stanem `failed`; `TimeoutStopSec=` daje czas na łagodne zamknięcie.\n- `NoNewPrivileges=`, `ProtectSystem=`, `ProtectHome=`, `PrivateTmp=` to podstawowe zabezpieczenia; ocena: `systemd-analyze security`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

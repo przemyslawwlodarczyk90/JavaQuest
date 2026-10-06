@@ -3,7 +3,7 @@
 Instrukcje: `LINUX_COURSE_STAGE_PROMPT.md`. Ten plik: aktualny stan, ostatnia czynność, następny
 krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (JavaScript).
 
-## Stan (2026-10-04)
+## Stan (2026-10-06)
 
 - **Krok 1 (struktura) — ZROBIONY i ROZBUDOWANY (2026-09-27, dyrektywa „kozak merytorycznie”).**
   46 rozdziałów (`_lx_01`…`_lx_46`) w 4 częściach, 437 lekcji. 234 lekcje mają źródło w
@@ -87,7 +87,18 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   (graceful shutdown Spring Boot 4: logger o.s.boot.tomcat.GracefulShutdown), kill/pkill/killall,
   nice/ionice, zadania w tle, nohup/disown/setsid, zombie/sieroty, demony i PID 1. Aplikacja `sklep`
   w ~/sklep (application.properties, sekrety.env); pod koniec rozdziału jako sklep.service (PID 5210).
-  Pozostałe lekcje (`_lx_22`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_22_systemd` (11 lekcji) — ZROBIONY (2026-10-06): systemd/PID 1, usługi i stany, typy
+  jednostek (ssh.socket w 24.04 — od 24.04 port z sshd_config przez sshd-socket-generator), pliki
+  jednostek, systemctl, enable/mask/presety, drop-iny i daemon-reload (apache-custom z LN22 = nowa
+  usługa, nie override), własna usługa, restart i zależności, targety, timery. Stan laboratorium po
+  rozdziale: Apache zainstalowany, ale `disabled` (port 80 = Nginx); `sklep.service` przepisany —
+  konto systemowe `sklep` (uid 994), jar w `/opt/sklep`, konfiguracja/sekrety w `/etc/sklep`
+  (`sklep.env`, 640 root:sklep), `StateDirectory=sklep`, `Type=exec`, `SuccessExitStatus=143`,
+  `Restart=on-failure`, `RestartSec=10s`, drop-in `baza.conf` (`Wants=postgresql.service`), PID 6120;
+  JDK z APT `/usr/lib/jvm/java-21-openjdk-amd64`; timer `kopia-sklep.timer` (2:30, pg_dump do
+  `/var/backups/sklep`); domyślny cel maszyny = `multi-user.target`. Przy okazji poprawione
+  odwołania „rozdział 24” → 26 (logi) w lekcjach 16/08, 21/07, 21/13.
+  Pozostałe lekcje (`_lx_23`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -142,7 +153,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_22_systemd`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_23_start_systemu`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
