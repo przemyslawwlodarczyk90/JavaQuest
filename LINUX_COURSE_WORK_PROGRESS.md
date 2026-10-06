@@ -115,7 +115,15 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   (drop-in `kopia-sklep.service.d/dysk.conf` z `RequiresMountsFor=/srv/kopie`, skrypt sprawdza
   `mountpoint`); swap: `/swap.img` zastąpiony `/swapfile` 4 GiB (600), `vm.swappiness=10`
   (`/etc/sysctl.d/90-swappiness.conf`). RAM maszyny 4 GiB (3.8Gi w free).
-  Pozostałe lekcje (`_lx_25`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_25_systemy_plikow_lvm_luks` (9 lekcji) — ZROBIONY (2026-10-06): VFS i rodzaje systemów
+  plików, FAT/exFAT/NTFS/ext4, ext4/XFS/Btrfs (Btrfs na obrazie ~/btrfs.img = /dev/loop7), i-węzły i
+  dziennik, LUKS (`sdd1` 5 GiB → `/dev/mapper/sejf` → `/srv/sejf`, crypttab z /root/sejf.key, kopia
+  nagłówka `/srv/kopie/sejf-naglowek.img`), LVM (koncepcje na serwerze `srv-test` 192.168.56.20 —
+  Ubuntu Server z `ubuntu-vg`; praktyka: `dane_vg` z sde+sdf, potem sdg 10 GiB i pvmove — sde usunięty;
+  LV `aplikacja` 4 GiB → `/srv/aplikacja`), RAID 1 `/dev/md0` (sdh + sdj po wymianie sdi) → `/srv/raid`,
+  NFS (`/srv/dane/wspolne` 2775 anna:programisci, eksport dla 192.168.56.0/24, klient srv-test
+  `/mnt/wspolne`), Samba (udział `[wspolne]`, `@programisci`). GID programisci = 1003.
+  Pozostałe lekcje (`_lx_26`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -170,7 +178,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria, rozdział `_lx_25_systemy_plikow_lvm_luks`**, potem kolejne rozdziały
+**Krok 2 — teoria, rozdział `_lx_26_logi`**, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
