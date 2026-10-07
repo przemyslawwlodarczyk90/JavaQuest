@@ -280,7 +280,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `/etc/environment` (+ no_proxy), `/etc/apt/apt.conf.d/95proxy`, `/etc/systemd/system.conf.d/proxy.conf`
   (DefaultEnvironment), JAVA_TOOL_OPTIONS z proxy w `/etc/raporty/raporty.env`. app01/app02: `/etc/srodowisko`
   (PROD/TEST) + `/etc/profile.d/zz-prompt-prod.sh` (kolorowy znacznik).
-  Pozostałe lekcje (`_lx_41`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_41_skrypty_bash_podstawy` (10 lekcji) — ZROBIONY (2026-10-08). Skrypty anny w `~/bin` na lubuntu-nauka:
+  `stan-sklepu.sh`, `sprawdz-instancje.sh`, `archiwizuj-raport.sh` (+ wersja `-zle`), `nowe-konto-testowe.sh`,
+  `czysc-baze-testowa.sh [-y]`, `pilnuj-sklepu.sh` (od lekcji 10 na bibliotece), `zrzut-szybki.sh`,
+  `kontrola-miejsca.sh`, `stan-serwerow.sh`, `kompresuj-logi.sh`, `czekaj-na-sklep.sh`, `kopia-katalogu.sh [-n] [-v]`,
+  `spakuj.sh`, `sklep-ctl.sh {status|restart|logi|wersja} [8080|8082]`, `sprzataj.sh`, `raport-instancji.sh`;
+  `~/infra/serwery.txt` (srv-test, srv-docker, deb-lab). Biblioteka **`/usr/local/lib/sklep/funkcje.sh`** (loguj,
+  zakoncz, czekaj_na_gotowosc, wersja_sklepu, wymagaj_montowania; log `/var/log/sklep/skrypty.log`). Raporty w
+  `/srv/sklep/raporty/` (m.in. „raport wrzesien.csv”, sprzedaz.csv 214 pozycji), archiwum `/srv/kopie/raporty/RRRR-MM/`.
+  Baza `sklep_test` (rola `ola` — pg_read_all_data).
+  Pozostałe lekcje (`_lx_42`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -350,7 +359,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_41_skrypty_bash_podstawy`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_42_skrypty_bash_zaawansowane`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
