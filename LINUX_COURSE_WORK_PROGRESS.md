@@ -321,7 +321,15 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   skopiowane do `~/.ssh` (z C:), git `core.autocrlf input` + credential.helper GCM z Windows, projekt w
   `~/projekty/sklep` (`.gitattributes` eol=lf), `~/bin/srodowisko.sh` (wizytówka środowiska). app01: KVM, 2 GB RAM,
   strefa Etc/UTC; srv-test: VirtualBox, 2 CPU, ~4 GB. Docker Desktop na laptopie (obraz eclipse-temurin:21-jre).
-  Pozostałe lekcje (`_lx_45`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_45_kontenery_i_docker` (8 lekcji) — ZROBIONY (2026-10-10). srv-docker: Docker Engine 28.4 z repozytorium
+  download.docker.com, `/etc/docker/daemon.json` (log-driver local 10m×3, live-restore, pula 10.210.0.0/16), ufw (22, 80);
+  sieć `sklep-net` (db postgres:16, sklep:1.4.2, web nginx:1.27 na :80; hasła w `~/sekrety/db`), `~/sklep-stack`
+  (compose.yaml + nginx/sklep.conf z client_max_body_size 20m, sklep.env z SKLEP_PLATNOSCI_KLUCZ), obraz sklep:1.4.2
+  (eclipse-temurin:21-jre, Java 21.0.9), kontener `raporty` (błąd konfiguracji), wolumen `notatki`. laptop-anna (Docker
+  Desktop 28.4, integracja z Ubuntu-24.04, kontekst `srv-docker` przez SSH): `~/projekty/sklep/compose.yaml` (db z
+  healthcheck, app build ., pgadmin w profilu narzedzia, `.env` w .gitignore), wolumeny `sklep_pgdata`, `pgdata`, `m2`;
+  kontener pg-dev na 5433. lubuntu-nauka: Docker rootless dla kuby (UID 1003, subuid 296608, linger).
+  Pozostałe lekcje (`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -391,7 +399,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_45_kontenery_i_docker`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_46_projekt_koncowy`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
