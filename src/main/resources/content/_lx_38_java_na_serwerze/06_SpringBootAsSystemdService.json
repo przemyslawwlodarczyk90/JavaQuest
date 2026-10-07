@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "W rozdziale 22 napisaliśmy jednostkę `sklep.service`: konto systemowe, katalogi z właściwymi prawami, sekrety w `EnvironmentFile`, pełna ścieżka do Javy, `SuccessExitStatus=143`, `Restart=on-failure`. To solidna podstawa. W tej lekcji złożysz z niej **wzorcową jednostkę dla aplikacji Spring Boot** — na przykładzie narzędzia raportowego `raporty` na `srv-test`, które w lekcji 5 działało jeszcze przez `nohup` — i dodasz elementy, które odróżniają usługę „działającą” od usługi gotowej na produkcję.\n\nZobaczysz, jak zgrać **łagodne zatrzymanie** Spring Boot (`server.shutdown=graceful`, faza zatrzymania) z `TimeoutStopSec`, jak sprawić, by `systemctl start` czekał, aż aplikacja będzie naprawdę **gotowa** (sonda gotowości Actuatora w `ExecStartPost`), jak **utwardzić** usługę opcjami sandboxa systemd (`ProtectSystem=strict`, `ReadWritePaths`, `RestrictAddressFamilies`...) i ocenić ją poleceniem `systemd-analyze security` — oraz której opcji **nie wolno** włączać dla JVM. Na koniec przerobisz `sklep` na **szablon** `sklep@.service`, z którego uruchamia się kilka instancji na różnych portach (przygotowanie do wdrożeń bez przestojów z lekcji 9)."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Typ usługi** — `Type=exec` (systemd uznaje start za udany, gdy `execve` się powiedzie); Spring Boot nie wysyła powiadomień `sd_notify`, więc `Type=notify` wymaga dodatkowej biblioteki.\n- **Gotowość** — `ExecStartPost=` z pętlą sprawdzającą `http://127.0.0.1:PORT/actuator/health/readiness` (Spring Boot: `management.endpoint.health.probes.enabled=true`); `TimeoutStartSec=` — ile czekać; do tego czasu usługa jest w stanie `activating`.\n- **Zatrzymanie** — `systemctl stop` wysyła `SIGTERM`; Spring Boot przy `server.shutdown=graceful` (domyślne od 3.4) kończy obsługę bieżących żądań w czasie `spring.lifecycle.timeout-per-shutdown-phase` (domyślnie 30 s); JVM kończy się kodem 143 → `SuccessExitStatus=143`; `TimeoutStopSec` musi być **dłuższy** niż faza zatrzymania, potem systemd wysyła `SIGKILL`.\n- **Ponowne uruchamianie** — `Restart=on-failure`, `RestartSec=10s`, limity `StartLimitIntervalSec=`/`StartLimitBurst=` (w `[Unit]`) — po zbyt wielu próbach usługa zostaje w `failed`.\n- **Sandbox (hartowanie)** — `NoNewPrivileges=yes`, `ProtectSystem=strict` + `ReadWritePaths=` (zapis tylko tam), `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`, `ProtectKernelTunables/Modules/Logs=yes`, `ProtectControlGroups=yes`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `CapabilityBoundingSet=` (pusty — bez uprawnień roota), `LockPersonality=yes`, `SystemCallArchitectures=native`.\n- **Nie dla JVM** — `MemoryDenyWriteExecute=yes` (blokuje pamięć zapisywalną i wykonywalną, której potrzebuje kompilator JIT — JVM się nie uruchomi lub padnie).\n- **`systemd-analyze security USLUGA`** — ocena ekspozycji (0 = najbezpieczniej, 10 = bez ograniczeń) z listą niewłączonych zabezpieczeń.\n- **Szablon** — plik `sklep@.service`, instancje `sklep@8080`, `sklep@8082`; `%i` w jednostce = część po `@` (np. port)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Jednostka systemd dla aplikacji Javy to **umowa najmu lokalu z regulaminem budynku**. Konto systemowe i katalogi to **przydzielony lokal z kluczami** tylko do niego; sandbox (`ProtectSystem`, `ProtectHome`, `RestrictAddressFamilies`) to **zakaz wchodzenia do cudzych pomieszczeń i ruszania instalacji budynku** — lokator może pracować u siebie, ale nie przestawi bezpieczników. Łagodne zatrzymanie to **zasada „przed zamknięciem obsłuż klientów w kolejce, ale masz na to 30 sekund”** — a `TimeoutStopSec` to ochrona, która po 45 sekundach zamknie drzwi, nawet jeśli ktoś jeszcze stoi. Sonda gotowości to **tabliczka „otwarte”**, którą lokator wywiesza dopiero wtedy, gdy wszystko jest przygotowane — wcześniej recepcja (systemd) nie skieruje do niego nikogo."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Cykl życia usługi Spring Boot pod systemd",
+      "body": "Start z czekaniem na gotowość i łagodne zatrzymanie — z czasami:",
+      "code": " systemctl start raporty\n   ExecStart=java ... -jar raporty.jar   -> stan: activating\n   ExecStartPost= petla: curl /actuator/health/readiness  (co 2 s, max TimeoutStartSec=120)\n        t=0s  connection refused ... t=6s  {\"status\":\"UP\"}  -> stan: active (running)\n   (gdyby po 120 s nie bylo UP -> stop, stan failed, Restart=on-failure -> ponowna proba za 10 s)\n\n systemctl stop raporty\n   SIGTERM -> Spring: server.shutdown=graceful\n              - przestaje przyjmowac nowe zadania, konczy biezace (max 30 s:\n                spring.lifecycle.timeout-per-shutdown-phase=30s)\n              - zamyka pule polaczen, wychodzi -> kod 143 -> SuccessExitStatus=143 -> \"inactive (dead)\"\n   jesli po TimeoutStopSec=45s nadal dziala -> SIGKILL -> kod 137 -> \"failed\"\n\n SANDBOX:  / tylko do odczytu (ProtectSystem=strict), zapis: /var/lib/raporty /var/log/raporty\n           brak /home, prywatne /tmp, brak urzadzen, tylko gniazda IPv4/IPv6/unix, bez capabilities"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Wzorcowa jednostka dla `raporty`",
+      "body": "Plik jednostki z czekaniem na gotowość, łagodnym zatrzymaniem i sandboxem, oraz ustawienia aplikacji, z którymi współpracuje (przykładowy wynik):",
+      "code": "anna@srv-test:~$ cat /etc/systemd/system/raporty.service\n[Unit]\nDescription=Raporty sprzedazy (Spring Boot)\nAfter=network-online.target\nWants=network-online.target\nStartLimitIntervalSec=10min\nStartLimitBurst=5\n\n[Service]\nType=exec\nUser=raporty\nGroup=raporty\nWorkingDirectory=/var/lib/raporty\nStateDirectory=raporty\nLogsDirectory=raporty\nEnvironmentFile=/etc/raporty/raporty.env\nExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java $JAVA_OPTS -jar /opt/raporty/raporty.jar \\\n    --spring.config.additional-location=file:/etc/raporty/\nExecStartPost=/bin/sh -c 'for i in $(seq 60); do curl -fs http://127.0.0.1:8090/actuator/health/readiness > /dev/null && exit 0; sleep 2; done; exit 1'\nTimeoutStartSec=130\nSuccessExitStatus=143\nTimeoutStopSec=45\nRestart=on-failure\nRestartSec=10s\n\nNoNewPrivileges=yes\nProtectSystem=strict\nReadWritePaths=/var/lib/raporty /var/log/raporty\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\nProtectControlGroups=yes\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nCapabilityBoundingSet=\nLockPersonality=yes\nSystemCallArchitectures=native\n\n[Install]\nWantedBy=multi-user.target\nanna@srv-test:~$ sudo grep -E 'shutdown|timeout-per|probes' /etc/raporty/application.properties\nserver.shutdown=graceful\nspring.lifecycle.timeout-per-shutdown-phase=30s\nmanagement.endpoint.health.probes.enabled=true"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Start z czekaniem na gotowość, ocena zabezpieczeń i szablon instancji",
+      "body": "Uruchomienie usługi (polecenie wraca dopiero po gotowości), łagodne zatrzymanie w dzienniku, ocena `systemd-analyze security` i szablon `sklep@.service` na `lubuntu-nauka` (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo systemctl daemon-reload && time sudo systemctl enable --now raporty\nCreated symlink /etc/systemd/system/multi-user.target.wants/raporty.service -> /etc/systemd/system/raporty.service.\n\nreal\t0m6.412s\nanna@srv-test:~$ systemctl is-active raporty && curl -s localhost:8090/actuator/health/readiness\nactive\n{\"status\":\"UP\"}\nanna@srv-test:~$ sudo systemctl stop raporty && journalctl -u raporty -n 3 -o cat | cut -c1-110\n2026-10-08T12:04:31.880+02:00  INFO 38120 --- [ionShutdownHook] o.s.b.w.e.tomcat.GracefulShutdown       : Commencing graceful shutdown. Waiting for active requests to complete\n2026-10-08T12:04:32.914+02:00  INFO 38120 --- [tomcat-shutdown] o.s.b.w.e.tomcat.GracefulShutdown       : Graceful shutdown complete\nraporty.service: Deactivated successfully.\nanna@srv-test:~$ systemd-analyze security raporty --no-pager | tail -1\n-> Overall exposure level for raporty.service: 3.1 OK :-)\nanna@srv-test:~$ systemd-analyze security sklep-stary --no-pager 2>/dev/null | tail -1\n-> Overall exposure level for sklep-stary.service: 9.2 UNSAFE :-{\n$ sudo cp /etc/systemd/system/sklep.service /etc/systemd/system/sklep@.service\n$ grep -E 'Description|ExecStart=|server.port' /etc/systemd/system/sklep@.service\nDescription=Aplikacja sklep (Spring Boot) - instancja %i\nExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java $JAVA_OPTS -jar /opt/sklep/sklep.jar --spring.config.additional-location=file:/etc/sklep/ --server.port=%i\n$ sudo systemctl daemon-reload && sudo systemctl enable --now sklep@8080 sklep@8082\n$ systemctl list-units 'sklep@*' --no-legend | awk '{print $1, $3, $4}'\nsklep@8080.service active running\nsklep@8082.service active running"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Od jara do usługi produkcyjnej",
+      "body": "1. Konto systemowe (`useradd --system --shell /usr/sbin/nologin`), jar w `/opt/APP/` (root, tylko odczyt), konfiguracja i sekrety w `/etc/APP/` (640 root:APP), dane i logi przez `StateDirectory=`/`LogsDirectory=`.\n2. Jednostka: `Type=exec`, `User=`, pełna ścieżka do Javy, `EnvironmentFile=`, `SuccessExitStatus=143`, `Restart=on-failure` + limity startów.\n3. Łagodne zatrzymanie: `server.shutdown=graceful`, faza zatrzymania (np. 30 s) < `TimeoutStopSec` (np. 45 s).\n4. Gotowość: włączone sondy Actuatora, `ExecStartPost=` czekające na `readiness`, `TimeoutStartSec=` z zapasem na wolny start.\n5. Sandbox: zacznij od `ProtectSystem=strict` + `ReadWritePaths=`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, `CapabilityBoundingSet=`; sprawdzaj start i działanie po każdej opcji; oceniaj `systemd-analyze security`.\n6. `systemd-analyze verify`, `daemon-reload`, `enable --now`, testy: zatrzymanie (czy w logu jest „Graceful shutdown complete”), awaria (`kill -9` → czy wstaje), restart serwera."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta wiedza",
+      "body": "- **Każda aplikacja Spring Boot na maszynie wirtualnej lub serwerze fizycznym** — jednostka zamiast `nohup` i skryptów.\n- **Wiele instancji** — szablony `APP@.service` dla kilku portów, kolejek, klientów.\n- **Wdrożenia bez przestojów** — instancje `@8080`/`@8082` przełączane w Nginx (lekcja 9).\n- **Bezpieczeństwo** — sandbox ogranicza skutki luki w aplikacji (np. RCE w bibliotece) do katalogów usługi.\n- **Monitoring** — `systemctl is-active`, `NRestarts` (`systemctl show -p NRestarts`), `OnFailure=` z powiadomieniem (rozdział 27).\n- **Inne aplikacje JVM** — Kafka, Elasticsearch, Keycloak, Jenkins — te same zasady (konto, sandbox, zatrzymanie)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kolejność czasów przy zatrzymaniu",
+      "body": "Trzy czasy muszą do siebie pasować. Spring Boot po `SIGTERM` czeka na zakończenie bieżących żądań maksymalnie `spring.lifecycle.timeout-per-shutdown-phase` (domyślnie 30 s), potem zamyka resztę kontekstu (pule połączeń, wątki planowanych zadań) — to trwa jeszcze chwilę. systemd czeka `TimeoutStopSec` (domyślnie 90 s, u nas 45 s) i dopiero potem zabija proces `SIGKILL`. Jeśli `TimeoutStopSec` jest **krótszy** niż faza zatrzymania, długie żądania (eksport raportu) zostaną przerwane brutalnie, a usługa skończy w stanie `failed` (kod 137). Jeśli jest dużo dłuższy — każde zatrzymanie zawieszonej aplikacji trwa niepotrzebnie długo. Za reverse proxy (rozdział 36) warto dodatkowo zatrzymywać instancję **po** wyłączeniu jej z `upstream` — wtedy nie dostaje nowych żądań w ogóle (lekcja 9)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "`MemoryDenyWriteExecute=yes` i nadmierny sandbox",
+      "body": "Przy hartowaniu usług łatwo skopiować „pełny zestaw” opcji z poradnika albo z podpowiedzi `systemd-analyze security`. Jedna z nich — `MemoryDenyWriteExecute=yes` — jest dla JVM zabójcza: kompilator JIT tworzy kod maszynowy w pamięci, która musi być jednocześnie zapisywalna i wykonywalna; JVM zakończy się błędem przy starcie lub przy pierwszej kompilacji. Inne opcje psują aplikację subtelniej: `ProtectSystem=strict` bez `ReadWritePaths` dla katalogu logów lub zrzutów pamięci (`HeapDumpPath`) — aplikacja działa, ale nie zapisze zrzutu przy `OutOfMemoryError`; `RestrictAddressFamilies` bez `AF_UNIX` — brak połączenia z PostgreSQL przez gniazdo; `PrivateTmp=yes` — pliki tymczasowe niewidoczne dla innych procesów (np. dla `jcmd` uruchamianego przez administratora — potrzebne `sudo -u USER` i ten sam namespace; rozdział 28). Każdą opcję dodawaj świadomie i testuj."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "`MemoryDenyWriteExecute` włączone dla JVM",
+      "body": "Opcja dodana „bo podniesie ocenę bezpieczeństwa” — JVM nie startuje, a usługa wpada w pętlę restartów (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo systemctl edit raporty --drop-in=mdwe.conf\nanna@srv-test:~$ cat /etc/systemd/system/raporty.service.d/mdwe.conf\n[Service]\nMemoryDenyWriteExecute=yes\nanna@srv-test:~$ sudo systemctl restart raporty\nJob for raporty.service failed because the control process exited with error code.\nanna@srv-test:~$ journalctl -u raporty -n 30 -o cat | grep -m2 -E 'Error|SIGSEGV|mmap'\nError occurred during initialization of VM\nCould not reserve enough space for code cache (245760K)\nanna@srv-test:~$ systemctl show raporty -p NRestarts\nNRestarts=4"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Sandbox bez opcji niezgodnych z JVM, ścieżki zapisu dla zrzutów",
+      "body": "Drop-in usunięty; katalog zrzutów pamięci dodany do `ReadWritePaths` — usługa działa, a ocena bezpieczeństwa pozostaje dobra (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo rm /etc/systemd/system/raporty.service.d/mdwe.conf\nanna@srv-test:~$ grep -o 'HeapDumpPath=[^ ]*' /etc/raporty/raporty.env\nHeapDumpPath=/var/lib/raporty\nanna@srv-test:~$ sudo systemctl daemon-reload && sudo systemctl reset-failed raporty && sudo systemctl start raporty\nanna@srv-test:~$ systemctl is-active raporty; systemd-analyze security raporty --no-pager | tail -1\nactive\n-> Overall exposure level for raporty.service: 3.1 OK :-)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Każda aplikacja Spring Boot działająca stale** — jednostka systemd z kontem, `EnvironmentFile`, pełną ścieżką do Javy.\n- **Aplikacja za load balancerem lub Nginx** — `ExecStartPost` czekające na `readiness` (start „gotowy”, nie tylko „uruchomiony”).\n- **Długie żądania** — dłuższa faza zatrzymania w Spring Boot i odpowiednio dłuższy `TimeoutStopSec`.\n- **Wiele instancji tej samej aplikacji** — szablon `APP@.service` z `%i`.\n- **Hartowanie** — `ProtectSystem=strict` + `ReadWritePaths`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, `CapabilityBoundingSet=`; **bez** `MemoryDenyWriteExecute`.\n- **Ocena** — `systemd-analyze security` (cel: wynik poniżej 4–5 dla aplikacji JVM)."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Wzorcowa jednostka Spring Boot: konto systemowe, `Type=exec`, pełna ścieżka do Javy, `EnvironmentFile=`, `StateDirectory=`/`LogsDirectory=`, `SuccessExitStatus=143`, `Restart=on-failure`.\n- Łagodne zatrzymanie (`server.shutdown=graceful`, faza 30 s) musi zmieścić się w `TimeoutStopSec`; po nim systemd wysyła `SIGKILL`.\n- `ExecStartPost=` z sondą `readiness` sprawia, że `systemctl start` kończy się dopiero, gdy aplikacja jest gotowa.\n- Sandbox systemd (`ProtectSystem=strict`, `ReadWritePaths`, `ProtectHome`, `PrivateTmp`, `RestrictAddressFamilies`...) ogranicza skutki luk; `systemd-analyze security` ocenia jednostkę; `MemoryDenyWriteExecute` psuje JVM.\n- Szablon `APP@.service` z `%i` uruchamia wiele instancji (np. na różnych portach)."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
