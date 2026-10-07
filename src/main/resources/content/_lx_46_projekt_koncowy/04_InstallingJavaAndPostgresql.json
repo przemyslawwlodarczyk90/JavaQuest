@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Trzeci etap projektu to środowisko uruchomieniowe aplikacji: **Java** i **baza danych**. Aplikacja sklep wymaga Javy 21 (Spring Boot 3) i PostgreSQL. Na serwerze produkcyjnym instalujemy tylko to, co potrzebne do uruchomienia: **JRE w wersji headless** (bez kompilatora, bez bibliotek graficznych — rozdział 38) oraz PostgreSQL 16 z repozytorium Ubuntu, nasłuchujący wyłącznie na `127.0.0.1`. Bazę i rolę tworzymy według planu, a hasło generujemy losowo i zapisujemy w katalogu sekretów, z którego w lekcji 5 przeczyta je systemd (`LoadCredential=`).\n\nWażną częścią tego etapu jest **budżet pamięci**. Na sklep01 są 4 GB RAM, które muszą wystarczyć dla JVM (sterta i pamięć poza stertą), PostgreSQL (`shared_buffers`, pamięć połączeń), systemu i pamięci podręcznej plików. Jeśli każdy składnik zostanie skonfigurowany „hojnie” w oderwaniu od pozostałych, pierwsze większe obciążenie skończy się interwencją OOM killera — i często ginie wtedy baza, a nie aplikacja."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`openjdk-21-jre-headless`** — środowisko uruchomieniowe bez narzędzi programistycznych i grafiki; `java -version`, `update-alternatives --display java`; pełna ścieżka `/usr/lib/jvm/java-21-openjdk-amd64/bin/java` w jednostce systemd.\n- **PostgreSQL 16** — pakiet `postgresql` (Ubuntu 24.04), klaster `16/main`, usługa `postgresql@16-main`; konfiguracja `/etc/postgresql/16/main/postgresql.conf` i `pg_hba.conf`; narzędzie `pg_lsclusters`.\n- **`listen_addresses = 'localhost'`** — domyślnie; baza dostępna tylko lokalnie (zgodnie z planem); `pg_hba.conf`: `host sklep sklep 127.0.0.1/32 scram-sha-256`.\n- **Rola i baza** — `CREATE ROLE sklep LOGIN PASSWORD ...`, `CREATE DATABASE sklep OWNER sklep`; aplikacja nie używa konta `postgres`.\n- **Hasło w pliku sekretu** — `openssl rand -base64 24` do `/etc/sklep/poswiadczenia/spring.datasource.password` (root, `600`), przekazane do `psql` zmienną (`-v haslo=...`, `:'haslo'`) — nie w historii powłoki ani w argumentach widocznych w `ps`.\n- **Budżet pamięci (4 GB)** — JVM do ok. 1,5 GB sterty (+ ok. 0,5 GB poza stertą), PostgreSQL `shared_buffers = 512MB`, `work_mem = 8MB`, `max_connections = 50`, reszta dla systemu i pamięci podręcznej plików (z której korzysta też PostgreSQL — `effective_cache_size = 1500MB`).\n- **Pula połączeń** — HikariCP w aplikacji (`maximum-pool-size: 10`) musi mieścić się w `max_connections` razem z połączeniami administracyjnymi i kopiami."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Budżet pamięci serwera jest jak **planowanie miejsca w małej kuchni restauracji**. Kucharz (JVM) potrzebuje blatu (sterty), ale też miejsca na noże i deski (pamięć poza stertą). Spiżarnia (PostgreSQL) chce półek na najczęściej używane produkty (`shared_buffers`), a przejście między nimi (system, pamięć podręczna plików) musi zostać wolne, bo inaczej nikt się nie ruszy. Jeśli kucharz rozłoży się na całej kuchni, a spiżarnia zajmie przejście, w godzinie szczytu kierownik (OOM killer) wyrzuci kogoś na zewnątrz — i zwykle jest to ten, kto zajmuje najwięcej miejsca: często spiżarnia."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Budżet pamięci sklep01 (4 GB)",
+      "body": "Podział pamięci między JVM, PostgreSQL i system:",
+      "code": " RAM 3.8 GiB (sklep01)\n +--------------------------------------------------------------------------------+\n | JVM sklep (MemoryMax=2G w jednostce, MaxRAMPercentage=70)                       |\n |   sterta ~1.4 GiB  |  metaspace, watki, JIT, bufory ~0.4 GiB                    |  ~1.8 GiB\n +--------------------------------------------------------------------------------+\n | PostgreSQL 16                                                                   |\n |   shared_buffers 512MB  |  polaczenia: 50 x (work_mem 8MB, procesy) ~0.3 GiB    |  ~0.8 GiB\n +--------------------------------------------------------------------------------+\n | system, nginx, fail2ban, journald                                    ~0.3 GiB  |\n +--------------------------------------------------------------------------------+\n | pamiec podreczna plikow (dane bazy, JAR)   effective_cache_size=1500MB  reszta  |  ~0.9 GiB\n +--------------------------------------------------------------------------------+\n\n aplikacja: HikariCP maximum-pool-size 10  <=  max_connections 50\n            (+ kopie pg_dump, psql administratora, monitoring)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Java 21 i PostgreSQL 16",
+      "body": "Instalacja minimalnego JRE i bazy, sprawdzenie wersji i adresów nasłuchu (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sudo apt-get install -y -qq openjdk-21-jre-headless postgresql > /dev/null\nanna@sklep01:~$ java -version 2>&1 | head -1; readlink -f \"$(command -v java)\"\nopenjdk version \"21.0.9\" 2025-10-21\n/usr/lib/jvm/java-21-openjdk-amd64/bin/java\nanna@sklep01:~$ dpkg -l | awk '/^ii/ && /openjdk/ {print $2}'\nopenjdk-21-jre-headless:amd64\nanna@sklep01:~$ pg_lsclusters\nVer Cluster Port Status Owner    Data directory              Log file\n16  main    5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log\nanna@sklep01:~$ sudo -u postgres psql -Atc 'SHOW listen_addresses'\nlocalhost\nanna@sklep01:~$ sudo ss -tlnp | grep 5432 | awk '{print $4}'\n127.0.0.1:5432\n[::1]:5432"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Hasło, rola, baza i ustawienia pamięci",
+      "body": "Losowe hasło w pliku sekretu, rola i baza aplikacji, reguła w `pg_hba.conf` i parametry pamięci w pliku `conf.d` (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sudo sh -c 'umask 077; openssl rand -base64 24 > /etc/sklep/poswiadczenia/spring.datasource.password'\nanna@sklep01:~$ sudo stat -c '%U %a %n' /etc/sklep/poswiadczenia/spring.datasource.password\nroot 600 /etc/sklep/poswiadczenia/spring.datasource.password\nanna@sklep01:~$ sudo -u postgres psql -q -v haslo=\"$(sudo cat /etc/sklep/poswiadczenia/spring.datasource.password)\" <<'SQL'\n> CREATE ROLE sklep LOGIN PASSWORD :'haslo';\n> CREATE DATABASE sklep OWNER sklep;\n> SQL\nanna@sklep01:~$ grep -E '^host\\s+sklep' /etc/postgresql/16/main/pg_hba.conf\nhost    sklep           sklep           127.0.0.1/32            scram-sha-256\nanna@sklep01:~$ cat /etc/postgresql/16/main/conf.d/90-sklep01.conf\n# budzet pamieci sklep01 (4 GB): patrz ~/infra/sklep01/README.md\nshared_buffers = 512MB\neffective_cache_size = 1500MB\nwork_mem = 8MB\nmaintenance_work_mem = 128MB\nmax_connections = 50\nanna@sklep01:~$ sudo systemctl restart postgresql@16-main && sudo -u postgres psql -Atc \"SELECT name, setting, unit FROM pg_settings WHERE name IN ('shared_buffers','max_connections')\"\nmax_connections|50|\nshared_buffers|65536|8kB\nanna@sklep01:~$ PGPASSWORD=\"$(sudo cat /etc/sklep/poswiadczenia/spring.datasource.password)\" psql -h 127.0.0.1 -U sklep -d sklep -Atc 'SELECT current_user, version()' | cut -c1-40\nsklep|PostgreSQL 16.10 (Ubuntu 16.10-0ubu"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak przygotować Javę i bazę",
+      "body": "1. Zainstaluj `openjdk-21-jre-headless` (nie pełne JDK) i zanotuj pełną ścieżkę do `java`.\n2. Zainstaluj PostgreSQL z repozytorium dystrybucji; sprawdź `pg_lsclusters` i nasłuch tylko na `localhost`.\n3. Wygeneruj hasło do pliku w katalogu sekretów (`umask 077`, właściciel root, `600`).\n4. Utwórz rolę i bazę aplikacji, przekazując hasło zmienną `psql`, nie w treści polecenia.\n5. Ogranicz `pg_hba.conf` do bazy, roli i adresu `127.0.0.1/32` z `scram-sha-256`.\n6. Rozpisz budżet pamięci (JVM, PostgreSQL, system, pamięć podręczna) i ustaw parametry w `conf.d/90-*.conf`.\n7. Zrestartuj bazę, sprawdź parametry w `pg_settings` i połączenie jako `sklep` przez `127.0.0.1`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie te decyzje mają znaczenie",
+      "body": "- **Serwer z aplikacją i bazą na jednej maszynie** — budżet pamięci decyduje o stabilności pod obciążeniem.\n- **Bezpieczeństwo** — baza tylko lokalnie, osobna rola, hasło losowe w pliku z ograniczonymi prawami.\n- **Aktualizacje** — JRE i PostgreSQL z repozytorium dystrybucji aktualizowane przez `unattended-upgrades`.\n- **Rozbudowa** — przeniesienie bazy na osobny serwer: zmiana `listen_addresses`, `pg_hba.conf` i zapory (rozdział 37).\n- **Diagnoza wydajności** — `pg_settings`, `pg_stat_activity`, porównanie liczby połączeń z pulą HikariCP.\n- **Migracja wersji Javy** — pełna ścieżka do `java` w jednostce zapobiega niezamierzonej zmianie przez `update-alternatives`."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Repozytorium dystrybucji czy PGDG i Temurin?",
+      "body": "W projekcie użyliśmy pakietów z repozytorium Ubuntu: OpenJDK 21 i PostgreSQL 16 są tam dostępne przez cały okres wsparcia Ubuntu 24.04 LTS i dostają poprawki bezpieczeństwa razem z systemem. Alternatywy — repozytorium PGDG (nowsze wersje PostgreSQL, jak na deb-lab z PostgreSQL 17) czy Eclipse Temurin z repozytorium Adoptium (jak na lubuntu-nauka) — mają sens, gdy aplikacja wymaga konkretnej wersji lub funkcji. Każde dodatkowe repozytorium to jednak kolejny klucz, kolejne źródło aktualizacji do śledzenia i inna polityka wsparcia. Zasada: zostań przy dystrybucji, dopóki nie masz konkretnego powodu, i zapisz ten powód w `README.md`."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Każdy składnik konfigurowany „hojnie” osobno",
+      "body": "Programista ustawia w `JAVA_OPTS` `-Xmx3g`, „bo aplikacja ma dużo danych w pamięci podręcznej”. Administrator bazy, czytając poradnik „`shared_buffers` = 25% RAM”, ustawia 1 GB, a `max_connections` zostaje 100. Każde ustawienie z osobna wygląda rozsądnie, razem przekraczają 4 GB. Przez kilka dni nic się nie dzieje, bo sterta rośnie powoli; przy pierwszym dużym imporcie lub raporcie system zaczyna brakować pamięci i jądro uruchamia OOM killera. Ten wybiera proces z najwyższą oceną — bardzo często proces PostgreSQL — i aplikacja nagle traci bazę (`Connection refused`, restart klastra, odtwarzanie WAL). Rozwiązanie: jeden budżet pamięci zapisany w repozytorium, limit cgroup dla usługi (`MemoryMax=`) i sterta liczona od limitu (`MaxRAMPercentage`)."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Sterta 3 GB i shared_buffers 1 GB na 4 GB RAM",
+      "body": "Pod obciążeniem OOM killer kończy proces bazy (przykładowy wynik):",
+      "code": "anna@sklep01:~$ grep -h -E 'Xmx|shared_buffers' /etc/sklep/sklep.env /etc/postgresql/16/main/conf.d/*.conf\nJAVA_OPTS=-Xmx3g\nshared_buffers = 1GB\nanna@sklep01:~$ sudo journalctl -k --since today | grep -m2 -E 'Out of memory|oom-kill'\nOct 12 14:02:11 sklep01 kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task_memcg=/system.slice/system-postgresql.slice/postgresql@16-main.service,task=postgres,pid=3602,uid=114\nOct 12 14:02:11 sklep01 kernel: Out of memory: Killed process 3602 (postgres) total-vm:1214532kB, anon-rss:18204kB, file-rss:4096kB, shmem-rss:1015808kB, UID:114 pgtables:2340kB oom_score_adj:0\nanna@sklep01:~$ sudo journalctl -u sklep --since '14:02' -o cat | grep -m1 PSQLException\norg.postgresql.util.PSQLException: Connection to 127.0.0.1:5432 refused."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Wspólny budżet i limit cgroup dla aplikacji",
+      "body": "Sterta liczona od `MemoryMax=2G`, baza z `shared_buffers = 512MB` — pod tym samym obciążeniem pamięć mieści się w budżecie (przykładowy wynik):",
+      "code": "anna@sklep01:~$ systemctl show sklep -p MemoryMax --value; grep JAVA_OPTS /etc/sklep/sklep.env\n2147483648\nJAVA_OPTS=-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError\nanna@sklep01:~$ sudo systemd-run -q --scope -p MemoryMax=2G java -XX:MaxRAMPercentage=70 -XX:+PrintFlagsFinal -version 2>/dev/null | grep ' MaxHeapSize '\n   size_t MaxHeapSize                              = 1503657984                                {product} {ergonomic}\nanna@sklep01:~$ free -h | awk '/^Mem/ {print \"uzyte:\", $3, \"dostepne:\", $7}'\nuzyte: 2.6Gi dostepne: 1.0Gi\nanna@sklep01:~$ sudo journalctl -k --since today | grep -c oom-kill\n0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Serwer produkcyjny Javy** — `openjdk-21-jre-headless` z repozytorium dystrybucji, pełna ścieżka w jednostce.\n- **Baza dla jednej aplikacji na tym samym serwerze** — `listen_addresses = 'localhost'`, osobna rola i baza.\n- **Hasła** — generowane losowo do pliku w katalogu sekretów, przekazywane zmienną `psql`.\n- **Ustawienia pamięci** — jeden budżet dla wszystkich składników, zapisany w repozytorium.\n- **Limit dla aplikacji** — `MemoryMax=` w jednostce i `MaxRAMPercentage` zamiast sztywnego `-Xmx`.\n- **Nowsze wersje niż w dystrybucji** — PGDG/Adoptium tylko z uzasadnieniem w dokumentacji."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Na serwerze produkcyjnym instaluje się JRE headless i PostgreSQL z repozytorium dystrybucji.\n- Baza nasłuchuje tylko na `127.0.0.1`; aplikacja ma własną rolę i bazę, a `pg_hba.conf` dopuszcza tylko ją.\n- Hasło generuje się losowo do pliku sekretu (`600`, root) i przekazuje do `psql` zmienną, nie w poleceniu.\n- Pamięć serwera dzieli się jednym budżetem: sterta JVM, pamięć poza stertą, PostgreSQL, system i pamięć podręczna.\n- `MemoryMax=` i `MaxRAMPercentage` ograniczają JVM; przekroczenie budżetu kończy się OOM killerem, często zabijającym bazę."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
