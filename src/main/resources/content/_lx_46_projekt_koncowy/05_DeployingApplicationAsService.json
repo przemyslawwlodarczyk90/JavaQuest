@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Czwarty etap to serce projektu: aplikacja sklep jako **usługa systemd**. Jednostka `sklep.service` decyduje o wszystkim, co dotyczy działania aplikacji: jako kto działa (konto `sklep`), skąd bierze konfigurację (`/etc/sklep/sklep.env`) i hasło (`LoadCredential=` z katalogu sekretów), z jakimi opcjami JVM startuje, ile pamięci może użyć (`MemoryMax=`), na jakim adresie nasłuchuje (`127.0.0.1:8080`), jak długo ma na łagodne zatrzymanie, kiedy jest restartowana i do czego **nie** ma dostępu (piaskownica systemd). To zebranie w jednym miejscu tego, co poznałeś w rozdziałach 22 (systemd) i 38 (Java na serwerze).\n\nDrugą częścią etapu jest **wdrażanie**: skrypt `/usr/local/bin/wdroz-sklep.sh`, który przyjmuje wersję i plik JAR (przez SSH z CI, jako konto `deploy`), sprawdza sumę kontrolną, umieszcza wydanie w `/opt/sklep/releases/WERSJA/`, atomowo podmienia dowiązanie, restartuje usługę, czeka na gotowość i w razie problemu wraca do poprzedniej wersji (rozdział 42, lekcja 10). Na koniec zobaczysz, jak piaskownica `ProtectSystem=strict` potrafi zablokować aplikacji zapis, jeśli zapomnisz o `ReadWritePaths=`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`[Service]` — tożsamość i środowisko** — `User=sklep`, `Group=sklep`, `WorkingDirectory=/var/lib/sklep`, `EnvironmentFile=/etc/sklep/sklep.env`, `Environment=SPRING_PROFILES_ACTIVE=prod`.\n- **Sekrety** — `LoadCredential=spring.datasource.password:/etc/sklep/poswiadczenia/spring.datasource.password` + `SPRING_CONFIG_IMPORT=optional:configtree:${CREDENTIALS_DIRECTORY}/` — hasło widoczne tylko dla usługi, poza `sklep.env` i poza `ps`.\n- **Uruchomienie** — `ExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java $JAVA_OPTS -jar /opt/sklep/sklep.jar --server.address=127.0.0.1 --server.port=8080` (systemd dzieli `$JAVA_OPTS` na słowa, `${JAVA_OPTS}` — nie).\n- **Zasoby i zatrzymanie** — `MemoryMax=2G`, `TimeoutStopSec=45` (dłużej niż `spring.lifecycle.timeout-per-shutdown-phase`), `SuccessExitStatus=143`, `Restart=on-failure`, `RestartSec=5`.\n- **Piaskownica** — `NoNewPrivileges=yes`, `ProtectSystem=strict` (cały system tylko do odczytu), `ReadWritePaths=/var/lib/sklep`, `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`, `CapabilityBoundingSet=`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`; ocena `systemd-analyze security sklep`.\n- **Gotowość** — `/actuator/health/readiness` sprawdzany przez skrypt wdrożeniowy (i w lekcji 7 przez monitoring).\n- **Wdrożenie** — `ssh deploy@sklep01 sudo /usr/local/bin/wdroz-sklep.sh 1.5.0 < sklep-1.5.0.jar`: suma `sha256`, katalog wydania, `ln -sfn` + `mv -T`, `systemctl restart sklep`, czekanie na gotowość, wycofanie przy błędzie, retencja 5 wydań."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Jednostka systemd to **umowa najmu z regulaminem** dla aplikacji: kto jest najemcą (`User=`), który lokal (`WorkingDirectory=`), ile prądu może pobrać (`MemoryMax=`), do których pomieszczeń ma klucz (`ReadWritePaths=`), a do których nie wolno jej wchodzić (`ProtectSystem=`, `ProtectHome=`), co zrobić, gdy coś się zepsuje (`Restart=`) i ile czasu ma na wyprowadzkę (`TimeoutStopSec=`). Skrypt wdrożeniowy to **firma przeprowadzkowa z procedurą**: nowe meble trafiają najpierw do osobnego pomieszczenia (katalog wydania), zamiana odbywa się jednym ruchem (dowiązanie), a jeśli w nowym układzie nie da się żyć — stare meble wracają na miejsce."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Usługa sklep i wdrożenie nowej wersji",
+      "body": "Co jednostka daje aplikacji i jak przebiega wdrożenie:",
+      "code": " sklep.service (User=sklep, MemoryMax=2G)\n   EnvironmentFile  /etc/sklep/sklep.env          JAVA_OPTS, SPRING_PROFILES_ACTIVE, ...\n   LoadCredential   /etc/sklep/poswiadczenia/...  -> $CREDENTIALS_DIRECTORY/spring.datasource.password\n   ExecStart        java $JAVA_OPTS -jar /opt/sklep/sklep.jar --server.address=127.0.0.1\n   piaskownica      / tylko odczyt (ProtectSystem=strict), zapis: /var/lib/sklep, /tmp prywatny\n   zatrzymanie      SIGTERM -> graceful shutdown -> 143 (sukces) / po 45 s SIGKILL\n\n CI: ssh deploy@sklep01 sudo /usr/local/bin/wdroz-sklep.sh 1.5.0 < sklep-1.5.0.jar\n   1. sha256 OK?                       nie -> koniec (kod 2)\n   2. /opt/sklep/releases/1.5.0/sklep.jar\n   3. poprzednie = readlink -f /opt/sklep/sklep.jar   (1.4.2)\n   4. ln -sfn ... && mv -T  (atomowo)  /opt/sklep/sklep.jar -> releases/1.5.0/sklep.jar\n   5. systemctl restart sklep\n   6. readiness w 90 s?   tak -> retencja 5 wydan, kod 0\n                          nie -> dowiazanie na 1.4.2, restart, kod 1"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Jednostka `sklep.service`",
+      "body": "Plik konfiguracyjny środowiska, jednostka z sekretem, limitem pamięci i piaskownicą, ocena bezpieczeństwa (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sudo cat /etc/sklep/sklep.env\nSPRING_PROFILES_ACTIVE=prod\nSPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/sklep\nSPRING_DATASOURCE_USERNAME=sklep\nJAVA_OPTS=-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep\nanna@sklep01:~$ cat /etc/systemd/system/sklep.service\n[Unit]\nDescription=Sklep (Spring Boot)\nAfter=network-online.target postgresql@16-main.service\nWants=network-online.target\nRequires=postgresql@16-main.service\n\n[Service]\nUser=sklep\nGroup=sklep\nWorkingDirectory=/var/lib/sklep\nEnvironmentFile=/etc/sklep/sklep.env\nLoadCredential=spring.datasource.password:/etc/sklep/poswiadczenia/spring.datasource.password\nEnvironment=SPRING_CONFIG_IMPORT=optional:configtree:${CREDENTIALS_DIRECTORY}/\nExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java $JAVA_OPTS -jar /opt/sklep/sklep.jar --server.address=127.0.0.1 --server.port=8080\nSuccessExitStatus=143\nTimeoutStopSec=45\nRestart=on-failure\nRestartSec=5\nMemoryMax=2G\nNoNewPrivileges=yes\nProtectSystem=strict\nReadWritePaths=/var/lib/sklep\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nCapabilityBoundingSet=\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n\n[Install]\nWantedBy=multi-user.target\nanna@sklep01:~$ sudo systemd-analyze verify /etc/systemd/system/sklep.service && echo \"jednostka OK\"\njednostka OK\nanna@sklep01:~$ systemd-analyze security sklep --no-pager | tail -1\n-> Overall exposure level for sklep.service: 3.4 OK :-)"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Skrypt wdrożeniowy i pierwsze wdrożenie z CI",
+      "body": "Fragment `wdroz-sklep.sh`, wdrożenie wersji 1.5.0 z laptopa jako `deploy` i stan usługi (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sed -n '/^main()/,/^}/p' /usr/local/bin/wdroz-sklep.sh\nmain() {\n    local wersja=$1 suma=$2 katalog=/opt/sklep/releases/$1 poprzednie\n    [[ $wersja =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || zakoncz 2 \"zla wersja: $wersja\"\n    install -d -m 755 \"$katalog\"\n    cat > \"$katalog/sklep.jar\"\n    echo \"$suma  $katalog/sklep.jar\" | sha256sum -c --quiet || { rm -rf \"$katalog\"; zakoncz 2 \"zla suma kontrolna\"; }\n    poprzednie=$(readlink -f /opt/sklep/sklep.jar || true)\n    ln -sfn \"$katalog/sklep.jar\" /opt/sklep/.sklep.jar.nowy && mv -T /opt/sklep/.sklep.jar.nowy /opt/sklep/sklep.jar\n    systemctl restart sklep\n    if czekaj_na_gotowosc 8080 90; then\n        loguj info \"wdrozono $wersja (wdrazal: ${SUDO_USER:-$USER})\"; retencja 5\n    else\n        loguj err \"brak gotowosci $wersja - wycofanie do ${poprzednie:-brak}\"\n        [[ -n $poprzednie ]] && ln -sfn \"$poprzednie\" /opt/sklep/.sklep.jar.nowy && mv -T /opt/sklep/.sklep.jar.nowy /opt/sklep/sklep.jar\n        systemctl restart sklep; zakoncz 1 \"wdrozenie $wersja wycofane\"\n    fi\n}\nanna@laptop-anna:~/projekty/sklep$ SUMA=$(sha256sum target/sklep-1.5.0.jar | cut -d' ' -f1)\nanna@laptop-anna:~/projekty/sklep$ ssh -i ~/.ssh/deploy_sklep deploy@203.0.113.50 sudo /usr/local/bin/wdroz-sklep.sh 1.5.0 \"$SUMA\" < target/sklep-1.5.0.jar; echo \"kod: $?\"\nwdroz-sklep.sh: [info] wdrozono 1.5.0 (wdrazal: deploy)\nkod: 0\nanna@sklep01:~$ systemctl status sklep --no-pager | sed -n '1,4p'\n● sklep.service - Sklep (Spring Boot)\n     Loaded: loaded (/etc/systemd/system/sklep.service; enabled; preset: enabled)\n     Active: active (running) since Mon 2026-10-12 15:20:44 UTC; 41s ago\n   Main PID: 4410 (java)\nanna@sklep01:~$ curl -s 127.0.0.1:8080/actuator/health/readiness; echo; readlink /opt/sklep/sklep.jar\n{\"status\":\"UP\"}\n/opt/sklep/releases/1.5.0/sklep.jar"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak uruchomić aplikację jako usługę i wdrażać nowe wersje",
+      "body": "1. Zapisz zmienne w `/etc/sklep/sklep.env` (właściciel `root:sklep`, `640`), hasło zostaw w katalogu sekretów.\n2. Napisz jednostkę: konto, środowisko, `LoadCredential=`, pełna ścieżka do `java`, adres `127.0.0.1`, `MemoryMax=`, zatrzymanie i restart.\n3. Dodaj piaskownicę (`ProtectSystem=strict` + `ReadWritePaths=` dla katalogów zapisu) i sprawdź `systemd-analyze security`.\n4. `systemd-analyze verify`, `daemon-reload`, `enable --now sklep`; sprawdź `status`, `journalctl -u sklep`, gotowość.\n5. Zainstaluj `wdroz-sklep.sh` (root, `755`) i regułę `sudo` dla `deploy` z lekcji 2.\n6. Wdrażaj z CI: suma kontrolna, JAR na standardowe wejście, kod wyjścia jako wynik zadania.\n7. Przetestuj wycofanie: wdróż celowo wadliwą wersję na serwerze testowym i sprawdź powrót do poprzedniej."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ten wzorzec",
+      "body": "- **Aplikacje Spring Boot na maszynach wirtualnych** — jednostka systemd zamiast skryptów startowych i `nohup`.\n- **Sekrety bez plików w katalogu aplikacji** — `LoadCredential=` i `configtree`.\n- **Wiele instancji** — szablon `sklep@.service` z portem w `%i` (jak w laboratorium, rozdział 38).\n- **Wdrożenia z CI bez pełnego dostępu** — konto `deploy` z `sudo` na jeden skrypt.\n- **Szybkie wycofanie** — poprzednie wydania w `/opt/sklep/releases`, zmiana dowiązania i restart.\n- **Wymagania audytu** — `systemd-analyze security` jako miara ograniczeń usługi."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Restart jednej instancji oznacza krótką przerwę",
+      "body": "Na sklep01 działa jedna instancja aplikacji, więc każde wdrożenie to kilkanaście sekund niedostępności: łagodne zatrzymanie, start nowej wersji i czas do gotowości. Nginx w tym czasie zwraca błąd 502 (lekcja 6 pokaże przyjazną stronę serwisową). Wdrożenie bez przerwy wymaga co najmniej dwóch instancji (np. `sklep@8080` i `sklep@8082` jak w laboratorium) i reverse proxy, które przełącza ruch między nimi, albo dwóch serwerów za równoważeniem obciążenia. Dla wielu aplikacji wewnętrznych i małych sklepów krótka przerwa w zaplanowanym oknie jest akceptowalna — ważne, żeby była to świadoma decyzja zapisana w `README.md`, a nie niespodzianka."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "`ProtectSystem=strict` bez `ReadWritePaths=`",
+      "body": "Piaskownica systemd znacznie ogranicza skutki błędu lub włamania do aplikacji — ale `ProtectSystem=strict` montuje **cały** system plików tylko do odczytu dla usługi. Jeśli aplikacja zapisuje gdziekolwiek poza katalogami wymienionymi w `ReadWritePaths=` (przesłane pliki, wygenerowane raporty, zrzut sterty, pliki tymczasowe poza `/tmp`), dostaje `Read-only file system` — zwykle nie przy starcie, tylko przy pierwszej takiej operacji, czyli już na produkcji. Typowe przypadki: `HeapDumpPath` wskazujący katalog spoza listy, katalog załączników skonfigurowany jako `/srv/sklep`, biblioteka zapisująca w katalogu domowym (zablokowanym przez `ProtectHome=`). Rozwiązanie: spisz wszystkie katalogi zapisu aplikacji i dodaj je do `ReadWritePaths=` (lub `StateDirectory=`, `CacheDirectory=`, `LogsDirectory=`), a po wdrożeniu przetestuj funkcje zapisujące pliki."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Raporty zapisywane poza dozwolonym katalogiem",
+      "body": "Usługa startuje poprawnie, ale eksport raportu do `/srv/sklep/raporty` kończy się błędem (przykładowy wynik):",
+      "code": "anna@sklep01:~$ grep -E 'RAPORTY|ReadWritePaths' /etc/sklep/sklep.env /etc/systemd/system/sklep.service\n/etc/sklep/sklep.env:SKLEP_RAPORTY_KATALOG=/srv/sklep/raporty\n/etc/systemd/system/sklep.service:ReadWritePaths=/var/lib/sklep\nanna@sklep01:~$ curl -s -X POST 127.0.0.1:8080/admin/raporty/sprzedaz | head -c 80; echo\n{\"status\":500,\"error\":\"Internal Server Error\",\"path\":\"/admin/raporty/sprzedaz\"}\nanna@sklep01:~$ sudo journalctl -u sklep --since -5min -o cat | grep -m1 FileSystemException\njava.nio.file.FileSystemException: /srv/sklep/raporty/sprzedaz-2026-10-12.csv: Read-only file system"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Katalog zapisu w `ReadWritePaths=`",
+      "body": "Katalog raportów utworzony z właścicielem `sklep` i dopisany w pliku dodatkowym jednostki (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sudo install -d -o sklep -g sklep -m 750 /srv/sklep/raporty\nanna@sklep01:~$ sudo systemctl edit sklep --drop-in=raporty --stdin <<'EOF'\n> [Service]\n> ReadWritePaths=/srv/sklep/raporty\n> EOF\nanna@sklep01:~$ systemctl show sklep -p ReadWritePaths\nReadWritePaths=/var/lib/sklep /srv/sklep/raporty\nanna@sklep01:~$ sudo systemctl restart sklep && sleep 20 && curl -s -X POST 127.0.0.1:8080/admin/raporty/sprzedaz; echo\n{\"plik\":\"sprzedaz-2026-10-12.csv\",\"pozycji\":214}"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Każda aplikacja Javy na serwerze z systemd** — jednostka z kontem usługi, pełną ścieżką do `java` i `MemoryMax=`.\n- **Hasła i klucze** — `LoadCredential=` i `configtree`, nie `sklep.env`.\n- **Ograniczenie skutków błędów** — piaskownica (`ProtectSystem=strict`, `ProtectHome=`, `NoNewPrivileges=`) z kompletną listą `ReadWritePaths=`.\n- **Wdrożenia** — skrypt z sumą kontrolną, katalogami wydań, atomowym dowiązaniem i wycofaniem.\n- **Zmiana jednostki bez edycji pliku głównego** — `systemctl edit --drop-in=...`.\n- **Wdrożenia bez przerwy** — dwie instancje i przełączanie w Nginx lub równoważenie obciążenia."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `sklep.service` uruchamia aplikację jako `sklep`, ze zmiennymi z `sklep.env`, hasłem z `LoadCredential=` i limitem `MemoryMax=2G`.\n- Aplikacja nasłuchuje na `127.0.0.1:8080`; łagodne zatrzymanie (kod 143) mieści się w `TimeoutStopSec=`.\n- Piaskownica systemd ogranicza dostęp aplikacji do systemu; katalogi zapisu muszą być w `ReadWritePaths=`.\n- `wdroz-sklep.sh` sprawdza sumę, tworzy katalog wydania, atomowo podmienia dowiązanie, czeka na gotowość i wycofuje przy błędzie.\n- CI wdraża jako `deploy` przez `sudo` na jeden skrypt; kod wyjścia skryptu jest wynikiem wdrożenia."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
