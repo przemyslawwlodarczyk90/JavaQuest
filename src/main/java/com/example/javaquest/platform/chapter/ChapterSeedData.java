@@ -803,7 +803,7 @@ public final class ChapterSeedData {
             new ChapterSeed("_lx_32_diagnostyka_sieci", "Linux - porty i diagnostyka sieci", List.of(
                     "01_NetstatBasics", "02_ListeningPortsNetstatPlnt", "03_NetstatWithPipesAndRoot",
                     "04_SsModernReplacement", "05_LsofForNetworkConnections", "06_NmapBasicScans",
-                    "07_TcpScanTypes", "08_ServiceAndOsDetection", "09_NmapScriptsAndLocalNetwork",
+                    "07_OpenPortsAudit", "08_ExposedServicesAndBanners", "09_LocalNetworkInventory",
                     "10_ScanningLegalityAndZenmap", "11_NetcatTesting", "12_TcpdumpBasics"
             ), CourseTrack.LINUX),
 

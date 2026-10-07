@@ -558,9 +558,9 @@ Nie przeskakuj kroków bez wyraźnej decyzji użytkownika.
 | `04_SsModernReplacement` | ss - nowoczesny następca netstat | LN27 §13 |
 | `05_LsofForNetworkConnections` | lsof -i - kto używa portu | uzupełnienie |
 | `06_NmapBasicScans` | nmap - podstawowe skanowanie hostów i portów | LN26 §1-2, §4-6, §11 |
-| `07_TcpScanTypes` | Rodzaje skanów TCP i skanowanie UDP | LN26 §7-8 |
-| `08_ServiceAndOsDetection` | Wykrywanie usług, wersji i systemu | LN26 §9-10, §12 |
-| `09_NmapScriptsAndLocalNetwork` | Skrypty NSE, skan sieci lokalnej i zapis wyników | LN26 §13-15 |
+| `07_OpenPortsAudit` | Audyt otwartych portów własnego serwera (ss, lsof, porównanie z listą oczekiwanych) | uzupełnienie (zamiast LN26 §7-8, decyzja 2026-10-12) |
+| `08_ExposedServicesAndBanners` | Co serwer ujawnia na zewnątrz: banery, nagłówki, certyfikaty (nc, curl, openssl) | uzupełnienie (zamiast LN26 §9-10, §12) |
+| `09_LocalNetworkInventory` | Inwentaryzacja urządzeń we własnej sieci (ip neigh, DHCP, arp-scan) | uzupełnienie (zamiast LN26 §13-15) |
 | `10_ScanningLegalityAndZenmap` | Legalność skanowania i Zenmap | LN26 §16-20 |
 | `11_NetcatTesting` | netcat - testowanie połączeń | uzupełnienie |
 | `12_TcpdumpBasics` | tcpdump - podgląd ruchu sieciowego | uzupełnienie |
