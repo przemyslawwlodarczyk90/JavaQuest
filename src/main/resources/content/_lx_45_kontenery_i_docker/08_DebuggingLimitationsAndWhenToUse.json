@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Kontener, który nie działa, rzadko mówi o tym wprost. Aplikacja kończy się po sekundzie, a `docker ps` jej nie pokazuje; kontener „działa”, ale restartuje się co kilka sekund; usługa jest `Up`, a test zdrowia od godziny zgłasza błąd; dysk zapełniają nieużywane obrazy i warstwy budowania. Do diagnozy służy zestaw poleceń Dockera, który warto mieć w palcach: `docker ps -a`, `logs`, `inspect`, `events`, `stats`, `exec`, `top`, `cp`, `system df` — oraz wiedza z poprzednich lekcji (przestrzenie nazw, cgroups, kody wyjścia).\n\nTa lekcja zamyka rozdział: przejdziesz przez systematyczną diagnozę kontenera sklepu, nauczysz się czytać kody wyjścia (`1`, `125`–`127`, `137`, `143`), sprawdzisz stan testu zdrowia i licznik restartów, zajrzysz do kontenera bez powłoki, posprzątasz miejsce na dysku i zbierzesz ograniczenia: czego w kontenerach nie robić (systemd, Docker w Dockerze, dane bez wolumenów) i kiedy Docker — szczególnie na WSL2 — ma sens, a kiedy nie."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`docker ps -a`** — także zakończone kontenery, ze statusem `Exited (KOD)`, `Restarting`, `(healthy)`/`(unhealthy)`.\n- **`docker logs`** — `--tail 50`, `-f`, `--since 10m`, `-t` (znaczniki czasu); pokazuje stdout/stderr procesu głównego, także z poprzednich uruchomień tego samego kontenera.\n- **`docker inspect`** — `.State` (`Status`, `ExitCode`, `OOMKilled`, `StartedAt`, `FinishedAt`, `Error`), `.RestartCount`, `.State.Health.Log` (wyniki testów zdrowia), `.Config.Env`, `.Mounts`.\n- **Kody wyjścia** — `0` sukces, `1` błąd aplikacji, `125` błąd samego `docker run`, `126` polecenie nie jest wykonywalne, `127` nie znaleziono polecenia, `137` = 128+9 (`SIGKILL`, często OOM), `143` = 128+15 (`SIGTERM`, łagodne zatrzymanie).\n- **`docker events`** — strumień zdarzeń (`start`, `die`, `oom`, `health_status`), np. `docker events --filter container=sklep --since 1h`.\n- **`docker stats`**, **`docker top`** — zużycie CPU/pamięci względem limitów i procesy kontenera widziane z gospodarza.\n- **Obraz bez powłoki** (distroless, `-jre` minimalne) — `docker exec ... sh` nie działa; zamiast tego `docker cp`, `nsenter -t PID -n` (lekcja 1) lub `docker debug` (Docker Desktop).\n- **Sprzątanie** — `docker system df` (obrazy, kontenery, wolumeny, cache budowania), `docker image prune`, `docker builder prune`, `docker system prune` (bez `--volumes`, chyba że świadomie)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Diagnoza kontenera przypomina **pracę mechanika z komputerem diagnostycznym**. `docker ps -a` to kontrolki na desce: widać, że coś się świeci. `docker logs` to rozmowa z kierowcą — co się działo tuż przed awarią. `docker inspect` to odczyt pamięci błędów sterownika: dokładny kod (137, OOM), licznik restartów, godzina. `docker events` to czarna skrzynka z zapisem zdarzeń. Dobry mechanik nie wymienia od razu silnika (nie przebudowuje obrazu na ślepo) — najpierw odczytuje kody. I nie ocenia auta po tym, że silnik akurat pracuje: samochód, który gaśnie co minutę i sam odpala, też „pracuje”."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Ścieżka diagnozy kontenera",
+      "body": "Od objawu do przyczyny:",
+      "code": " objaw: \"sklep nie dziala\"\n   |\n   v\n docker ps -a --filter name=sklep\n   |-- Exited (1)        -> docker logs --tail 50 sklep          (wyjatek aplikacji, konfiguracja)\n   |-- Exited (137)      -> docker inspect -f '{{.State.OOMKilled}}'  true -> limit pamieci (lekcja 1)\n   |-- Exited (127/126)  -> zle ENTRYPOINT/CMD, brak pliku, CRLF w skrypcie\n   |-- Restarting (1)    -> RestartCount, docker events --filter event=die\n   |-- Up (unhealthy)    -> docker inspect -f '{{json .State.Health.Log}}'\n   |-- Up (healthy), a nie dziala z zewnatrz -> docker port, siec, zapora (lekcja 4)\n   v\n docker stats / docker top     -> zuzycie wzgledem limitow\n docker exec / nsenter / cp    -> zajrzyj do srodka\n docker system df              -> miejsce na dysku"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Kody wyjścia, logi i stan kontenera",
+      "body": "Kontener zakończony z błędem: status, kod, przyczyna w logu i w `inspect` (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker ps -a --filter name=raporty --format '{{.Names}} {{.Status}}'\nraporty Exited (1) 2 minutes ago\nanna@srv-docker:~$ docker logs --tail 3 raporty\n***************************\nAPPLICATION FAILED TO START\n***************************\nanna@srv-docker:~$ docker logs raporty 2>&1 | grep -m1 -A2 'Description:'\nDescription:\nFailed to bind properties under 'raporty.katalog-wyjsciowy' to java.nio.file.Path:\nanna@srv-docker:~$ docker inspect -f 'kod={{.State.ExitCode}} OOM={{.State.OOMKilled}} koniec={{.State.FinishedAt}}' raporty\nkod=1 OOM=false koniec=2026-10-10T13:41:22.518Z\nanna@srv-docker:~$ docker run --rm alpine:3.20 nieistniejace-polecenie; echo \"kod: $?\"\ndocker: Error response from daemon: failed to create task for container: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: exec: \"nieistniejace-polecenie\": executable file not found in $PATH: unknown\nkod: 127"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Test zdrowia, zdarzenia, zasoby i sprzątanie",
+      "body": "Stan `unhealthy` z wynikiem testu, zdarzenia z ostatniej godziny, zużycie pamięci, plik skopiowany z kontenera bez powłoki i miejsce na dysku (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker ps --format '{{.Names}} {{.Status}}' --filter name=sklep\nsklep Up 3 hours (unhealthy)\nanna@srv-docker:~$ docker inspect -f '{{range .State.Health.Log}}{{.ExitCode}} {{.Output}}{{end}}' sklep | tail -1\n1 {\"status\":\"DOWN\",\"components\":{\"db\":{\"status\":\"DOWN\"}}}\nanna@srv-docker:~$ docker events --since 1h --until 0s --filter container=db --format '{{.Time}} {{.Action}}'\n1760102414 die\n1760102415 start\nanna@srv-docker:~$ docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' sklep db\nsklep 0.41% 402.1MiB / 768MiB\ndb 0.05% 61.3MiB / 512MiB\nanna@srv-docker:~$ docker cp -q sklep:/app/sklep.jar /tmp/ && unzip -p /tmp/sklep.jar BOOT-INF/classes/application.yml | grep -A2 datasource\n  datasource:\n    hikari:\n      maximum-pool-size: 10\nanna@srv-docker:~$ docker system df\nTYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE\nImages          23        6         6.41GB    4.98GB (77%)\nContainers      7         5         1.2MB     0B (0%)\nLocal Volumes   5         4         1.83GB    12.4MB (0%)\nBuild Cache     118       0         2.37GB    2.37GB\nanna@srv-docker:~$ docker image prune -a -f --filter 'until=720h' | tail -1; docker builder prune -f | tail -1\nTotal reclaimed space: 4.21GB\nTotal: 2.37GB"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zdiagnozować niedziałający kontener",
+      "body": "1. `docker ps -a` — status i kod wyjścia; zanotuj czas zakończenia.\n2. `docker logs --tail 100 NAZWA` — ostatnie komunikaty aplikacji (wyjątek, „APPLICATION FAILED TO START”).\n3. `docker inspect` — `ExitCode`, `OOMKilled`, `RestartCount`, `Health.Log`, zmienne i montowania.\n4. Kod 137 + `OOMKilled=true` — limit pamięci (lekcja 1); 127/126 — `ENTRYPOINT`/`CMD`, ścieżki, CRLF; 1 — logi aplikacji.\n5. `docker events --since 1h` — czy kontener się restartuje, czy był OOM, kiedy zmienił się stan zdrowia.\n6. Kontener działa, ale nie odpowiada — `docker stats`, `docker exec`/`nsenter`, sieć i porty (lekcja 4).\n7. Problemy z miejscem — `docker system df`, ostrożne `prune` (bez `--volumes`)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Kiedy Docker ma sens — i kiedy nie",
+      "body": "- **Ma sens** — aplikacje Spring Boot i mikroserwisy, bazy i kolejki dla programistów, CI, Testcontainers, powtarzalne wdrożenia na serwerach Linux.\n- **Docker na WSL2** — świetny do programowania na Windows; projekt w `~`, nie w `/mnt/c`; nie do produkcji.\n- **Nie ma sensu** — systemd i wiele usług w jednym kontenerze („kontener jak VM”), aplikacje graficzne desktopowe, sterowniki i moduły jądra.\n- **Ostrożnie** — Docker w Dockerze (dostęp do gniazda demona z kontenera daje kontrolę nad gospodarzem; w CI lepiej rootless, Kaniko, Buildah), bazy produkcyjne bez przemyślanych kopii.\n- **Ciężkie operacje dyskowe na NTFS** — przez `/mnt/c` w WSL2 — wolne; dane w wolumenach.\n- **Skala wielu serwerów** — orkiestrator (Kubernetes), nie ręczne `docker run`."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kontener w pętli restartów wygląda na działający",
+      "body": "Polityka `restart: always` lub `unless-stopped` jest przydatna — po awarii aplikacji czy restarcie serwera kontener wraca sam. Ma jednak efekt uboczny: kontener, który pada przy każdym starcie, w `docker ps` przez większość czasu wygląda na działający (`Up 2 seconds`), a chwilami ma status `Restarting`. Po każdej awarii Docker czeka coraz dłużej przed kolejną próbą (od 100 ms, podwajając), więc usługa jest niedostępna z przerwami, a monitoring sprawdzający tylko „czy kontener działa” nic nie zgłasza. Zwracaj uwagę na `RestartCount` w `docker inspect`, zdarzenia `die` w `docker events` i krótkie czasy `Up` — oraz monitoruj test zdrowia, a nie sam stan kontenera."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Ocena stanu po samym `docker ps`",
+      "body": "Po wdrożeniu nowej wersji administrator sprawdza `docker ps`, widzi `Up 4 seconds` i uznaje, że wszystko działa. Tymczasem aplikacja kończy się błędem kilka sekund po starcie (brak zmiennej środowiskowej, zła migracja bazy, zajęty port w sieci), a polityka `restart: unless-stopped` uruchamia ją ponownie — w kółko. Użytkownicy dostają błędy 502 z reverse proxy, a w logach kontenera jest ten sam wyjątek powtórzony kilkadziesiąt razy. Po wdrożeniu sprawdzaj: licznik restartów, stan testu zdrowia (`healthy`) po czasie dłuższym niż start aplikacji i zdarzenia `die` w `docker events`. Skrypt wdrożeniowy powinien czekać na `healthy`, a nie na `Up`."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "„Up 4 seconds” uznane za sukces wdrożenia",
+      "body": "Kontener w pętli restartów — `docker ps` raz pokazuje `Up`, raz `Restarting` (przykładowy wynik):",
+      "code": "anna@srv-docker:~/sklep-stack$ docker compose up -d sklep && docker ps --format '{{.Names}} {{.Status}}' --filter name=sklep\n ✔ Container sklep  Started\nsklep Up 4 seconds\nanna@srv-docker:~/sklep-stack$ echo \"wdrozenie OK\"\nwdrozenie OK\nanna@srv-docker:~/sklep-stack$ sleep 60; docker ps --format '{{.Names}} {{.Status}}' --filter name=sklep\nsklep Restarting (1) 7 seconds ago\nanna@lubuntu-nauka ~ > curl -s -o /dev/null -w '%{http_code}\\n' http://192.168.56.30/\n502"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Weryfikacja wdrożenia: zdrowie, restarty, zdarzenia",
+      "body": "Czekanie na `healthy` z limitem czasu; przy błędzie — przyczyna z logów i licznik restartów (przykładowy wynik):",
+      "code": "anna@srv-docker:~/sklep-stack$ docker compose up -d --wait --wait-timeout 90 sklep; echo \"kod: $?\"\n ✘ Container sklep  Error\ncontainer sklep is unhealthy\nkod: 1\nanna@srv-docker:~/sklep-stack$ docker inspect -f 'restarty={{.RestartCount}} kod={{.State.ExitCode}}' sklep\nrestarty=6 kod=1\nanna@srv-docker:~/sklep-stack$ docker logs sklep 2>&1 | grep -m1 'Could not resolve placeholder'\nCaused by: java.lang.IllegalArgumentException: Could not resolve placeholder 'SKLEP_PLATNOSCI_KLUCZ' in value \"${SKLEP_PLATNOSCI_KLUCZ}\"\nanna@srv-docker:~/sklep-stack$ grep -A1 'env_file' compose.yaml | tail -1\n      - sklep.env\nanna@srv-docker:~/sklep-stack$ echo \"SKLEP_PLATNOSCI_KLUCZ=$(cat ~/sekrety/platnosci)\" >> sklep.env && docker compose up -d --wait --wait-timeout 90 sklep; echo \"kod: $?\"\n ✔ Container sklep  Healthy\nkod: 0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Kontener zakończony** — `docker ps -a`, `docker logs`, `docker inspect` (kod, OOM).\n- **Kontener restartuje się** — `RestartCount`, `docker events --filter event=die`, logi z wielu uruchomień.\n- **`unhealthy`** — `.State.Health.Log` i zależności (baza, sieć).\n- **Obraz bez powłoki** — `docker cp`, `nsenter`, `docker debug`.\n- **Brak miejsca** — `docker system df`, `image prune`, `builder prune`; wolumeny tylko świadomie.\n- **Weryfikacja wdrożenia** — `docker compose up -d --wait` (czeka na `healthy`), nie samo `docker ps`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Diagnoza zaczyna się od `docker ps -a`, `docker logs` i `docker inspect` (kod wyjścia, `OOMKilled`, `RestartCount`, `Health`).\n- Kody wyjścia: `1` błąd aplikacji, `125`–`127` błąd uruchomienia, `137` `SIGKILL`/OOM, `143` łagodne zatrzymanie.\n- `docker events`, `stats`, `top`, `cp` i `nsenter` uzupełniają obraz; `system df` i `prune` pilnują miejsca.\n- Kontener w pętli restartów wygląda na działający — sprawdzaj test zdrowia i licznik restartów, wdrożenia weryfikuj `--wait`.\n- Docker służy do aplikacji i usług w powtarzalnych środowiskach; nie zastępuje VM, a Docker na WSL2 jest narzędziem programisty."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
