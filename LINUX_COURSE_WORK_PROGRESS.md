@@ -218,7 +218,19 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   z zestawem `admin`, port 9100 dla 192.168.56.20), `rocky-lab` 192.168.56.50 (Rocky 9, firewalld: public = http/https
   + rich rule 192.0.2.10→9100; internal = źródło 192.168.56.0/24 z ssh, cockpit, usługą `sklep` 8081 (Nginx przed
   Spring Boot; `semanage port -a -t http_port_t -p tcp 8081`)).
-  Pozostałe lekcje (`_lx_36`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_36_serwery_www` (9 lekcji) — ZROBIONY (2026-10-07). Apache 2.4.58 na **srv-test** (port 80, ufw 'Apache
+  Full' z lab): `conf-available/zabezpieczenia.conf` (ServerTokens Prod, nagłówki, `-Indexes`), mod headers; hosty
+  `strona.lab.local` (+www; `/var/www/strona`, `DirectoryIndex index.php index.html`, katalog `cenniki` z `+Indexes`),
+  `docs.lab.local` (Javadoc), `panel.lab.local` (SPA, `FallbackResource`), host domyślny `000-domyslny.conf` (404),
+  `000-default` wyłączony; rekordy dnsmasq `/etc/dnsmasq.d/www.conf`; hasła strony w `/etc/strona/baza.php`. PHP 8.3.12 ze
+  źródeł w `/opt/php-8.3` jako moduł (`libphp.so`, `mods-available/php.{load,conf}`), MPM przełączony na **prefork**,
+  `php.ini-production`. Nginx 1.24.0 na lubuntu-nauka: `sites-available/sklep` (upstream `sklep_app` 127.0.0.1:8080
+  max_fails + 8082 backup, keepalive 16, `/assets/` alias /var/www/sklep/, `/actuator/` 404 poza health, `/ws/`,
+  `client_max_body_size 20m`, `error_page 502 503 504 /przerwa.html` z /var/www/sklep-bledy, log `sklep-access.log` w
+  formacie `czasy` z `conf.d/log-czasy.conf`), druga instancja `sklep@8082`; strona `pomoc.lab.local` (/var/www/pomoc).
+  `app01` (produkcja, 203.0.113.40): certbot 2.9.0, certyfikat Let's Encrypt dla sklep.firma.example + www (do
+  2027-01-05), `listen 443 ssl http2`, HSTS 1 rok, ufw 'Nginx Full'.
+  Pozostałe lekcje (`_lx_37`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -288,7 +300,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_36_serwery_www`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_37_bazy_danych_na_serwerze`** (MySQL planowo na srv-test obok Apache/PHP — phpMyAdmin; PostgreSQL na lubuntu-nauka), potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

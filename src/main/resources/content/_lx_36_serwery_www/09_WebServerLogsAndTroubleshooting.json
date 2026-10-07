@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Serwer WWW to miejsce, w którym spotykają się wszystkie warstwy: sieć, zapora, DNS, uprawnienia plików, konfiguracja serwera, aplikacja Javy, baza danych. Gdy klient widzi błąd, przyczyna może leżeć w każdej z nich — a jedynym wiarygodnym źródłem informacji są **logi**. Serwer WWW zapisuje dwa rodzaje logów: **dziennik dostępu** (*access log* — każde żądanie: kto, kiedy, co, z jakim wynikiem i ile trwało) i **dziennik błędów** (*error log* — dlaczego coś się nie udało: brak pliku, odmowa dostępu, aplikacja nie odpowiada, błąd składni).\n\nW tej lekcji rozszerzysz format dziennika dostępu Nginx o czasy odpowiedzi aplikacji, przeanalizujesz logi narzędziami z rozdziałów 6-13 (najczęstsze adresy, rozkład kodów odpowiedzi, najwolniejsze żądania), a potem przejdziesz przez systematyczną diagnozę najczęstszych błędów: **403**, **404**, **413**, **500**, **502**, **504** i pętli przekierowań — dla każdego zobaczysz, jak wygląda w `curl`, co mówi `error.log` i gdzie szukać przyczyny. Na koniec pułapka, na którą trafia prawie każdy: katalog strony w katalogu domowym i błąd 403 mimo „dobrych” praw pliku."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Format `combined`** — domyślny format dziennika dostępu (Apache i Nginx): `adres - użytkownik [czas] \"żądanie\" kod rozmiar \"Referer\" \"User-Agent\"`.\n- **Własny format Nginx** — `log_format czasy '$remote_addr ... $status $body_bytes_sent rt=$request_time urt=$upstream_response_time us=$upstream_status';` + `access_log /var/log/nginx/sklep-access.log czasy;`; Apache: `%D` (czas w mikrosekundach), `%{X-Forwarded-For}i`.\n- **Dziennik błędów** — `error_log /var/log/nginx/error.log warn;` (poziomy: `debug`, `info`, `notice`, `warn`, `error`, `crit`); Apache: `LogLevel warn`, `ErrorLog`.\n- **Kody 4xx (po stronie klienta/konfiguracji)** — **403** brak dostępu (prawa plików, `Require`/`deny`, brak pliku startowego przy `-Indexes`), **404** brak pliku (zły `root`/`alias`, literówka, brak trasy w aplikacji), **413** za duże żądanie (`client_max_body_size`/`LimitRequestBody`).\n- **Kody 5xx (po stronie serwera)** — **500** błąd aplikacji (stos wyjątku w logu aplikacji), **502** proxy nie może połączyć się z aplikacją lub dostało błędną odpowiedź (aplikacja nie działa, zły port, prawa do gniazda, SELinux), **503** usługa niedostępna (limit, tryb serwisowy), **504** aplikacja nie odpowiedziała w czasie (`proxy_read_timeout`).\n- **Narzędzia** — `curl -v`/`-I`/`-w '%{http_code} %{time_total}'`, `tail -f` z `grep`, `awk`/`sort`/`uniq -c` (rozdziały 11-13), `nginx -T`, `apache2ctl -S`, `namei -l SCIEZKA` (prawa na całej ścieżce), `journalctl -u nginx`, `ss -tlnp`.\n- **Rotacja** — `/etc/logrotate.d/nginx` i `apache2` (codziennie, 14 kopii, kompresja, przeładowanie po rotacji — rozdział 26)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Logi serwera WWW to **czarna skrzynka i dziennik pokładowy samolotu**. Dziennik dostępu zapisuje każdy lot: skąd, dokąd, o której, ile trwał i jak się zakończył (kod odpowiedzi). Dziennik błędów zapisuje komunikaty techniczne: „silnik nr 2 nie odpowiada” (502), „brak uprawnień do drzwi kabiny” (403). Kod odpowiedzi to tylko **objaw**, jak „opóźniony lot” na tablicy odlotów — dopiero dziennik techniczny mówi, czy przyczyną była pogoda, awaria czy brak załogi. Diagnosta zaczyna zawsze od tego samego: znajduje w dzienniku konkretny lot (żądanie) i czyta wpisy z tej samej chwili."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Od kodu odpowiedzi do przyczyny",
+      "body": "Mapa diagnostyczna: co oznacza kod, co pokazuje `error.log` i gdzie szukać dalej:",
+      "code": " KOD  CO WIDZI KLIENT              error.log (Nginx)                             GDZIE SZUKAC\n 403  Forbidden                    \"Permission denied\" / \"directory index ...    namei -l, prawa www-data,\n                                    is forbidden\" / \"access forbidden by rule\"   Require/deny, index\n 404  Not Found                    open() \"/sciezka\" failed (2: No such file)    root vs alias, literowka;\n                                    (lub brak wpisu - 404 z aplikacji)           log aplikacji (brak trasy)\n 413  Request Entity Too Large     client intended to send too large body       client_max_body_size\n 500  Internal Server Error        (zwykle brak - blad w aplikacji)             journalctl -u sklep,\n                                                                                 aplikacja.log (wyjatek)\n 502  Bad Gateway                  connect() failed (111: Connection refused)    systemctl status sklep, ss,\n                                    / (13: Permission denied) [SELinux]           port w proxy_pass\n 504  Gateway Time-out             upstream timed out (110) while reading        wolne zapytanie SQL,\n                                                                                 proxy_read_timeout, jstack\n ERR_TOO_MANY_REDIRECTS (3xx)      -                                             X-Forwarded-Proto, HTTPS w\n                                                                                 aplikacji i w proxy naraz"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Format z czasami odpowiedzi i analiza dziennika dostępu",
+      "body": "Własny format logu sklepu w Nginx i typowe analizy: kody odpowiedzi, najaktywniejsze adresy, najwolniejsze żądania (przykładowy wynik):",
+      "code": "$ cat /etc/nginx/conf.d/log-czasy.conf\nlog_format czasy '$remote_addr - $remote_user [$time_local] \"$request\" $status $body_bytes_sent '\n                 '\"$http_referer\" \"$http_user_agent\" rt=$request_time urt=$upstream_response_time us=$upstream_status';\n$ grep access_log /etc/nginx/sites-available/sklep\n    access_log /var/log/nginx/sklep-access.log czasy;\n$ tail -1 /var/log/nginx/sklep-access.log\n192.168.56.1 - - [07/Oct/2026:22:41:07 +0200] \"GET /api/produkty?kategoria=krzesla HTTP/1.1\" 200 4812 \"-\" \"Mozilla/5.0\" rt=0.084 urt=0.083 us=200\n$ awk '{print $9}' /var/log/nginx/sklep-access.log | sort | uniq -c | sort -rn\n  18211 200\n    912 304\n    143 404\n     37 401\n     12 502\n      4 504\n$ awk '{print $1}' /var/log/nginx/sklep-access.log | sort | uniq -c | sort -rn | head -3\n   9120 192.168.56.1\n   4410 192.168.56.20\n    218 198.51.100.23\n$ grep -oE '\"[A-Z]+ [^ ]+ |rt=[0-9.]+' /var/log/nginx/sklep-access.log | paste - - | sort -t= -k2 -rn | head -3\n\"GET /api/raporty/sprzedaz-roczna \trt=59.997\n\"GET /api/raporty/sprzedaz-roczna \trt=58.412\n\"POST /api/zamowienia/import \trt=12.084"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Diagnoza 502 i 504 na podstawie logów",
+      "body": "Klient zgłasza błędy; w dzienniku dostępu widać 502 o 22:14 i 504 przy raporcie rocznym — `error.log`, stan usługi i log aplikacji wskazują przyczyny (przykładowy wynik):",
+      "code": "$ grep -E '\" 50[24] ' /var/log/nginx/sklep-access.log | tail -2 | cut -c1-120\n192.168.56.1 - - [07/Oct/2026:22:14:31 +0200] \"GET /api/produkty HTTP/1.1\" 502 157 \"-\" \"Mozilla/5.0\" rt=0.001 urt=0.000 us=502\n192.168.56.1 - - [07/Oct/2026:22:30:12 +0200] \"GET /api/raporty/sprzedaz-roczna HTTP/1.1\" 504 167 \"-\" \"curl/8.5.0\" rt=60.002 urt=60.001 us=504\n$ sudo grep -E '22:14:31|22:30:12' /var/log/nginx/error.log | cut -c1-150\n2026/10/07 22:14:31 [error] 1205#1205: *5012 connect() failed (111: Connection refused) while connecting to upstream, client: 192.168.56.1, server:\n2026/10/07 22:30:12 [error] 1206#1206: *5398 upstream timed out (110: Connection timed out) while reading response header from upstream, client:\n$ journalctl -u sklep --since '22:13' --until '22:16' -o short-iso | grep -E 'Stopp|Start|Started' | cut -c1-90\n2026-10-07T22:14:29+02:00 lubuntu-nauka systemd[1]: Stopping sklep.service - Sklep (Spring Boot)...\n2026-10-07T22:14:44+02:00 lubuntu-nauka systemd[1]: Started sklep.service - Sklep (Spring Boot).\n$ grep -m1 -A2 'sprzedaz-roczna' /var/log/sklep/aplikacja.log | cut -c1-120\n2026-10-07T22:29:12.214+02:00  INFO 15210 --- [nio-8080-exec-9] p.s.raporty.RaportService : Raport roczny: start zapytania (412 tys. zamowien)\n2026-10-07T22:30:41.877+02:00  INFO 15210 --- [nio-8080-exec-9] p.s.raporty.RaportService : Raport roczny: koniec po 89663 ms\n# -> 502: restart aplikacji (15 s bez nasluchu); 504: zapytanie trwa 90 s > proxy_read_timeout 60 s"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Systematyczna diagnoza błędu strony",
+      "body": "1. Odtwórz błąd z terminala: `curl -sv -o /dev/null http://HOST/SCIEZKA` — kod, nagłówki, czas; zapamiętaj **godzinę**.\n2. Znajdź żądanie w dzienniku dostępu (adres, ścieżka, czas) — brak wpisu oznacza, że żądanie nie dotarło (DNS, zapora, inny serwer/host wirtualny).\n3. Przeczytaj `error.log` z tej samej sekundy — komunikat zwykle wskazuje przyczynę wprost.\n4. Dla 5xx przy proxy: `systemctl status APLIKACJA`, `ss -tlnp | grep PORT`, log aplikacji z tej chwili; dla 403/404 — ścieżka na dysku z `error.log`, `namei -l`, konfiguracja `root`/`alias`.\n5. Sprawdź konfigurację wynikową: `sudo nginx -T` lub `apache2ctl -S`/`-t`.\n6. Po poprawce powtórz `curl` i obserwuj logi na żywo: `sudo tail -f /var/log/nginx/error.log`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Do czego jeszcze służą logi serwera WWW",
+      "body": "- **Wydajność** — najwolniejsze ścieżki (`rt=`, `urt=`), porównanie czasu proxy i aplikacji (różnica = sieć/kolejka).\n- **Bezpieczeństwo** — skany (`/wp-login.php`, `/.env`), zgadywanie haseł, źródło dla fail2ban (rozdział 35).\n- **Wdrożenia** — wzrost liczby 5xx po wdrożeniu nowej wersji → wycofanie (rozdział 38).\n- **Statystyki** — liczba żądań, popularne produkty, klienci (`User-Agent`), błędy 404 z linków zewnętrznych (`Referer`).\n- **Centralizacja** — wysyłanie logów do systemu centralnego (rsyslog z rozdziału 26, ELK, Loki) z alarmami na 5xx.\n- **Zgodność z przepisami** — logi zawierają adresy IP (dane osobowe w RODO) — ustal retencję i dostęp."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Logi a RODO i rozmiar dysku",
+      "body": "Dziennik dostępu zawiera adres IP klienta, czas i odwiedzane adresy — w świetle RODO to dane osobowe. Nie znaczy to, że nie wolno ich zbierać (bezpieczeństwo i diagnostyka to uzasadnione cele), ale trzeba świadomie ustalić **czas przechowywania** (domyślny `logrotate` dla Nginx w Ubuntu: 14 dni), dostęp (grupa `adm`, rozdział 26) i unikać zapisywania w logach danych wrażliwych — np. tokenów, haseł czy numerów dokumentów w parametrach URL (`?token=...` trafia do `$request` w każdym wpisie). Druga sprawa to miejsce: przy dużym ruchu dziennik dostępu rośnie o gigabajty dziennie; wyłączaj go dla rzeczy nieistotnych (`access_log off;` dla `/assets/` i `/actuator/health`, odpytywanego przez monitoring co kilka sekund) i pilnuj rotacji."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Strona w katalogu domowym — 403 mimo dobrych praw pliku",
+      "body": "Klasyczny problem: `root /home/anna/strona;` w konfiguracji, plik `index.html` ma prawa 644, a serwer zwraca **403** (Nginx) lub **403/404** (Apache). Przyczyną jest **cała ścieżka**: proces `www-data` musi mieć prawo przejścia (`x`) przez każdy katalog po drodze, a katalog domowy w Ubuntu 24.04 ma prawa `750` — „inni” nie mogą do niego wejść. `ls -l` na pliku tego nie pokaże; pokaże `namei -l`. Najgorsza „naprawa” to `chmod -R 777 /home/anna` — otwiera całe konto (klucze SSH, historia poleceń) dla wszystkich użytkowników systemu i łamie wymogi SSH (rozdział 33). W Rocky/RHEL dochodzi do tego SELinux: pliki w katalogu domowym mają kontekst `user_home_t`, którego `httpd_t` nie może czytać, nawet przy prawach 777."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Katalog strony w domu użytkownika i „naprawa” 777",
+      "body": "Nginx nie może przejść przez `/home/anna`; zmiana praw na 777 otwiera konto wszystkim (przykładowy wynik):",
+      "code": "$ grep root /etc/nginx/sites-available/pomoc\n    root /home/anna/pomoc;\n$ curl -s -o /dev/null -w '%{http_code}\\n' -H 'Host: pomoc.lab.local' http://localhost/\n403\n$ sudo tail -1 /var/log/nginx/error.log | cut -c1-130\n2026/10/07 22:52:18 [crit] 1206#1206: *6021 stat() \"/home/anna/pomoc/\" failed (13: Permission denied), client: 127.0.0.1, server: p\n$ chmod -R 777 /home/anna\n$ ssh srv-test true; echo \"kod: $?\"\nBad owner or permissions on /home/anna/.ssh/config\nkod: 255"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Analiza ścieżki i katalog strony poza katalogiem domowym",
+      "body": "`namei -l` pokazuje, który katalog blokuje dostęp; strona przeniesiona do `/var/www`, prawa domu przywrócone (przykładowy wynik):",
+      "code": "$ chmod 750 /home/anna && chmod -R go-rwx /home/anna/.ssh\n$ namei -l /home/anna/pomoc/index.html\nf: /home/anna/pomoc/index.html\ndrwxr-xr-x root root /\ndrwxr-xr-x root root home\ndrwxr-x--- anna anna anna\ndrwxrwxr-x anna anna pomoc\n-rw-rw-r-- anna anna index.html\n$ sudo install -d -o anna -g www-data -m 2750 /var/www/pomoc && rsync -a ~/pomoc/ /var/www/pomoc/\n$ sudo sed -i 's#root /home/anna/pomoc;#root /var/www/pomoc;#' /etc/nginx/sites-available/pomoc\n$ sudo nginx -t 2>&1 | tail -1 && sudo systemctl reload nginx\nnginx: configuration file /etc/nginx/nginx.conf test is successful\n$ curl -s -o /dev/null -w '%{http_code}\\n' -H 'Host: pomoc.lab.local' http://localhost/\n200"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Błąd widoczny dla klienta** — `curl -sv` + dziennik dostępu + `error.log` z tej samej sekundy.\n- **403** — `namei -l` dla ścieżki z `error.log`, `Require`/`deny`, plik startowy; w Rocky — konteksty SELinux (`ls -Z`).\n- **404** — ścieżka z `error.log` (`root`/`alias`); brak wpisu w `error.log` = 404 zwrócone przez aplikację.\n- **502/504** — stan aplikacji, port, log aplikacji, `proxy_read_timeout`; długie operacje — przetwarzanie w tle.\n- **Wydajność** — format logu z `$request_time` i `$upstream_response_time`, analiza `awk`.\n- **Na bieżąco** — `tail -f` dziennika błędów przy każdej zmianie konfiguracji i wdrożeniu."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Dziennik dostępu zapisuje każde żądanie (kod, czas, rozmiar), dziennik błędów — przyczyny niepowodzeń; diagnoza zaczyna się od znalezienia żądania w obu.\n- Format logu warto rozszerzyć o `$request_time` i `$upstream_response_time` — pozwala to odróżnić wolną aplikację od wolnego proxy.\n- 403/404/413 to zwykle konfiguracja lub uprawnienia, 500 — wyjątek w aplikacji, 502 — aplikacja niedostępna, 504 — przekroczony czas odpowiedzi.\n- `namei -l` pokazuje uprawnienia na całej ścieżce — proces serwera musi móc przejść przez każdy katalog; strony trzymaj w `/var/www`, nie w katalogu domowym.\n- Logi zawierają dane osobowe — ustal retencję, ogranicz dostęp i nie umieszczaj sekretów w adresach URL."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
