@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "W lekcji 3 rsync po zmianie jednego pliku przesłał kilka kilobajtów zamiast 52 MB — bo pominął pliki, które się nie zmieniły. Ale co, jeśli zmienił się **duży** plik? Zrzut bazy 400 MB, w którym przybyło kilka tysięcy wierszy, obraz maszyny wirtualnej, plik logu z dopisanymi liniami? Tu działa właściwa sztuczka rsync, opisana w notatkach kursu: **algorytm przesyłania różnic** (*delta-transfer*). rsync dzieli plik na bloki, liczy dla nich sumy kontrolne i przesyła przez sieć **tylko te fragmenty, których druga strona jeszcze nie ma** — resztę odbiorca składa z kawałków swojej starej wersji.\n\nW tej lekcji zrozumiesz, jak to działa krok po kroku (sumy „toczące się” i silne sumy kontrolne, dlaczego wykrywa także przesunięte dane), zmierzysz efekt na zrzucie bazy `sklep` (pola `Literal data` i `Matched data` w `--stats`), poznasz przypadki, w których algorytm **nie pomaga** (pliki skompresowane i zaszyfrowane, kopie lokalne — gdzie rsync świadomie go wyłącza) oraz opcje, które nim sterują: `--whole-file`, `--no-whole-file`, `--block-size`, `-z`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Algorytm rsync** — opracowany przez Andrew Tridgella i Paula Mackerrasa (1996); różnice wylicza się **bez przesyłania starej wersji pliku** — obie strony wymieniają tylko sumy kontrolne.\n- **Bloki** — odbiorca dzieli **swoją** (starą) wersję pliku na bloki stałej długości (domyślnie ok. pierwiastka z rozmiaru pliku, np. ~20 KB dla 400 MB) i wysyła nadawcy dwie sumy dla każdego bloku.\n- **Suma słaba (toczona, *rolling checksum*)** — bardzo szybka do przeliczenia przy przesunięciu okna o 1 bajt; pozwala nadawcy przeszukać **każde położenie** w nowym pliku.\n- **Suma silna** — kryptograficzny skrót (w rsync 3.2 negocjowany: xxh128/xxh3, MD5 lub MD4) potwierdzający dopasowanie, gdy suma słaba pasuje.\n- **Instrukcje rekonstrukcji** — nadawca wysyła listę: „blok nr 17 z twojej kopii”, „te 900 nowych bajtów”, „blok nr 18”...; odbiorca składa nowy plik obok starego i podmienia go na końcu.\n- **`Literal data` / `Matched data`** — w `--stats`: bajty przesłane dosłownie / bajty odtworzone z istniejących bloków odbiorcy.\n- **`--whole-file` (`-W`)** — wyłącz algorytm, przesyłaj całe pliki; **domyślne przy kopiowaniu lokalnym** (dysk → dysk), gdzie czytanie obu wersji kosztuje więcej niż zwykła kopia; `--no-whole-file` wymusza algorytm.\n- **Kompresja `-z`** — dodatkowo kompresuje przesyłane dane (sens przy wolnym łączu i plikach tekstowych; nie przy szybkiej sieci lokalnej)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Wyobraź sobie, że ty i kolega macie po egzemplarzu tej samej książki, ale on ma starsze wydanie, a ty nowe — z kilkoma poprawionymi akapitami. Zamiast dyktować mu całą książkę przez telefon, kolega czyta ci **krótkie „odciski”** każdej strony swojego wydania (pierwsze litery wierszy). Ty przesuwasz palec po swoim egzemplarzu i za każdym razem, gdy fragment pasuje do któregoś odcisku, mówisz tylko „przepisz swoją stronę 17”. Dyktujesz dosłownie wyłącznie nowe akapity. Dzięki przesuwaniu palca litera po literze znajdziesz stare strony nawet wtedy, gdy wstawiony akapit przesunął cały dalszy tekst."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Przesyłanie różnic krok po kroku",
+      "body": "Odbiorca ma starą wersję zrzutu, nadawca nową — z kilkoma nowymi wierszami w środku:",
+      "code": " ODBIORCA (srv-test, stary sklep.dump)         NADAWCA (lubuntu-nauka, nowy sklep.dump)\n [B0][B1][B2][B3][B4] ... [B19999]               [B0][B1][B2][NOWE 900 B][B3][B4] ... [B19999][NOWE 2 MB]\n  1. dla kazdego bloku: (suma slaba, suma silna) ------>\n                                                 2. okno o dlugosci bloku przesuwane co 1 bajt:\n                                                    suma slaba pasuje? -> sprawdz silna -> DOPASOWANIE\n  3. <------ instrukcje: B0, B1, B2, LITERALNIE 900 B, B3, B4, ... B19999, LITERALNIE 2 MB\n  4. sklada nowy plik (obok starego: .sklep.dump.Xy3kq), na koncu zamienia\n\n PRZESLANE PRZEZ SIEC: sumy (~400 KB) + 2 MB nowych danych   zamiast 412 MB\n PLIK SKOMPRESOWANY (sklep.dump.gz): mala zmiana na poczatku -> caly dalszy strumien inny -> ~100% literalnie"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Duży plik ze zmianą w środku — ile naprawdę przesłano",
+      "body": "Zrzut bazy `sklep` (format tekstowy SQL) skopiowany na `srv-test`, potem zmieniony (nowe zamówienia) i zsynchronizowany ponownie (przykładowy wynik):",
+      "code": "$ ls -lh ~/zrzuty/sklep.sql\n-rw-r----- 1 anna anna 412M Oct  7 17:50 /home/anna/zrzuty/sklep.sql\n$ rsync -a --stats ~/zrzuty/sklep.sql srv-test:kopie/ | grep -E 'Literal|Matched|^sent'\nLiteral data: 431.98M bytes\nMatched data: 0 bytes\nsent 432.09M bytes  received 35 bytes  48.01M bytes/sec\n$ pg_dump -U sklep sklep > ~/zrzuty/sklep.sql\n$ ls -lh ~/zrzuty/sklep.sql\n-rw-r----- 1 anna anna 414M Oct  7 18:20 /home/anna/zrzuty/sklep.sql\n$ rsync -a --stats ~/zrzuty/sklep.sql srv-test:kopie/ | grep -E 'Literal|Matched|^sent|speedup'\nLiteral data: 2.38M bytes\nMatched data: 431.69M bytes\nsent 2.81M bytes  received 412.07K bytes  495.81K bytes/sec\ntotal size is 434.07M  speedup is 134.82"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Kiedy algorytm nie pomaga: kompresja i kopie lokalne",
+      "body": "Wczoraj na `srv-test` trafił zrzut skompresowany gzipem; dzisiejszy, po niewielkich zmianach w bazie, prawie w całości jest przesyłany ponownie; `--rsyncable` to łagodzi; przy kopii lokalnej rsync domyślnie przesyła całe pliki (przykładowy wynik):",
+      "code": "$ pg_dump -U sklep sklep | gzip > /tmp/sklep.sql.gz\n$ rsync -a --stats /tmp/sklep.sql.gz srv-test:kopie/ | grep -E 'Literal|Matched'\nLiteral data: 61.20M bytes\nMatched data: 1.31M bytes\n$ pg_dump -U sklep sklep | gzip --rsyncable > /tmp/sklep.sql.gz\n$ rsync -a --stats /tmp/sklep.sql.gz srv-test:kopie/ | grep -E 'Literal|Matched'\nLiteral data: 3.94M bytes\nMatched data: 58.82M bytes\n$ rsync -a --stats ~/zrzuty/sklep.sql /tmp/lokalna/ | grep -E 'Literal|Matched'\nLiteral data: 434.07M bytes\nMatched data: 0 bytes\n$ rsync -a --no-whole-file --stats ~/zrzuty/sklep.sql /tmp/lokalna/ | grep -E 'Literal|Matched'\nLiteral data: 0 bytes\nMatched data: 434.07M bytes"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak rsync przesyła jeden zmieniony plik",
+      "body": "1. Quick check (lekcja 3) stwierdza, że plik różni się rozmiarem lub czasem — trzeba go zaktualizować.\n2. Odbiorca dzieli swoją starą wersję na bloki i wysyła nadawcy parę sum (słaba + silna) dla każdego bloku.\n3. Nadawca przesuwa okno po nowej wersji bajt po bajcie; gdy suma słaba pasuje do któregoś bloku, sprawdza sumę silną.\n4. Dopasowane fragmenty zastępuje odwołaniem „blok nr N”, niedopasowane bajty wysyła dosłownie.\n5. Odbiorca zapisuje nowy plik jako tymczasowy (`.nazwa.XXXXXX` w tym samym katalogu), na końcu sprawdza sumę całego pliku i atomowo podmienia go na miejscu starego.\n6. Gdy suma końcowa się nie zgadza (rzadkie kolizje), rsync powtarza transfer pliku z innymi parametrami."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie algorytm różnicowy daje najwięcej",
+      "body": "- **Duże pliki z niewielkimi zmianami** — zrzuty SQL w formacie tekstowym, logi z dopisanymi liniami, obrazy dysków maszyn wirtualnych, pliki baz SQLite.\n- **Wolne lub płatne łącza** — kopia z serwera w chmurze do biura, transfer przez VPN, łącze komórkowe.\n- **Kopie do zdalnego magazynu** — nocna synchronizacja na drugi serwer lub do innej serwerowni.\n- **Artefakty Javy** — jar z niewielką zmianą w kodzie: zależności w środku pliku się nie zmieniły, więc część danych zostaje dopasowana (warstwowe jary Spring Boot i obrazy warstwowe dają jeszcze więcej).\n- **Gdy NIE pomaga** — pliki skompresowane (`.gz`, `.zip`, `.jar` w całości przepakowane), zaszyfrowane, multimedia — przesyłane są prawie w całości."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Dlaczego lokalnie rsync kopiuje całe pliki",
+      "body": "Algorytm różnicowy oszczędza **sieć** kosztem **pracy dysku i procesora**: obie wersje pliku trzeba przeczytać w całości, a nowa jest i tak zapisywana od początku (do pliku tymczasowego). Gdy źródło i cel są na tym samym komputerze, „przesłanie” bloku to zwykły odczyt z dysku — więc liczenie sum byłoby czystą stratą. Dlatego przy kopii lokalnej rsync domyślnie działa w trybie `--whole-file`, a zysk daje tylko pomijanie niezmienionych plików (quick check). Wyjątek stanowi kopia na dysk sieciowy zamontowany lokalnie (NFS, Samba — rozdział 25): z punktu widzenia rsync to ścieżka lokalna, ale dane idą przez sieć; tu `--no-whole-file` może przyspieszyć kopię, choć lepiej uruchomić rsync bezpośrednio na serwerze plików przez SSH. Zwróć też uwagę, że odbiorca potrzebuje **wolnego miejsca na drugą kopię** zmienianego pliku (plik tymczasowy) — przy obrazie VM 100 GB na prawie pełnym dysku kopia się nie uda (pomaga `--inplace`, z ryzykiem uszkodzenia pliku przy przerwaniu)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Kompresja przed wysłaniem niszczy zysk z rsync",
+      "body": "Intuicyjny pomysł „skompresuję zrzut, to będzie mniej do przesłania” często działa odwrotnie, gdy plik jest synchronizowany cyklicznie. Zwykły `gzip` sprawia, że zmiana jednego wiersza na początku zmienia cały dalszy strumień skompresowany — rsync nie znajduje pasujących bloków i przesyła 60 MB codziennie, podczas gdy nieskompresowany zrzut wymagałby ok. 3 MB różnic (plus `-z` w samym rsync zapewnia kompresję w locie). Jeśli plik musi być skompresowany, użyj `gzip --rsyncable` lub `zstd --rsyncable`. Drugi błąd: `-z` przy kopiowaniu przez szybką sieć lokalną albo dla plików już skompresowanych — procesor staje się wąskim gardłem i kopia trwa dłużej."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Codzienny zrzut kompresowany zwykłym gzipem",
+      "body": "Skrypt kopii każdego dnia przesyła prawie cały skompresowany plik (przykładowy wynik):",
+      "code": "$ cat ~/bin/kopia-zrzutu.sh\n#!/bin/bash\npg_dump -U sklep sklep | gzip > ~/zrzuty/sklep.sql.gz\nrsync -az --stats ~/zrzuty/sklep.sql.gz srv-test:kopie/ | grep -E 'Literal|^sent'\n$ ~/bin/kopia-zrzutu.sh\nLiteral data: 61.20M bytes\nsent 61.24M bytes  received 9.83K bytes  6.10M bytes/sec"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Zrzut nieskompresowany lub z `--rsyncable`",
+      "body": "Zrzut tekstowy, kompresja w locie przez `-z` (wolne łącze) — przesyłane są tylko różnice (przykładowy wynik):",
+      "code": "$ cat ~/bin/kopia-zrzutu.sh\n#!/bin/bash\npg_dump -U sklep sklep > ~/zrzuty/sklep.sql\nrsync -az --stats ~/zrzuty/sklep.sql srv-test:kopie/ | grep -E 'Literal|^sent'\n$ ~/bin/kopia-zrzutu.sh\nLiteral data: 2.38M bytes\nsent 1.07M bytes  received 412.09K bytes  328.97K bytes/sec"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Kopia przez sieć (SSH)** — domyślnie algorytm różnicowy działa sam, nic nie trzeba włączać.\n- **Kopia lokalna dysk → dysk** — domyślne `--whole-file` jest właściwe.\n- **Szybka sieć lokalna (1 Gb/s+) i małe zmiany w ogromnych plikach** — rozważ `-W`, jeśli procesor lub dysk są wolniejsze niż sieć.\n- **Wolne łącze, pliki tekstowe** — dodaj `-z`.\n- **Pliki synchronizowane cyklicznie** — nie kompresuj ich wcześniej albo użyj `--rsyncable`.\n- **Weryfikacja treści po kopii** — `-c` (sumy kontrolne całych plików), niezależnie od algorytmu różnicowego."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Algorytm rsync przesyła tylko te fragmenty zmienionego pliku, których odbiorca nie ma; resztę odbiorca odtwarza ze swojej starej wersji.\n- Odbiorca wysyła sumy (słabą i silną) dla bloków; nadawca szuka dopasowań w każdym położeniu, więc wykrywa też przesunięte dane.\n- `Literal data` w `--stats` to dane przesłane dosłownie, `Matched data` — odtworzone z istniejących bloków.\n- Lokalnie rsync domyślnie kopiuje całe pliki (`--whole-file`); `--no-whole-file` wymusza algorytm.\n- Pliki skompresowane i zaszyfrowane niweczą zysk — synchronizuj dane nieskompresowane (z `-z`) lub z `--rsyncable`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
