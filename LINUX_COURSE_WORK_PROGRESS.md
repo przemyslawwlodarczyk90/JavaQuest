@@ -405,7 +405,8 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 - Narzędzie: `scripts/content-migration/lx_build_practice.js <plik.txt> <lekcja.json>` (format `#EX` P:/H:/S:,
   `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
   poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
-- Stan: `_lx_01/01` — 30/100, `_lx_01/02` — 20/60 GOTOWE. Pozostałe lekcje — 0/0 (kolejność: po kolei od 01/03).
+- Stan: rozdział `_lx_01` GOTOWY (01/01 30/100, 01/02-08 20/60). Pozostałe — 0/0 (kolejność: po kolei).
+  Źródła w `scripts/content-migration/lx_practice/_lx_RR_LL.txt`.
 - **DECYZJA UŻYTKOWNIKA (2026-10-12): dwa poziomy, przypisane per rozdział** (bez trzeciego poziomu; „zależy mi na
   solidnym materiale, nawet do nauki”):
   - **PEŁNY = 30 ćwiczeń / 100 pytań** — rozdziały 03-07, 10-18, 21, 22, 24-28, 30-42, 45.
