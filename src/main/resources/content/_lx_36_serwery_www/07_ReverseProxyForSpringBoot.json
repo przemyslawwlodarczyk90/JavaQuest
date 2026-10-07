@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Aplikacja Spring Boot ma wbudowany serwer (Tomcat) i mogłaby odpowiadać klientom bezpośrednio na porcie 80 lub 443. W praktyce prawie zawsze stoi przed nią **reverse proxy** — Nginx lub Apache — a sama aplikacja nasłuchuje tylko lokalnie (`server.address=127.0.0.1`, rozdział 30). Proxy przyjmuje połączenia od klientów, obsługuje HTTPS (lekcja 8), serwuje pliki statyczne (lekcja 6), ogranicza rozmiar i liczbę żądań, ukrywa szczegóły aplikacji, pozwala wyświetlić stronę „przerwa techniczna”, gdy aplikacja się restartuje, i rozkładać ruch na kilka instancji przy wdrożeniach bez przestojów.\n\nW tej lekcji zbudujesz kompletną konfigurację `sklep` w Nginx na `lubuntu-nauka`: blok `upstream` z utrzymywaniem połączeń, przekazywanie nagłówków `Host` i `X-Forwarded-*` (oraz ustawienia Spring Boot, które je odczytują), limity czasu i rozmiaru żądań, ograniczenie dostępu do Actuatora, obsługę WebSocketów i własną stronę błędu 502 na czas restartu aplikacji. Zobaczysz, co się psuje bez nagłówków (adresy klientów, przekierowania, linki w odpowiedziach), i dodasz drugą instancję aplikacji do równoważenia obciążenia."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Reverse proxy** — serwer przyjmujący żądania w imieniu aplikacji i przekazujący je do niej (*upstream*/*backend*); klient rozmawia tylko z proxy.\n- **`proxy_pass http://ADRES;`** — przekaż żądanie; z blokiem `upstream sklep_app { server 127.0.0.1:8080; }` — `proxy_pass http://sklep_app;`.\n- **Nagłówki** — `proxy_set_header Host $host;` (oryginalna nazwa), `X-Real-IP $remote_addr`, `X-Forwarded-For $proxy_add_x_forwarded_for` (łańcuch adresów), `X-Forwarded-Proto $scheme` (http/https), `X-Forwarded-Port`; gotowy zestaw w `/etc/nginx/proxy_params`.\n- **Spring Boot za proxy** — `server.forward-headers-strategy=native` (Tomcat `RemoteIpValve`: adres klienta, schemat i port z nagłówków od zaufanych adresów) lub `framework` (`ForwardedHeaderFilter` Springa); bez tego aplikacja widzi `127.0.0.1` i `http`.\n- **Utrzymywanie połączeń** — `keepalive 16;` w `upstream` + `proxy_http_version 1.1;` + `proxy_set_header Connection \"\";` — Nginx nie otwiera nowego połączenia TCP do aplikacji przy każdym żądaniu.\n- **Limity** — `client_max_body_size 20m;` (domyślnie 1m — większe przesyłanie plików kończy się 413), `proxy_connect_timeout 5s;`, `proxy_read_timeout 60s;` (dłuższe operacje → 504).\n- **WebSocket** — `proxy_set_header Upgrade $http_upgrade;` + `Connection \"upgrade\"` w osobnym `location` (np. `/ws/`).\n- **Kody błędów proxy** — **502** Bad Gateway (aplikacja nie odpowiada/nie działa), **504** Gateway Timeout (przekroczony `proxy_read_timeout`), **413** (za duże żądanie); `error_page 502 503 504 /przerwa.html;`.\n- **Kilka instancji** — `upstream` z kilkoma `server ...;` (domyślnie po kolei, `least_conn`, `max_fails`, `fail_timeout`, `backup`)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Reverse proxy to **recepcja kancelarii prawnej**: klienci nigdy nie wchodzą bezpośrednio do gabinetu prawnika (aplikacji), tylko zostawiają sprawy w recepcji, która sprawdza dokumenty, odsyła zbyt grube teczki (`client_max_body_size`), a w razie nieobecności prawnika wręcza uprzejmą kartkę „wracamy za chwilę” (strona 502). Recepcja **dopisuje na teczce**, kto ją przyniósł i jak przyszedł — osobiście czy kurierem z zabezpieczeniem (`X-Forwarded-For`, `X-Forwarded-Proto`). Prawnik, który ignoruje te dopiski, myśli, że wszystkie sprawy przyniosła sama recepcja — i odpisuje na adres recepcji zamiast klienta."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Żądanie klienta przez Nginx do aplikacji Spring Boot",
+      "body": "Co Nginx dokłada do żądania i jak aplikacja z tego korzysta:",
+      "code": " klient 192.168.56.1                 Nginx :80 (lubuntu-nauka)                 sklep 127.0.0.1:8080\n GET /api/produkty                    upstream sklep_app { server 127.0.0.1:8080;\n Host: sklep.lab.local  ---------->                        server 127.0.0.1:8082 backup; keepalive 16; }\n                                      proxy_pass http://sklep_app;\n                                      Host: sklep.lab.local\n                                      X-Real-IP: 192.168.56.1\n                                      X-Forwarded-For: 192.168.56.1        -------->  Tomcat RemoteIpValve\n                                      X-Forwarded-Proto: http                         (forward-headers-strategy=native)\n                                                                                      request.getRemoteAddr() = 192.168.56.1\n                                                                                      linki/redirecty z http(s)://sklep.lab.local\n <---- 200 / 502 (aplikacja nie dziala -> /przerwa.html) / 504 (za dlugo) / 413 (za duzy plik)\n\n /actuator/health -> dozwolone; /actuator/* -> 404 z zewnatrz\n /ws/             -> Upgrade: websocket (powiadomienia o zamowieniach)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Konfiguracja reverse proxy sklepu",
+      "body": "Pełny blok `server` dla aplikacji: upstream z keepalive, nagłówki, limity, Actuator, WebSocket i strona przerwy (przykładowy wynik):",
+      "code": "$ cat /etc/nginx/sites-available/sklep\nupstream sklep_app {\n    server 127.0.0.1:8080;\n    keepalive 16;\n}\nserver {\n    listen 80 default_server;\n    listen [::]:80 default_server;\n    server_name sklep.lab.local sklep.firma.example;\n    client_max_body_size 20m;\n\n    location ^~ /assets/ { alias /var/www/sklep/; expires 7d; access_log off; }\n    location = /actuator/health { proxy_pass http://sklep_app; }\n    location ^~ /actuator/ { return 404; }\n    location /ws/ {\n        proxy_pass http://sklep_app;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection \"upgrade\";\n        proxy_read_timeout 1h;\n    }\n    location / {\n        proxy_pass http://sklep_app;\n        proxy_http_version 1.1;\n        proxy_set_header Connection \"\";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_connect_timeout 5s;\n        proxy_read_timeout 60s;\n    }\n    error_page 502 503 504 /przerwa.html;\n    location = /przerwa.html { root /var/www/sklep-bledy; internal; }\n}\n$ grep -E 'SERVER_(ADDRESS|FORWARD)' /etc/sklep/sklep.env\nSERVER_ADDRESS=127.0.0.1\nSERVER_FORWARD_HEADERS_STRATEGY=native\n$ sudo nginx -t 2>&1 | tail -1 && sudo systemctl reload nginx\nnginx: configuration file /etc/nginx/nginx.conf test is successful"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Testy: nagłówki w aplikacji, Actuator, 413, restart aplikacji i druga instancja",
+      "body": "Sprawdzenie, co widzi aplikacja, działania ograniczeń i zachowania podczas restartu; potem wdrożenie z drugą instancją jako zapasową (przykładowy wynik):",
+      "code": "$ curl -s -H 'Host: sklep.lab.local' http://192.168.56.10/api/diagnostyka/zadanie\n{\"remoteAddr\":\"192.168.56.10\",\"scheme\":\"http\",\"serverName\":\"sklep.lab.local\",\"requestUrl\":\"http://sklep.lab.local/api/diagnostyka/zadanie\"}\nanna@srv-test:~$ curl -s http://sklep.lab.local/actuator/health; echo; curl -s -o /dev/null -w '%{http_code}\\n' http://sklep.lab.local/actuator/env\n{\"status\":\"UP\"}\n404\nanna@srv-test:~$ head -c 30M /dev/urandom > /tmp/duze.jpg; curl -s -o /dev/null -w '%{http_code}\\n' -F plik=@/tmp/duze.jpg http://sklep.lab.local/api/produkty/12/zdjecie\n413\n$ sudo systemctl stop sklep; curl -s -w '\\n%{http_code}\\n' http://localhost/api/produkty | tail -2\n<h1>Przerwa techniczna - wracamy za chwile</h1>\n502\n$ sudo tail -1 /var/log/nginx/error.log | cut -c1-140\n2026/10/07 22:14:31 [error] 1205#1205: *5012 connect() failed (111: Connection refused) while connecting to upstream, client: 127.0.0.1, ser\n$ sudo systemctl start sklep sklep@8082\n$ sudo sed -i 's#^    server 127.0.0.1:8080;#    server 127.0.0.1:8080 max_fails=2 fail_timeout=10s;\\n    server 127.0.0.1:8082 backup;#' /etc/nginx/sites-available/sklep\n$ sudo nginx -t 2>&1 | tail -1 && sudo systemctl reload nginx\nnginx: configuration file /etc/nginx/nginx.conf test is successful\n$ sudo systemctl stop sklep; curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/api/produkty\n200"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Wystawienie aplikacji Spring Boot za Nginx",
+      "body": "1. Aplikacja nasłuchuje tylko lokalnie: `server.address=127.0.0.1`, `server.port=8080`; ustaw `server.forward-headers-strategy=native`.\n2. W Nginx: `upstream` z adresem aplikacji i `keepalive`; `location /` z `proxy_pass`, `proxy_http_version 1.1`, `Connection \"\"` i nagłówkami `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`.\n3. Dostosuj limity do aplikacji: `client_max_body_size` (przesyłanie plików), `proxy_read_timeout` (długie raporty), osobny `location` dla WebSocketów.\n4. Zablokuj z zewnątrz ścieżki administracyjne (`/actuator/` poza `health`), dodaj stronę dla 502/504.\n5. `sudo nginx -t`, `reload`, testy: nagłówki widziane przez aplikację, przekierowania (adres w `Location`), przesyłanie dużego pliku, zatrzymanie aplikacji.\n6. Monitoruj `error.log` Nginx (`upstream timed out`, `connect() failed`) i czasy odpowiedzi aplikacji (lekcja 9)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Co jeszcze robi reverse proxy przed Javą",
+      "body": "- **HTTPS** — certyfikat i szyfrowanie po stronie Nginx, aplikacja dostaje zwykłe HTTP lokalnie (lekcja 8).\n- **Wdrożenia bez przestojów** — dwie instancje (`8080`, `8082`), przełączanie w `upstream` i `reload` (rozdział 38).\n- **Ograniczanie ruchu** — `limit_req_zone`/`limit_req` (np. 10 żądań/s na adres dla `/api/logowanie`).\n- **Kompresja i cache** — `gzip on;`, `proxy_cache` dla odpowiedzi publicznych.\n- **Kilka aplikacji pod jednym adresem** — `location /sklep/` → aplikacja A, `location /panel/` → aplikacja B (z `server.servlet.context-path`).\n- **Bezpieczeństwo** — ukrycie nagłówków aplikacji (`proxy_hide_header X-Powered-By`), nagłówki bezpieczeństwa, blokada ścieżek (`/.git`, `/actuator`)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Zaufanie do nagłówków `X-Forwarded-*`",
+      "body": "Nagłówki `X-Forwarded-For` i `X-Forwarded-Proto` może wysłać **każdy klient** — wystarczy `curl -H 'X-Forwarded-For: 1.2.3.4'`. Aplikacja może im ufać tylko wtedy, gdy przyszły od zaufanego proxy. Tomcat (`forward-headers-strategy=native`) domyślnie ufa nagłówkom tylko od adresów wewnętrznych (`127.0.0.1`, sieci prywatne — wzorzec `server.tomcat.remoteip.internal-proxies`), a `$proxy_add_x_forwarded_for` w Nginx **dopisuje** adres klienta do tego, co klient przysłał — Tomcat bierze ostatni niezaufany adres z łańcucha, więc sfałszowany wpis na początku nie wpływa na wynik. Jeśli aplikacja słucha na `0.0.0.0` i jest dostępna z sieci z pominięciem proxy, a sieć prywatna jest „zaufana” — klient z tej sieci może podszyć się pod dowolny adres (np. obejść blokadę fail2ban z rozdziału 35 lub ograniczenie dostępu po IP). To kolejny powód, by aplikacja słuchała tylko na `127.0.0.1`."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Brak `X-Forwarded-Proto` i `Host` — złe przekierowania i linki",
+      "body": "Konfiguracja z samym `proxy_pass` „działa” — strony się wyświetlają — ale aplikacja widzi żądanie jako `http://127.0.0.1:8080/...`. Skutki pojawiają się w nieoczekiwanych miejscach: przekierowanie po zalogowaniu (`Location: http://127.0.0.1:8080/konto`) prowadzi klienta donikąd, linki generowane przez aplikację (e-maile z potwierdzeniem zamówienia, linki do resetu hasła, dokumentacja OpenAPI) zawierają adres wewnętrzny, po włączeniu HTTPS aplikacja przekierowuje na `http://` i powstaje pętla przekierowań, ciasteczka z flagą `Secure` nie są ustawiane, a logi i fail2ban widzą wszystkich klientów jako `127.0.0.1`. Diagnoza jest prosta: `curl -sI` na ścieżkę, która przekierowuje, i sprawdzenie nagłówka `Location`."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Samo `proxy_pass` — przekierowanie na adres wewnętrzny",
+      "body": "Bez nagłówków i bez strategii nagłówków w Spring Boot przekierowanie po zalogowaniu wskazuje na `127.0.0.1:8080` (przykładowy wynik):",
+      "code": "$ sudo sed -n '/location \\/ {/,/}/p' /etc/nginx/sites-available/sklep\n    location / {\n        proxy_pass http://127.0.0.1:8080;\n    }\nanna@srv-test:~$ curl -sI -X POST -d 'email=anna@sklep.example&haslo=xxx' http://sklep.lab.local/logowanie | grep -E 'HTTP|Location'\nHTTP/1.1 302\nLocation: http://127.0.0.1:8080/konto"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Nagłówki w Nginx + `forward-headers-strategy` w aplikacji",
+      "body": "Z pełnym zestawem nagłówków i strategią `native` przekierowanie używa nazwy i schematu, które widzi klient (przykładowy wynik):",
+      "code": "$ sudo grep -E 'proxy_set_header (Host|X-Forwarded-Proto)' /etc/nginx/sites-available/sklep\n        proxy_set_header Host $host;\n        proxy_set_header X-Forwarded-Proto $scheme;\n$ grep FORWARD /etc/sklep/sklep.env\nSERVER_FORWARD_HEADERS_STRATEGY=native\nanna@srv-test:~$ curl -sI -X POST -d 'email=anna@sklep.example&haslo=xxx' http://sklep.lab.local/logowanie | grep -E 'HTTP|Location'\nHTTP/1.1 302 Moved Temporarily\nLocation: http://sklep.lab.local/konto"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Aplikacja Spring Boot w produkcji** — zawsze za reverse proxy, aplikacja na `127.0.0.1`.\n- **Proste przekazanie** — `location / { proxy_pass ...; include proxy_params; }` + `forward-headers-strategy=native`.\n- **Duży ruch** — `upstream` z `keepalive`, kilka instancji, `least_conn`.\n- **Przesyłanie plików** — `client_max_body_size` w Nginx **i** `spring.servlet.multipart.max-file-size` w aplikacji.\n- **Długie operacje** — zwiększony `proxy_read_timeout` tylko w ich `location` (lepiej: przetwarzanie asynchroniczne).\n- **Apache zamiast Nginx** — `mod_proxy` + `mod_proxy_http`: `ProxyPass / http://127.0.0.1:8080/`, `ProxyPreserveHost On`, `RequestHeader set X-Forwarded-Proto \"https\"`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Reverse proxy (Nginx) przyjmuje ruch od klientów i przekazuje go aplikacji Spring Boot nasłuchującej lokalnie; dodaje HTTPS, pliki statyczne, limity i strony błędów.\n- `proxy_pass` + nagłówki `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`; po stronie aplikacji `server.forward-headers-strategy=native`.\n- `upstream` z `keepalive` (i `proxy_http_version 1.1`, `Connection \"\"`) ogranicza liczbę połączeń do aplikacji; kilka `server` w `upstream` daje równoważenie i zapas.\n- `client_max_body_size` (413), `proxy_read_timeout` (504), 502 = aplikacja nie odpowiada — ustaw limity i stronę błędu świadomie.\n- Bez nagłówków aplikacja generuje złe przekierowania i linki oraz widzi wszystkich klientów jako `127.0.0.1`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
