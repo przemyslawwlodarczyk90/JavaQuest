@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Każdy kontener ma własną przestrzeń nazw sieci (lekcja 1): własny interfejs `eth0`, własny adres (np. `172.17.0.2`), własną tablicę tras i własne `localhost`. Docker łączy kontenery z gospodarzem przez wirtualny most (`docker0` lub sieć utworzoną przez Ciebie) i reguły NAT w zaporze jądra. Z tego wynikają trzy drogi komunikacji, które trzeba rozróżniać: **świat zewnętrzny → kontener** (publikowanie portów `-p 8080:8080`), **kontener → kontener** (wspólna sieć i nazwy DNS, np. aplikacja łączy się z bazą pod nazwą `db`) oraz **kontener → gospodarz** (`host.docker.internal`).\n\nW tej lekcji uruchomisz kontenery w sieci domyślnej i w sieci użytkownika, zobaczysz wbudowany serwer DNS Dockera, połączysz aplikację sklep z bazą PostgreSQL po nazwie, sprawdzisz publikowane porty (`docker port`, `ss`, reguły NAT) i dostęp z Windows przez `localhost`. Najważniejsza pułapka dotyczy administratora: port opublikowany przez Dockera **omija `ufw`** — baza „zamknięta” w zaporze może być dostępna z całej sieci."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Sieć bridge domyślna** — `docker0`, `172.17.0.0/16`; kontenery bez `--network` trafiają tutaj; **brak rozwiązywania nazw kontenerów**.\n- **Sieć użytkownika** — `docker network create sklep-net`; kontenery w niej widzą się **po nazwach** (wbudowany DNS `127.0.0.11`); Compose tworzy taką sieć automatycznie (nazwy usług = nazwy hostów).\n- **Publikowanie portów** — `-p 8080:8080` (wszystkie adresy gospodarza `0.0.0.0` i `::`), `-p 127.0.0.1:5433:5432` (tylko lokalnie), `-p 8080` (losowy port gospodarza); `docker port NAZWA` pokazuje mapowanie; `EXPOSE` w Dockerfile to tylko dokumentacja.\n- **NAT i zapora** — Docker dodaje reguły w łańcuchach `DOCKER`, `DOCKER-USER` (iptables/nftables); ruch do opublikowanych portów przechodzi przez `FORWARD` po DNAT, **przed** regułami `ufw` dla `INPUT`; własne ograniczenia — w łańcuchu `DOCKER-USER`.\n- **`localhost` w kontenerze** — to sam kontener, nie gospodarz ani inny kontener; aplikacja w kontenerze łączy się z bazą przez nazwę (`db`), a nie `localhost`.\n- **Kontener → gospodarz** — `host.docker.internal` (Docker Desktop domyślnie; na Linuksie `--add-host=host.docker.internal:host-gateway`).\n- **Inne tryby sieci** — `--network host` (sieć gospodarza, bez izolacji i bez `-p`), `--network none`, `macvlan` (kontener z adresem w sieci lokalnej).\n- **Windows ↔ kontener** — port opublikowany w Docker Desktop jest dostępny pod `localhost:PORT` w Windows; adres WSL nie jest potrzebny."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Sieć Dockera jest jak **biurowiec z wewnętrzną centralą telefoniczną**. Każde biuro (kontener) ma swój numer wewnętrzny, a w sieci użytkownika — także wpis w książce telefonicznej: dzwonisz do „db”, centrala łączy z właściwym biurem. Publikowanie portu to **wystawienie numeru na zewnątrz budynku**: klienci z ulicy mogą dzwonić prosto do biura. Pułapka polega na tym, że centrala Dockera ma **własne wejście** obok recepcji (`ufw`) — recepcjonista, który ma zakaz wpuszczania gości do archiwum (port bazy), nawet nie wie, że centrala przełączyła rozmowę bezpośrednio do archiwum."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Drogi ruchu sieciowego kontenerów",
+      "body": "Sklep, baza i Nginx w sieci `sklep-net` na srv-docker:",
+      "code": " lubuntu-nauka 192.168.56.10 / przegladarka\n        |  http://192.168.56.30:80\n        v\n srv-docker  eth1 192.168.56.30\n   nftables/iptables:  PREROUTING  DNAT  :80 -> 172.18.0.4:80     (regula Dockera)\n                       FORWARD     DOCKER-USER -> DOCKER          (ufw INPUT tu NIE dziala!)\n        |\n   most br-5e1f (sklep-net 172.18.0.0/16)   DNS 127.0.0.11: web, sklep, db\n   +-------------------+     +---------------------+     +----------------------+\n   | web 172.18.0.4    | --> | sklep 172.18.0.3    | --> | db 172.18.0.2        |\n   | nginx  -p 80:80   |     | :8080 (bez -p)      |     | :5432 (bez -p)       |\n   | proxy_pass        |     | jdbc:postgresql://  |     |                      |\n   |  http://sklep:8080|     |   db:5432/sklep     |     |                      |\n   +-------------------+     +---------------------+     +----------------------+\n   \"localhost\" w kazdym kontenerze = ten sam kontener\n   kontener -> gospodarz:  host.docker.internal (--add-host=...:host-gateway)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Publikowanie portu i sieć domyślna",
+      "body": "Kontener z opublikowanym portem, mapowanie, proces nasłuchujący na gospodarzu i brak nazw w sieci domyślnej (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker network ls --format '{{.Name}} {{.Driver}}'\nbridge bridge\nhost host\nnone null\nanna@srv-docker:~$ docker run -d --name demo -p 8081:80 nginx:1.27 > /dev/null; docker port demo\n80/tcp -> 0.0.0.0:8081\n80/tcp -> [::]:8081\nanna@srv-docker:~$ curl -s -o /dev/null -w '%{http_code}\\n' localhost:8081\n200\nanna@srv-docker:~$ sudo ss -tlnp 'sport = :8081'\nState  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\nLISTEN 0      4096         0.0.0.0:8081      0.0.0.0:*     users:((\"docker-proxy\",pid=6021,fd=7))\nLISTEN 0      4096            [::]:8081         [::]:*     users:((\"docker-proxy\",pid=6028,fd=7))\nanna@srv-docker:~$ docker run --rm busybox:1.36 nslookup demo 2>&1 | tail -1\n** server can't find demo: NXDOMAIN\nanna@srv-docker:~$ docker inspect -f '{{.NetworkSettings.IPAddress}}' demo\n172.17.0.3"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Sieć użytkownika: aplikacja, baza i Nginx po nazwach",
+      "body": "Sieć `sklep-net`, baza i aplikacja bez publikowania portów, tylko Nginx na porcie 80; rozwiązywanie nazw i połączenie z gospodarzem (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker rm -f web sklep > /dev/null   # kontenery z poprzednich lekcji\nanna@srv-docker:~$ docker network create sklep-net > /dev/null\nanna@srv-docker:~$ docker run -d --name db --network sklep-net -e POSTGRES_DB=sklep -e POSTGRES_USER=sklep \\\n>   -e POSTGRES_PASSWORD_FILE=/run/secrets/db -v ~/sekrety/db:/run/secrets/db:ro postgres:16 > /dev/null\nanna@srv-docker:~$ docker run -d --name sklep --network sklep-net \\\n>   -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/sklep -e SPRING_DATASOURCE_USERNAME=sklep \\\n>   -e SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/ \\\n>   -v ~/sekrety/db:/run/secrets/spring.datasource.password:ro sklep:1.4.2 > /dev/null\nanna@srv-docker:~$ docker run -d --name web --network sklep-net -p 80:80 -v ~/sklep-stack/nginx/sklep.conf:/etc/nginx/conf.d/default.conf:ro nginx:1.27 > /dev/null\nanna@srv-docker:~$ docker exec sklep getent hosts db web\n172.18.0.2      db\n172.18.0.4      web\nanna@srv-docker:~$ docker exec web grep proxy_pass /etc/nginx/conf.d/default.conf\n        proxy_pass http://sklep:8080;\nanna@srv-docker:~$ curl -s localhost/actuator/health\n{\"status\":\"UP\"}\nanna@srv-docker:~$ docker run --rm --add-host=host.docker.internal:host-gateway busybox:1.36 wget -qO- -T 3 http://host.docker.internal:9100/metrics | head -1\n# HELP go_gc_duration_seconds A summary of the pause duration of garbage collection cycles."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zaprojektować komunikację kontenerów",
+      "body": "1. Utwórz sieć użytkownika dla aplikacji (`docker network create NAZWA`) lub użyj Compose (tworzy ją sam).\n2. Uruchamiaj kontenery w tej sieci i odwołuj się do siebie **po nazwach** (`db`, `sklep`), nigdy po adresach IP ani `localhost`.\n3. Publikuj tylko porty, które mają być dostępne z zewnątrz (zwykle jeden: reverse proxy na 80/443).\n4. Porty potrzebne tylko lokalnie (baza do narzędzi administratora) publikuj na `127.0.0.1`.\n5. Sprawdź wynik: `docker port`, `sudo ss -tlnp`, z innej maszyny `nc -zv ADRES PORT`.\n6. Dodatkowe ograniczenia ruchu do kontenerów wpisuj w łańcuchu `DOCKER-USER`, nie w `ufw`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Typowe scenariusze sieciowe",
+      "body": "- **Aplikacja + baza** — sieć użytkownika, URL JDBC z nazwą usługi (`jdbc:postgresql://db:5432/sklep`).\n- **Reverse proxy** — jeden Nginx z publikowanym portem, aplikacje bez `-p`, `proxy_pass http://sklep:8080`.\n- **Baza dla programisty** — `-p 127.0.0.1:5433:5432` lub w Docker Desktop `localhost:5433` z IntelliJ IDEA.\n- **Kontener potrzebuje usługi na gospodarzu** — `host.docker.internal` (np. eksporter metryk, lokalna baza).\n- **Diagnoza sieci** — `docker network inspect`, `docker exec ... getent hosts`, `nsenter -n` z narzędziami gospodarza.\n- **Wydajność lub specjalne protokoły** — `--network host` (świadomie, bez izolacji portów)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "`localhost` w kontenerze to nie gospodarz",
+      "body": "Najczęstszy błąd przy przenoszeniu aplikacji do kontenera: w konfiguracji zostaje `spring.datasource.url=jdbc:postgresql://localhost:5432/sklep`, bo „baza działa na tej maszynie”. W kontenerze `localhost` to jego własna przestrzeń nazw sieci — nie ma tam bazy, więc aplikacja kończy się `Connection refused`. Baza w innym kontenerze jest pod swoją nazwą w sieci użytkownika (`db`), baza na gospodarzu — pod `host.docker.internal` (i musi nasłuchiwać nie tylko na `127.0.0.1`). Adresy IP kontenerów zmieniają się przy każdym odtworzeniu, więc nie wpisuj ich do konfiguracji. Ustawienia połączeń przekazuj zmiennymi środowiskowymi (`SPRING_DATASOURCE_URL`), żeby ten sam obraz działał w każdym środowisku."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Opublikowany port omija `ufw`",
+      "body": "Na serwerze z `ufw` (domyślnie odrzucaj ruch przychodzący, dozwolone 22 i 80) administrator uruchamia bazę z `-p 5432:5432`, „bo trzeba się do niej podłączyć z serwera”. Zakłada, że zapora i tak blokuje 5432 z zewnątrz. Tymczasem Docker publikuje port przez regułę DNAT w `PREROUTING` i przepuszcza ruch w łańcuchu `FORWARD` — pakiety do kontenera w ogóle nie przechodzą przez łańcuch `INPUT`, w którym działają reguły `ufw`. Baza jest dostępna z całej sieci (a na serwerze z publicznym adresem — z internetu), mimo że `ufw status` jej nie pokazuje. Rozwiązania: nie publikuj portów, które nie muszą być publiczne (sieć użytkownika), publikuj na `127.0.0.1`, a dodatkowe reguły wpisuj w łańcuchu `DOCKER-USER`."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Baza „za zaporą” dostępna z sieci",
+      "body": "`ufw` nie zezwala na 5432, a mimo to połączenie z lubuntu-nauka się udaje (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ sudo ufw status | grep -E 'Status|5432|ALLOW'\nStatus: active\n22/tcp                     ALLOW       Anywhere\n80/tcp                     ALLOW       Anywhere\nanna@srv-docker:~$ docker run -d --name db-test -p 5432:5432 -e POSTGRES_PASSWORD=test123 postgres:16 > /dev/null\nanna@srv-docker:~$ sudo iptables -t nat -S DOCKER | grep 5432\n-A DOCKER ! -i docker0 -p tcp -m tcp --dport 5432 -j DNAT --to-destination 172.17.0.4:5432\nanna@lubuntu-nauka ~ > nc -zv -w 3 192.168.56.30 5432\nConnection to 192.168.56.30 5432 port [tcp/postgresql] succeeded!"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Port opublikowany tylko lokalnie",
+      "body": "Ten sam kontener z portem na `127.0.0.1` — z serwera działa, z sieci nie (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker rm -f db-test > /dev/null\nanna@srv-docker:~$ docker run -d --name db-test -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD_FILE=/run/secrets/db -v ~/sekrety/db:/run/secrets/db:ro postgres:16 > /dev/null\nanna@srv-docker:~$ docker port db-test\n5432/tcp -> 127.0.0.1:5432\nanna@srv-docker:~$ pg_isready -h 127.0.0.1 -p 5432\n127.0.0.1:5432 - accepting connections\nanna@lubuntu-nauka ~ > nc -zv -w 3 192.168.56.30 5432\nnc: connect to 192.168.56.30 port 5432 (tcp) failed: Connection refused"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Kontenery jednej aplikacji** — sieć użytkownika i nazwy usług, bez publikowania wewnętrznych portów.\n- **Dostęp z zewnątrz** — `-p` tylko dla reverse proxy (80/443) lub usługi publicznej.\n- **Dostęp tylko z gospodarza** — `-p 127.0.0.1:PORT:PORT`.\n- **Ograniczenie dostępu do opublikowanego portu** — reguły w `DOCKER-USER`, nie `ufw`.\n- **Kontener → usługa na gospodarzu** — `host.docker.internal` (na Linuksie z `host-gateway`).\n- **Windows → kontener w Docker Desktop** — `localhost:PORT`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Każdy kontener ma własną sieć i własne `localhost`; Docker łączy kontenery mostem i NAT-em.\n- W sieci użytkownika kontenery widzą się po nazwach (DNS `127.0.0.11`); w sieci domyślnej — nie.\n- `-p HOST:KONTENER` publikuje port na wszystkich adresach gospodarza; `-p 127.0.0.1:...` — tylko lokalnie.\n- Opublikowane porty omijają `ufw` (DNAT + `FORWARD`) — publikuj tylko to, co musi być publiczne, i filtruj w `DOCKER-USER`.\n- Z kontenera do gospodarza prowadzi `host.docker.internal`; z Windows do kontenera w Docker Desktop — `localhost:PORT`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
