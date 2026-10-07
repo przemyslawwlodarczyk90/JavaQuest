@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Na serwerze z Linuksem nie ma Docker Desktop i nie jest potrzebny — jądro ma wszystkie mechanizmy kontenerów, więc wystarczy **Docker Engine**: demon `dockerd` z `containerd`, uruchamiany przez systemd, oraz klient `docker` z wtyczkami Compose i Buildx. Tak działa srv-docker w laboratorium i tak działają serwery, na które trafiają kontenery z aplikacjami Javy. Administrator odpowiada tu za rzeczy, które na laptopie załatwiał Docker Desktop: instalację z właściwego repozytorium, uprawnienia do demona, konfigurację (`/etc/docker/daemon.json`), rotację logów kontenerów i miejsce na dysku.\n\nW tej lekcji zainstalujesz Docker Engine z repozytorium Dockera, skonfigurujesz demona, poznasz **tryb rootless** (demon działający jako zwykły użytkownik — tak pracuje kuba na lubuntu-nauka od rozdziału 39) i zobaczysz typowy problem administratora: logi kontenera bez rotacji, które zapełniają dysk serwera."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Docker Engine** — pakiety `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin` z repozytorium `download.docker.com` (nowsze niż `docker.io` z Ubuntu/Debiana); usługi `docker.service`, `docker.socket`, `containerd.service`.\n- **Grupa `docker`** — pozwala używać demona bez `sudo`; klasyczny demon działa jako root, więc członkostwo w tej grupie należy traktować jak uprawnienia administracyjne (rozdział 39) i przyznawać tylko zaufanym administratorom.\n- **`/etc/docker/daemon.json`** — konfiguracja demona: `log-driver`, `log-opts` (`max-size`, `max-file`), `data-root`, `live-restore` (kontenery działają podczas restartu demona), `default-address-pools`; po zmianie `systemctl restart docker`.\n- **Sterowniki logów** — `json-file` (domyślny, **bez rotacji**, jeśli nie ustawisz `max-size`), `local` (z rotacją i kompresją), `journald` (logi w dzienniku systemd: `journalctl CONTAINER_NAME=sklep`).\n- **Tryb rootless** — osobny demon uruchamiany przez użytkownika (`dockerd-rootless-setuptool.sh install`), usługa `systemctl --user` `docker.service`, gniazdo `/run/user/UID/docker.sock`; wymaga pakietu `uidmap` i zakresów w `/etc/subuid`, `/etc/subgid`.\n- **Ograniczenia rootless** — porty poniżej 1024 tylko po zmianie `net.ipv4.ip_unprivileged_port_start`, limity cgroup wymagają delegacji kontrolerów, nieco wolniejsza sieć, demon działa w ramach sesji użytkownika (`loginctl enable-linger`).\n- **Podman** — alternatywa bez demona, domyślnie rootless, zgodna z poleceniami `docker` (domyślna w Rocky/RHEL)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Docker Engine na serwerze to **własna hala magazynowa** zamiast usług firmy logistycznej (Docker Desktop). Masz pełną kontrolę, ale sam odpowiadasz za klucze (kto może wydawać polecenia demonowi), regulamin hali (`daemon.json`) i wywóz śmieci (rotacja logów, sprzątanie obrazów). Tryb rootless to **wydzielony boks dla jednego najemcy** — działa na tych samych zasadach, ale najemca ma klucz tylko do swojego boksu, a nie do całej hali. A logi bez rotacji to kosz, którego nikt nie opróżnia: przez miesiące nikt go nie zauważa, aż pewnego dnia hala jest zawalona."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Klasyczny demon i tryb rootless",
+      "body": "Kto uruchamia demona, gdzie jest gniazdo i gdzie leżą dane:",
+      "code": " KLASYCZNY (srv-docker)                         ROOTLESS (kuba na lubuntu-nauka)\n systemd (system)                               systemd --user (kuba, UID 1003)\n   +-- docker.service  dockerd (root)             +-- docker.service  dockerd (kuba)\n   +-- containerd.service                               rootlesskit, slirp4netns/pasta\n gniazdo: /var/run/docker.sock  root:docker     gniazdo: /run/user/1003/docker.sock\n dane:    /var/lib/docker                       dane:    ~/.local/share/docker\n config:  /etc/docker/daemon.json               config:  ~/.config/docker/daemon.json\n dostep:  sudo lub grupa docker (zaufani admini)  dostep: tylko kuba\n porty:   dowolne                               porty:   >= 1024 (domyslnie)\n\n logi kontenera (json-file): /var/lib/docker/containers/ID/ID-json.log\n   bez max-size  -> rosnie bez konca\n   max-size=10m, max-file=3 -> maks. ok. 30 MB na kontener"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Instalacja Docker Engine z repozytorium Dockera",
+      "body": "Klucz i repozytorium, pakiety, stan usług i sprawdzenie (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ sudo install -m 0755 -d /etc/apt/keyrings\nanna@srv-docker:~$ sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc\nanna@srv-docker:~$ echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable\" | sudo tee /etc/apt/sources.list.d/docker.list\ndeb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\nanna@srv-docker:~$ sudo apt-get update -qq && sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin > /dev/null\nanna@srv-docker:~$ systemctl is-active docker containerd; systemctl is-enabled docker\nactive\nactive\nenabled\nanna@srv-docker:~$ sudo docker version --format 'klient {{.Client.Version}} / serwer {{.Server.Version}}'\nklient 28.4.0 / serwer 28.4.0\nanna@srv-docker:~$ ls -l /var/run/docker.sock; getent group docker\nsrw-rw---- 1 root docker 0 Oct 10 13:02 /var/run/docker.sock\ndocker:x:988:anna"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Konfiguracja demona i tryb rootless",
+      "body": "`daemon.json` z rotacją logów i `live-restore` na srv-docker oraz demon rootless dla kuby na lubuntu-nauka (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ cat /etc/docker/daemon.json\n{\n  \"log-driver\": \"local\",\n  \"log-opts\": { \"max-size\": \"10m\", \"max-file\": \"3\" },\n  \"live-restore\": true,\n  \"default-address-pools\": [ { \"base\": \"10.210.0.0/16\", \"size\": 24 } ]\n}\nanna@srv-docker:~$ sudo systemctl restart docker && docker info --format '{{.LoggingDriver}} live-restore={{.LiveRestoreEnabled}}'\nlocal live-restore=true\nkuba@lubuntu-nauka:~$ grep kuba /etc/subuid\nkuba:296608:65536\nkuba@lubuntu-nauka:~$ dockerd-rootless-setuptool.sh install 2>&1 | tail -2\n[INFO] Make sure the following environment variable(s) are set (or add them to ~/.bashrc):\nexport DOCKER_HOST=unix:///run/user/1003/docker.sock\nkuba@lubuntu-nauka:~$ systemctl --user is-active docker; loginctl show-user kuba -p Linger\nactive\nLinger=yes\nkuba@lubuntu-nauka:~$ docker info --format '{{.SecurityOptions}}'\n[name=seccomp,profile=builtin name=rootless name=cgroupns]\nkuba@lubuntu-nauka:~$ docker run --rm alpine:3.20 sh -c 'id -u; cat /proc/self/uid_map'\n0\n         0       1003          1\n         1     296608      65536"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak przygotować serwer z Docker Engine",
+      "body": "1. Zainstaluj pakiety z repozytorium `download.docker.com` (klucz w `/etc/apt/keyrings`, wpis w `sources.list.d`).\n2. Sprawdź usługi: `systemctl is-active docker containerd`, `docker version`.\n3. Utwórz `/etc/docker/daemon.json`: sterownik logów z rotacją (`local` lub `json-file` z `max-size`), `live-restore`, pula adresów niekolidująca z siecią firmy.\n4. Zrestartuj demona i sprawdź `docker info`.\n5. Ustal zasady dostępu: grupa `docker` tylko dla zaufanych administratorów; pozostali użytkownicy — tryb rootless lub Podman.\n6. Dodaj monitorowanie miejsca na dysku (`docker system df`, `/var/lib/docker`) i okresowe `docker image prune`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się Docker Engine",
+      "body": "- **Serwery aplikacji** — kontenery Spring Boot z Compose (`restart: unless-stopped`) na jednej maszynie.\n- **Agenci CI** — budowanie i testowanie obrazów (Buildx), Testcontainers w pipeline.\n- **Stacje robocze z Linuksem** — programowanie bez Docker Desktop.\n- **Wielu użytkowników na jednej maszynie** — tryb rootless dla każdego zamiast wspólnej grupy `docker`.\n- **WSL bez licencji Docker Desktop** — Docker Engine w dystrybucji z systemd (lekcja 44/8).\n- **Rocky/RHEL** — Podman jako domyślne narzędzie, Docker Engine z repozytorium Dockera, gdy wymagany."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Rootless to nie wszystko — ale dobry domyślny wybór dla zwykłych użytkowników",
+      "body": "Tryb rootless ogranicza skutki błędu lub przejęcia kontenera: proces, który w kontenerze jest „rootem”, na gospodarzu działa z UID zwykłego użytkownika (mapowanie widać w `/proc/self/uid_map`). Nie zastępuje jednak innych zabezpieczeń: aktualizacji obrazów, uruchamiania aplikacji jako nie-root (`USER` w Dockerfile), limitów pamięci i procesów, ograniczania publikowanych portów (lekcja 4). Na serwerach produkcyjnych zwykle działa klasyczny demon zarządzany przez administratorów, a dostęp do niego mają tylko wdrożenia (CI) i administratorzy. Uprawnienia przyznawaj jak `sudo` — świadomie i wąsko."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Logi kontenerów bez rotacji zapełniają dysk",
+      "body": "Domyślny sterownik `json-file` zapisuje wszystko, co kontener wypisze na standardowe wyjście, do pliku `/var/lib/docker/containers/ID/ID-json.log` — **bez limitu**. Aplikacja Spring Boot z poziomem DEBUG albo zapętlonym wyjątkiem potrafi wygenerować gigabajty dziennie. `logrotate` tych plików nie obejmuje, a `journalctl --vacuum` nic nie zmienia. Po kilku tygodniach partycja z `/var` jest pełna: baza w innym kontenerze przestaje zapisywać, `apt` się nie aktualizuje, a `df` pokazuje 100%. Rozwiązanie: rotacja w `daemon.json` (`max-size`, `max-file`) lub sterownik `local`/`journald` — pamiętając, że nowe ustawienia dotyczą tylko kontenerów **utworzonych po zmianie**, więc istniejące trzeba odtworzyć."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Pełny dysk przez log jednego kontenera",
+      "body": "Brak rotacji — log kontenera aplikacji urósł do kilkunastu gigabajtów (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ df -h /var | tail -1\n/dev/mapper/vg0-var   20G   20G     0 100% /var\nanna@srv-docker:~$ sudo du -sh /var/lib/docker/containers/* | sort -h | tail -2\n84M\t/var/lib/docker/containers/9e1b...\n17G\t/var/lib/docker/containers/c41a...\nanna@srv-docker:~$ docker inspect -f '{{.Name}} {{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' $(docker ps -q) | grep sklep\n/sklep json-file map[]\nanna@srv-docker:~$ docker logs sklep 2>&1 | tail -1\n2026-10-10T13:20:41.002Z ERROR 1 --- [scheduling-1] p.l.s.raporty.Eksport : Nie mozna zapisac raportu: No space left on device"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Rotacja logów i odtworzenie kontenera",
+      "body": "Ustawienia w `daemon.json`, odtworzenie kontenera i sprawdzenie, że log ma limit (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ grep -A1 log-driver /etc/docker/daemon.json\n  \"log-driver\": \"local\",\n  \"log-opts\": { \"max-size\": \"10m\", \"max-file\": \"3\" },\nanna@srv-docker:~$ sudo systemctl restart docker\nanna@srv-docker:~$ cd ~/sklep-stack && docker compose up -d --force-recreate sklep\n ✔ Container sklep  Started\nanna@srv-docker:~$ docker inspect -f '{{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' sklep\nlocal map[max-file:3 max-size:10m]\nanna@srv-docker:~$ df -h /var | tail -1\n/dev/mapper/vg0-var   20G  2.9G   16G  16% /var"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Serwer z kontenerami** — Docker Engine z repozytorium Dockera, `daemon.json` z rotacją logów i `live-restore`.\n- **Dostęp administratorów** — `sudo` lub grupa `docker` tylko dla zaufanych osób.\n- **Zwykli użytkownicy, programiści na wspólnej maszynie** — tryb rootless lub Podman.\n- **Logi w jednym miejscu z resztą systemu** — sterownik `journald`.\n- **Zmiana ustawień logów** — `daemon.json`, restart demona, odtworzenie kontenerów.\n- **Rocky/RHEL** — Podman, chyba że wymagany jest Docker Engine."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Na Linuksie wystarcza Docker Engine (`docker-ce` + `containerd`) z repozytorium Dockera, zarządzany przez systemd.\n- `/etc/docker/daemon.json` ustala sterownik i rotację logów, `live-restore` i pule adresów sieci.\n- Grupa `docker` daje uprawnienia porównywalne z administratorem — przyznawaj ją wąsko.\n- Tryb rootless uruchamia osobny demon jako zwykły użytkownik z mapowaniem UID; ma ograniczenia portów i sieci.\n- Bez rotacji logi `json-file` rosną bez końca — ustaw `max-size`/`max-file` lub sterownik `local` i odtwórz kontenery."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
