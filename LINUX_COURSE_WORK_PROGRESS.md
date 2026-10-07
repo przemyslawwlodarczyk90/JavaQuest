@@ -194,7 +194,18 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `restrict,from=192.168.56.0/24,command=/usr/local/bin/wdroz-sklep.sh` (jar na stdin → /opt/sklep/releases, symlink
   /opt/sklep/sklep.jar); deploy key `~/.ssh/deploy_sklep_repo` (read-only) i klon repo sklep. GitHub: konto
   anna-kowalska, repo `sklep` (git 2.43, gałąź main). sklep na lubuntu-nauka ma (do debugowania) JDWP na 127.0.0.1:5005.
-  Pozostałe lekcje (`_lx_34`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_34_transfer_i_synchronizacja` (12 lekcji) — ZROBIONY (2026-10-07): scp (SFTP pod spodem od 9.0, `-O`),
+  sftp (konto `hurtownia` tylko-SFTP z chrootem `/srv/sftp/hurtownia` root:root 755, podkatalog `do-sklepu` 2770
+  hurtownia:sklep, grupa `sftp-partnerzy` dopisana do `AllowGroups` w `20-zabezpieczenia.conf`, `40-sftp.conf` z
+  `ForceCommand internal-sftp -d /do-sklepu`), rsync 3.2.7: quick check, algorytm różnicowy (`~/zrzuty/sklep.sql`,
+  `--rsyncable`), `-a`/`-i`, ukośniki (`/srv/kopie/anna/` — katalog anny na dysku kopii), przez SSH (`--rsync-path="sudo
+  rsync"` + `/etc/sudoers.d/anna-rsync` na srv-test; klucz `kopia_offsite` z `rrsync -ro /home/anna/kopie`), `--delete`
+  (pliki statyczne `/var/www/sklep`, `--backup-dir`, `--max-delete`, skrypt `lustro-dane.sh` z `mountpoint`), wykluczenia
+  (`wdrozenie-wyklucz.txt`), prawa/wznawianie/pasmo (`kopia-etc.sh` + `kopia-etc.service`, migawki `/srv/kopie/etc/DATA`),
+  migawki `--link-dest` (nawiązanie do `kopia-sklep.sh` z rozdz. 27; serwer off-site `backup` z kontem `kopie` i skryptem
+  `pobierz-kopie-sklep.sh`, dowiązanie `ostatnia`), `python3 -m http.server` (Python 3.12.3, `~/udostepnione`) i `jwebserver`.
+  ufw aktywny także na lubuntu-nauka (reguły w rozdziale 35).
+  Pozostałe lekcje (`_lx_35`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -264,7 +275,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_34_transfer_i_synchronizacja`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_35_zapora_sieciowa`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

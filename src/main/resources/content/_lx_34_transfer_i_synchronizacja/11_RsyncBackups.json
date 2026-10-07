@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Notatki kursu proponują prosty schemat kopii zapasowej: `rsync -avh --delete ~/dane/ /mnt/backup/dane/` uruchamiany codziennie o 2:00 z crona — i od razu dodają zastrzeżenie, które jest sednem tej lekcji: **rsync nie jest migawką** — nadpisuje i usuwa, a do historii wersji służą rsnapshot, Btrfs czy ZFS. W rozdziale 27 zbudowaliśmy już skrypt `kopia-sklep.sh`, który obchodzi ten problem opcją **`--link-dest`**: każdy dzień ma osobny katalog wyglądający jak pełna kopia, a niezmienione pliki zajmują miejsce tylko raz (dowiązania twarde).\n\nTutaj zrozumiesz ten mechanizm od strony rsync (jak działa `--link-dest`, dlaczego ścieżka jest liczona względem celu, ile miejsca naprawdę zajmują migawki), przećwiczysz **odtwarzanie** pojedynczego pliku i całego katalogu, **weryfikację** kopii sumami kontrolnymi i poznasz zasadę 3-2-1. Druga część to zebrane w jednym miejscu **najczęstsze błędy** z notatek (zły ukośnik, `--delete` bez `--dry-run`, brak `-a`, brak `-e` przy niestandardowym porcie, kopiowanie bez roota) oraz kody wyjścia rsync, które musi rozumieć każdy skrypt kopii."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`--link-dest=KATALOG`** — dla pliku identycznego (rozmiar, czas, prawa, właściciel) z plikiem w `KATALOG` rsync tworzy w celu **dowiązanie twarde** zamiast kopii; ścieżka względna liczona jest od **katalogu celu** (`--link-dest=../2026-10-06`).\n- **Migawka (*snapshot*)** — katalog z pełnym stanem z danej chwili (`pliki/2026-10-07/`); każdą można przeglądać i odtwarzać niezależnie; usunięcie starej migawki nie narusza nowszych (dane znikają dopiero, gdy zniknie ostatnie dowiązanie).\n- **Rotacja (retencja)** — usuwanie migawek starszych niż N dni/katalogów (`kopia-sklep.sh`: 14).\n- **Weryfikacja kopii** — `rsync -ainc ZRODLO/ KOPIA/` (porównanie treści sumami, bez kopiowania), próbne odtworzenie, `pg_restore --list` dla zrzutów baz.\n- **Zasada 3-2-1** — 3 kopie danych, na 2 różnych nośnikach, 1 poza siedzibą (off-site; model pull z lekcji 7).\n- **Kody wyjścia** — `0` sukces; `1` błąd składni; `2` niezgodny protokół; `3` błędne ścieżki; `5` błąd startu protokołu; `10` błąd gniazda/połączenia; `11` błąd zapisu/odczytu pliku; `12` błąd strumienia danych (np. brak rsync po drugiej stronie); `20` przerwany sygnałem (Ctrl+C); `23` częściowy transfer z powodu błędów; `24` pliki zniknęły w trakcie (zwykle niegroźne przy żywych danych); `25` limit `--max-delete`; `30` przekroczony `--timeout`; `35` limit oczekiwania na demona.\n- **Narzędzia oparte na rsync i alternatywy** — rsnapshot (migawki `--link-dest` z konfiguracją i rotacją), BorgBackup i restic (deduplikacja, szyfrowanie, kompresja), migawki Btrfs/ZFS/LVM."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Zwykłe lustro z `--delete` to **jedno zdjęcie pokoju aktualizowane co noc**: zawsze masz stan z wczoraj, ale gdy przez tydzień nikt nie zauważy, że zniknął obraz ze ściany, na zdjęciu też go już nie ma. Migawki z `--link-dest` to **album ze zdjęciem z każdego dnia**, w którym niezmienione przedmioty nie są fotografowane od nowa — album tylko odsyła do poprzedniej fotografii. Każdą stronę albumu można otworzyć i odtworzyć z niej pokój, a wyrwanie najstarszej strony nie psuje pozostałych. Zasada 3-2-1 to trzymanie **kopii albumu u rodziny w innym mieście** — na wypadek pożaru w domu."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jak `--link-dest` buduje migawki",
+      "body": "Kolejne dni kopii katalogu z przesłanymi przez klientów plikami (`/srv/dane/sklep/upload`):",
+      "code": " dzien 1:  rsync -a          upload/ pliki/2026-10-05/       -> 412 MB (pelna kopia)\n dzien 2:  rsync -a --link-dest=../2026-10-05  upload/ pliki/2026-10-06/\n             plik bez zmian   -> dowiazanie twarde do 2026-10-05   (0 B nowego miejsca)\n             plik nowy/zmieniony -> kopia                            (3.1 MB)\n dzien 3:  rsync -a --link-dest=../2026-10-06  upload/ pliki/2026-10-07/   (2.7 MB)\n\n pliki/2026-10-05/faktura-1001.pdf  -.\n pliki/2026-10-06/faktura-1001.pdf  -+-> i-wezel 524301 (jeden zestaw blokow na dysku, licznik dowiazan 3)\n pliki/2026-10-07/faktura-1001.pdf  -'\n rm -rf pliki/2026-10-05  -> licznik 2, dane zostaja (sa w 06 i 07)\n\n 3-2-1:  /srv/dane (oryginal)  +  /srv/kopie (inny dysk, migawki)  +  backup.firma.example (off-site, pull)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Migawki, zajętość i odtworzenie pliku",
+      "body": "Stan migawek na dysku kopii po kilku dniach działania `kopia-sklep.sh` i odtworzenie pliku usuniętego przez klienta dwa dni temu (przykładowy wynik):",
+      "code": "$ ls /srv/kopie/sklep/pliki/\n2026-10-05  2026-10-06  2026-10-07\n$ sudo du -sh /srv/kopie/sklep/pliki/*\n412M\t/srv/kopie/sklep/pliki/2026-10-05\n3.1M\t/srv/kopie/sklep/pliki/2026-10-06\n2.7M\t/srv/kopie/sklep/pliki/2026-10-07\n$ sudo du -sh --apparent-size /srv/kopie/sklep/pliki/2026-10-07\n416M\t/srv/kopie/sklep/pliki/2026-10-07\n$ ls /srv/dane/sklep/upload/zdjecia/ | grep -c krzeslo-dab\n0\n$ sudo find /srv/kopie/sklep/pliki -name 'krzeslo-dab*'\n/srv/kopie/sklep/pliki/2026-10-05/zdjecia/krzeslo-dab.jpg\n$ sudo rsync -a /srv/kopie/sklep/pliki/2026-10-05/zdjecia/krzeslo-dab.jpg /srv/dane/sklep/upload/zdjecia/\n$ ls -l /srv/dane/sklep/upload/zdjecia/krzeslo-dab.jpg\n-rw-r----- 1 sklep sklep 284117 Oct  3 14:22 /srv/dane/sklep/upload/zdjecia/krzeslo-dab.jpg"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Ręczna migawka, weryfikacja i kopia off-site z kodem wyjścia",
+      "body": "Migawka wykonana ręcznie (żeby zobaczyć `--link-dest` w akcji), weryfikacja treści kopii i pobranie kopii na serwer off-site z kontrolą kodów wyjścia (przykładowy wynik):",
+      "code": "$ sudo rsync -ai --link-dest=../2026-10-07 /srv/dane/sklep/upload/ /srv/kopie/sklep/pliki/2026-10-07-test/ | head -3\ncd+++++++++ ./\n>f+++++++++ zdjecia/krzeslo-dab.jpg\n>f+++++++++ zamowienia/2026-10/zam-20431.pdf\n$ sudo find /srv/kopie/sklep/pliki/2026-10-07-test -type f -links 1 | wc -l\n2\n$ sudo rm -rf /srv/kopie/sklep/pliki/2026-10-07-test\n$ sudo rsync -ainc /srv/dane/sklep/upload/ /srv/kopie/sklep/pliki/2026-10-07/ | grep -v '^\\.d' | head\n>f+++++++++ zdjecia/krzeslo-dab.jpg\n>f+++++++++ zamowienia/2026-10/zam-20431.pdf\n# -> tylko pliki nowsze niz migawka; brak linii \">fc\" = tresc pozostalych plikow zgodna\nkopie@backup:~$ cat /usr/local/bin/pobierz-kopie-sklep.sh\n#!/bin/bash\ndzien=$(date +%F)\nrsync -a --timeout=600 --link-dest=../ostatnia \\\n      lubuntu-nauka:/srv/kopie/sklep/pliki/ /kopie/sklep/pliki/$dzien/\nkod=$?\ncase $kod in\n  0|24) ln -sfn \"$dzien\" /kopie/sklep/pliki/ostatnia ;;\n  *)    logger -t kopia-offsite \"rsync blad $kod\"; exit $kod ;;\nesac\nkopie@backup:~$ /usr/local/bin/pobierz-kopie-sklep.sh; echo \"kod: $?\"\nkod: 0"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Przegląd kopii zapasowej (raz w miesiącu)",
+      "body": "1. Sprawdź, czy kopie powstają: lista migawek z ostatnich dni, wpisy w dzienniku (`journalctl -t kopia-sklep`), wynik timera (`systemctl list-timers`).\n2. Sprawdź kody wyjścia — kod inny niż 0 (lub 24 przy żywych danych) to błąd, nie ostrzeżenie.\n3. Zweryfikuj treść: `rsync -ainc ZRODLO/ NAJNOWSZA_MIGAWKA/` — różnice tylko dla plików zmienionych po kopii.\n4. **Odtwórz próbnie**: pojedynczy plik i cały katalog do katalogu tymczasowego; zrzut bazy — `pg_restore` do testowej bazy (rozdział 37).\n5. Sprawdź kopię off-site (czy jest, czy aktualna, czy da się z niej odtworzyć bez dostępu do serwera produkcyjnego).\n6. Sprawdź miejsce na dysku kopii i retencję (`df -h /srv/kopie`, liczba migawek)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie stosować migawki rsync",
+      "body": "- **Pliki aplikacji** — przesłane przez użytkowników (zdjęcia, faktury), katalogi `/srv/dane`.\n- **Katalogi domowe i konfiguracja** — `/home`, `/etc` (z `sudo`, `-aHAX`).\n- **Serwer kopii w innej lokalizacji** — pull z `--link-dest` po stronie serwera kopii.\n- **Małe firmy i laboratoria** — rsnapshot jako gotowe narzędzie z rotacją godzinową/dzienną/tygodniową.\n- **Kiedy wybrać inne narzędzie** — bazy danych (zrzut `pg_dump`/`mysqldump` zamiast kopiowania plików działającej bazy), duże zbiory z wieloma małymi zmianami w dużych plikach (Borg/restic z deduplikacją), wymóg szyfrowania kopii u zewnętrznego dostawcy (restic, Borg).\n- **Systemy plików z migawkami** — Btrfs, ZFS, LVM: natychmiastowa migawka + rsync migawki na inny serwer."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Najczęstsze błędy z notatek kursu — w jednym miejscu",
+      "body": "Notatki wymieniają pięć błędów, które powodują większość problemów z rsync, i każdy z nich omówiliśmy w osobnej lekcji: **1) zły ukośnik** — `projekt` zamiast `projekt/` (lekcja 6); **2) brak `--dry-run` przed `--delete`** (lekcja 8); **3) brak `-a`** — utrata praw, czasów i dowiązań (lekcja 5); **4) brak `-e \"ssh -p ...\"` przy niestandardowym porcie** — rsync łączy się na port 22 i dostaje `Connection refused` (lekcja 7; najlepiej alias z `Port` w `~/.ssh/config`); **5) kopiowanie jako zwykły użytkownik zamiast roota** — brak plików i właścicieli (lekcja 10). Do tej listy warto dopisać trzy błędy typowe dla kopii zapasowych: **brak sprawdzania kodu wyjścia** w skrypcie (kopia „działa” od miesięcy z kodem 23), **brak próbnego odtworzenia** (kopia istnieje, ale nie da się z niej nic odtworzyć — np. zrzut bazy jest pusty) i **kopie tylko na tym samym dysku lub serwerze** — awaria dysku, ransomware albo błąd administratora niszczy oryginał i kopię jednocześnie."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Kopia z crona bez kontroli i bez historii",
+      "body": "Schemat z notatek (`0 2 * * * rsync -avh --delete ~/dane/ /mnt/backup/dane/`) w praktyce ma kilka słabości naraz: `-v` w cronie generuje pocztę lub śmieci w logu, nikt nie sprawdza kodu wyjścia, `--delete` bez historii przenosi przypadkowe usunięcia i zaszyfrowane przez ransomware pliki do kopii przy następnym uruchomieniu, a niezamontowany `/mnt/backup` powoduje, że kopia ląduje na dysku systemowym i go zapełnia. Wszystkie te problemy rozwiązuje skrypt z rozdziału 27 (`mountpoint`, `set -e`, `--link-dest`, retencja, `OnFailure` w systemd) — schemat z notatek traktuj jako punkt wyjścia do nauki, nie jako gotową politykę kopii."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "„Kopia”, która od tygodni się nie wykonuje",
+      "body": "Zadanie w cronie bez kontroli wyniku: dysk kopii przepełniony, rsync kończy się błędem 11 każdej nocy, nikt nie wie (przykładowy wynik):",
+      "code": "$ crontab -l | grep rsync\n0 2 * * * rsync -aq --delete /srv/dane/ /mnt/backup/dane/ 2>/dev/null\n$ df -h /mnt/backup | tail -1\n/dev/sdc1       15G   15G     0 100% /mnt/backup\n$ rsync -aq --delete /srv/dane/ /mnt/backup/dane/; echo \"kod: $?\"\nrsync: [receiver] write failed on \"/mnt/backup/dane/sklep/upload/zamowienia/2026-10/zam-20431.pdf\": No space left on device (28)\nrsync error: error in file IO (code 11) at receiver.c(381) [receiver=3.2.7]\nkod: 11\n$ ls /mnt/backup/dane/sklep/upload/zamowienia/\n2026-08  2026-09"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Kopia jako usługa z migawkami, kontrolą i powiadomieniem",
+      "body": "Usługa `kopia-sklep.service` z rozdziału 27: błąd kończy usługę stanem `failed` i uruchamia powiadomienie (przykładowy wynik):",
+      "code": "$ systemctl list-timers kopia-sklep.timer --no-pager | sed -n 2p\nThu 2026-10-08 02:34:11 CEST 7h left Wed 2026-10-07 02:31:52 CEST 16h ago kopia-sklep.timer kopia-sklep.service\n$ systemctl show kopia-sklep.service -p Result -p ExecMainStatus\nResult=success\nExecMainStatus=0\n$ journalctl -t kopia-sklep -n 1 -o cat\nOK baza=1.8M pliki=412M\n$ df -h /srv/kopie | tail -1\n/dev/sdc1        15G  2.4G   12G  17% /srv/kopie"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Lustro „stan z wczoraj”** — `rsync -a --delete` (świadomie, bez historii).\n- **Kopia z historią na własnym dysku/serwerze** — migawki `--link-dest` (skrypt jak `kopia-sklep.sh` lub rsnapshot).\n- **Kopia off-site** — pull z serwera kopii, klucz `rrsync -ro`, migawki po stronie serwera kopii.\n- **Szyfrowane kopie u zewnętrznego dostawcy, deduplikacja** — restic lub BorgBackup.\n- **Bazy danych** — zrzut (`pg_dump`) + kopia zrzutu rsync, nie kopiowanie plików działającej bazy.\n- **Każda kopia** — kontrola kodu wyjścia, powiadomienie o błędzie, regularne próbne odtworzenie."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Samo lustro rsync nie jest kopią z historią — nadpisuje i usuwa; historię dają migawki z `--link-dest` (lub rsnapshot, Borg, restic, migawki systemu plików).\n- `--link-dest=../POPRZEDNIA` tworzy dowiązania twarde do niezmienionych plików — każda migawka wygląda jak pełna kopia, a zajmuje tylko miejsce zmian.\n- Kopię trzeba weryfikować (`rsync -ainc`, próbne odtworzenie) i trzymać zgodnie z zasadą 3-2-1.\n- Skrypty kopii muszą sprawdzać kod wyjścia rsync: 0 = sukces, 24 = zniknięte pliki, 23/11/12/30 = błąd.\n- Najczęstsze błędy: zły ukośnik, `--delete` bez `--dry-run`, brak `-a`, brak portu przy `-e`, kopia bez roota, brak kontroli i próbnego odtworzenia."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
