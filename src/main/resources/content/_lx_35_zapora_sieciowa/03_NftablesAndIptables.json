@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "ufw i firewalld są wygodne, ale pod spodem zawsze działają reguły netfilter zapisane w języku **nftables** (dawniej **iptables**). Znajomość tego poziomu przydaje się w trzech sytuacjach: gdy trzeba zrozumieć, co naprawdę robi zapora (np. dlaczego Docker omija ufw), gdy pracujesz na systemie bez nakładki (minimalny Debian, kontener, router, system wbudowany) i gdy reguły są zbyt złożone dla prostych narzędzi (NAT, przekierowania, zestawy adresów, limity). W wielu skryptach, poradnikach i odpowiedziach z internetu nadal spotkasz składnię `iptables -A INPUT ...` — trzeba ją umieć przeczytać i przetłumaczyć.\n\nW tej lekcji poznasz strukturę nftables (tabele, łańcuchy z punktem zaczepienia i polityką, reguły, zestawy), przeczytasz reguły wygenerowane przez ufw na `lubuntu-nauka`, a na świeżej maszynie z Debianem 12 (`deb-lab`, 192.168.56.40, bez ufw) napiszesz kompletną zaporę w pliku `/etc/nftables.conf`, sprawdzisz jej składnię, włączysz i będziesz modyfikować w locie. Druga część to iptables: składnia, `iptables-save`/`restore`, trwałość reguł i automatyczne tłumaczenie na nftables (`iptables-translate`)."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Tabela** — kontener na łańcuchy, z rodziną: `ip` (IPv4), `ip6`, `inet` (IPv4 + IPv6 naraz — zalecane), `arp`, `bridge`, `netdev`; nazwa dowolna (np. `filter`).\n- **Łańcuch bazowy** — podpięty do jądra: `type filter hook input priority filter; policy drop;` (typy: `filter`, `nat`, `route`; punkty: `prerouting`, `input`, `forward`, `output`, `postrouting`); łańcuchy zwykłe służą do skoków (`jump`).\n- **Reguła** — warunki + akcja: `tcp dport 22 ip saddr 192.168.56.0/24 accept`; akcje: `accept`, `drop`, `reject`, `jump`, `log prefix \"...\"`, `counter`, `limit rate 5/minute`.\n- **Stan** — `ct state established,related accept`, `ct state invalid drop`.\n- **Zestawy** — anonimowe `{ 80, 443 }` lub nazwane `set admin { type ipv4_addr; flags interval; elements = { ... } }` — zmiana zestawu bez przepisywania reguł.\n- **Polecenia `nft`** — `nft list ruleset` (wszystko), `nft list table inet filter`, `nft -a list ruleset` (z numerami *handle*), `nft add rule ...`, `nft insert rule ...` (na początek), `nft delete rule inet filter input handle N`, `nft add element inet filter admin { 10.8.0.0/24 }`, `nft -c -f PLIK` (sprawdź bez wprowadzania), `nft -f PLIK` (wczytaj).\n- **Trwałość** — Debian/Ubuntu: `/etc/nftables.conf` + `systemctl enable --now nftables`; reguły wpisane poleceniem `nft add` znikają po restarcie.\n- **iptables** — `iptables -A|-I|-D ŁAŃCUCH warunki -j AKCJA`, `-P INPUT DROP` (polityka), `-L -n -v --line-numbers`, `iptables-save`/`iptables-restore`; trwałość: pakiet `iptables-persistent` (`/etc/iptables/rules.v4`); dziś zwykle **iptables-nft** — ta sama składnia, reguły trafiają do nftables; `iptables-translate` tłumaczy regułę na `nft`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Jeśli ufw to tłumacz na portierni (lekcja 2), to nftables jest **oryginalnym regulaminem portierni w języku urzędowym**: rozdziały (tabele), paragrafy dla każdego wejścia (łańcuchy z punktem zaczepienia — główne drzwi, wyjście, przejazd przez dziedziniec), punkty paragrafów (reguły) czytane od góry oraz załączniki z listami nazwisk (zestawy), które można aktualizować bez przepisywania paragrafów. iptables to **starsze wydanie tego regulaminu** — inna składnia, ten sam portier; dziś zwykle drukowane na nowym papierze (iptables-nft). Kto czyta oryginał, rozumie, co naprawdę obowiązuje — także to, czego tłumacz nie przetłumaczył."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Struktura pliku `/etc/nftables.conf`",
+      "body": "Elementy kompletnej zapory hosta w jednym pliku:",
+      "code": " #!/usr/sbin/nft -f\n flush ruleset                                    <- zacznij od czystej karty\n table inet filter {                              <- TABELA: rodzina inet = IPv4 + IPv6\n     set admin {                                  <- ZESTAW nazwany\n         type ipv4_addr; flags interval\n         elements = { 192.168.56.0/24 }\n     }\n     chain input {                                <- LANCUCH bazowy\n         type filter hook input priority filter; policy drop;\n         ct state established,related accept     <- REGULY od gory\n         ct state invalid drop\n         iif \"lo\" accept\n         meta l4proto { icmp, ipv6-icmp } accept\n         tcp dport 22 ip saddr @admin accept      <- uzycie zestawu\n         tcp dport { 80, 443 } accept             <- zestaw anonimowy\n         limit rate 5/minute log prefix \"nft-drop: \"\n     }                                            <- koniec: polityka drop\n     chain forward { type filter hook forward priority filter; policy drop; }\n     chain output  { type filter hook output  priority filter; policy accept; }\n }\n iptables:  iptables -A INPUT -p tcp -s 192.168.56.0/24 --dport 22 -j ACCEPT\n nft:       nft add rule inet filter input ip saddr 192.168.56.0/24 tcp dport 22 accept"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Odczyt reguł: co ufw zapisało w nftables",
+      "body": "Na `lubuntu-nauka` oglądasz pod spodem reguły utworzone przez ufw — te same, tylko w języku nftables i iptables (przykładowy wynik):",
+      "code": "$ sudo nft list ruleset | grep -c 'chain ufw'\n28\n$ sudo nft list chain ip filter ufw-user-input\ntable ip filter {\n\tchain ufw-user-input {\n\t\tip saddr 192.168.56.0/24 meta l4proto tcp tcp dport 22 counter packets 412 bytes 27184 accept\n\t\tmeta l4proto tcp tcp dport { 80,443 } counter packets 8812 bytes 641220 accept\n\t\tip saddr 192.168.56.0/24 meta l4proto tcp tcp dport 2049 counter packets 39 bytes 2340 accept\n\t\tip saddr 192.168.56.0/24 meta l4proto udp udp dport 2049 counter packets 0 bytes 0 accept\n\t\t(...fragment wyniku)\n\t}\n}\n$ sudo iptables -L ufw-user-input -n --line-numbers | head -4\nChain ufw-user-input (1 references)\nnum  target     prot opt source               destination\n1    ACCEPT     6    --  192.168.56.0/24      0.0.0.0/0            tcp dpt:22\n2    ACCEPT     6    --  0.0.0.0/0            0.0.0.0/0            multiport dports 80,443"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Własna zapora nftables na Debianie: plik, test, włączenie, zmiany w locie",
+      "body": "Na `deb-lab` (Debian 12, bez ufw) piszesz zaporę z diagramu, sprawdzasz składnię, włączasz usługę, dodajesz adres do zestawu i usuwasz regułę po numerze (przykładowy wynik):",
+      "code": "anna@deb-lab:~$ sudo nano /etc/nftables.conf        # tresc jak na diagramie\nanna@deb-lab:~$ sudo nft -c -f /etc/nftables.conf && echo 'skladnia OK'\nskladnia OK\nanna@deb-lab:~$ sudo systemctl enable --now nftables\nCreated symlink /etc/systemd/system/sysinit.target.wants/nftables.service -> /lib/systemd/system/nftables.service.\nanna@deb-lab:~$ sudo nft list chain inet filter input | grep -E 'policy|dport'\n\t\ttype filter hook input priority filter; policy drop;\n\t\ttcp dport 22 ip saddr @admin accept\n\t\ttcp dport { 80, 443 } accept\nanna@deb-lab:~$ sudo nft add element inet filter admin '{ 10.8.0.0/24 }'\nanna@deb-lab:~$ sudo nft list set inet filter admin | grep elements\n\t\telements = { 10.8.0.0/24, 192.168.56.0/24 }\nanna@deb-lab:~$ sudo nft insert rule inet filter input tcp dport 9100 ip saddr 192.168.56.20 accept comment '\"node_exporter\"'\nanna@deb-lab:~$ sudo nft -a list chain inet filter input | grep 9100\n\t\ttcp dport 9100 ip saddr 192.168.56.20 accept comment \"node_exporter\" # handle 14\nanna@deb-lab:~$ sudo nft delete rule inet filter input handle 14\nanna@deb-lab:~$ iptables-translate -A INPUT -p tcp -s 192.168.56.0/24 --dport 5432 -j ACCEPT\nnft 'add rule ip filter INPUT ip saddr 192.168.56.0/24 tcp dport 5432 counter accept'\nanna@deb-lab:~$ grep -c '10.8.0.0' /etc/nftables.conf\n0\n# -> zmiany wprowadzone w locie NIE trafiaja do pliku - po restarcie znikna"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak bezpiecznie wprowadzić zaporę nftables na serwerze",
+      "body": "1. Upewnij się, że nie działa inna nakładka (`systemctl is-active ufw firewalld`) — dwa systemy zarządzające regułami będą sobie przeszkadzać.\n2. Napisz `/etc/nftables.conf`: `flush ruleset`, tabela `inet`, łańcuch `input` z `policy drop`, reguły stanu, `lo`, ICMP, SSH (właściwy port i źródło), usługi.\n3. Sprawdź składnię: `sudo nft -c -f /etc/nftables.conf`.\n4. Zabezpiecz się przed odcięciem: `echo 'nft flush ruleset' | sudo at now + 5 minutes` (rozdział 27).\n5. Wczytaj: `sudo nft -f /etc/nftables.conf`; z nowego terminala sprawdź SSH; jeśli działa — `sudo atrm NUMER` i `sudo systemctl enable nftables`.\n6. Każdą zmianę w locie (`nft add ...`) **przenieś do pliku** — inaczej zniknie po restarcie; po zmianie pliku: `nft -c -f`, potem `systemctl reload nftables`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się nftables i iptables",
+      "body": "- **Minimalne systemy** — Debian, Alpine, maszyny w chmurze i kontenery bez ufw/firewalld.\n- **Routery i bramy** — NAT (`masquerade`), przekierowania portów (`dnat`), łańcuch `forward`.\n- **Zestawy adresów** — dynamiczne listy blokowanych/dozwolonych adresów (np. aktualizowane przez skrypt lub fail2ban).\n- **Diagnoza** — `nft list ruleset` pokazuje prawdę o regułach ufw, firewalld, Dockera i Kubernetesa naraz.\n- **Stare instrukcje i skrypty** — odczyt i tłumaczenie składni `iptables` (`iptables-translate`).\n- **Liczniki** — `counter` w regułach pokazuje, ile ruchu pasuje do reguły (czy reguła w ogóle działa)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "iptables, iptables-nft i iptables-legacy",
+      "body": "Polecenie `iptables` w Ubuntu 24.04, Debianie 12 i Rocky 9 to zwykle **iptables-nft** — przyjmuje starą składnię, ale reguły zapisuje w nftables (`iptables --version` pokazuje `(nf_tables)`). Istnieje też `iptables-legacy`, korzystający ze starego mechanizmu jądra; oba mogą działać naraz i wtedy `iptables -L` nie pokazuje reguł z drugiego. Reguły natywne nftables (np. tabela `inet filter` z Twojego pliku) **nie są widoczne** w `iptables -L` — dlatego do diagnozy używaj `nft list ruleset`, który pokazuje wszystko. Jeśli konfigurujesz zaporę sam, wybierz jeden sposób: albo ufw/firewalld, albo własny `nftables.conf`. Docker i Kubernetes dopisują własne reguły (tabele `ip nat`, `ip filter` z łańcuchami `DOCKER*`/`KUBE-*`) — `flush ruleset` w Twoim pliku usuwa je przy przeładowaniu, więc na hostach z kontenerami nie używaj `flush ruleset`, tylko usuwaj własną tabelę (`table inet filter` + `delete table inet filter` przed definicją)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Reguły dodane poleceniem znikają po restarcie",
+      "body": "Zmiany wprowadzone poleceniami `nft add rule ...` lub `iptables -A ...` działają **natychmiast i tylko do restartu**. Typowy scenariusz: administrator w trakcie awarii odblokowuje port lub blokuje atakujący adres poleceniem, problem znika, a po nocnym restarcie (np. po aktualizacji jądra) wszystko wraca — usługa jest niedostępna albo blokada zniknęła. Odwrotna pułapka: ktoś edytuje `/etc/nftables.conf`, ale nie przeładowuje reguł — przez tygodnie działa stara konfiguracja, a nowa „zadziała” dopiero po restarcie, często z błędem składni, który odcina serwer. Zawsze: zmiana w pliku, `nft -c -f`, przeładowanie i porównanie `nft list ruleset` z plikiem."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Reguła dodana w locie, której brak w pliku",
+      "body": "Port dla monitoringu otwarty poleceniem podczas wdrożenia; po restarcie maszyny reguła znika i monitoring przestaje działać (przykładowy wynik):",
+      "code": "anna@deb-lab:~$ sudo nft add rule inet filter input tcp dport 9100 ip saddr 192.168.56.20 accept\nanna@deb-lab:~$ sudo nft list chain inet filter input | grep -c 9100\n1\nanna@deb-lab:~$ sudo reboot\nanna@deb-lab:~$ sudo nft list chain inet filter input | grep -c 9100\n0\nanna@srv-test:~$ nc -zv -w 3 192.168.56.40 9100\nnc: connect to 192.168.56.40 port 9100 (tcp) timed out: Operation now in progress"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Zmiana w pliku, test składni i przeładowanie",
+      "body": "Reguła dopisana do `/etc/nftables.conf`, sprawdzona i przeładowana usługą — przetrwa restart (przykładowy wynik):",
+      "code": "anna@deb-lab:~$ sudo sed -i '/tcp dport { 80, 443 } accept/a\\        tcp dport 9100 ip saddr 192.168.56.20 accept comment \"node_exporter\"' /etc/nftables.conf\nanna@deb-lab:~$ sudo nft -c -f /etc/nftables.conf && sudo systemctl reload nftables\nanna@deb-lab:~$ sudo nft list chain inet filter input | grep 9100\n\t\ttcp dport 9100 ip saddr 192.168.56.20 accept comment \"node_exporter\"\nanna@deb-lab:~$ systemctl is-enabled nftables\nenabled"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Ubuntu, prosty serwer** — ufw (lekcja 2); **RHEL/Rocky/Fedora** — firewalld (lekcja 4).\n- **System bez nakładki, router, złożone reguły** — `/etc/nftables.conf` + usługa `nftables`.\n- **Diagnoza dowolnej zapory** — `sudo nft list ruleset` (widzi wszystko).\n- **Stara instrukcja z `iptables`** — przeczytaj, przetłumacz `iptables-translate`, zapisz w nftables.\n- **Zmiany awaryjne** — `nft add/insert` natychmiast, potem koniecznie w pliku.\n- **Host z Dockerem/Kubernetesem** — bez `flush ruleset`; własna tabela, reguły w `DOCKER-USER` (iptables) lub osobnym łańcuchu o właściwym priorytecie."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- nftables to współczesny język reguł netfilter: tabele (rodzina `inet` = IPv4 + IPv6), łańcuchy bazowe z punktem zaczepienia i polityką, reguły, zestawy.\n- `nft list ruleset` pokazuje wszystkie reguły (także ufw, firewalld, Dockera); `-a` dodaje numery do usuwania reguł.\n- Trwała konfiguracja: `/etc/nftables.conf`, `nft -c -f` (test), `systemctl enable --now nftables`; zmiany poleceniem `nft add` znikają po restarcie.\n- iptables to starsza składnia — dziś zwykle iptables-nft zapisujące reguły w nftables; `iptables-translate` tłumaczy reguły.\n- Nie mieszaj kilku systemów zarządzania zaporą na jednej maszynie."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
