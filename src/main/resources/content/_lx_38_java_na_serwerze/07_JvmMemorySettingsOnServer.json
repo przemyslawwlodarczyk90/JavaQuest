@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Najczęstsze pytanie przy wdrażaniu aplikacji Javy na serwer brzmi: „ile pamięci jej dać?” — a najczęstsza odpowiedź, `-Xmx` równe pamięci maszyny lub limitowi usługi, jest błędna. Parametr `-Xmx` ogranicza tylko **stertę** (*heap*), a proces JVM zużywa znacznie więcej: metaspace (klasy), pamięć podręczną skompilowanego kodu, stosy wątków (każdy wątek Tomcata ma własny), bufory bezpośrednie (sieć, NIO), struktury GC, biblioteki natywne. Jeśli suma przekroczy limit z jednostki systemd (`MemoryMax=` z rozdziału 28) albo pamięć maszyny, jądro zabije proces (*OOM killer*) — bez wyjątku `OutOfMemoryError`, bez zrzutu pamięci, z jednym wpisem w dzienniku.\n\nW tej lekcji dobierzesz ustawienia pamięci dla `sklep` na `lubuntu-nauka` (4 GB RAM, obok PostgreSQL, Nginx i testowego Elasticsearcha): poznasz składniki pamięci procesu JVM i zmierzysz je narzędziem **Native Memory Tracking**, zobaczysz, jak JVM **wykrywa limit cgroup** usługi i wylicza z niego domyślną stertę (`-XX:MaxRAMPercentage`), dlaczego przy małym limicie wybiera inny odśmiecacz, i ustawisz reakcję na brak pamięci: `-XX:+ExitOnOutOfMemoryError` ze zrzutem sterty i automatycznym restartem przez systemd. Na koniec zobaczysz klasyczny błąd: `-Xmx` równe `MemoryMax`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Sterta (heap)** — obiekty aplikacji; `-Xms` (początkowa), `-Xmx` (maksymalna) albo procentowo: `-XX:InitialRAMPercentage=`, `-XX:MaxRAMPercentage=` (procent pamięci dostępnej dla procesu — RAM lub limitu cgroup; domyślnie 25%).\n- **Pamięć poza stertą** — metaspace (`-XX:MaxMetaspaceSize`), code cache (`-XX:ReservedCodeCacheSize`, ok. 240 MB zarezerwowane), stosy wątków (`-Xss`, domyślnie 1 MB rezerwacji na wątek), bufory bezpośrednie (`-XX:MaxDirectMemorySize`, domyślnie = `-Xmx`), struktury GC, biblioteki natywne (np. sterowniki, kompresja).\n- **RSS** — pamięć fizyczna faktycznie zajęta przez proces (`ps -o rss`, `systemctl status` → `Memory:`); zwykle sterta + 150–400 MB dla typowej aplikacji Spring Boot.\n- **Świadomość kontenera/cgroup** — JVM 10+ czyta limity cgroup procesu (także usługi systemd z `MemoryMax=`) i traktuje je jak pamięć maszyny; `-XX:+PrintFlagsFinal -version | grep MaxHeapSize` pokazuje wyliczoną stertę.\n- **Wybór GC** — G1 (domyślny na „serwerach”), ZGC (`-XX:+UseZGC`, krótkie pauzy dla dużych stert), Serial (wybierany automatycznie, gdy JVM widzi < 2 procesory lub < 1792 MB pamięci — np. w usłudze z małym `MemoryMax`).\n- **Reakcja na brak pamięci** — `-XX:+ExitOnOutOfMemoryError` (zakończ proces zamiast działać w stanie niespójnym → systemd restartuje), `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep` (zrzut do analizy, rozdział 26).\n- **Native Memory Tracking** — `-XX:NativeMemoryTracking=summary` + `jcmd PID VM.native_memory summary` — rozkład pamięci JVM na kategorie.\n- **Limity systemd** — `MemoryHigh=` (miękki — dławienie), `MemoryMax=` (twardy — OOM kill w obrębie usługi) (rozdział 28)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Ustawianie pamięci JVM przypomina **planowanie miejsca w kontenerze przeprowadzkowym**. `-Xmx` to tylko **przestrzeń na meble** (sterta). Ale w kontenerze muszą się zmieścić także pudła z narzędziami (metaspace, code cache), rzeczy każdego z przewoźników (stosy wątków), wózki transportowe (bufory) i przejście, którym można chodzić (struktury GC). Jeśli zarezerwujesz na meble całą pojemność kontenera (`-Xmx` = `MemoryMax`), reszta się nie zmieści — a firma przewozowa (jądro) nie negocjuje: po prostu zamyka drzwi i odjeżdża (OOM kill). `MaxRAMPercentage` to reguła „meble zajmują najwyżej 60% kontenera” — działa niezależnie od tego, jaki kontener dostaniesz."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Budżet pamięci `lubuntu-nauka` i składniki procesu `sklep`",
+      "body": "Podział 4 GB RAM między usługi i rozkład pamięci jednej instancji aplikacji:",
+      "code": " lubuntu-nauka: 3.8 GiB RAM (free -h), swap 4 GiB (swappiness 10)\n   system + Nginx + inne        ~ 400 MB\n   PostgreSQL (shared_buffers 512MB + polaczenia)  ~ 800 MB\n   Elasticsearch (testowy, -Xmx512m)               ~ 900 MB\n   sklep@8080   MemoryHigh=1000M  MemoryMax=1200M   <- limit cgroup\n   sklep@8082   (zapasowa, w czasie wdrozenia - lekcja 9)\n   page cache   reszta (dyskowa pamiec podreczna)\n\n sklep@8080 (MemoryMax=1200M, -XX:MaxRAMPercentage=60 -> sterta max ~720 MB)\n   Java Heap            720 MB max   (zwykle ~400 MB uzyte)\n   Metaspace (Class)     ~90 MB      (Spring Boot, Hibernate, sterowniki)\n   Code cache            ~40 MB      (zarezerwowane 240 MB)\n   Thread (200 watkow Tomcata + inne)  ~25 MB fizycznie\n   GC (G1/Serial), bufory, natywne     ~60 MB\n   ------------------------------------------------\n   RSS ~ 650-950 MB  <  MemoryHigh 1000M  <  MemoryMax 1200M"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Ile pamięci naprawdę zużywa JVM — Native Memory Tracking",
+      "body": "Włączenie NMT w środowisku usługi, pomiar kategorii pamięci i porównanie z RSS (przykładowy wynik):",
+      "code": "$ sudo grep JAVA_OPTS /etc/sklep/sklep.env\nJAVA_OPTS=-Xms256m -Xmx512m -XX:NativeMemoryTracking=summary\n$ sudo systemctl restart sklep@8080 && PID=$(systemctl show -p MainPID --value sklep@8080)\n$ sudo -u sklep jcmd $PID VM.native_memory summary | grep -E '^Total|^-' | head -8\nTotal: reserved=1918MB, committed=794MB\n-                 Java Heap (reserved=512MB, committed=512MB)\n-                     Class (reserved=1034MB, committed=88MB)\n-                    Thread (reserved=63MB, committed=6MB)\n-                      Code (reserved=247MB, committed=41MB)\n-                        GC (reserved=74MB, committed=74MB)\n-                  Internal (reserved=3MB, committed=3MB)\n-                     Other (reserved=34MB, committed=34MB)\n$ ps -o pid,rss,cmd -p $PID | awk 'NR==2 {printf \"PID %s RSS %.0f MB\\n\", $1, $2/1024}'\nPID 15210 RSS 731 MB\n$ systemctl status sklep@8080 --no-pager | grep -E 'Memory:'\n     Memory: 742.3M (high: 1000.0M max: 1.1G available: 257.6M peak: 801.0M)"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Sterta wyliczana z limitu usługi, wybór GC i reakcja na OOM",
+      "body": "Jak JVM widzi limit `MemoryMax` (test przez `systemd-run`), nowe opcje Javy z procentem pamięci i zrzutem przy braku pamięci, sprawdzenie po restarcie (przykładowy wynik):",
+      "code": "$ java -XX:+PrintFlagsFinal -version 2>/dev/null | grep -E ' MaxHeapSize | UseG1GC | UseSerialGC '\n   size_t MaxHeapSize                              = 1019215872                                {product} {ergonomic}\n     bool UseG1GC                                  = true                                      {product} {ergonomic}\n     bool UseSerialGC                              = false                                     {product} {ergonomic}\n$ sudo systemd-run --wait --pipe -q -p MemoryMax=1200M java -XX:MaxRAMPercentage=60 -XX:+PrintFlagsFinal -version 2>/dev/null | grep -E ' MaxHeapSize | UseG1GC | UseSerialGC '\n   size_t MaxHeapSize                              = 754974720                                 {product} {ergonomic}\n     bool UseG1GC                                  = false                                     {product} {ergonomic}\n     bool UseSerialGC                              = true                                      {product} {ergonomic}\n$ sudo sed -i 's/^JAVA_OPTS=.*/JAVA_OPTS=-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=\\/var\\/lib\\/sklep/' /etc/sklep/sklep.env\n$ sudo systemctl restart sklep@8080 && PID=$(systemctl show -p MainPID --value sklep@8080)\n$ sudo -u sklep jcmd $PID VM.flags | tr ' ' '\\n' | grep -E 'MaxHeapSize|UseG1GC|ExitOnOutOfMemory'\n-XX:+ExitOnOutOfMemoryError\n-XX:MaxHeapSize=754974720\n-XX:+UseG1GC\n$ sudo -u sklep jcmd $PID GC.heap_info | head -2\n garbage-first heap   total 368640K, used 141210K [0x00000000d3000000, 0x0000000100000000)\n  region size 1024K, 222 young (227328K), 9 survivors (9216K)"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Dobór pamięci dla aplikacji Javy na serwerze",
+      "body": "1. Ustal budżet: ile pamięci maszyny przypada na aplikację po odjęciu systemu, bazy, innych usług i zapasu na pamięć podręczną dysku.\n2. Ustaw limit usługi w systemd: `MemoryHigh=` (ok. 85% budżetu) i `MemoryMax=` (budżet) — drop-in z rozdziału 28.\n3. Ustaw stertę jako część limitu: `-XX:MaxRAMPercentage=50-70` (JVM liczy ją od `MemoryMax`) albo stałe `-Xmx` wyraźnie mniejsze niż limit (zostaw 300-500 MB na pamięć poza stertą).\n4. Wybierz GC świadomie (`-XX:+UseG1GC` — przy małych limitach JVM sama wybrałaby Serial), dodaj `-XX:+ExitOnOutOfMemoryError` i zrzut sterty do katalogu zapisywalnego przez usługę.\n5. Zmierz pod obciążeniem: `systemctl status` (Memory, peak), `jcmd VM.native_memory summary` (NMT), `jcmd GC.heap_info`, dziennik GC (rozdział 26).\n6. Koryguj: RSS blisko `MemoryHigh` → mniej sterty lub większy limit; częste pełne GC → więcej sterty lub analiza wycieku (zrzut, Eclipse MAT)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta wiedza",
+      "body": "- **Kilka usług na jednej maszynie** — przewidywalny podział pamięci (aplikacja, baza, wyszukiwarka).\n- **Kontenery i Kubernetes** — te same mechanizmy (limit cgroup → `MaxRAMPercentage`), te same pułapki z `-Xmx`.\n- **Diagnoza „aplikacja znika bez śladu”** — OOM kill w `journalctl -u USLUGA` i `dmesg` (rozdział 28).\n- **Dwie instancje w czasie wdrożenia** — budżet musi pomieścić obie naraz (lekcja 9).\n- **Duże sterty, wymagania niskich pauz** — ZGC/Shenandoah zamiast G1.\n- **Optymalizacja kosztów w chmurze** — mniejsza maszyna przy poprawnie dobranej stercie i limitach."
+    },
+    {
+      "type": "NOTE",
+      "heading": "`MaxRAMPercentage` a `-Xmx`",
+      "body": "`-Xmx` to wartość bezwzględna: `-Xmx512m` oznacza 512 MB niezależnie od tego, ile pamięci ma maszyna i jaki limit ma usługa. Gdy zmienisz limit w systemd (albo przeniesiesz aplikację na większą maszynę lub do kontenera z innym limitem), musisz pamiętać o zmianie `-Xmx` w drugim miejscu — i łatwo o niespójność. `-XX:MaxRAMPercentage=60` jest **względne**: JVM wylicza stertę przy każdym starcie z pamięci, którą widzi (RAM maszyny albo `MemoryMax` cgroup usługi), więc limit ustawiasz w jednym miejscu, a sterta się do niego dopasowuje. Uwaga na dwa szczegóły: jeśli podasz jednocześnie `-Xmx`, ma on pierwszeństwo przed procentami; a bez `MemoryMax` JVM liczy procent od **całego RAM-u maszyny** — 60% z 4 GB dla każdej z kilku aplikacji szybko przekroczy dostępną pamięć."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "`-Xmx` równe limitowi usługi",
+      "body": "Najczęstszy błąd konfiguracji pamięci: `MemoryMax=1200M` w jednostce i `-Xmx1200m` (albo `-XX:MaxRAMPercentage=100`) w opcjach Javy, „żeby aplikacja mogła wykorzystać cały przydział”. Sterta rośnie, metaspace, code cache, wątki i bufory dokładają swoje kilkaset megabajtów — i proces przekracza limit cgroup, zanim sterta się zapełni. Jądro zabija JVM (`SIGKILL`): nie ma `OutOfMemoryError`, nie ma zrzutu sterty, w logach aplikacji — urwany wpis w połowie linii. systemd restartuje usługę (`Restart=on-failure`), cykl się powtarza pod obciążeniem. Jedynym śladem jest dziennik systemd i jądra."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Sterta równa limitowi — OOM kill bez wyjątku Javy",
+      "body": "Instancja testowa z `-Xmx1200m` przy `MemoryMax=1200M` pod obciążeniem zostaje zabita przez jądro (przykładowy wynik):",
+      "code": "$ sudo grep JAVA_OPTS /etc/sklep/sklep-8082.env\nJAVA_OPTS=-Xms1200m -Xmx1200m\n$ journalctl -u sklep@8082 --since '13:00' -o cat | grep -E 'oom|OOM|killed|Main process exited' | head -3\nsklep@8082.service: A process of this unit has been killed by the OOM killer.\nsklep@8082.service: Main process exited, code=killed, status=9/KILL\nsklep@8082.service: Failed with result 'oom-kill'.\n$ grep -c OutOfMemoryError /var/log/sklep/aplikacja-8082.log; ls /var/lib/sklep/*.hprof 2>/dev/null | wc -l\n0\n0"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Sterta jako procent limitu i kontrolowana reakcja na brak pamięci",
+      "body": "Sterta 60% limitu — pamięć poza stertą mieści się w reszcie; prawdziwy brak sterty kończy się zrzutem i restartem zamiast „cichego” zabicia (przykładowy wynik):",
+      "code": "$ sudo grep JAVA_OPTS /etc/sklep/sklep-8082.env\nJAVA_OPTS=-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep\n$ systemctl status sklep@8082 --no-pager | grep Memory:\n     Memory: 903.4M (high: 1000.0M max: 1.1G available: 96.5M peak: 958.2M)\n$ journalctl -u sklep@8082 --since '13:30' -o cat | grep -E 'heap|Terminating|oom' | head -3\njava.lang.OutOfMemoryError: Java heap space\nDumping heap to /var/lib/sklep/java_pid17120.hprof ...\nTerminating due to java.lang.OutOfMemoryError: Java heap space\n$ ls -lh /var/lib/sklep/java_pid17120.hprof | awk '{print $5, $9}'\n742M /var/lib/sklep/java_pid17120.hprof"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Usługa z limitem `MemoryMax`** — `-XX:MaxRAMPercentage=50-70` (bez `-Xmx`).\n- **Brak limitu cgroup, jedna aplikacja na maszynie** — `MaxRAMPercentage` liczony od RAM-u lub stałe `-Xmx` z zapasem.\n- **Przewidywalny start i brak zmian rozmiaru sterty** — `-Xms` równe maksymalnej stercie (kosztem większego RSS od początku).\n- **Mały limit (< 1,8 GB) a chcesz G1** — jawnie `-XX:+UseG1GC` (inaczej Serial).\n- **Zawsze na produkcji** — `-XX:+ExitOnOutOfMemoryError`, `HeapDumpOnOutOfMemoryError` z katalogiem zapisywalnym, `Restart=on-failure`.\n- **Diagnoza pamięci poza stertą** — `-XX:NativeMemoryTracking=summary` + `jcmd VM.native_memory`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `-Xmx` ogranicza tylko stertę; proces JVM zużywa dodatkowo metaspace, code cache, stosy wątków, bufory i pamięć GC — zwykle kilkaset MB.\n- JVM wykrywa limit cgroup usługi (`MemoryMax=`) i od niego liczy `MaxRAMPercentage`; przy małym limicie sama wybiera Serial GC.\n- Stertę ustawiaj jako część limitu (50–70%), nigdy równą limitowi — inaczej jądro zabije proces bez `OutOfMemoryError`.\n- `-XX:+ExitOnOutOfMemoryError` ze zrzutem sterty i `Restart=on-failure` daje kontrolowaną reakcję na brak pamięci.\n- Rzeczywiste zużycie mierz `systemctl status` (Memory/peak) i Native Memory Tracking (`jcmd VM.native_memory summary`)."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
