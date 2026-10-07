@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Poprzednie lekcje rozdziału pokazały pojedyncze techniki: tablice, operacje na napisach, arytmetykę, tryb ścisły, `trap`, `getopts`, czytanie plików linia po linii i śledzenie. W praktyce administratora liczy się jednak co innego — **kompletny skrypt**, który można bezpiecznie uruchomić z crona lub timera systemd o czwartej rano, który nie zrobi szkody przy nietypowych danych, zostawi czytelny ślad w dzienniku i zwróci kod wyjścia zrozumiały dla monitoringu. Większość takich skryptów ma ten sam szkielet: tryb ścisły, opis użycia, opcje, funkcja logowania, blokada przed równoległym uruchomieniem, sprzątanie w `trap`, tryb symulacji i jasne kody wyjścia.\n\nW tej lekcji zbudujesz ten szkielet jako szablon, a potem na jego podstawie trzy typowe narzędzia: **kontrolę zajętości dysków** z progiem ostrzeżenia, **rotację kopii zapasowych** (zostaw N najnowszych, usuń starsze) oraz **raport kont** (kto ma powłokę logowania, kto dawno się nie logował). Każde z nich podłączysz do timera systemd, a wyniki — do dziennika z własnym identyfikatorem, żeby łatwo je przeszukać `journalctl -t`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Szkielet skryptu** — `#!/bin/bash`, `set -euo pipefail`, stałe na górze, funkcje (`uzycie`, `loguj`, `zakoncz`), parsowanie opcji, główna logika na dole (`main \"$@\"`).\n- **Kody wyjścia** — `0` wszystko w porządku, `1` ostrzeżenie/problem wykryty, `2` błąd użycia (złe opcje), inne — błąd działania; monitoring i `systemd` (`OnFailure=`) rozpoznają je bez czytania tekstu.\n- **Logowanie** — `logger -t NAZWA -p user.warning \"...\"` (dziennik systemowy, filtr `journalctl -t NAZWA`) oraz kopia na stderr, gdy skrypt działa w terminalu (`[[ -t 2 ]]`).\n- **Blokada** — `exec 9> /run/lock/NAZWA.lock; flock -n 9 || zakoncz 0 \"juz dziala\"` — drugi egzemplarz kończy się od razu.\n- **Tryb symulacji** — opcja `-n`: zamiast wykonywać zmiany, skrypt wypisuje polecenia (`uruchom() { if (( SYMULACJA )); then echo \"[symulacja] $*\"; else \"$@\"; fi; }`).\n- **Konfiguracja** — progi i ścieżki w pliku `/etc/NAZWA.conf` (wczytywanym `source` po sprawdzeniu właściciela) z wartościami domyślnymi `${PROG:=85}`.\n- **Bezpieczne usuwanie** — `find KATALOG -maxdepth 1 -name 'WZORZEC' -printf ... | sort | head -n -N`, rozdzielanie znakiem NUL, `--` przed nazwami, sprawdzenie, że katalog nie jest pusty ani `/`.\n- **Uruchamianie cykliczne** — usługa `Type=oneshot` + timer (`OnCalendar=`, `Persistent=true`, `RandomizedDelaySec=`), wynik w `systemctl status` i `journalctl -u`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Szkielet skryptu administracyjnego jest jak **lista kontrolna pilota przed startem**. Każdy lot jest inny (trasa, pogoda, ładunek), ale kolejność czynności zawsze ta sama: sprawdź paliwo, ustaw klapy, potwierdź z wieżą, zapnij pasy. Dzięki temu nawet zmęczony pilot o czwartej rano nie zapomni o niczym ważnym. Tak samo każdy nowy skrypt zaczyna się od tych samych „punktów listy” — tryb ścisły, blokada, logowanie, sprzątanie, kody wyjścia — a dopiero potem dochodzi to, co w nim unikalne: dyski, kopie czy konta."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Budowa typowego skryptu administracyjnego",
+      "body": "Kolejne warstwy szkieletu i to, co zapewnia każda z nich:",
+      "code": " #!/bin/bash\n set -euo pipefail                         <- blad = koniec, puste zmienne wykryte\n readonly NAZWA=${0##*/}  KONF=/etc/...    <- stale i konfiguracja (z domyslnymi)\n -------------------------------------------------------------------\n uzycie()  loguj()  zakoncz()  uruchom()   <- wspolne funkcje (lub source biblioteki)\n -------------------------------------------------------------------\n getopts \":np:h\"                           <- -n symulacja, -p prog, -h pomoc   (zle -> exit 2)\n exec 9> /run/lock/$NAZWA.lock; flock -n 9 <- tylko jeden egzemplarz\n trap 'sprzataj' EXIT                      <- pliki tymczasowe zawsze usuniete\n -------------------------------------------------------------------\n main: wlasciwa praca                      <- dyski / kopie / konta\n -------------------------------------------------------------------\n exit 0 | 1 | 2 | 3                        <- OK | wykryto problem | zle uzycie | blad dzialania\n        |\n        v\n timer systemd -> usluga oneshot -> journalctl -t NAZWA / OnFailure= -> powiadomienie"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Szablon skryptu administracyjnego",
+      "body": "Szablon, od którego zaczyna się każdy nowy skrypt w laboratorium (przykładowy wynik):",
+      "code": "anna@srv-test:~$ cat /usr/local/share/szablony/skrypt-admin.sh\n#!/bin/bash\n# NAZWA - krotki opis. Uzycie: NAZWA [-n] [-h]\nset -euo pipefail\nreadonly NAZWA=${0##*/}\nSYMULACJA=0\n\nuzycie() { echo \"Uzycie: $NAZWA [-n] [-h]   -n symulacja, -h pomoc\"; }\nloguj()  {\n    local poziom=$1; shift\n    logger -t \"$NAZWA\" -p \"user.$poziom\" -- \"$*\"\n    [[ -t 2 ]] && echo \"$NAZWA: [$poziom] $*\" >&2\n    return 0\n}\nzakoncz() { loguj err \"$2\"; exit \"$1\"; }\nuruchom() { if (( SYMULACJA )); then echo \"[symulacja] $*\"; else \"$@\"; fi; }\n\nwhile getopts \":nh\" opcja; do\n    case $opcja in\n        n) SYMULACJA=1 ;;\n        h) uzycie; exit 0 ;;\n        *) uzycie >&2; exit 2 ;;\n    esac\ndone\nshift $((OPTIND - 1))\n\nexec 9> \"/run/lock/$NAZWA.lock\"\nflock -n 9 || { loguj notice \"inny egzemplarz juz dziala\"; exit 0; }\n\nmain() {\n    loguj info \"start\"\n    # ... wlasciwa praca ...\n    loguj info \"koniec\"\n}\nmain \"$@\"\nanna@srv-test:~$ shellcheck /usr/local/share/szablony/skrypt-admin.sh && echo \"brak uwag\"\nbrak uwag"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Kontrola dysków i rotacja kopii na podstawie szablonu",
+      "body": "Dwa narzędzia zbudowane z szablonu: próg zajętości z kodem wyjścia `1` oraz zachowanie 7 najnowszych kopii (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sed -n '/^main()/,/^}/p' /usr/local/bin/sprawdz-dyski.sh\nmain() {\n    local prog=${PROG:-85} problem=0 zajete punkt\n    while read -r zajete punkt; do\n        zajete=${zajete%\\%}\n        if (( zajete >= prog )); then\n            loguj warning \"$punkt zajety w ${zajete}% (prog ${prog}%)\"\n            problem=1\n        fi\n    done < <(df --output=pcent,target -x tmpfs -x devtmpfs -x squashfs | tail -n +2)\n    return \"$problem\"\n}\nanna@srv-test:~$ PROG=60 sprawdz-dyski.sh; echo \"kod: $?\"\nsprawdz-dyski.sh: [warning] /var zajety w 71% (prog 60%)\nkod: 1\nanna@srv-test:~$ journalctl -t sprawdz-dyski.sh --since today -o short-iso | tail -1\n2026-10-09T21:14:03+02:00 srv-test sprawdz-dyski.sh[48211]: /var zajety w 71% (prog 60%)\nanna@srv-test:~$ sed -n '/^main()/,/^}/p' /usr/local/bin/rotuj-kopie.sh\nmain() {\n    local katalog=${1:?podaj katalog kopii} zostaw=${ZOSTAW:-7} plik\n    [[ -d $katalog && $katalog != / ]] || zakoncz 3 \"zly katalog: $katalog\"\n    while IFS= read -r -d '' plik; do\n        uruchom rm -f -- \"$plik\"\n        loguj info \"usuwam ${plik##*/}\"\n    done < <(find \"$katalog\" -maxdepth 1 -type f -name 'mysql-*.sql.gz' -printf '%T@ %p\\0' \\\n             | sort -z -n -r | tail -z -n +\"$((zostaw + 1))\" | cut -z -d' ' -f2-)\n}\nanna@srv-test:~$ ls /var/backups/mysql | wc -l\n10\nanna@srv-test:~$ sudo rotuj-kopie.sh -n /var/backups/mysql\n[symulacja] rm -f -- /var/backups/mysql/mysql-2026-09-30.sql.gz\nrotuj-kopie.sh: [info] usuwam mysql-2026-09-30.sql.gz\n[symulacja] rm -f -- /var/backups/mysql/mysql-2026-09-29.sql.gz\nrotuj-kopie.sh: [info] usuwam mysql-2026-09-29.sql.gz\n[symulacja] rm -f -- /var/backups/mysql/mysql-2026-09-28.sql.gz\nrotuj-kopie.sh: [info] usuwam mysql-2026-09-28.sql.gz\nanna@srv-test:~$ systemctl cat rotuj-kopie.timer | grep -E 'OnCalendar|Persistent|Randomized'\nOnCalendar=*-*-* 04:30\nPersistent=true\nRandomizedDelaySec=10min"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak napisać nowy skrypt administracyjny",
+      "body": "1. Skopiuj szablon (`cp /usr/local/share/szablony/skrypt-admin.sh /usr/local/bin/NAZWA.sh`) i opisz w komentarzu cel oraz użycie.\n2. Ustal kody wyjścia: co jest „problemem wykrytym” (`1`), co błędem użycia (`2`), co błędem działania (`3`).\n3. Napisz funkcję `main` — każdą zmianę w systemie (`rm`, `mv`, `systemctl`, `useradd`) wywołuj przez `uruchom`, żeby działał tryb `-n`.\n4. Progi i ścieżki przenieś do zmiennych z wartościami domyślnymi lub pliku konfiguracyjnego.\n5. Sprawdź `bash -n` i `shellcheck`, potem uruchom z `-n` na prawdziwych danych i porównaj wynik z oczekiwaniami.\n6. Uruchom bez `-n` ręcznie, sprawdź `journalctl -t NAZWA.sh` i kod wyjścia.\n7. Dodaj usługę `oneshot` z timerem (opcjonalnie `OnFailure=` z powiadomieniem) i sprawdź `systemctl list-timers`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Typowe skrypty administracyjne",
+      "body": "- **Zajętość dysków i i-węzłów** — próg ostrzegawczy, wpis w dzienniku, kod `1` dla monitoringu.\n- **Rotacja kopii** — zostaw N najnowszych lub z ostatnich N dni (`find -mtime +N`), usuń resztę.\n- **Raport kont** — konta z powłoką logowania, ostatnie logowanie (`lastlog`, `last`), konta bez hasła, członkowie `sudo`.\n- **Kontrola usług** — lista jednostek w stanie `failed` (`systemctl --failed --plain --no-legend`), restart z limitem.\n- **Wygasające certyfikaty** — `openssl x509 -enddate -noout` i ostrzeżenie N dni przed końcem.\n- **Porządki** — stare pliki tymczasowe, archiwizacja logów aplikacji, czyszczenie katalogów wydań (`/opt/sklep/releases`)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Skrypt czy gotowe narzędzie?",
+      "body": "Zanim napiszesz skrypt, sprawdź, czy problem nie ma już gotowego rozwiązania: rotacja logów — `logrotate`, czyszczenie plików tymczasowych — `systemd-tmpfiles` (`/etc/tmpfiles.d/*.conf` z wiekiem plików), rotacja kopii — wiele narzędzi kopii ma ją wbudowaną (np. `restic forget --keep-daily 7`), monitoring zajętości — agent monitoringu (Zabbix, Prometheus `node_exporter`). Gotowe narzędzia są przetestowane na milionach maszyn i znane innym administratorom. Własny skrypt ma sens, gdy łączy kilka kroków specyficznych dla Twojego środowiska — i wtedy szablon z blokadą, logowaniem i trybem `-n` sprawia, że następca zrozumie go w kilka minut. Trzymaj skrypty w repozytorium Git (nie tylko na serwerze) razem z plikami jednostek systemd."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Usuwanie na podstawie pustej lub złej zmiennej",
+      "body": "Najgroźniejszy błąd skryptów porządkowych to polecenie usuwające z katalogiem wziętym ze zmiennej, która okazała się pusta lub błędna: `rm -rf \"$KATALOG/\"*` przy pustym `KATALOG` zamienia się w `rm -rf /*`. Podobnie `cd $KATALOG && rm *` — gdy `cd` się nie uda, a skrypt nie sprawdza wyniku, pliki znikają z bieżącego katalogu. Zabezpieczenia: `set -u` i `${KATALOG:?}` (przerwanie przy pustej wartości), jawne sprawdzenie (`[[ -d $KATALOG && $KATALOG != / ]]`), usuwanie przez `find KATALOG -maxdepth 1 -name 'konkretny-wzorzec'` zamiast `*`, tryb `-n` przy pierwszym uruchomieniu i ShellCheck, który ostrzega przed `rm -rf \"$x/\"*` (reguła `SC2115`)."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Rotacja oparta na `cd` i `ls`",
+      "body": "Skrypt bez sprawdzenia `cd`; literówka w ścieżce sprawiła, że usunął pliki z katalogu domowego roota (przykładowy wynik):",
+      "code": "root@srv-test:~# cat /usr/local/bin/rotuj-stare.sh\n#!/bin/bash\ncd /var/backup/mysql\nls -t | tail -n +8 | xargs rm -f\nroot@srv-test:~# ls | wc -l\n12\nroot@srv-test:~# /usr/local/bin/rotuj-stare.sh; echo \"kod: $?\"\n/usr/local/bin/rotuj-stare.sh: line 2: cd: /var/backup/mysql: No such file or directory\nkod: 0\nroot@srv-test:~# ls | wc -l\n7"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Rotacja z kontrolą katalogu, wzorcem i trybem symulacji",
+      "body": "Ta sama zła ścieżka kończy się błędem `3` i wpisem w dzienniku, nic nie zostaje usunięte (przykładowy wynik):",
+      "code": "root@srv-test:~# rotuj-kopie.sh -n /var/backup/mysql; echo \"kod: $?\"\nrotuj-kopie.sh: [err] zly katalog: /var/backup/mysql\nkod: 3\nroot@srv-test:~# ls | wc -l\n12\nroot@srv-test:~# rotuj-kopie.sh /var/backups/mysql; echo \"kod: $?\"\nrotuj-kopie.sh: [info] usuwam mysql-2026-09-30.sql.gz\nrotuj-kopie.sh: [info] usuwam mysql-2026-09-29.sql.gz\nrotuj-kopie.sh: [info] usuwam mysql-2026-09-28.sql.gz\nkod: 0\nroot@srv-test:~# ls /var/backups/mysql | wc -l\n7"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Każdy nowy skrypt uruchamiany cyklicznie** — szablon: tryb ścisły, blokada, `logger`, kody wyjścia.\n- **Skrypt coś zmienia lub usuwa** — tryb `-n` przez funkcję `uruchom` i sprawdzanie katalogów.\n- **Wynik ma trafić do monitoringu** — kody wyjścia `0`/`1` i `OnFailure=` w usłudze.\n- **Problem ma gotowe narzędzie** — `logrotate`, `systemd-tmpfiles`, opcje narzędzia kopii zamiast własnego skryptu.\n- **Progi i ścieżki różne na serwerach** — zmienne z wartościami domyślnymi lub plik `/etc/NAZWA.conf`.\n- **Kilku administratorów** — skrypty i jednostki w repozytorium Git, ShellCheck przed wdrożeniem."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Skrypty administracyjne warto budować z jednego szablonu: tryb ścisły, `uzycie`, `loguj`, `getopts`, `flock`, `trap`, `main`.\n- `logger -t NAZWA` zapisuje wyniki w dzienniku, a `journalctl -t NAZWA` je odnajduje; kody wyjścia informują monitoring.\n- Tryb symulacji (`-n`) przez funkcję `uruchom` pozwala bezpiecznie sprawdzić skrypt na prawdziwych danych.\n- Usuwanie zawsze z kontrolą katalogu (`${X:?}`, `-d`, nie `/`), konkretnym wzorcem i `find -print0`.\n- Uruchamianie cykliczne — usługa `oneshot` z timerem; przed pisaniem skryptu sprawdź gotowe narzędzia (`logrotate`, `tmpfiles`)."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
