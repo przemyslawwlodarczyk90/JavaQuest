@@ -205,7 +205,20 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   migawki `--link-dest` (nawiązanie do `kopia-sklep.sh` z rozdz. 27; serwer off-site `backup` z kontem `kopie` i skryptem
   `pobierz-kopie-sklep.sh`, dowiązanie `ostatnia`), `python3 -m http.server` (Python 3.12.3, `~/udostepnione`) i `jwebserver`.
   ufw aktywny także na lubuntu-nauka (reguły w rozdziale 35).
-  Pozostałe lekcje (`_lx_35`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_35_zapora_sieciowa` (6 lekcji) — ZROBIONY (2026-10-07). ZAPORA LABORATORIUM: lubuntu-nauka — ufw
+  (skrypt `~/infra/zapora/lubuntu-nauka.sh`): deny incoming/allow outgoing/deny routed, `limit` 22/tcp z 192.168.56.0/24,
+  'Nginx Full', 2049 i 111 z lab, Samba z lab, logging low; przekierowanie VirtualBox NAT gospodarz 8022 → 22 (SSH z NAT
+  zablokowany). Elasticsearch (testowy, port 9200) i Actuator `management.server.port=8081` przestawione na 127.0.0.1
+  (`network.host`, `MANAGEMENT_SERVER_ADDRESS` w `/etc/sklep/sklep.env`); JDWP 127.0.0.1:5005. srv-test — ufw `limit`
+  2222/tcp z 192.168.56.0/24; fail2ban 1.0.2 (`jail.local`: bantime 1h + increment, findtime 10m, maxretry 5, ignoreip
+  192.168.56.1 i .10, banaction nftables-multiport, backend systemd; `[sshd]` port 2222 maxretry 3). lubuntu-nauka:
+  jail `sklep-logowanie` (filtr na `LogowanieListener ... Nieudane logowanie: email=... ip=<HOST>` w
+  `/var/log/sklep/aplikacja.log`, porty http/https, maxretry 10/5m, bantime 30m); Nginx przekazuje X-Real-IP/X-Forwarded-For,
+  `SERVER_FORWARD_HEADERS_STRATEGY=native`. Nowe maszyny: `deb-lab` 192.168.56.40 (Debian 12, `/etc/nftables.conf`
+  z zestawem `admin`, port 9100 dla 192.168.56.20), `rocky-lab` 192.168.56.50 (Rocky 9, firewalld: public = http/https
+  + rich rule 192.0.2.10→9100; internal = źródło 192.168.56.0/24 z ssh, cockpit, usługą `sklep` 8081 (Nginx przed
+  Spring Boot; `semanage port -a -t http_port_t -p tcp 8081`)).
+  Pozostałe lekcje (`_lx_36`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -275,7 +288,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_35_zapora_sieciowa`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_36_serwery_www`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

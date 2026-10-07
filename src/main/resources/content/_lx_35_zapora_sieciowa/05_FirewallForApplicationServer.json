@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Poprzednie lekcje dały narzędzia; teraz złożysz z nich **kompletną zaporę serwera aplikacji** — takiego jak `lubuntu-nauka`, na którym działa sklep w Spring Boot za Nginx, PostgreSQL, SSH, a w laboratorium także NFS i Samba. Zadanie nie zaczyna się od `ufw allow`, tylko od **inwentaryzacji**: co nasłuchuje, na jakim adresie, kto musi mieć dostęp. Dopiero z takiej tabeli powstają reguły — dla ruchu z internetu (tylko HTTP i HTTPS), z sieci administracyjnej (SSH, monitoring), z innych serwerów (baza dla serwera aplikacji) i dla portów wewnętrznych, które **nie powinny być w ogóle osiągalne z sieci** (8080 aplikacji, 5005 debuggera, port zarządzania Actuatora, JMX).\n\nW tej lekcji przejdziesz cały proces: inwentaryzacja `ss -tulnp`, poprawa adresów nasłuchu tam, gdzie usługa słucha szerzej, niż powinna, reguły ufw zapisane w skrypcie trzymanym w repozytorium, opcjonalne ograniczenie ruchu **wychodzącego**, weryfikacja z zewnątrz skanem portów (rozdział 32) i z sieci NAT. Na koniec zobaczysz, jak ta sama polityka wygląda w chmurze, gdzie przed zaporą hosta stoi grupa zabezpieczeń dostawcy."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Inwentaryzacja** — `sudo ss -tulnp` (TCP/UDP, nasłuch, numery, procesy): adres `0.0.0.0`/`[::]` = dostępne z sieci (jeśli zapora pozwoli), `127.0.0.1`/`[::1]` = tylko lokalnie.\n- **Klasy dostępu** — **publiczne** (80, 443), **administracyjne** (SSH, Cockpit, monitoring — tylko z sieci admin lub przez bastion/VPN), **między serwerami** (baza tylko dla serwerów aplikacji), **lokalne** (8080 aplikacji za reverse proxy, 5005 JDWP, Actuator `management.server.port`, JMX — nasłuch `127.0.0.1`, bez reguł).\n- **Spring Boot** — `server.address=127.0.0.1` (aplikacja za Nginx), `management.server.port=8081` + `management.server.address=127.0.0.1` (Actuator osobno, lokalnie), `-agentlib:jdwp=...,address=127.0.0.1:5005` (debugger tylko lokalnie, dostęp tunelem SSH — rozdział 33).\n- **Ruch wychodzący** — domyślnie dozwolony; na serwerach o wysokich wymaganiach `default deny outgoing` + wyjątki: DNS (53), NTP (123/udp), HTTP/HTTPS (aktualizacje, API), SMTP (587), baza na innym hoście — utrudnia wyprowadzanie danych i pobieranie narzędzi przez intruza.\n- **Zapora jako kod** — reguły w skrypcie (`ufw ...`) lub pliku (`nftables.conf`) w repozytorium; zmiana przez przegląd i wdrożenie, nie ręcznie na serwerze.\n- **Weryfikacja** — skan z innej maszyny w tej samej sieci i z innej sieci (rozdział 32), porównanie z oczekiwaną listą portów.\n- **Chmura** — grupa zabezpieczeń (AWS Security Group, Azure NSG, reguły VPC w GCP): stanowa, reguły „allow” dla źródeł; zapora hosta działa **dodatkowo**."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Projektowanie zapory serwera to **ustalanie zasad wejścia do restauracji**. Drzwi frontowe (80/443) są otwarte dla wszystkich gości. Wejście służbowe (SSH) — tylko dla personelu z kartą (sieć administracyjna). Rampa dostaw (baza danych) — tylko dla samochodów zaopatrzenia z zaprzyjaźnionej hurtowni (serwery aplikacji). A kuchnia (8080), sejf z utargiem (JMX, Actuator) i zaplecze z narzędziami (debugger) **nie mają drzwi na zewnątrz w ogóle** — dostaje się do nich tylko od środka. Inwentaryzacja to obejście budynku przed otwarciem i sprawdzenie, czy jakieś okno na zaplecze nie zostało przypadkiem otwarte na ulicę."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Polityka dostępu `lubuntu-nauka`",
+      "body": "Wynik inwentaryzacji i decyzje dla każdego nasłuchującego portu:",
+      "code": " PORT       PROCES        NASLUCH (ss)      KLASA            DECYZJA\n 80, 443    nginx         0.0.0.0, [::]     publiczne        ufw allow 'Nginx Full'\n 22         sshd(socket)  0.0.0.0, [::]     administracyjne  ufw limit from 192.168.56.0/24 port 22\n 2049, 111  nfsd,rpcbind  0.0.0.0           laboratorium     ufw allow from 192.168.56.0/24\n 139, 445   smbd          0.0.0.0           laboratorium     ufw allow from 192.168.56.0/24 app Samba\n 5432       postgres      127.0.0.1         lokalne          brak reguly (nasluch lokalny)\n 8080       java (sklep)  127.0.0.1         lokalne          brak reguly (za Nginx)\n 8081       java (Actuator) 0.0.0.0  !!!    lokalne          POPRAW: management.server.address=127.0.0.1\n 5005       java (JDWP)   127.0.0.1         lokalne          brak reguly (tunel SSH)\n 9200       java (Elastic) 0.0.0.0  !!!     lokalne          POPRAW: network.host: 127.0.0.1\n reszta                                     -                default deny incoming\n\n Z INTERNETU (przez router/NAT):  tylko 80, 443        Z SIECI LAB:  + 22, NFS, Samba"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Inwentaryzacja i poprawa adresów nasłuchu",
+      "body": "Lista nasłuchujących gniazd na `lubuntu-nauka`; dwie usługi słuchają szerzej, niż powinny — poprawka konfiguracji zamiast reguły zapory (przykładowy wynik):",
+      "code": "$ sudo ss -tlnp | awk 'NR>1 {print $4, $6}' | sed 's/users:((//; s/,pid.*//' | sort -u\n0.0.0.0:111 \"rpcbind\"\n0.0.0.0:139 \"smbd\"\n0.0.0.0:2049 -\n0.0.0.0:22 \"systemd\"\n0.0.0.0:445 \"smbd\"\n0.0.0.0:80 \"nginx\"\n0.0.0.0:8081 \"java\"\n0.0.0.0:9200 \"java\"\n127.0.0.1:5005 \"java\"\n127.0.0.1:5432 \"postgres\"\n127.0.0.1:8080 \"java\"\n$ sudo ps -o pid,user,cmd -p $(sudo ss -tlnpH 'sport = :9200' | grep -oP 'pid=\\K[0-9]+' | head -1) | cut -c1-80\n    PID USER     CMD\n  19822 elastic+ /usr/share/elasticsearch/jdk/bin/java -Xshare:auto -Des.networkaddress\n$ grep -E '^(network.host|http.port)' /etc/elasticsearch/elasticsearch.yml\nnetwork.host: 0.0.0.0\n$ sudo sed -i 's/^network.host: 0.0.0.0/network.host: 127.0.0.1/' /etc/elasticsearch/elasticsearch.yml\n$ echo 'MANAGEMENT_SERVER_ADDRESS=127.0.0.1' | sudo tee -a /etc/sklep/sklep.env > /dev/null\n$ sudo systemctl restart elasticsearch sklep\n$ sudo ss -tln | grep -E ':(8081|9200) '\nLISTEN 0      100        127.0.0.1:8081       0.0.0.0:*\nLISTEN 0      4096       127.0.0.1:9200       0.0.0.0:*"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Reguły jako skrypt w repozytorium i weryfikacja z zewnątrz",
+      "body": "Skrypt odtwarzający zaporę od zera (przechowywany w repozytorium konfiguracji), uruchomienie i skany z sieci laboratorium oraz z gospodarza przez przekierowanie portów NAT (przykładowy wynik):",
+      "code": "$ cat ~/infra/zapora/lubuntu-nauka.sh\n#!/bin/bash\n# Zapora serwera aplikacji lubuntu-nauka - jedyne zrodlo prawdy, zmiany przez repozytorium\nset -euo pipefail\nLAB=192.168.56.0/24\nufw --force reset\nufw default deny incoming\nufw default allow outgoing\nufw default deny routed\nufw limit from $LAB to any port 22 proto tcp comment 'SSH - siec lab'\nufw allow 'Nginx Full' comment 'sklep - HTTP/HTTPS'\nufw allow from $LAB to any port 2049 comment 'NFS'\nufw allow from $LAB to any port 111 comment 'rpcbind'\nufw allow from $LAB to any app Samba comment 'Samba'\nufw logging low\nufw --force enable\n$ sudo bash ~/infra/zapora/lubuntu-nauka.sh > /dev/null && sudo ufw status | grep -c ALLOW\n5\nanna@srv-test:~$ sudo nmap -n -p- -T4 192.168.56.10 | grep -E '^[0-9]'\n22/tcp   open  ssh\n80/tcp   open  http\n111/tcp  open  rpcbind\n139/tcp  open  netbios-ssn\n445/tcp  open  microsoft-ds\n2049/tcp open  nfs\nPS C:\\Users\\anna> Test-NetConnection 127.0.0.1 -Port 8022 | Select-Object TcpTestSucceeded\nTcpTestSucceeded : True\n# -> przekierowanie VirtualBox NAT: gospodarz 8022 -> lubuntu-nauka 22 (zrodlo 10.0.2.2)\nPS C:\\Users\\anna> ssh -p 8022 anna@127.0.0.1\nssh: connect to host 127.0.0.1 port 8022: Connection timed out\n# -> SSH z NAT (10.0.2.2) nie jest w 192.168.56.0/24 -> zablokowany, zgodnie z polityka"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Zapora serwera aplikacji — od zera do weryfikacji",
+      "body": "1. **Inwentaryzacja**: `sudo ss -tulnp`; dla każdego portu ustal proces, adres nasłuchu i klasę dostępu (publiczne, administracyjne, między serwerami, lokalne).\n2. **Popraw nasłuch**: usługi lokalne przełącz na `127.0.0.1` w ich konfiguracji (`server.address`, `management.server.address`, `listen_addresses`, `network.host`).\n3. **Zapisz reguły w skrypcie lub pliku** w repozytorium: polityki domyślne, SSH z sieci admin (`limit`), publiczne 80/443, wyjątki między serwerami.\n4. **Wdróż** z zapasową sesją SSH (lekcja 2), włącz logowanie zablokowanych pakietów.\n5. **Zweryfikuj z zewnątrz**: pełny skan TCP z sieci administracyjnej i z innej sieci; porównaj z tabelą z kroku 1 — każdy otwarty port musi mieć uzasadnienie.\n6. **Powtarzaj** po każdym wdrożeniu nowej usługi i okresowo (rozdział 39); różnice między skanami zapisuj (`ndiff`, rozdział 32)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Wzorce dla typowych serwerów",
+      "body": "- **Serwer aplikacji za reverse proxy** — publiczne 80/443, SSH z sieci admin; aplikacja, Actuator, JMX, debugger — `127.0.0.1`.\n- **Serwer bazy danych** — 5432/3306 tylko z adresów serwerów aplikacji (`ufw allow from 10.20.0.11 to any port 5432`), SSH z sieci admin, nic publicznego (rozdział 37).\n- **Bastion** — tylko SSH (z `limit`), wychodzące SSH do sieci prywatnej (rozdział 33).\n- **Serwer z Dockerem** — porty kontenerów publikowane na `127.0.0.1` + Nginx; reguły w `DOCKER-USER` (lekcja 2).\n- **Chmura** — grupa zabezpieczeń: 80/443 z `0.0.0.0/0`, 22 z adresu VPN/bastionu; zapora hosta z tą samą polityką.\n- **Serwer o wysokich wymaganiach** — dodatkowo `default deny outgoing` z listą wyjątków."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Ruch wychodzący: kiedy go ograniczać",
+      "body": "Większość poradników zostawia ruch wychodzący otwarty — i dla laboratorium czy typowego serwera aplikacji to rozsądny kompromis. Ograniczenie ruchu wychodzącego ma jednak realną wartość na serwerach przetwarzających dane wrażliwe: intruz, który wykorzysta podatność aplikacji (np. zdalne wykonanie kodu przez bibliotekę logowania), zwykle w pierwszym kroku pobiera narzędzia z internetu i otwiera połączenie zwrotne do swojego serwera. Przy `default deny outgoing` oba kroki się nie udają, a zablokowane próby widać w logach `[UFW BLOCK] OUT=...`. Ceną jest utrzymanie listy wyjątków: DNS (53 do serwerów z `resolvectl`), NTP (123/udp), repozytoria pakietów (80/443 — najlepiej przez lokalne lustro lub proxy), API zewnętrzne aplikacji (płatności, poczta — 443, 587), baza na innym hoście, serwer logów (514/tcp z rozdziału 26), kopie zapasowe. Brak któregoś wyjątku objawia się „losowymi” błędami aplikacji, więc wprowadzaj to stopniowo, najpierw z samym logowaniem."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Otwieranie portów wewnętrznych „na wszelki wypadek”",
+      "body": "Częsty błąd w zespołach: port 8080 aplikacji otwarty publicznie, „bo czasem trzeba ominąć Nginx”, port Actuatora 8081 otwarty, „żeby monitoring działał”, JMX 9010 lub debugger 5005 na `0.0.0.0`, „bo tak było prościej podłączyć IDE”. Każdy z nich to poważne ryzyko: bezpośredni dostęp do aplikacji omija ograniczenia i nagłówki ustawiane przez Nginx (rozmiar żądań, limity, HTTPS), Actuator może ujawniać zmienne środowiskowe i zrzuty pamięci (`/actuator/env`, `/actuator/heapdump` z hasłami), a otwarty JMX lub JDWP pozwala **wykonać dowolny kod** w procesie Javy. Dostęp administracyjny do takich portów realizuje się tunelem SSH (rozdział 33) albo z sieci administracyjnej przez wąską regułę dla jednego adresu monitoringu."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Port aplikacji i debuggera otwarte dla wszystkich",
+      "body": "„Tymczasowe” reguły ułatwiające pracę zespołu, które zostały na stałe (przykładowy wynik):",
+      "code": "$ sudo ufw status | grep -E '8080|8081|5005'\n8080/tcp                   ALLOW       Anywhere\n8081/tcp                   ALLOW       Anywhere\n5005/tcp                   ALLOW       Anywhere\n$ sudo ss -tln | grep -E ':(8080|8081|5005) '\nLISTEN 0      100          0.0.0.0:8080       0.0.0.0:*\nLISTEN 0      100          0.0.0.0:8081       0.0.0.0:*\nLISTEN 0      50           0.0.0.0:5005       0.0.0.0:*\nanna@srv-test:~$ curl -s 192.168.56.10:8081/actuator/env | grep -o '\"SPRING_DATASOURCE_PASSWORD\":{[^}]*}'\n\"SPRING_DATASOURCE_PASSWORD\":{\"value\":\"******\"}\n# -> tu zamaskowane, ale /actuator/heapdump zawiera haslo jawnie; JDWP na 5005 = wykonanie dowolnego kodu"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Porty wewnętrzne tylko lokalnie, dostęp tunelem",
+      "body": "Reguły usunięte, nasłuch lokalny, monitoring przez reverse proxy z ograniczeniem, praca z IDE przez tunel SSH (przykładowy wynik):",
+      "code": "$ for p in 8080 8081 5005; do sudo ufw delete allow $p/tcp > /dev/null; done\n$ sudo ss -tln | grep -E ':(8080|8081|5005) '\nLISTEN 0      100        127.0.0.1:8080       0.0.0.0:*\nLISTEN 0      100        127.0.0.1:8081       0.0.0.0:*\nLISTEN 0      50         127.0.0.1:5005       0.0.0.0:*\nanna@srv-test:~$ sudo nmap -n -p 8080,8081,5005 192.168.56.10 | grep tcp\n5005/tcp filtered avt-profile-2\n8080/tcp filtered http-proxy\n8081/tcp filtered blackice-icecap\nPS C:\\Users\\anna> ssh -N -L 5005:localhost:5005 -L 8081:localhost:8081 anna@192.168.56.10"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Usługa ma być tylko lokalna** — nasłuch `127.0.0.1` w jej konfiguracji (zapora jako zabezpieczenie dodatkowe).\n- **Usługa publiczna** — reguła `allow` bez ograniczenia źródła (80/443).\n- **Usługa administracyjna** — `allow`/`limit` tylko z sieci administracyjnej, VPN lub bastionu.\n- **Dostęp programisty do portów wewnętrznych** — tunel SSH (rozdział 33), nie reguła zapory.\n- **Wysokie wymagania bezpieczeństwa** — także `default deny outgoing` z listą wyjątków.\n- **Każda zmiana** — w skrypcie/pliku w repozytorium, zweryfikowana skanem z zewnątrz."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Zaporę serwera projektuje się od inwentaryzacji nasłuchujących portów (`ss -tulnp`) i podziału na klasy dostępu.\n- Porty wewnętrzne (aplikacja za proxy, Actuator, JMX, debugger, baza lokalna) powinny słuchać na `127.0.0.1` — wtedy w ogóle nie potrzebują reguł.\n- Publicznie tylko 80/443; SSH i usługi administracyjne tylko z sieci administracyjnej, VPN lub bastionu.\n- Reguły trzymaj jako kod w repozytorium i weryfikuj skanem z innej maszyny i innej sieci.\n- W chmurze grupa zabezpieczeń i zapora hosta działają razem; ograniczanie ruchu wychodzącego to dodatkowa warstwa dla serwerów o wysokich wymaganiach."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Zapora z lekcji 2-5 działa według stałych reguł: port otwarty albo zamknięty. Usługa publiczna — SSH wystawiony do internetu, formularz logowania sklepu — musi jednak przyjmować połączenia od każdego, także od botów, które godzinami zgadują hasła. Tu pomaga **fail2ban**: program, który **czyta logi** (dziennik systemd, `/var/log/auth.log`, logi Nginx i aplikacji), wyszukuje w nich nieudane próby (wyrażeniami regularnymi), liczy je dla każdego adresu IP i po przekroczeniu progu **dodaje do zapory regułę blokującą** ten adres na określony czas. W rozdziale 33 widzieliśmy na `srv-test` 1847 nieudanych prób logowania w ciągu doby — fail2ban zamieniłby je w kilkadziesiąt zablokowanych adresów.\n\nW tej lekcji zainstalujesz fail2ban, skonfigurujesz w `jail.local` ochronę SSH na porcie 2222 (z listą adresów, których nigdy nie blokuje, i wydłużaniem blokad dla recydywistów), sprawdzisz stan i odblokujesz adres ręcznie. Następnie napiszesz **własny filtr** dla aplikacji `sklep`, która loguje nieudane logowania klientów, przetestujesz go `fail2ban-regex` i poznasz pułapkę aplikacji za reverse proxy: w logu jest `127.0.0.1` zamiast adresu klienta."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **fail2ban** — usługa `fail2ban.service` (Ubuntu 24.04: wersja 1.0.2), klient `fail2ban-client`; konfiguracja w `/etc/fail2ban/`.\n- **Jail (więzienie)** — połączenie: **filtr** (co szukać w logu) + **akcja** (co zrobić — zwykle blokada w zaporze) + parametry; np. `[sshd]`, `[nginx-http-auth]`, własne `[sklep-logowanie]`.\n- **Filtr** — plik `/etc/fail2ban/filter.d/NAZWA.conf` z `failregex` (wyrażenia z `<HOST>` w miejscu adresu) i opcjonalnie `ignoreregex`, `journalmatch`.\n- **Parametry** — `maxretry` (liczba prób), `findtime` (okno czasowe, np. `10m`), `bantime` (czas blokady, np. `1h`, `-1` = na zawsze), `bantime.increment = true` (każda kolejna blokada dłuższa), `ignoreip` (adresy nigdy nieblokowane), `port`, `logpath` lub `backend = systemd`.\n- **Akcje blokady** — `banaction = nftables-multiport` (lub `iptables-multiport`, `ufw`, `firewallcmd-rich-rules` w Rocky); w Ubuntu domyślnie iptables (przez iptables-nft).\n- **Pliki** — **nie edytuj** `jail.conf` (nadpisywany przy aktualizacjach); własne ustawienia w `jail.local` lub `jail.d/*.local`; Ubuntu/Debian ma `jail.d/defaults-debian.conf` z włączonym `[sshd]`.\n- **Polecenia** — `fail2ban-client status`, `status sshd`, `set sshd unbanip ADRES`, `set sshd banip ADRES`, `reload`, `fail2ban-client -d` (konfiguracja wynikowa), `fail2ban-regex LOG FILTR` (test filtra).\n- **Ograniczenia** — nie chroni przed atakami rozproszonymi (każdy adres próbuje kilka razy), nie zastępuje kluczy SSH i silnych haseł; przy IPv6 atakujący łatwo zmienia adres."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "fail2ban to **ochroniarz, który czyta księgę wejść** (logi) przy recepcji. Gdy widzi, że ta sama osoba trzy razy w ciągu dziesięciu minut podała złe hasło do drzwi (`maxretry=3`, `findtime=10m`), wpisuje ją na listę osób, których portier ma nie wpuszczać przez godzinę (`bantime=1h`), a recydywistom za każdym razem przedłuża zakaz (`bantime.increment`). Ochroniarz ma też listę VIP-ów, których nigdy nie zatrzymuje (`ignoreip` — np. adres administratora). Ale jeśli wszyscy goście wchodzą przez jedną bramkę obrotową, która w księdze zapisuje się jako „bramka” (reverse proxy i `127.0.0.1`), ochroniarz nie wie, kogo zatrzymać."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jak fail2ban zamienia wpisy w logu w blokadę",
+      "body": "Przepływ dla `[sshd]` na `srv-test` (port 2222) i własnego jail aplikacji:",
+      "code": " sshd (journald)                          fail2ban                                   zapora (nftables)\n Failed password for invalid user admin   filtr sshd: failregex z <HOST>\n   from 203.0.113.50 port 51122  ------>  203.0.113.50: 1, 2, 3 proby w 10 min\n ...                                       maxretry=3 osiagniety  ------------------> ban 203.0.113.50 :2222 na 1h\n                                           po 1h: unban; kolejny ban: 2h, 4h ... (increment)\n 192.168.56.1 (ignoreip)                   nigdy nie blokowany\n\n /var/log/sklep/aplikacja.log\n WARN ... Nieudane logowanie: email=jan@... ip=198.51.100.23  --> filtr sklep-logowanie --> ban :80,:443\n UWAGA: za Nginx bez X-Forwarded-For -> ip=127.0.0.1 (ignoreip) -> NIC nie zostaje zablokowane"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Ochrona SSH: instalacja, `jail.local`, stan i odblokowanie",
+      "body": "Na `srv-test` włączasz jail `sshd` dla portu 2222 z blokadą w nftables i wydłużaniem blokad; potem sprawdzasz stan (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo apt install -y fail2ban > /dev/null 2>&1; fail2ban-client --version\nFail2Ban v1.0.2\nanna@srv-test:~$ sudo tee /etc/fail2ban/jail.local > /dev/null << 'KONIEC'\n> [DEFAULT]\n> bantime = 1h\n> bantime.increment = true\n> findtime = 10m\n> maxretry = 5\n> ignoreip = 127.0.0.1/8 ::1 192.168.56.1 192.168.56.10\n> banaction = nftables-multiport\n> backend = systemd\n>\n> [sshd]\n> enabled = true\n> port = 2222\n> maxretry = 3\n> KONIEC\nanna@srv-test:~$ sudo systemctl enable --now fail2ban && sudo fail2ban-client status\nStatus\n|- Number of jail:\t1\n`- Jail list:\tsshd\nanna@srv-test:~$ sudo fail2ban-client status sshd\nStatus for the jail: sshd\n|- Filter\n|  |- Currently failed:\t2\n|  |- Total failed:\t41\n|  `- Journal matches:\t_SYSTEMD_UNIT=sshd.service + _COMM=sshd\n`- Actions\n   |- Currently banned:\t3\n   |- Total banned:\t3\n   `- Banned IP list:\t203.0.113.50 198.51.100.77 192.168.56.30\nanna@srv-test:~$ sudo fail2ban-client set sshd unbanip 192.168.56.30\n1\nanna@srv-test:~$ sudo nft list set inet f2b-table addr-set-sshd | grep elements\n\t\telements = { 198.51.100.77, 203.0.113.50 }"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Własny filtr dla logowań w aplikacji `sklep`",
+      "body": "Aplikacja loguje nieudane logowania klientów; filtr, test na prawdziwym logu i jail blokujący HTTP/HTTPS na `lubuntu-nauka` (przykładowy wynik):",
+      "code": "$ grep -m2 'Nieudane logowanie' /var/log/sklep/aplikacja.log\n2026-10-07T21:14:02.118+02:00  WARN 15210 --- [nio-8080-exec-4] p.s.bezpieczenstwo.LogowanieListener : Nieudane logowanie: email=admin@sklep.example ip=198.51.100.23\n2026-10-07T21:14:03.902+02:00  WARN 15210 --- [nio-8080-exec-7] p.s.bezpieczenstwo.LogowanieListener : Nieudane logowanie: email=test@test.pl ip=198.51.100.23\n$ cat /etc/fail2ban/filter.d/sklep-logowanie.conf\n[Definition]\nfailregex = ^.*LogowanieListener\\s*: Nieudane logowanie: email=\\S* ip=<HOST>$\nignoreregex =\ndatepattern = ^%%Y-%%m-%%dT%%H:%%M:%%S\n$ sudo fail2ban-regex /var/log/sklep/aplikacja.log /etc/fail2ban/filter.d/sklep-logowanie.conf | grep -E '^(Failregex|Lines)'\nFailregex: 37 total\nLines: 18342 lines, 0 ignored, 37 matched, 18305 missed\n$ cat /etc/fail2ban/jail.d/sklep.local\n[sklep-logowanie]\nenabled  = true\nbackend  = auto\nlogpath  = /var/log/sklep/aplikacja.log\nport     = http,https\nmaxretry = 10\nfindtime = 5m\nbantime  = 30m\n$ sudo fail2ban-client reload && sudo fail2ban-client status sklep-logowanie | tail -3\nOK\n   |- Currently banned:\t1\n   |- Total banned:\t1\n   `- Banned IP list:\t198.51.100.23"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Wdrożenie fail2ban dla nowej usługi",
+      "body": "1. Sprawdź, co i gdzie usługa loguje przy nieudanym logowaniu (`journalctl -u USLUGA`, plik logu) — wpis musi zawierać **adres klienta**.\n2. Użyj gotowego filtra (`ls /etc/fail2ban/filter.d/`) albo napisz własny w `filter.d/NAZWA.conf` z `<HOST>` w miejscu adresu.\n3. Przetestuj filtr na prawdziwym logu: `fail2ban-regex LOG FILTR` — liczba `matched` musi odpowiadać nieudanym próbom, a nie wszystkim liniom.\n4. Utwórz jail w `jail.d/NAZWA.local`: `enabled`, `logpath` lub `backend = systemd`, `port`, progi; ustaw `ignoreip` dla adresów administracyjnych i monitoringu.\n5. `sudo fail2ban-client reload`, potem `status NAZWA`; sprowokuj kilka nieudanych prób z maszyny testowej i sprawdź, czy blokada się pojawia (`nft list ruleset | grep f2b`).\n6. Odblokuj adres testowy (`set NAZWA unbanip`) i obserwuj jail przez kilka dni (fałszywe blokady prawdziwych klientów?)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się fail2ban",
+      "body": "- **SSH dostępny z internetu** — jail `sshd` (nawet przy logowaniu tylko kluczem ogranicza szum i obciążenie).\n- **Nginx/Apache** — `nginx-http-auth` (Basic Auth), `nginx-limit-req` (przekroczenia limitów), `nginx-botsearch` (skanowanie znanych ścieżek, np. `/wp-login.php`).\n- **Aplikacje** — własne filtry na logi logowania, resetu hasła, API z kluczem (Spring Security: listener zdarzeń `AuthenticationFailureBadCredentialsEvent`).\n- **Poczta** — Postfix, Dovecot (zgadywanie haseł do skrzynek).\n- **Recydywiści** — jail `recidive` (blokada na tydzień adresów blokowanych wielokrotnie) lub `bantime.increment`.\n- **Rocky/RHEL** — `banaction = firewallcmd-rich-rules` (integracja z firewalld)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "fail2ban za reverse proxy i w kontenerach",
+      "body": "fail2ban blokuje adres, który znajdzie w logu. Aplikacja `sklep` stoi za Nginx (rozdział 30), więc bez dodatkowej konfiguracji widzi każde żądanie jako pochodzące z `127.0.0.1` — i tak je loguje. Taki adres jest na liście `ignoreip`, więc fail2ban niczego nie zablokuje; gdyby go tam nie było, zablokowałby sam serwer proxy, czyli **wszystkich klientów naraz**. Rozwiązanie: Nginx przekazuje adres klienta w nagłówku (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, `X-Real-IP`), a Spring Boot go odczytuje (`server.forward-headers-strategy=native` — Tomcat ufa nagłówkom tylko od wewnętrznych adresów proxy). Alternatywnie fail2ban może czytać log Nginx, w którym adres klienta jest prawdziwy. Drugi przypadek: aplikacja w kontenerze Dockera — blokada w łańcuchu `input` hosta nie dotyczy ruchu do kontenera (łańcuch `forward`, lekcja 2); trzeba ustawić `chain = DOCKER-USER` w akcji."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Zablokowanie samego siebie",
+      "body": "Najczęstsza przygoda z fail2ban: administrator kilka razy pomyli hasło do klucza lub użyje niewłaściwego klucza (klient próbuje kolejno wszystkich kluczy z agenta — lekcja 33/07), przekracza `maxretry` i jego adres zostaje zablokowany — połączenie kończy się `Connection timed out`, a w zespole wszyscy pracujący zza jednego firmowego NAT-u są zablokowani razem z nim. Zapobieganie: `ignoreip` z adresami administracyjnymi (sieć VPN, bastion, adres biura), `IdentitiesOnly yes` w konfiguracji klienta i rozsądne progi. Ratunek: inna sieć/adres, konsola dostawcy lub VirtualBoxa i `sudo fail2ban-client set sshd unbanip ADRES`. Drugi błąd: edycja `jail.conf` zamiast `jail.local` — przy aktualizacji pakietu zmiany giną albo instalator pyta o konflikt pliku."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Jail aplikacji za proxy bez adresów klientów",
+      "body": "Aplikacja loguje adres proxy; filtr pasuje, ale wszystkie wpisy mają `127.0.0.1` (z `ignoreip`) — nikt nie zostaje zablokowany (przykładowy wynik):",
+      "code": "$ grep -m1 'Nieudane logowanie' /var/log/sklep/aplikacja.log\n2026-10-07T20:02:11.430+02:00  WARN 15210 --- [nio-8080-exec-2] p.s.bezpieczenstwo.LogowanieListener : Nieudane logowanie: email=admin@sklep.example ip=127.0.0.1\n$ sudo fail2ban-regex /var/log/sklep/aplikacja.log /etc/fail2ban/filter.d/sklep-logowanie.conf | grep -A2 '^Failregex'\nFailregex: 412 total\n|-  #) [# of hits] regular expression\n|   1) [412] ^.*LogowanieListener\\s*: Nieudane logowanie: email=\\S* ip=<HOST>$\n$ sudo fail2ban-client status sklep-logowanie | grep 'Total banned'\n   |- Total banned:\t0"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Adres klienta przekazany przez Nginx i odczytany przez Spring Boot",
+      "body": "Nagłówki w konfiguracji Nginx i strategia nagłówków w aplikacji — w logu pojawia się prawdziwy adres klienta (przykładowy wynik):",
+      "code": "$ grep -E 'X-Forwarded-For|X-Real-IP' /etc/nginx/sites-available/sklep\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n$ grep FORWARD /etc/sklep/sklep.env\nSERVER_FORWARD_HEADERS_STRATEGY=native\n$ sudo systemctl restart sklep\n$ tail -1 /var/log/sklep/aplikacja.log | grep -o 'ip=.*'\nip=198.51.100.23\n$ sudo fail2ban-client status sklep-logowanie | grep 'Banned IP'\n   `- Banned IP list:\t198.51.100.23"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **SSH widoczny z internetu** — jail `sshd` (z `ignoreip` dla adresów administracyjnych), obok logowania kluczem.\n- **SSH tylko z sieci administracyjnej/VPN** — zapora z ograniczeniem źródła wystarcza; fail2ban opcjonalnie.\n- **Formularz logowania lub API** — własny filtr na logi aplikacji (z prawdziwym adresem klienta).\n- **Prosty limit bez analizy logów** — `ufw limit` (lekcja 2) lub `limit rate` w nftables.\n- **Ataki rozproszone, duża skala** — ograniczenia w aplikacji (rate limiting, CAPTCHA, blokada konta), WAF, ochrona dostawcy (CDN).\n- **Rocky/RHEL** — ten sam fail2ban z `banaction = firewallcmd-rich-rules`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- fail2ban czyta logi, liczy nieudane próby dla każdego adresu i po przekroczeniu `maxretry` w `findtime` blokuje adres w zaporze na `bantime`.\n- Jail = filtr (`failregex` z `<HOST>`) + akcja (`banaction`) + parametry; konfiguracja w `jail.local`/`jail.d/*.local`, nigdy w `jail.conf`.\n- `fail2ban-client status JAIL` pokazuje zablokowane adresy, `set JAIL unbanip` odblokowuje; `fail2ban-regex` testuje filtr.\n- Ustaw `ignoreip` dla adresów administracyjnych, żeby nie zablokować samego siebie.\n- Za reverse proxy aplikacja musi logować prawdziwy adres klienta (`X-Forwarded-For` + `server.forward-headers-strategy`), inaczej fail2ban nie ma kogo blokować."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
