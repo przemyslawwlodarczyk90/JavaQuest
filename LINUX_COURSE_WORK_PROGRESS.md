@@ -298,7 +298,18 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `raport-nocny.sh` (SLEDZ=1 → /var/tmp/raport-nocny.slad, bez sekretów w śladzie); konto ci: `~/bin/sklep-testowy.sh`
   (start w tle na 18080, gotowość, TERM→KILL po 30 s, trap). srv-docker: `~/sklep-obraz` z `entrypoint.sh` (`exec`,
   tablica opcji, JAVA_OPTS przez read -a), obraz `sklep:1.4.1`, stary `entrypoint-stary.sh` bez exec (kod 137).
-  Pozostałe lekcje (`_lx_43`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_43_powloki_i_terminale` (8 lekcji) — ZROBIONY (2026-10-09). lubuntu-nauka (konto anna): zsh 5.9 jako
+  powłoka logowania (`chsh`), Oh My Zsh (`~/.zshrc.pre-oh-my-zsh`, `custom/anna.zsh` wczytujący ~/.profile przez
+  `emulate sh` i ~/.bash_aliases, `custom/aliasy-konflikty.zsh` — unalias gp; gl anny wygrywa), wtyczki git sudo z mvn
+  gradle docker systemd zsh-autosuggestions zsh-syntax-highlighting, Powerlevel10k (lean, `~/.p10k.zsh`, java_version
+  włączony, próg czasu 5 s; powitanie `stan-sklepu.sh` nad instant prompt), czcionka MesloLGS NF w QTerminalu; root
+  z powrotem na bashu. Prompt w lekcjach: `~ > ` / `➜  ~` (przed p10k). Terminator 2.1.3 (układ `lab`: srv-test +
+  deb-lab w grupie), Guake 3.10 (autostart, F12, wysokość 45); tmux 3.4 (`~/.tmux.conf`: mysz, historia 100000,
+  base-index 1, vi, `|`/`-`, `prefiks r`), `~/bin/tmux-sklep.sh`; port szeregowy ttyUSB0 (grupa dialout).
+  srv-test: `~/.tmux.conf` z czerwonym paskiem, alias `srv-test-t` (RemoteCommand tmux new -A -s praca) w
+  ~/.ssh/config anny na lubuntu-nauka, `/srv/tmux` (grupa admini), baza `sklep_raporty` (import-2026-10.sql, 12
+  tabel), `~/.screenrc`, screen 4.9.1. rocky-lab: EPEL + screen 4.8.
+  Pozostałe lekcje (`_lx_44`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -368,7 +379,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_43_powloki_i_terminale`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_44_wsl`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
