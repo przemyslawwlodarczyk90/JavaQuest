@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Skrypt bash nie ma kompilatora, który przed uruchomieniem wskaże literówkę w nazwie zmiennej, brakujące cudzysłowy czy `cd` bez sprawdzenia wyniku — błędy wychodzą dopiero w trakcie działania, często w rzadkiej gałęzi i o trzeciej w nocy. Dlatego potrzebne są dwa rodzaje narzędzi. **Śledzenie** (`bash -x`, `set -x`) pokazuje każde polecenie po rozwinięciu zmiennych, zanim zostanie wykonane — widać, co **naprawdę** trafiło do `rm`, `rsync` czy `curl`. **Analiza statyczna** — **ShellCheck** — czyta skrypt bez uruchamiania i wskazuje setki typowych błędów (brak cudzysłowów, `local x=$(...)`, nieużywane zmienne, porównania napisów z liczbami) z numerem reguły i wyjaśnieniem — jak kompilator i linter dla Javy.\n\nW tej lekcji poznasz sprawdzanie składni `bash -n`, śledzenie całego skryptu i jego fragmentu, czytelny prefiks śledzenia z numerem linii (`PS4`) i zapis śledzenia do osobnego pliku (`BASH_XTRACEFD`). Zainstalujesz ShellCheck, przepuścisz przez niego skrypty z poprzednich lekcji, nauczysz się czytać jego komunikaty (`SC2086`, `SC2155`, `SC2164`...) i świadomie wyłączać pojedyncze ostrzeżenia z uzasadnieniem. Na koniec — ważna pułapka: śledzenie wypisuje **wartości zmiennych**, także haseł."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`bash -n skrypt.sh`** — tylko sprawdzenie składni (bez wykonania): brakujące `fi`, `done`, nawiasy.\n- **`bash -x skrypt.sh`** / **`set -x`** — śledzenie: przed wykonaniem każde polecenie wypisane (na stderr) po rozwinięciu, z prefiksem `+` (głębokość zagnieżdżenia: `++`); `set +x` wyłącza; `set -v` — linie w postaci przed rozwinięciem.\n- **`PS4`** — prefiks linii śledzenia: `export PS4='+ ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '` (plik, linia, funkcja).\n- **`BASH_XTRACEFD`** — numer deskryptora, do którego trafia śledzenie: `exec 7> /tmp/slad.log; BASH_XTRACEFD=7; set -x` — śledzenie w pliku, normalne wyjście bez zmian.\n- **ShellCheck** — `sudo apt install shellcheck`, `shellcheck skrypt.sh`; komunikaty z kodem `SCxxxx`, poziomem (`error`, `warning`, `info`, `style`) i wskazaniem miejsca; opis reguły: `https://www.shellcheck.net/wiki/SC2086`.\n- **Najczęstsze reguły** — `SC2086` (zmienna bez cudzysłowów), `SC2046` (`$(...)` bez cudzysłowów), `SC2155` (`local x=$(...)` maskuje kod wyjścia), `SC2164` (`cd` bez `|| exit`), `SC2034` (nieużywana zmienna), `SC2068` (`$@` bez cudzysłowów), `SC2162` (`read` bez `-r`), `SC2181` (`if [ $? -eq 0 ]` zamiast `if polecenie`).\n- **Dyrektywy** — `# shellcheck disable=SC2086` w linii nad poleceniem (wyłączenie jednego miejsca, z komentarzem dlaczego), `# shellcheck source=/usr/local/lib/sklep/funkcje.sh`, `--severity=warning`, `-x` (śledź pliki z `source`).\n- **Integracja** — wtyczki edytorów (VS Code, IntelliJ, Vim), krok w CI (`shellcheck scripts/*.sh`), hak `pre-commit`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "`bash -x` to **nagrywanie kamerą każdego ruchu robota na linii montażowej** — widzisz dokładnie, którą śrubę wkręcił i z jaką siłą (polecenie z podstawionymi wartościami), więc od razu wiesz, gdzie coś poszło nie tak. ShellCheck to **inspektor BHP, który czyta instrukcję obsługi linii, zanim ktokolwiek ją uruchomi**, i zaznacza na marginesie: „tu brakuje osłony”, „tu ktoś może włożyć rękę” — z numerem przepisu. Kamera nie wie, co jest błędem, tylko pokazuje; inspektor nie widzi danych z produkcji, ale wyłapuje wady projektu. Najlepiej korzystać z obu."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Śledzenie i analiza statyczna tego samego skryptu",
+      "body": "Co pokazuje `bash -x` w trakcie działania, a co ShellCheck przed uruchomieniem:",
+      "code": " skrypt (fragment):          9  katalog=$1\n                            10  cd $katalog\n                            11  rm -f $(ls *.tmp)\n\n SLEDZENIE  (PS4='+ ${BASH_SOURCE##*/}:${LINENO}: ')    bash -x porzadki.sh \"/srv/moje dane\"\n   + porzadki.sh:9: katalog='/srv/moje dane'\n   + porzadki.sh:10: cd /srv/moje dane            <- WIDAC: dwa argumenty, cd do /srv/moje\n   porzadki.sh: line 10: cd: too many arguments\n   ++ porzadki.sh:11: ls '*.tmp'                  <- ls w ZLYM katalogu (cd sie nie udalo)\n\n SHELLCHECK  (shellcheck porzadki.sh) - BEZ uruchamiania\n   In porzadki.sh line 10:  cd $katalog\n                            ^-- SC2164 (warning): Use 'cd ... || exit' in case cd fails.\n                               ^------^ SC2086 (info): Double quote to prevent globbing and word splitting.\n   In porzadki.sh line 11:  rm -f $(ls *.tmp)\n                                  ^---------^ SC2046 (warning): Quote this to prevent word splitting.\n                                     ^-- SC2035 (info): Use ./*glob* or -- *glob* so names with dashes won't become options."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "`bash -n`, `bash -x` i czytelny prefiks śledzenia",
+      "body": "Sprawdzenie składni, śledzenie całego skryptu i fragmentu z numerami linii (przykładowy wynik):",
+      "code": "$ bash -n ~/bin/sklep-ctl.sh && echo \"skladnia OK\"\nskladnia OK\n$ printf '#!/bin/bash\\nif true; then\\n  echo x\\n' > /tmp/zly.sh; bash -n /tmp/zly.sh\n/tmp/zly.sh: line 4: syntax error: unexpected end of file\n$ bash -x ~/bin/stan-sklepu.sh 2>&1 | head -4\n++ hostname\n++ date '+%F %T'\n+ echo '=== Stan sklepu na lubuntu-nauka (2026-10-08 21:52:10) ==='\n=== Stan sklepu na lubuntu-nauka (2026-10-08 21:52:10) ===\n$ export PS4='+ ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '\n$ bash -x ~/bin/pilnuj-sklepu.sh 2>&1 | grep -m3 -E 'czekaj_na_gotowosc|curl'\n+ pilnuj-sklepu.sh:4:main: czekaj_na_gotowosc 8080 10\n+ funkcje.sh:14:czekaj_na_gotowosc: local port=8080 limit=10 start=0\n+ funkcje.sh:15:czekaj_na_gotowosc: curl -fs -m 2 localhost:8080/actuator/health/readiness\n$ cat ~/bin/fragment-sledzony.sh\n#!/bin/bash\nzrodlo=/srv/dane/wspolne\nset -x\nrsync -a --dry-run \"$zrodlo/\" srv-test:kopie/wspolne/\nset +x\necho \"koniec\"\n$ ~/bin/fragment-sledzony.sh\n+ rsync -a --dry-run /srv/dane/wspolne/ srv-test:kopie/wspolne/\n+ set +x\nkoniec"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "ShellCheck na skryptach z poprzednich lekcji",
+      "body": "Instalacja, analiza starej wersji skryptu archiwizującego, poprawki i świadome wyłączenie jednej reguły z uzasadnieniem (przykładowy wynik):",
+      "code": "$ sudo apt install -y shellcheck > /dev/null 2>&1; shellcheck --version | sed -n 2p\nversion: 0.9.0\n$ shellcheck ~/bin/archiwizuj-raport-zle.sh\n\nIn /home/anna/bin/archiwizuj-raport-zle.sh line 4:\nmkdir -p $archiwum\n         ^-------^ SC2086 (info): Double quote to prevent globbing and word splitting.\n\nIn /home/anna/bin/archiwizuj-raport-zle.sh line 5:\nmv /srv/sklep/raporty/$plik $archiwum/\n                      ^---^ SC2086 (info): Double quote to prevent globbing and word splitting.\n                            ^-------^ SC2086 (info): Double quote to prevent globbing and word splitting.\n\nFor more information:\n  https://www.shellcheck.net/wiki/SC2086 -- Double quote to prevent globbing ...\n$ shellcheck ~/bin/archiwizuj-raport.sh && echo \"brak uwag\"\nbrak uwag\n$ shellcheck -x --severity=warning ~/bin/*.sh /usr/local/bin/*.sh 2>&1 | grep -oE 'SC[0-9]+ \\((warning|error)\\)' | sort | uniq -c\n      3 SC2155 (warning)\n      2 SC2164 (warning)\n      1 SC2034 (warning)\n$ grep -n -B1 'java \\$JAVA_OPTS' ~/bin/start-lokalny.sh\n6-# shellcheck disable=SC2086  # JAVA_OPTS celowo dzielone na opcje (bez spacji w wartosciach)\n7-exec java $JAVA_OPTS -jar \"$JAR\" \"$@\"\n$ shellcheck ~/bin/start-lokalny.sh && echo \"brak uwag\"\nbrak uwag"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak znaleźć błąd w skrypcie",
+      "body": "1. `bash -n skrypt.sh` — najpierw składnia (szczególnie po edycji na serwerze).\n2. `shellcheck skrypt.sh` — przeczytaj każde ostrzeżenie; większość typowych błędów (cudzysłowy, `cd`, `local`) wskaże bez uruchamiania.\n3. Ustaw informacyjny `PS4` (plik, linia, funkcja) i uruchom `bash -x skrypt.sh ARGUMENTY 2>/tmp/slad.txt` — na danych, na których skrypt zawodzi (najlepiej w trybie symulacji, jeśli skrypt coś zmienia).\n4. W śladzie znajdź ostatnie polecenia przed błędem i porównaj ich **rozwinięte** argumenty z oczekiwanymi (puste zmienne, rozbite ścieżki, złe ścieżki względne).\n5. Dla długich skryptów śledź tylko fragment (`set -x` ... `set +x`) lub kieruj ślad do pliku (`BASH_XTRACEFD`).\n6. Po poprawce: ponownie `shellcheck` i test; dodaj `shellcheck` do CI lub haka `pre-commit`, żeby błędy nie wracały."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydają się te narzędzia",
+      "body": "- **Każdy nowy skrypt** — `shellcheck` przed pierwszym uruchomieniem na serwerze.\n- **Diagnoza „skrypt robi coś innego niż powinien”** — `bash -x` z prefiksem `PS4`.\n- **Skrypty uruchamiane z systemd/cron** — tymczasowe `set -x` z `BASH_XTRACEFD` do pliku, bo terminala nie ma (ślad trafiłby do dziennika).\n- **Przegląd kodu** — wynik ShellChecka w CI jako warunek scalenia zmian w skryptach repozytorium.\n- **Skrypty w projektach Javy** — `mvnw`, `entrypoint.sh` obrazów Dockera, skrypty `scripts/*.sh` — linter jak dla kodu Javy.\n- **Nauka** — opisy reguł ShellChecka to świetny kurs dobrych praktyk basha."
+    },
+    {
+      "type": "NOTE",
+      "heading": "ShellCheck nie zastąpi testów — ale wyłapuje to, czego testy nie widzą",
+      "body": "ShellCheck analizuje kod statycznie: nie wie, jakie pliki będą na serwerze ani jakie argumenty poda użytkownik, więc nie znajdzie błędów logiki (zły katalog, zła kolejność kroków). Za to wychwytuje błędy, które ujawniają się **tylko przy nietypowych danych** — i dlatego testy na „zwykłych” danych ich nie wykrywają: brak cudzysłowów (dopiero plik ze spacją), `cd` bez sprawdzenia (dopiero gdy katalog zniknie), `local x=$(...)` (dopiero gdy polecenie zawiedzie). Ostrzeżenia wyłączaj **pojedynczo** dyrektywą `# shellcheck disable=SCxxxx` w linii nad poleceniem, z komentarzem dlaczego (np. celowy podział `$JAVA_OPTS`), a nie globalnie dla całego pliku czy projektu. Plik `.shellcheckrc` w repozytorium pozwala ustalić wspólne opcje zespołu (np. `external-sources=true`)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "`set -x` wypisuje hasła i sekrety",
+      "body": "Śledzenie pokazuje każde polecenie **po podstawieniu zmiennych** — także `PGPASSWORD=...`, `curl -u admin:haslo`, `mysql -p\"$haslo\"`, nagłówki z tokenami API. Ślad trafia na standardowe wyjście błędów, czyli przy usługach i cronie — do dziennika systemd lub poczty, a w CI — do publicznego logu zadania. Często zdarza się też zostawić `set -x` w skrypcie po diagnozie: od tej pory każde uruchomienie zapisuje sekrety w dzienniku, który czyta grupa `adm`. Przy skryptach obsługujących sekrety wyłączaj śledzenie wokół wrażliwych poleceń (`set +x` ... `set -x`), a po zakończeniu diagnozy usuń `set -x` i — jeśli ślad z sekretem trafił do logów — zmień sekret."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Śledzenie zostawione w skrypcie z hasłem",
+      "body": "`set -x` dodane do diagnozy i zapomniane — hasło do bazy pojawia się w dzienniku usługi (przykładowy wynik):",
+      "code": "$ head -4 /usr/local/bin/raport-nocny.sh\n#!/bin/bash\nset -x\nhaslo=$(cat /etc/sklep/poswiadczenia/spring.datasource.password)\nPGPASSWORD=$haslo psql -h 127.0.0.1 -U sklep -d sklep -Atc 'SELECT count(*) FROM zamowienia'\n$ journalctl -u raport-nocny --since today -o cat | grep -m2 -E 'haslo=|PGPASSWORD'\n++ cat /etc/sklep/poswiadczenia/spring.datasource.password\n+ haslo=Zm1ana-Ha5la-2026"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Śledzenie wyłączone wokół sekretów i usunięte po diagnozie",
+      "body": "Wrażliwy fragment bez śledzenia, ślad do osobnego pliku tylko na czas diagnozy (przykładowy wynik):",
+      "code": "$ head -8 /usr/local/bin/raport-nocny.sh\n#!/bin/bash\nset -euo pipefail\n[[ ${SLEDZ:-0} == 1 ]] && { exec 7>> /var/tmp/raport-nocny.slad; BASH_XTRACEFD=7; set -x; }\n{ set +x; } 2>/dev/null\nPGPASSWORD=$(cat /etc/sklep/poswiadczenia/spring.datasource.password)\nexport PGPASSWORD\n[[ ${SLEDZ:-0} == 1 ]] && set -x\npsql -h 127.0.0.1 -U sklep -d sklep -Atc 'SELECT count(*) FROM zamowienia'\n$ sudo SLEDZ=1 /usr/local/bin/raport-nocny.sh > /dev/null; sudo grep -c 'Zm1ana' /var/tmp/raport-nocny.slad\n0\n$ journalctl -u raport-nocny --since today -o cat | grep -c 'PGPASSWORD='\n0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Po każdej edycji** — `bash -n` (składnia) i `shellcheck` (typowe błędy).\n- **Skrypt działa, ale robi coś innego** — `bash -x` z informacyjnym `PS4`.\n- **Długi skrypt, błąd w jednym miejscu** — `set -x` / `set +x` wokół fragmentu.\n- **Usługa lub cron** — śledzenie do pliku przez `BASH_XTRACEFD`, włączane zmienną (`SLEDZ=1`).\n- **Uzasadniony wyjątek od reguły** — `# shellcheck disable=SCxxxx` nad jedną linią z komentarzem.\n- **Zespół i repozytorium** — ShellCheck w CI i w edytorze."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `bash -n` sprawdza składnię, `bash -x`/`set -x` śledzi wykonanie, pokazując polecenia po rozwinięciu zmiennych.\n- `PS4` z `${BASH_SOURCE}`, `${LINENO}` i `${FUNCNAME}` wskazuje plik, linię i funkcję; `BASH_XTRACEFD` kieruje ślad do osobnego pliku.\n- ShellCheck analizuje skrypt bez uruchamiania i wskazuje typowe błędy z kodem reguły (`SC2086`, `SC2155`, `SC2164`...).\n- Ostrzeżenia ShellChecka wyłączaj pojedynczo, z uzasadnieniem; uruchamiaj go w edytorze i CI.\n- Śledzenie wypisuje wartości zmiennych, także haseł — wyłączaj je wokół sekretów i nie zostawiaj w skryptach."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
