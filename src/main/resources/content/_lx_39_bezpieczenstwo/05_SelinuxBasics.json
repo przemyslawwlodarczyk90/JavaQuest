@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Klasyczne uprawnienia Linuksa (właściciel, grupa, `rwx` — rozdział 17) to **uznaniowa kontrola dostępu** (DAC): właściciel pliku decyduje, kto ma do niego dostęp, a proces działający jako root może wszystko. **SELinux** (*Security-Enhanced Linux*), domyślny w rodzinie RHEL (Rocky, AlmaLinux, Fedora), dodaje **obowiązkową kontrolę dostępu** (MAC): każdy proces i każdy plik ma **etykietę** (kontekst), a polityka systemowa określa, które etykiety procesów mogą robić co z którymi etykietami plików, portów i innych zasobów — niezależnie od uprawnień `rwx` i także dla roota. Przejęty Nginx (`httpd_t`) nie przeczyta `/etc/shadow` ani kluczy SSH, nawet jeśli działa jako root, bo polityka mu na to nie pozwala.\n\nW tej lekcji na `rocky-lab` (Rocky 9) poznasz tryby pracy SELinux, konteksty plików i procesów (`ls -Z`, `ps -Z`), **przełączniki** (*booleans*) i trzy najczęstsze sytuacje, w których SELinux „psuje” poprawnie skonfigurowaną usługę: Nginx jako reverse proxy do aplikacji Javy (zakaz połączeń sieciowych), pliki strony w niestandardowym katalogu (zła etykieta) i usługa na niestandardowym porcie (spotkana w rozdziale 35). Nauczysz się czytać odmowy z dziennika audytu (`ausearch`, `audit2why`) i naprawiać je właściwie — a nie przez wyłączenie SELinux, co jest najczęstszą, najgorszą „poprawką” w internecie."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Tryby** — `enforcing` (polityka egzekwowana i logowana), `permissive` (tylko logowanie odmów — diagnoza), `disabled`; `getenforce`, `sestatus`, `sudo setenforce 0|1` (do restartu), trwale w `/etc/selinux/config` (`SELINUX=enforcing`).\n- **Kontekst** — `użytkownik:rola:typ:poziom`, np. `system_u:object_r:httpd_sys_content_t:s0`; w praktyce liczy się **typ** (*type enforcement*): proces `httpd_t` (Nginx/Apache) może czytać pliki `httpd_sys_content_t`.\n- **Podgląd** — `ls -Z` (pliki), `ps -eZ` (procesy), `id -Z`, `ss -Z`; `semanage port -l` (etykiety portów).\n- **Przełączniki (booleans)** — gotowe włączniki fragmentów polityki: `getsebool -a | grep httpd`, `sudo setsebool -P httpd_can_network_connect on` (`-P` = trwale); np. `httpd_can_network_connect` (proxy do aplikacji), `httpd_can_network_connect_db`, `httpd_enable_homedirs`.\n- **Etykiety plików** — reguły w polityce (`semanage fcontext -l`); własne: `sudo semanage fcontext -a -t httpd_sys_content_t \"/srv/www(/.*)?\"`, zastosowanie: `sudo restorecon -Rv /srv/www`; `chcon` zmienia tymczasowo (do `restorecon`/relabel).\n- **Etykiety portów** — `sudo semanage port -a -t http_port_t -p tcp 8081` (rozdział 35).\n- **Odmowy** — wpisy `type=AVC ... denied` w `/var/log/audit/audit.log`; `sudo ausearch -m AVC -ts recent`, `audit2why` (wyjaśnienie i podpowiedź przełącznika), `sealert` (pakiet `setroubleshoot-server`), `audit2allow` (generowanie modułu — ostrożnie).\n- **`mv` vs `cp`** — `mv` zachowuje etykietę źródła (np. `user_home_t` z katalogu domowego), `cp` nadaje etykietę katalogu docelowego."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Uprawnienia `rwx` to **zamki w drzwiach, do których klucze rozdaje właściciel pokoju** — a dozorca (root) ma klucz uniwersalny. SELinux to **ochrona budynku z identyfikatorami i regulaminem**, której nie obchodzi, kto ma jaki klucz: kucharz (proces `httpd_t`) z identyfikatorem „kuchnia” może wejść do pomieszczeń oznaczonych „kuchnia” i „spiżarnia” (`httpd_sys_content_t`), ale nie do archiwum (`shadow_t`) — nawet z kluczem uniwersalnym. Przełączniki to **dopiski w regulaminie** („kucharz może dzwonić do dostawców” — `httpd_can_network_connect`). A wyłączenie SELinux to **zwolnienie całej ochrony**, bo jeden kucharz nie mógł wejść do magazynu."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Trzy typowe odmowy SELinux dla serwera aplikacji",
+      "body": "Nginx przed aplikacją Spring Boot na `rocky-lab` — co blokuje SELinux i właściwa poprawka:",
+      "code": " nginx (httpd_t) --proxy_pass--> 127.0.0.1:8080 (java, unconfined_service_t)\n   AVC denied { name_connect } scontext=httpd_t tcontext=http_cache_port_t (8080)\n   -> 502, error.log: connect() ... failed (13: Permission denied)\n   POPRAWKA: setsebool -P httpd_can_network_connect on\n\n nginx (httpd_t) --czyta--> /srv/www/sklep/index.html  (default_t lub user_home_t po \"mv\")\n   AVC denied { read } scontext=httpd_t tcontext=default_t\n   -> 403, error.log: open() ... failed (13: Permission denied)\n   POPRAWKA: semanage fcontext -a -t httpd_sys_content_t \"/srv/www(/.*)?\" && restorecon -Rv /srv/www\n\n nginx (httpd_t) --listen--> 0.0.0.0:8081\n   AVC denied { name_bind } scontext=httpd_t tcontext=unreserved_port_t\n   -> nginx nie startuje: bind() to 0.0.0.0:8081 failed (13: Permission denied)\n   POPRAWKA: semanage port -a -t http_port_t -p tcp 8081   (rozdzial 35)\n\n NIE: setenforce 0 / SELINUX=disabled  (wylacza ochrone dla WSZYSTKICH uslug)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Tryb, konteksty procesów i plików, przełączniki",
+      "body": "Stan SELinux na `rocky-lab`, etykiety Nginx, Javy, plików i portów (przykładowy wynik):",
+      "code": "[anna@rocky-lab ~]$ getenforce\nEnforcing\n[anna@rocky-lab ~]$ sestatus | grep -E 'status|mode|policy name'\nSELinux status:                 enabled\nLoaded policy name:             targeted\nCurrent mode:                   enforcing\nMode from config file:          enforcing\n[anna@rocky-lab ~]$ ps -eZ | grep -E 'nginx|java|sshd' | awk '{print $1, $NF}' | sort -u\nsystem_u:system_r:httpd_t:s0 nginx\nsystem_u:system_r:sshd_t:s0-s0:c0.c1023 sshd\nsystem_u:system_r:unconfined_service_t:s0 java\n[anna@rocky-lab ~]$ ls -Z /usr/share/nginx/html/index.html /etc/shadow /home/anna/.ssh/authorized_keys\nsystem_u:object_r:httpd_sys_content_t:s0 /usr/share/nginx/html/index.html\n       system_u:object_r:shadow_t:s0 /etc/shadow\nunconfined_u:object_r:ssh_home_t:s0 /home/anna/.ssh/authorized_keys\n[anna@rocky-lab ~]$ getsebool httpd_can_network_connect httpd_enable_homedirs\nhttpd_can_network_connect --> off\nhttpd_enable_homedirs --> off\n[anna@rocky-lab ~]$ sudo semanage port -l | grep -E '^http_(port|cache_port)_t'\nhttp_cache_port_t              tcp      8080, 8118, 8123, 10001-10010\nhttp_port_t                    tcp      80, 81, 443, 488, 8008, 8009, 8443, 9000, 8081"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Diagnoza i naprawa: proxy do Javy i pliki strony w `/srv/www`",
+      "body": "502 przy proxy do aplikacji, odczyt odmowy z dziennika audytu i przełącznik; potem 403 dla plików przeniesionych z katalogu domowego i poprawna etykieta (przykładowy wynik):",
+      "code": "[anna@rocky-lab ~]$ curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/api/produkty\n502\n[anna@rocky-lab ~]$ sudo ausearch -m AVC -ts recent | grep -o 'denied.*' | head -1\ndenied  { name_connect } for  pid=4420 comm=\"nginx\" dest=8080 scontext=system_u:system_r:httpd_t:s0 tcontext=system_u:object_r:http_cache_port_t:s0 tclass=tcp_socket permissive=0\n[anna@rocky-lab ~]$ sudo ausearch -m AVC -ts recent | audit2why | grep -A2 'Was caused by'\n\tWas caused by:\n\tThe boolean httpd_can_network_connect was set incorrectly.\n\tDescription:\n[anna@rocky-lab ~]$ sudo setsebool -P httpd_can_network_connect on\n[anna@rocky-lab ~]$ curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/api/produkty\n200\n[anna@rocky-lab ~]$ sudo mv ~/strona-sklep /srv/www/sklep && ls -Zd /srv/www/sklep\nunconfined_u:object_r:user_home_t:s0 /srv/www/sklep\n[anna@rocky-lab ~]$ curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/sklep/\n403\n[anna@rocky-lab ~]$ sudo semanage fcontext -a -t httpd_sys_content_t \"/srv/www(/.*)?\"\n[anna@rocky-lab ~]$ sudo restorecon -Rv /srv/www | head -2\nRelabeled /srv/www from unconfined_u:object_r:var_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0\nRelabeled /srv/www/sklep from unconfined_u:object_r:user_home_t:s0 to unconfined_u:object_r:httpd_sys_content_t:s0\n[anna@rocky-lab ~]$ curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/sklep/\n200"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Usługa nie działa na systemie z SELinux — procedura",
+      "body": "1. Czy to SELinux? Komunikat `Permission denied (13)` mimo poprawnych praw `rwx` to typowy objaw; sprawdź `sudo ausearch -m AVC -ts recent`.\n2. Przeczytaj odmowę: kto (`scontext` — typ procesu), co (`tcontext` — typ pliku/portu), jaka operacja (`{ read }`, `{ name_connect }`, `{ name_bind }`).\n3. Zapytaj `audit2why` (lub `sealert -a /var/log/audit/audit.log`) — często wskaże gotowy przełącznik.\n4. Wybierz właściwą poprawkę: przełącznik (`setsebool -P`), etykieta plików (`semanage fcontext` + `restorecon`), etykieta portu (`semanage port -a`).\n5. Opcjonalnie do diagnozy: `sudo setenforce 0` na chwilę — jeśli działa w `permissive`, problem jest w SELinux; **od razu** `setenforce 1` i naprawa właściwą metodą.\n6. Własny moduł polityki (`audit2allow -M`) tylko po zrozumieniu, na co pozwala — nie generuj go „na ślepo” z wszystkich odmów."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie spotkasz SELinux",
+      "body": "- **RHEL, Rocky, AlmaLinux, Fedora, CentOS Stream** — włączony domyślnie w trybie `enforcing` z polityką `targeted`.\n- **Serwery WWW i reverse proxy** — przełączniki `httpd_can_network_connect`, `httpd_can_network_connect_db`, etykiety katalogów z treścią.\n- **Bazy danych w niestandardowych katalogach** — `mysqld_db_t`, `postgresql_db_t` (rozdział 37).\n- **Kontenery Podman/Docker** — etykiety woluminów (`:Z`, `:z` przy montowaniu), `container_t`.\n- **Usługi na niestandardowych portach** — `semanage port` (SSH na 2222: `ssh_port_t`, rozdział 33).\n- **Chmura i certyfikacje** — wymagania bezpieczeństwa (np. STIG, CIS) zakładają włączony SELinux."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Polityka `targeted` i procesy „unconfined”",
+      "body": "Domyślna polityka SELinux w RHEL to **`targeted`**: szczegółowo ograniczone są wybrane usługi sieciowe i systemowe (Nginx/Apache — `httpd_t`, `sshd_t`, `mysqld_t`, `postgresql_t`, `named_t`...), a pozostałe procesy działają w domenach **nieograniczonych** (`unconfined_t` dla sesji użytkowników, `unconfined_service_t` dla usług bez własnej polityki). Dlatego w przykładzie aplikacja Javy uruchomiona jako usługa systemd działa jako `unconfined_service_t` — SELinux praktycznie jej nie ogranicza (chronią ją inne warstwy: konto, sandbox systemd z rozdziału 38). Za to Nginx przed nią jest ograniczony i potrzebuje zgody na połączenie sieciowe. Dla własnych aplikacji można napisać dedykowaną politykę (`sepolicy generate`), ale to zadanie zaawansowane; w praktyce najważniejsze jest, by nie wyłączać ochrony dla usług, które polityka już obejmuje."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "`SELINUX=disabled` jako pierwsza „poprawka”",
+      "body": "Najpopularniejsza rada w internecie przy problemach z usługami na RHEL brzmi: „wyłącz SELinux” — `setenforce 0` i `SELINUX=disabled` w `/etc/selinux/config`. Działa natychmiast, bo usuwa całą warstwę ochrony **dla wszystkich usług** na maszynie, nie tylko dla tej jednej. Co gorsza, przy `disabled` system przestaje nadawać etykiety nowym plikom — późniejsze ponowne włączenie wymaga pełnego przeetykietowania (`touch /.autorelabel` i restart, długi na dużych dyskach), a do tego czasu usługi mogą nie działać. Właściwa poprawka zajmuje zwykle jedną linię (`setsebool -P` lub `semanage fcontext` + `restorecon`) i pozostawia ochronę dla reszty systemu."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Wyłączenie SELinux zamiast przełącznika",
+      "body": "Problem z proxy „rozwiązany” wyłączeniem SELinux na stałe — po restarcie cała maszyna działa bez tej warstwy (przykład — NIE stosuj):",
+      "code": "[anna@rocky-lab ~]$ sudo setenforce 0\n[anna@rocky-lab ~]$ sudo sed -i 's/^SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config\n[anna@rocky-lab ~]$ curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/api/produkty\n200\n[anna@rocky-lab ~]$ sudo reboot\n[anna@rocky-lab ~]$ getenforce\nDisabled\n# -> przejety nginx (dzialajacy jako root w procesie glownym) moze teraz czytac /etc/shadow, klucze SSH, dane baz"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Tryb `enforcing` i jeden przełącznik",
+      "body": "SELinux pozostaje włączony; włączony tylko przełącznik potrzebny Nginx do połączeń z aplikacją (przykładowy wynik):",
+      "code": "[anna@rocky-lab ~]$ sudo sed -i 's/^SELINUX=disabled/SELINUX=enforcing/' /etc/selinux/config && sudo touch /.autorelabel && sudo reboot\n[anna@rocky-lab ~]$ getenforce\nEnforcing\n[anna@rocky-lab ~]$ sudo setsebool -P httpd_can_network_connect on\n[anna@rocky-lab ~]$ getsebool httpd_can_network_connect\nhttpd_can_network_connect --> on\n[anna@rocky-lab ~]$ curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/api/produkty\n200\n[anna@rocky-lab ~]$ sudo ausearch -m AVC -ts today | grep -c denied\n0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Usługa potrzebuje dodatkowej czynności (połączenie sieciowe, katalogi domowe)** — przełącznik `setsebool -P` (najpierw `audit2why`).\n- **Pliki w niestandardowym katalogu** — `semanage fcontext -a -t TYP \"SCIEZKA(/.*)?\"` + `restorecon -Rv`.\n- **Usługa na niestandardowym porcie** — `semanage port -a -t TYP -p tcp PORT`.\n- **Diagnoza „czy to SELinux”** — `ausearch -m AVC`, chwilowo `setenforce 0` (i natychmiast z powrotem).\n- **Niestandardowa potrzeba bez przełącznika** — świadomy moduł z `audit2allow -M` po analizie reguł.\n- **Nigdy** — `SELINUX=disabled` jako rozwiązanie problemu z jedną usługą."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- SELinux to obowiązkowa kontrola dostępu w rodzinie RHEL: procesy i pliki mają etykiety, a polityka decyduje, co wolno — niezależnie od `rwx` i także dla roota.\n- Tryby: `enforcing`, `permissive`, `disabled`; podgląd etykiet `ls -Z`, `ps -eZ`, portów `semanage port -l`.\n- Odmowy są w dzienniku audytu (`ausearch -m AVC`), a `audit2why` często wskazuje właściwy przełącznik.\n- Typowe poprawki: `setsebool -P httpd_can_network_connect on`, `semanage fcontext` + `restorecon`, `semanage port -a`.\n- Wyłączenie SELinux usuwa ochronę dla całego systemu — naprawiaj konkretną odmowę."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
