@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Notatki kursu opisują dwa podejścia do kopii zapasowej MySQL. **Kopia logiczna** — `mysqldump -u root -p baza > backup.sql` — zapisuje bazę jako plik z poleceniami SQL (`CREATE TABLE`, `INSERT`): bezpieczna, przenośna między wersjami i maszynami, wykonywana **bez zatrzymywania** serwera — i to ją notatki rekomendują. **Kopia fizyczna** — skopiowanie `/var/lib/mysql` po zatrzymaniu MySQL (lekcja 2) — wymaga przestoju i tej samej wersji serwera.\n\nW tej lekcji zbudujesz na `srv-test` porządną kopię logiczną: osobny użytkownik z minimalnymi prawami do wykonywania kopii, hasło w pliku opcji zamiast w poleceniu, spójny zrzut działającej bazy (`--single-transaction`), procedury i zdarzenia, kompresja, skrypt uruchamiany codziennie z rotacją i kontrolą błędów. Przećwiczysz odtworzenie bazy do bazy testowej i weryfikację. Druga część lekcji to najczęstsze błędy przy pracy z MySQL — od `Access denied` i braku gniazda po zapomniane hasło roota — z komunikatami, które je zdradzają, i sposobami naprawy."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`mysqldump`** — zrzut logiczny: `mysqldump [OPCJE] BAZA > plik.sql`; `--databases b1 b2` (z `CREATE DATABASE`), `--all-databases`/`-A`.\n- **`--single-transaction`** — spójny zrzut tabel InnoDB w jednej transakcji, bez blokowania zapisu (bez niej domyślnie blokuje tabele na czas zrzutu: `--lock-tables`).\n- **Dodatkowe obiekty** — `--routines` (procedury, funkcje), `--events` (zdarzenia), `--triggers` (domyślnie włączone); `--no-tablespaces` (nie wymaga uprawnienia `PROCESS`).\n- **Odtworzenie** — `mysql BAZA < plik.sql` (baza musi istnieć) lub `gunzip -c plik.sql.gz | mysql BAZA`.\n- **Plik opcji** — `~/.my.cnf` (prawa 600) z sekcją `[client]` lub `[mysqldump]`: `user=`, `password=`; albo `mysql_config_editor set --login-path=kopie` (zaciemnione hasło w `~/.mylogin.cnf`) i `mysqldump --login-path=kopie`.\n- **Użytkownik kopii** — `CREATE USER 'kopie'@'localhost' ...; GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS ON *.* TO 'kopie'@'localhost';` — może czytać wszystko, nie może niczego zmienić.\n- **Inne narzędzia** — MySQL Shell (`util.dumpInstance()` — równoległy zrzut), Percona XtraBackup (fizyczna kopia „na gorąco”), dziennik binarny + `mysqlbinlog` (odtworzenie zmian po ostatnim zrzucie); `mysqlpump` usunięty w 8.4.\n- **Częste komunikaty** — `ERROR 1045 (28000): Access denied for user ...`, `ERROR 2002 (HY000): Can't connect to local MySQL server through socket ...`, `ERROR 1049 (42000): Unknown database`, `mysqldump: Got error: 1044 ... when using LOCK TABLES`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Kopia logiczna to **przepisanie całej księgi rachunkowej na czysto** — powstaje dokument, z którego każdy księgowy w dowolnym biurze odtworzy księgę od zera (inny serwer, inna wersja). `--single-transaction` to robienie tego **zdjęciem w jednej chwili**: przepisujesz stan z godziny 3:00, choć w trakcie przepisywania kasjer dalej zapisuje nowe operacje — każda strona kopii pochodzi z tej samej chwili. Kopia fizyczna to **sfotografowanie samego zeszytu** — szybsze, ale tylko przy zamkniętej kasie i tylko dla tego samego rodzaju zeszytu. A osobny użytkownik do kopii to **audytor z prawem wglądu, ale bez długopisu**."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Codzienna kopia logiczna MySQL na `srv-test`",
+      "body": "Elementy procesu kopii i odtwarzania:",
+      "code": " cron/timer 03:00 -> /usr/local/bin/kopia-mysql.sh (root)\n    |  /root/.my.cnf  [mysqldump] user=kopie password=...   (600, root)\n    v\n mysqldump --single-transaction --routines --events --databases strona\n    |   (uzytkownik kopie: SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS)\n    v   (baza dziala dalej - zapis nie jest blokowany)\n gzip -> /srv/kopie/mysql/strona-2026-10-08.sql.gz   (+ kontrola: kod wyjscia, \"Dump completed\")\n    |\n    +-> retencja 14 dni (find -mtime +14 -delete)\n    +-> kopia poza serwerem (rsync pull z serwera kopii - rozdzial 34)\n\n ODTWORZENIE (test co miesiac):\n   CREATE DATABASE strona_test;  gunzip -c ... | sed 's/`strona`/`strona_test`/' | mysql strona_test\n   SELECT COUNT(*) ... porownanie z produkcja"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Użytkownik kopii, plik opcji i pierwszy zrzut",
+      "body": "Konto `kopie` z prawami tylko do odczytu, hasło w `/root/.my.cnf` i spójny zrzut bazy `strona` (przykładowy wynik):",
+      "code": "anna@srv-test:~$ mysql -u root -p\nmysql> CREATE USER 'kopie'@'localhost' IDENTIFIED BY 'Kopie-Haslo-2026!x';\nmysql> GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS ON *.* TO 'kopie'@'localhost';\nmysql> exit\nanna@srv-test:~$ sudo tee /root/.my.cnf > /dev/null << 'KONIEC'\n> [mysqldump]\n> user=kopie\n> password=Kopie-Haslo-2026!x\n> KONIEC\nanna@srv-test:~$ sudo chmod 600 /root/.my.cnf\nanna@srv-test:~$ sudo mysqldump --single-transaction --routines --events --databases strona | gzip > /tmp/strona.sql.gz\nanna@srv-test:~$ ls -lh /tmp/strona.sql.gz && gunzip -c /tmp/strona.sql.gz | grep -E '^(CREATE DATABASE|CREATE TABLE|-- Dump completed)'\n-rw-rw-r-- 1 anna anna 41K Oct  7 23:24 /tmp/strona.sql.gz\nCREATE DATABASE /*!32312 IF NOT EXISTS*/ `strona` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */ /*!80016 DEFAULT ENCRYPTION='N' */;\nCREATE TABLE `artykuly` (\nCREATE TABLE `kontakty` (\n-- Dump completed on 2026-10-07 23:24:51"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Skrypt codziennej kopii i próbne odtworzenie",
+      "body": "Skrypt z kontrolą błędów i retencją; odtworzenie do bazy testowej i porównanie liczby wierszy (przykładowy wynik):",
+      "code": "anna@srv-test:~$ cat /usr/local/bin/kopia-mysql.sh\n#!/bin/bash\nset -euo pipefail\nCEL=/srv/kopie/mysql\nPLIK=\"$CEL/strona-$(date +%F).sql.gz\"\ninstall -d -m 700 \"$CEL\"\nmysqldump --single-transaction --routines --events --databases strona | gzip > \"$PLIK\"\ngunzip -c \"$PLIK\" | tail -1 | grep -q 'Dump completed' || { logger -t kopia-mysql \"BLAD: niepelny zrzut $PLIK\"; exit 1; }\nfind \"$CEL\" -name 'strona-*.sql.gz' -mtime +14 -delete\nlogger -t kopia-mysql \"OK $PLIK $(du -h \"$PLIK\" | cut -f1)\"\nanna@srv-test:~$ sudo /usr/local/bin/kopia-mysql.sh && journalctl -t kopia-mysql -n 1 -o cat\nOK /srv/kopie/mysql/strona-2026-10-07.sql.gz 41K\nanna@srv-test:~$ mysql -u root -p -e 'CREATE DATABASE strona_test'\nEnter password:\nanna@srv-test:~$ sudo gunzip -c /srv/kopie/mysql/strona-2026-10-07.sql.gz | sed 's/`strona`/`strona_test`/g' | mysql -u root -p\nEnter password:\nanna@srv-test:~$ mysql -u root -p -e \"SELECT (SELECT COUNT(*) FROM strona.kontakty) AS produkcja, (SELECT COUNT(*) FROM strona_test.kontakty) AS kopia\"\nEnter password:\n+-----------+-------+\n| produkcja | kopia |\n+-----------+-------+\n|      1842 |  1842 |\n+-----------+-------+"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Najczęstsze błędy MySQL — jak je rozpoznać",
+      "body": "1. **`ERROR 2002 ... Can't connect to local MySQL server through socket`** — serwer nie działa: `systemctl status mysql`, `/var/log/mysql/error.log` (brak miejsca, błąd konfiguracji, prawa do `datadir`).\n2. **`ERROR 1045 ... Access denied for user 'X'@'localhost' (using password: YES)`** — złe hasło lub użytkownik istnieje dla innego hosta (`'X'@'%'` vs `'X'@'localhost'`): `SELECT user,host,plugin FROM mysql.user;`.\n3. **`(using password: NO)`** — klient nie wysłał hasła: brak `-p` albo nie wczytał pliku opcji (zła sekcja, zły użytkownik systemu, prawa pliku).\n4. **`ERROR 1044 ... Access denied for user ... to database`** / błędy `mysqldump` o `LOCK TABLES` lub `PROCESS` — brak uprawnień: `SHOW GRANTS FOR ...`.\n5. **`ERROR 1049 ... Unknown database`** przy odtwarzaniu — utwórz bazę albo użyj zrzutu z `--databases`.\n6. **Aplikacja „nie widzi” bazy na innym serwerze** — `bind-address` (domyślnie `127.0.0.1`), zapora, użytkownik bez wpisu dla adresu aplikacji (lekcja 8 i rozdział 35)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydają się kopie logiczne",
+      "body": "- **Codzienna kopia baz aplikacji** — skrypt + timer/cron (rozdział 27), kopia poza serwerem (rozdział 34).\n- **Przed wdrożeniem** — zrzut przed migracją schematu (Flyway, Liquibase) — szybki powrót przy problemach.\n- **Środowisko testowe** — kopia produkcji (po anonimizacji danych osobowych) do testów.\n- **Migracja i aktualizacja** — przeniesienie bazy na nowy serwer lub nowszą wersję MySQL.\n- **Pojedyncze tabele** — `mysqldump strona kontakty > kontakty.sql` przed ryzykowną operacją.\n- **Duże bazy** — MySQL Shell (`util.dumpInstance`) lub XtraBackup, gdy `mysqldump` trwa za długo."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Zapomniane hasło roota — procedura awaryjna na własnym serwerze",
+      "body": "Gdy hasło roota MySQL zginęło, a nie ma innego konta administracyjnego, procedura jest następująca: zatrzymaj usługę, uruchom serwer z opcją `--skip-grant-tables --skip-networking` (bez sprawdzania haseł i bez nasłuchu sieciowego — dostęp tylko lokalnie przez gniazdo), połącz się `mysql -u root`, wykonaj `FLUSH PRIVILEGES;` i `ALTER USER 'root'@'localhost' IDENTIFIED BY 'NoweHaslo';`, a następnie zatrzymaj ten tryb i uruchom serwer normalnie. Wymaga to uprawnień roota systemu — tak, jak każda inna operacja na plikach serwera; dlatego ochrona dostępu do systemu (SSH, `sudo`, rozdziały 16 i 33) jest jednocześnie ochroną bazy. W pakiecie Ubuntu prościej: konto `root` w MySQL loguje się przez gniazdo (`auth_socket`), więc `sudo mysql` działa bez hasła."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Kopia, która się „robi”, ale nie da się z niej nic odtworzyć",
+      "body": "Klasyczne błędy kopii MySQL: zrzut bez `--single-transaction` w trakcie pracy aplikacji (niespójne dane między tabelami — zamówienie bez pozycji); kopia tylko jednej bazy, gdy aplikacja korzysta z dwóch; brak `--routines` i `--events` (po odtworzeniu brakuje procedur); `mysqldump ... | gzip > plik` w skrypcie **bez `set -o pipefail`** — gdy `mysqldump` kończy się błędem (np. złe hasło), `gzip` i tak tworzy mały plik, a kod wyjścia całego potoku to kod `gzip`, czyli 0. Skrypt raportuje sukces, a w kopii jest tylko komunikat o błędzie. Dlatego sprawdzaj kod wyjścia, obecność `-- Dump completed` na końcu zrzutu i regularnie odtwarzaj kopię próbnie."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Potok bez `pipefail` — pusty zrzut zgłoszony jako sukces",
+      "body": "Hasło użytkownika kopii zmieniono, `mysqldump` kończy się błędem, ale skrypt zwraca 0 i tworzy 20-bajtowy plik (przykładowy wynik):",
+      "code": "anna@srv-test:~$ cat /usr/local/bin/kopia-mysql-stara.sh\n#!/bin/bash\nmysqldump --databases strona | gzip > /srv/kopie/mysql/strona-$(date +%F).sql.gz\nanna@srv-test:~$ sudo /usr/local/bin/kopia-mysql-stara.sh; echo \"kod: $?\"\nmysqldump: Got error: 1045: Access denied for user 'kopie'@'localhost' (using password: YES) when trying to connect\nkod: 0\nanna@srv-test:~$ ls -l /srv/kopie/mysql/ | tail -1\n-rw-r--r-- 1 root root 20 Oct  8 03:00 strona-2026-10-08.sql.gz"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "`pipefail` i sprawdzenie zakończenia zrzutu",
+      "body": "Ta sama sytuacja w skrypcie z `set -euo pipefail` i kontrolą końca zrzutu — błąd jest widoczny i zgłoszony (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo /usr/local/bin/kopia-mysql.sh; echo \"kod: $?\"\nmysqldump: Got error: 1045: Access denied for user 'kopie'@'localhost' (using password: YES) when trying to connect\nkod: 2\n# -> kod rozny od 0: cron wysyla komunikat (MAILTO, rozdzial 27), monitoring zglasza brak kopii"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Codzienna kopia małej i średniej bazy** — `mysqldump --single-transaction --routines --events` + kompresja.\n- **Duże bazy, krótkie okno kopii** — MySQL Shell (`util.dumpInstance`) lub Percona XtraBackup.\n- **Odtwarzanie do konkretnej chwili** — zrzut + dziennik binarny (`mysqlbinlog --stop-datetime`).\n- **Kopia całego serwera przed aktualizacją** — kopia fizyczna przy zatrzymanym serwerze (lekcja 2).\n- **Dane uwierzytelniające w skryptach** — plik opcji z prawami 600 lub `mysql_config_editor`, nigdy `-pHASLO`.\n- **Każda strategia** — próbne odtworzenie przynajmniej raz w miesiącu."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Kopia logiczna `mysqldump` jest przenośna, działa bez zatrzymania serwera i jest zalecaną metodą codziennej kopii.\n- `--single-transaction` daje spójny zrzut InnoDB bez blokowania zapisu; `--routines` i `--events` dodają procedury i zdarzenia.\n- Kopie wykonuje osobny użytkownik z prawami tylko do odczytu, a hasło leży w pliku opcji z prawami 600.\n- Skrypt kopii musi wykrywać błędy (`set -o pipefail`, `-- Dump completed`), a kopię trzeba regularnie odtwarzać próbnie.\n- Komunikaty `ERROR 2002`, `1045`, `1044`, `1049` wskazują odpowiednio: niedziałający serwer, złe dane logowania, brak uprawnień, brak bazy."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
