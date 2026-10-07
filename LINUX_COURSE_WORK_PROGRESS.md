@@ -271,7 +271,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   /srv/kopie/raporty` (`91-eksport.cnf`), profil `kopia-mysql` (enforce); timer `kontrola-bezpieczenstwa.timer`
   (7:00, OnFailure=powiadom@); `~/infra/wyjatki.md`. rocky-lab: SELinux enforcing, `httpd_can_network_connect on`,
   fcontext `/srv/www(/.*)?` → httpd_sys_content_t.
-  Pozostałe lekcje (`_lx_40`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_40_zmienne_srodowiskowe` (7 lekcji) — ZROBIONY (2026-10-08). lubuntu-nauka: zmienne środowiskowe anny
+  przeniesione z `~/.bashrc` do **`~/.profile`** (EDITOR=vim, JAVA_HOME, KOPIE_DIR); `~/.bash_profile` wczytujący
+  `~/.profile` (+ MAVEN_OPTS=-Xmx2g); `~/.bash_aliases` (mvni, mvnq, gs, gl, ports, dfh, sysfail; funkcje logi, port,
+  mkcd, jarinfo, dzis); prompt z kodem błędu i `__git_ps1`; `~/bin/kopia-projektu.sh` (z własnym PATH/JAVA_HOME),
+  `~/bin/przejdz.sh`; `/etc/sudoers.d/anna-java` (env_keep JAVA_HOME). srv-test: LANG=pl_PL.UTF-8 (localectl), strefa
+  Europe/Warsaw, `/etc/profile.d/historia.sh` (HISTTIMEFORMAT), proxy firmowe proxy.firma.example:3128 w
+  `/etc/environment` (+ no_proxy), `/etc/apt/apt.conf.d/95proxy`, `/etc/systemd/system.conf.d/proxy.conf`
+  (DefaultEnvironment), JAVA_TOOL_OPTIONS z proxy w `/etc/raporty/raporty.env`. app01/app02: `/etc/srodowisko`
+  (PROD/TEST) + `/etc/profile.d/zz-prompt-prod.sh` (kolorowy znacznik).
+  Pozostałe lekcje (`_lx_41`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -341,7 +350,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_40_zmienne_srodowiskowe`** (część IV), potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_41_skrypty_bash_podstawy`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
