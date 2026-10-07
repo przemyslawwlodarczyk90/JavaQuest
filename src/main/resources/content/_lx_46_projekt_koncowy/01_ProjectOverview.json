@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Ostatni rozdział kursu to **projekt końcowy**: od pustej maszyny do działającego, zabezpieczonego serwera produkcyjnego dla aplikacji Spring Boot. Nie poznasz tu nowych poleceń — wykorzystasz to, czego nauczyłeś się w poprzednich 45 rozdziałach: konta i uprawnienia, SSH, zaporę, pakiety, systemd, PostgreSQL, Nginx, TLS, logi, kopie zapasowe i skrypty bash. Różnica polega na tym, że teraz wszystko musi zagrać **razem**, w przemyślanej kolejności i z decyzjami, które da się uzasadnić i odtworzyć.\n\nBohaterem projektu jest nowy serwer **sklep01** — maszyna wirtualna w chmurze z Ubuntu Server 24.04 LTS, publicznym adresem `203.0.113.50` i domeną `sklep.firma.example`, na której ma działać aplikacja sklep (ta sama, którą anna rozwijała i wdrażała w laboratorium). W tej lekcji ustalisz założenia: architekturę, porty, konta, katalogi, wersje i plan pracy na kolejne lekcje. Zapiszesz je w repozytorium `~/infra/sklep01` — bo serwer, którego konfiguracji nikt nie spisał, jest serwerem, którego nikt nie odtworzy."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Architektura projektu** — internet → Nginx (80/443, TLS) → aplikacja Spring Boot (`127.0.0.1:8080`, usługa systemd) → PostgreSQL 16 (`127.0.0.1:5432`); z zewnątrz otwarte tylko porty 22, 80, 443.\n- **Konta** — `anna` (administrator, `sudo`, logowanie kluczem), `deploy` (wdrożenia z CI, `sudo` tylko na skrypt wdrożeniowy), `sklep` (konto systemowe usługi, bez powłoki i hasła), `postgres` (systemowe).\n- **Katalogi** — `/opt/sklep/releases/WERSJA/` + dowiązanie `/opt/sklep/sklep.jar`, konfiguracja `/etc/sklep/`, sekrety `/etc/sklep/poswiadczenia/` (700, root), dane `/var/lib/sklep`, logi aplikacji w dzienniku systemd, kopie `/var/backups/sklep`.\n- **Wersje** — Ubuntu 24.04 LTS, OpenJDK 21 (JRE headless), PostgreSQL 16 z repozytorium Ubuntu, Nginx z repozytorium Ubuntu, certyfikat Let's Encrypt (certbot).\n- **Wymagania niefunkcjonalne** — aktualizacje bezpieczeństwa automatycznie, logowanie tylko kluczami, kopia bazy codziennie (7 dni lokalnie + kopia poza serwerem), sprawdzanie zdrowia aplikacji co minutę, odtworzenie serwera skryptem.\n- **Repozytorium infrastruktury** — `~/infra/sklep01/` w Git: `README.md` (założenia), `pliki/` (konfiguracje), `instaluj.sh` (lekcja 8), `lista-kontrolna.md` (lekcja 9).\n- **Plan lekcji** — 2: serwer i konta, 3: SSH i zapora, 4: Java i PostgreSQL, 5: usługa systemd, 6: Nginx i HTTPS, 7: logi, monitoring, kopie, 8: skrypt automatyzujący, 9: lista kontrolna."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Projekt serwera jest jak **budowa domu według projektu architektonicznego**. Zanim przyjedzie koparka, architekt ustala, gdzie będą drzwi wejściowe (porty 80/443), które pokoje są prywatne (baza tylko na `127.0.0.1`), kto ma klucze do czego (konta i `sudo`), gdzie biegną instalacje (katalogi, logi, kopie). Ekipa budowlana (kolejne lekcje) realizuje projekt etapami, a kierownik budowy na koniec przechodzi listę odbioru (lekcja 9). Dom budowany „na żywo”, bez projektu, też stanie — ale nikt nie będzie wiedział, gdzie biegnie rura, kiedy trzeba będzie coś naprawić."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Architektura serwera sklep01",
+      "body": "Ruch, usługi, konta i katalogi:",
+      "code": " internet / przegladarka                 laptop-anna / CI (GitHub Actions)\n      | https://sklep.firma.example            | ssh (klucz) : 22\n      v                                        v\n +------------------------------ sklep01 203.0.113.50 (Ubuntu 24.04) ------------------------------+\n | ufw: 22/tcp (ograniczony), 80/tcp, 443/tcp      fail2ban (sshd)      unattended-upgrades       |\n |                                                                                                  |\n |  nginx :80 -> 301 https   :443 TLS (Let's Encrypt)                                               |\n |     | proxy_pass http://127.0.0.1:8080                                                           |\n |     v                                                                                            |\n |  sklep.service (User=sklep)  java -jar /opt/sklep/sklep.jar  --server.address=127.0.0.1           |\n |     | jdbc:postgresql://127.0.0.1:5432/sklep      LoadCredential= /etc/sklep/poswiadczenia/        |\n |     v                                                                                            |\n |  postgresql@16-main  127.0.0.1:5432  dane /var/lib/postgresql/16/main                             |\n |                                                                                                  |\n |  timery: kopia-bazy (02:30)  ->  /var/backups/sklep  ->  rsync  ->  kopie.firma.example           |\n |          sprawdz-sklep (co 1 min)  ->  journald + powiadomienie                                   |\n +--------------------------------------------------------------------------------------------------+\n konta: anna (sudo)  deploy (sudo: tylko wdroz-sklep.sh)  sklep (systemowe, nologin)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Pierwszy kontakt z nowym serwerem",
+      "body": "Rozpoznanie maszyny zaraz po utworzeniu w chmurze — system, zasoby, dyski, sieć, otwarte porty (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ ssh -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50\nubuntu@sklep01:~$ hostnamectl | grep -E 'Static|Operating|Kernel|Virtualization'\n Static hostname: sklep01\n  Virtualization: kvm\nOperating System: Ubuntu 24.04.3 LTS\n          Kernel: Linux 6.8.0-85-generic\nubuntu@sklep01:~$ nproc; free -h | awk '/^Mem/ {print $2}'; df -h / | tail -1\n2\n3.8Gi\n/dev/vda1        48G  2.1G   46G   5% /\nubuntu@sklep01:~$ ip -4 -br addr | grep -v '^lo'\neth0             UP             203.0.113.50/24\nubuntu@sklep01:~$ sudo ss -tlnp | awk 'NR > 1 {print $4, $6}'\n0.0.0.0:22 users:((\"sshd\",pid=812,fd=3))\n127.0.0.53%lo:53 users:((\"systemd-resolve\",pid=401,fd=15))\n[::]:22 users:((\"sshd\",pid=812,fd=6))\nubuntu@sklep01:~$ timedatectl show -p Timezone --value; locale | head -1\nEtc/UTC\nLANG=C.UTF-8"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Repozytorium infrastruktury z założeniami",
+      "body": "Szkielet repozytorium `~/infra/sklep01` z opisem decyzji — punkt odniesienia dla kolejnych lekcji (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ mkdir -p ~/infra/sklep01/pliki && cd ~/infra/sklep01 && git init -q\nanna@laptop-anna:~/infra/sklep01$ cat README.md\n# sklep01 - serwer produkcyjny aplikacji sklep\n\n## Maszyna\n- Ubuntu 24.04 LTS, 2 vCPU, 4 GB RAM, 48 GB, 203.0.113.50, sklep.firma.example\n- strefa czasowa: Etc/UTC (logi i harmonogramy w UTC)\n\n## Ruch\n- publicznie: 22 (tylko klucze, fail2ban), 80 (-> 301), 443 (Nginx, TLS)\n- lokalnie: aplikacja 127.0.0.1:8080, PostgreSQL 127.0.0.1:5432\n\n## Konta\n- anna - administrator (sudo), deploy - CI (sudo tylko /usr/local/bin/wdroz-sklep.sh)\n- sklep - konto uslugi (systemowe, /usr/sbin/nologin)\n\n## Katalogi\n- /opt/sklep/releases/WERSJA/sklep.jar, /opt/sklep/sklep.jar -> biezace wydanie\n- /etc/sklep/sklep.env, /etc/sklep/poswiadczenia/ (700 root), /var/lib/sklep, /var/backups/sklep\n\n## Kopie i monitoring\n- pg_dump codziennie 02:30 UTC, 7 dni lokalnie, rsync na kopie.firma.example\n- sprawdzanie /actuator/health co minute, powiadomienie przy bledzie\nanna@laptop-anna:~/infra/sklep01$ git add README.md && git commit -qm \"sklep01: zalozenia projektu\" && git log --oneline\n4d1c2a7 sklep01: zalozenia projektu"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zaplanować serwer przed instalacją",
+      "body": "1. Spisz cel serwera i aplikację (wersja Javy, baza, wymagania pamięci, domena).\n2. Narysuj ruch: co jest publiczne (80/443, SSH), co tylko lokalne (aplikacja, baza).\n3. Ustal konta i ich uprawnienia — kto się loguje, kto wdraża, jako kto działa usługa.\n4. Ustal katalogi: wydania, konfiguracja, sekrety, dane, logi, kopie.\n5. Ustal wersje i źródła pakietów (repozytorium dystrybucji, LTS).\n6. Ustal zasady utrzymania: aktualizacje, kopie (ile, gdzie, jak odtworzyć), monitoring.\n7. Zapisz wszystko w repozytorium infrastruktury i dopiero potem zaloguj się na serwer."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się taki plan",
+      "body": "- **Nowy serwer produkcyjny** — punkt odniesienia dla wszystkich kroków instalacji.\n- **Przegląd bezpieczeństwa** — audytor widzi, co powinno być otwarte, i porównuje z rzeczywistością.\n- **Awaria i odtworzenie** — nowy serwer według tych samych założeń i skryptu.\n- **Przekazanie obowiązków** — następca wie, gdzie co leży i dlaczego.\n- **Rozmowa z zespołem aplikacji** — ustalenie portów, zmiennych, ścieżek i sposobu wdrażania.\n- **Rozbudowa** — drugi serwer aplikacji, osobny serwer bazy — zmiana planu, nie improwizacja."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Dlaczego bez kontenerów?",
+      "body": "Ten sam projekt można zrealizować w kontenerach (rozdział 45): Nginx, aplikacja i PostgreSQL w Docker Compose. W projekcie końcowym celowo wybrano instalację „natywną” — usługę systemd, PostgreSQL z pakietów, Nginx z pakietów — bo pozwala przećwiczyć administrację samym Linuksem: konta, uprawnienia, systemd, zaporę, dziennik, kopie. W praktyce oba podejścia są spotykane: wiele firm uruchamia aplikacje Javy jako usługi systemd na maszynach wirtualnych, inne — w kontenerach lub Kubernetesie. Zasady z tego projektu (minimalne otwarte porty, osobne konta, sekrety poza kodem, kopie z próbą odtworzenia, monitoring zdrowia) obowiązują w każdym wariancie."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Instalacja „na żywo” bez planu",
+      "body": "Najczęstszy scenariusz przy pierwszym serwerze: zalogować się jako `root` lub domyślny użytkownik chmury i instalować po kolei to, co wydaje się potrzebne. Aplikacja startuje z `java -jar` na domyślnym porcie 8080 nasłuchującym na wszystkich adresach, PostgreSQL dostaje `listen_addresses = '*'`, „żeby działało połączenie z laptopa”, hasła lądują w `application.properties` w katalogu domowym, a zapora zostaje wyłączona „na chwilę”. Wszystko działa — i wszystko jest wystawione do internetu. Po kilku tygodniach nikt nie pamięta, co i dlaczego zostało zmienione. Plan z założeniami i porównanie stanu serwera z planem (`ss -tlnp`, `ufw status`) chronią przed tym od pierwszego dnia."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Serwer skonfigurowany bez planu",
+      "body": "Aplikacja i baza nasłuchują na adresie publicznym, zapora wyłączona (przykładowy wynik):",
+      "code": "root@sklep01:~# ss -tlnp | awk 'NR > 1 {print $4, $6}' | grep -E '8080|5432'\n*:8080 users:((\"java\",pid=2211,fd=21))\n0.0.0.0:5432 users:((\"postgres\",pid=1890,fd=6))\nroot@sklep01:~# ufw status\nStatus: inactive\nroot@sklep01:~# ps -o user,cmd -C java\nUSER     CMD\nroot     java -jar /root/sklep.jar\nanna@laptop-anna:~$ nc -zv -w 3 203.0.113.50 5432\nConnection to 203.0.113.50 5432 port [tcp/postgresql] succeeded!"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Stan docelowy zgodny z planem",
+      "body": "Po wykonaniu projektu: z zewnątrz tylko 22, 80, 443; aplikacja i baza lokalnie, usługa jako `sklep` (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sudo ss -tlnp | awk 'NR > 1 {print $4, $6}' | grep -E ':(22|80|443|8080|5432) '\n0.0.0.0:22 users:((\"sshd\",pid=812,fd=3))\n0.0.0.0:80 users:((\"nginx\",pid=3120,fd=6))\n0.0.0.0:443 users:((\"nginx\",pid=3120,fd=8))\n[::ffff:127.0.0.1]:8080 users:((\"java\",pid=4410,fd=19))\n127.0.0.1:5432 users:((\"postgres\",pid=3602,fd=7))\nanna@sklep01:~$ ps -o user,cmd -C java | tail -1 | cut -c1-60\nsklep    /usr/lib/jvm/java-21-openjdk-amd64/bin/java -XX:MaxRAMP\nanna@laptop-anna:~$ nc -zv -w 3 203.0.113.50 5432\nnc: connect to 203.0.113.50 port 5432 (tcp) timed out: Operation now in progress"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Każdy nowy serwer** — najpierw założenia w repozytorium, potem instalacja.\n- **Usługi wewnętrzne (aplikacja, baza)** — tylko `127.0.0.1` lub sieć prywatna.\n- **Ruch publiczny** — przez reverse proxy z TLS (Nginx), nie bezpośrednio do aplikacji.\n- **Uprawnienia** — osobne konta dla ludzi, wdrożeń i usługi.\n- **Sekrety** — poza kodem i katalogami domowymi, z ograniczonymi prawami.\n- **Weryfikacja** — porównanie `ss -tlnp` i `ufw status` z planem po każdym etapie."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Projekt końcowy łączy umiejętności z całego kursu: od pustej maszyny do serwera produkcyjnego dla Spring Boot.\n- Architektura: Nginx z TLS na 80/443 → aplikacja na `127.0.0.1:8080` → PostgreSQL na `127.0.0.1:5432`.\n- Konta: administrator (`anna`), wdrożenia (`deploy`), usługa (`sklep`) — każde z minimalnymi uprawnieniami.\n- Założenia (porty, konta, katalogi, wersje, kopie, monitoring) zapisuje się w repozytorium przed instalacją.\n- Stan serwera po każdym etapie porównuje się z planem — `ss -tlnp`, `ufw status`, `ps`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
