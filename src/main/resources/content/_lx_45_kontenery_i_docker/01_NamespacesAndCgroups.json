@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Kontener często opisuje się jako „lekką maszynę wirtualną”, ale to porównanie bardziej przeszkadza, niż pomaga. Kontener **nie ma własnego jądra** ani własnego systemu — to zwykły proces (lub grupa procesów) działający na jądrze gospodarza, któremu jądro pokazuje **ograniczony i odizolowany widok** systemu. Ten efekt powstaje z kilku mechanizmów jądra Linuksa, które istnieją niezależnie od Dockera: **przestrzenie nazw** (namespaces) decydują, co proces *widzi* (swoje procesy, swój system plików, swoją sieć, swoją nazwę hosta), **cgroups** decydują, ile proces może *zużyć* (pamięć, procesor, liczba procesów), a **system plików warstwowy** (overlayfs) składa obraz kontenera z warstw tylko do odczytu i jednej warstwy do zapisu. Docker, Podman czy Kubernetes to wygodne narzędzia, które te mechanizmy konfigurują.\n\nW tej lekcji zajrzysz pod maskę: zbudujesz „kontener” ręcznie poleceniem `unshare`, obejrzysz przestrzenie nazw procesu (`/proc/PID/ns`, `lsns`), wejdziesz do przestrzeni nazw działającego kontenera (`nsenter`), sprawdzisz jego limity w `/sys/fs/cgroup` i zobaczysz, jak to samo robi systemd dla usług (`systemd-cgls`, `MemoryMax=`). Na koniec — pułapka, która dotyka każdego programistę Javy: JVM, której sterta jest większa niż limit cgroup kontenera."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Przestrzeń nazw (namespace)** — mechanizm jądra dający procesowi własną kopię zasobu globalnego; typy: **pid** (własne numery procesów, PID 1 w kontenerze), **mnt** (własne drzewo montowań), **net** (własne interfejsy, adresy, trasy, zapora), **uts** (własna nazwa hosta), **ipc** (kolejki i pamięć współdzielona), **user** (mapowanie UID — root w kontenerze to zwykły użytkownik na gospodarzu), **cgroup**, **time**.\n- **`/proc/PID/ns/`** — dowiązania do przestrzeni nazw procesu (`net:[4026532301]`); te same numery = ta sama przestrzeń; **`lsns`** — lista przestrzeni nazw w systemie.\n- **`unshare`** — uruchamia program w nowych przestrzeniach nazw (`unshare --uts --pid --fork --mount-proc bash`); **`nsenter`** — wchodzi do przestrzeni nazw istniejącego procesu (`nsenter -t PID -n ip addr`).\n- **cgroups v2** — hierarchia grup procesów w `/sys/fs/cgroup` z limitami w plikach: `memory.max`, `memory.current`, `cpu.max` (`50000 100000` = pół procesora), `pids.max`, `io.max`; przekroczenie `memory.max` → OOM killer w obrębie grupy.\n- **systemd i cgroups** — każda usługa to osobna grupa (`system.slice/sklep@8080.service`); `systemd-cgls`, `systemd-cgtop`, limity `MemoryMax=`, `CPUQuota=`, `TasksMax=` w jednostkach; kontenery Dockera — grupy `system.slice/docker-ID.scope`.\n- **overlayfs** — system plików składający katalogi warstw (`lowerdir` tylko do odczytu, `upperdir` do zapisu) w jeden widok (`merged`); obraz kontenera = warstwy, kontener = obraz + cienka warstwa zmian.\n- **Capabilities i seccomp** — dodatkowe ograniczenia uprawnień roota w kontenerze (np. brak `CAP_SYS_ADMIN`) i filtrowanie wywołań systemowych."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Kontener jest jak **pokój w hotelu**, a jądro — jak cały budynek. Przestrzenie nazw to **ściany i drzwi**: gość w pokoju widzi tylko swoje meble (procesy), swój numer na drzwiach (nazwę hosta), swój telefon wewnętrzny (sieć), i nie wie, kto mieszka obok. cgroups to **liczniki i bezpieczniki** w każdym pokoju: ile prądu (procesora) i wody (pamięci) może zużyć — gdy przekroczy limit, bezpiecznik wyłącza prąd tylko w tym pokoju. overlayfs to **umeblowanie z katalogu**: wszystkie pokoje mają te same meble bazowe (warstwy obrazu), a gość może dostawić swoje rzeczy (warstwa zapisu), nie zmieniając katalogu. Budynek (jądro), fundamenty i instalacje są wspólne — dlatego pokój powstaje w sekundę, a nie w miesiąc."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Proces kontenera z perspektywy gospodarza",
+      "body": "Kontener `web` (Nginx) na srv-docker — przestrzenie nazw, cgroup i warstwy:",
+      "code": " GOSPODARZ srv-docker (jedno jadro 6.8.0-85-generic)\n   PID 1 systemd ... PID 3412 containerd-shim\n                       +-- PID 3431 nginx: master   <- w kontenerze to PID 1\n                             +-- PID 3460 nginx: worker   <- w kontenerze PID 29\n\n /proc/3431/ns/        gospodarz (PID 1)        kontener web (PID 3431)\n   pid                 pid:[4026531836]   !=    pid:[4026532305]    wlasne numery procesow\n   net                 net:[4026531840]   !=    net:[4026532308]    eth0 172.17.0.2\n   uts                 uts:[4026531838]   !=    uts:[4026532303]    hostname 7f3c2a91d0b4\n   mnt                 mnt:[4026531841]   !=    mnt:[4026532302]    / z overlayfs\n   user                user:[4026531837]  ==    user:[4026531837]   (bez user namespace)\n\n cgroup: /sys/fs/cgroup/system.slice/docker-7f3c2a91d0b4...scope/\n   memory.max   268435456   (docker run -m 256m)\n   cpu.max      50000 100000 (--cpus 0.5)\n   pids.max     100          (--pids-limit 100)\n\n overlayfs:  lowerdir = warstwy obrazu nginx:1.27 (tylko odczyt)\n             upperdir = zmiany kontenera        ->  merged = \"/\" w kontenerze"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Ręczny „kontener” z `unshare`",
+      "body": "Nowe przestrzenie nazw UTS i PID dla powłoki na lubuntu-nauka — własna nazwa hosta i własne numery procesów (przykładowy wynik):",
+      "code": "anna@lubuntu-nauka ~ > ls -l /proc/$$/ns | awk '{print $9, $11}' | grep -E '^(pid|uts|net) '\nnet net:[4026531840]\npid pid:[4026531836]\nuts uts:[4026531838]\nanna@lubuntu-nauka ~ > sudo unshare --uts --pid --fork --mount-proc bash\nroot@lubuntu-nauka:/home/anna# hostname kontener-reczny; hostname\nkontener-reczny\nroot@lubuntu-nauka:/home/anna# ps -e\n    PID TTY          TIME CMD\n      1 pts/1    00:00:00 bash\n      8 pts/1    00:00:00 ps\nroot@lubuntu-nauka:/home/anna# readlink /proc/self/ns/pid /proc/self/ns/net\npid:[4026532412]\nnet:[4026531840]\nroot@lubuntu-nauka:/home/anna# exit\nanna@lubuntu-nauka ~ > hostname\nlubuntu-nauka\nanna@lubuntu-nauka ~ > lsns -t pid -t net | head -4\n        NS TYPE NPROCS   PID USER COMMAND\n4026531836 pid      14  1720 anna /lib/systemd/systemd --user\n4026531840 net      14  1720 anna /lib/systemd/systemd --user"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Kontener Dockera widziany z gospodarza",
+      "body": "Proces kontenera w `ps`, wejście do jego sieci przez `nsenter`, limity w cgroup i te same mechanizmy w usłudze systemd (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker run -d --name web -m 256m --cpus 0.5 --pids-limit 100 nginx:1.27 > /dev/null\nanna@srv-docker:~$ PID=$(docker inspect -f '{{.State.Pid}}' web); ps -o pid,ppid,user,cmd -p \"$PID\"\n    PID    PPID USER     CMD\n   3431    3412 root     nginx: master process nginx -g daemon off;\nanna@srv-docker:~$ sudo nsenter -t \"$PID\" -n ip -4 -br addr\nlo               UNKNOWN        127.0.0.1/8\neth0@if7         UP             172.17.0.2/16\nanna@srv-docker:~$ sudo nsenter -t \"$PID\" -u hostname\n7f3c2a91d0b4\nanna@srv-docker:~$ CG=/sys/fs/cgroup$(cut -d: -f3 /proc/$PID/cgroup); echo \"$CG\"\n/sys/fs/cgroup/system.slice/docker-7f3c2a91d0b4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d0.scope\nanna@srv-docker:~$ cat \"$CG\"/{memory.max,cpu.max,pids.max,memory.current}\n268435456\n50000 100000\n100\n9822208\nanna@srv-docker:~$ docker inspect -f '{{.GraphDriver.Data.UpperDir}}' web | sed 's|/var/lib/docker/overlay2/[^/]*|/var/lib/docker/overlay2/...|'\n/var/lib/docker/overlay2/.../diff\nanna@srv-docker:~$ ssh lubuntu-nauka 'systemctl show sklep@8080 -p ControlGroup -p MemoryMax -p TasksMax'\nControlGroup=/system.slice/system-sklep.slice/sklep@8080.service\nMemoryMax=infinity\nTasksMax=4915"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zajrzeć do kontenera od strony jądra",
+      "body": "1. Znajdź PID głównego procesu kontenera na gospodarzu: `docker inspect -f '{{.State.Pid}}' NAZWA`.\n2. Porównaj przestrzenie nazw z gospodarzem: `sudo ls -l /proc/PID/ns` i `ls -l /proc/self/ns` (różne numery = izolacja).\n3. Wejdź do wybranej przestrzeni: `sudo nsenter -t PID -n` (sieć), `-u` (nazwa hosta), `-m` (system plików), `-p` (procesy) — z narzędziami gospodarza.\n4. Znajdź grupę cgroup procesu: `cat /proc/PID/cgroup` i odczytaj limity z `/sys/fs/cgroup/...` (`memory.max`, `cpu.max`, `pids.max`).\n5. Sprawdź bieżące zużycie: `memory.current`, `cpu.stat`, `memory.events` (licznik `oom_kill`).\n6. Porównaj z usługami systemd: `systemd-cgls`, `systemd-cgtop`, `systemctl show USŁUGA -p MemoryMax`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się wiedza o przestrzeniach nazw i cgroups",
+      "body": "- **Diagnoza kontenera bez narzędzi w obrazie** — `nsenter -n` z `ss`, `ip`, `tcpdump` gospodarza do obrazu bez powłoki.\n- **Analiza OOM w kontenerach** — `memory.events` (`oom_kill`), `dmesg`, `docker inspect` (`OOMKilled`).\n- **Limity dla usług bez kontenerów** — `MemoryMax=`, `CPUQuota=`, `TasksMax=` w jednostkach systemd (te same cgroups).\n- **Jednorazowe zadanie z limitem** — `systemd-run --scope -p MemoryMax=1G -p CPUQuota=50% polecenie`.\n- **Bezpieczeństwo** — zrozumienie, że root w kontenerze bez user namespace to root na gospodarzu (tryb rootless — lekcja 7).\n- **JVM w kontenerach** — JVM czyta limity cgroup (`-XX:+UseContainerSupport`, domyślnie włączone) i dobiera do nich stertę i wątki."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kontener to nie granica bezpieczeństwa jak maszyna wirtualna",
+      "body": "Wszystkie kontenery na gospodarzu korzystają z **jednego jądra**. Błąd w jądrze, niebezpieczna konfiguracja (`--privileged`, zamontowane `/var/run/docker.sock`, `--pid host`, `--net host`) lub uruchomienie jako root bez przestrzeni nazw użytkownika mogą pozwolić procesowi „wyjść” z kontenera na gospodarza. Maszyna wirtualna ma osobne jądro i znacznie mniejszą powierzchnię ataku. Dlatego w środowiskach, gdzie obok siebie działają kod różnych klientów, łączy się oba podejścia (kontenery wewnątrz osobnych VM, gVisor, Kata Containers). Dla własnych aplikacji praktyczne minimum to: kontener jako zwykły użytkownik (`USER` w Dockerfile), bez `--privileged`, z limitami pamięci i liczby procesów."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Sterta JVM większa niż limit pamięci kontenera",
+      "body": "Limit `docker run -m 512m` to twardy `memory.max` w cgroup. Jeśli JVM dostanie `-Xmx1g`, nie wie, że w grupie jest tylko 512 MB: sterta rośnie, aż jądro uruchomi OOM killera w obrębie cgroup i zabije proces sygnałem `SIGKILL`. Nie ma wtedy `OutOfMemoryError`, zrzutu sterty ani wpisu w logu aplikacji — kontener po prostu kończy się kodem **137**, a `docker inspect` pokazuje `OOMKilled=true`. Ten sam problem dotyczy usług systemd z `MemoryMax=`. Pamiętaj też, że JVM zużywa pamięć poza stertą (metaspace, stosy wątków, bufory, JIT), więc `-Xmx` równe limitowi to też za dużo. Rozwiązanie: nie ustawiaj `-Xmx` na sztywno w kontenerach — użyj `-XX:MaxRAMPercentage=60..75`, który liczy stertę od limitu cgroup."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "`-Xmx` większe niż `memory.max`",
+      "body": "Kontener z limitem 512 MB i stertą 1 GB — zabity przez jądro bez śladu w logu aplikacji (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker run -d --name sklep-test -p 8080:8080 -m 512m -e JAVA_OPTS=\"-Xmx1g\" sklep:1.4.1 > /dev/null\nanna@srv-docker:~$ curl -s -X POST localhost:8080/admin/import-cennika > /dev/null; sleep 20\nanna@srv-docker:~$ docker inspect -f 'status={{.State.Status}} kod={{.State.ExitCode}} OOMKilled={{.State.OOMKilled}}' sklep-test\nstatus=exited kod=137 OOMKilled=true\nanna@srv-docker:~$ docker logs sklep-test 2>&1 | grep -c OutOfMemoryError\n0\nanna@srv-docker:~$ sudo dmesg | grep -m1 'Memory cgroup out of memory'\n[48211.402113] Memory cgroup out of memory: Killed process 5120 (java) total-vm:3891204kB, anon-rss:519816kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:1412kB oom_score_adj:0"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Sterta liczona od limitu cgroup",
+      "body": "`MaxRAMPercentage` — JVM odczytuje limit kontenera i zostawia miejsce na pamięć poza stertą (przykładowy wynik):",
+      "code": "anna@srv-docker:~$ docker run --rm -m 512m --entrypoint java sklep:1.4.1 -XX:MaxRAMPercentage=70 -XX:+PrintFlagsFinal -version 2>/dev/null | grep -E ' MaxHeapSize '\n   size_t MaxHeapSize                              = 375390208                                 {product} {ergonomic}\nanna@srv-docker:~$ docker run -d --name sklep-test2 -p 8080:8080 -m 512m -e JAVA_OPTS=\"-XX:MaxRAMPercentage=70\" sklep:1.4.1 > /dev/null\nanna@srv-docker:~$ curl -s -X POST localhost:8080/admin/import-cennika; echo\n{\"zaimportowano\":1840211,\"czas_s\":64}\nanna@srv-docker:~$ docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' sklep-test2\nsklep-test2 431.2MiB / 512MiB"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Zrozumienie izolacji** — `unshare` i `/proc/PID/ns` na maszynie testowej.\n- **Diagnoza sieci kontenera z narzędziami gospodarza** — `nsenter -t PID -n`.\n- **Sprawdzenie limitów i OOM** — `/sys/fs/cgroup/.../memory.max`, `memory.events`, `docker inspect`.\n- **Limit dla usługi bez kontenera** — `MemoryMax=`, `CPUQuota=` w jednostce systemd.\n- **JVM w kontenerze** — `-XX:MaxRAMPercentage`, a nie sztywne `-Xmx` większe od limitu.\n- **Izolacja niezaufanego kodu** — maszyna wirtualna lub kontenery w VM, nie same kontenery."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Kontener to proces na jądrze gospodarza, odizolowany przestrzeniami nazw i ograniczony cgroups.\n- Przestrzenie nazw (pid, mnt, net, uts, ipc, user) decydują, co proces widzi; `/proc/PID/ns`, `lsns`, `unshare`, `nsenter`.\n- cgroups v2 w `/sys/fs/cgroup` ograniczają pamięć, procesor i liczbę procesów — tak samo dla kontenerów i usług systemd.\n- overlayfs składa obraz z warstw tylko do odczytu i warstwy zapisu kontenera.\n- JVM w kontenerze musi mieścić się w `memory.max` — używaj `MaxRAMPercentage`, inaczej kontener zginie z kodem 137."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
