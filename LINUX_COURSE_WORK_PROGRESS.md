@@ -180,7 +180,21 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   zatrzymał filtr bezpieczeństwa DWUKROTNIE (2026-10-06 i 2026-10-07, także przy ujęciu „audyt własnego
   laboratorium”). Nie próbować ponownie bez decyzji użytkownika (np. napisze sam, scali tematy z lekcją 06
   w ogólnym zarysie albo lekcje zostaną usunięte ze struktury).
-  Pozostałe lekcje (`_lx_33`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_33_ssh` (12 lekcji) — ZROBIONY (2026-10-07). Stan laboratorium: OpenSSH 9.6p1; odcisk klucza hosta
+  srv-test ED25519 `SHA256:Qm7vR1kd2XoT5c8bLwz0eYfA3nH6uJpS9tGiK4lVxEo`. Klucze anny na lubuntu-nauka: `id_ed25519` (z hasłem,
+  `SHA256:7fKq2Wm9...NwQk`, komentarz anna@lubuntu-nauka), `id_rsa_sw01` (RSA 4096, przełącznik sw-01 192.168.56.2),
+  `deploy_sklep` (bez hasła, CI), `id_ed25519_github`; klucz z laptopa „anna@laptop-anna”. `~/.ssh/config` anny:
+  `Include ~/.ssh/config.d/*`, aliasy srv-test/test (Port 2222), srv-docker, deploy-test (User deploy, Port 2222), sw01,
+  `Host srv-*`, `Host *` na końcu (AddKeysToAgent 4h, IdentitiesOnly, ServerAlive 30/3); pliki config.d: `firma`
+  (bastion.firma.example 203.0.113.10 → app01 10.20.0.11, db01 10.20.0.21, ProxyJump; użytkownik anna.kowalska),
+  `tunele` (baza-lubuntu: LocalForward 15432), `github`. srv-test: sshd na porcie **2222** (`sshd_config.d/10-port.conf`,
+  ssh.socket), `20-zabezpieczenia.conf` (PermitRootLogin no, hasła wyłączone, AllowGroups ssh-dostep [GID 1005: anna,
+  deploy], MaxAuthTries 3, LoginGraceTime 30, ClientAlive 300/2, X11/agent forwarding off), ufw aktywny z regułą
+  2222/tcp (szczegóły zapory — rozdział 35), konto kuba (uid 1002) bez dostępu SSH; deploy: klucz z
+  `restrict,from=192.168.56.0/24,command=/usr/local/bin/wdroz-sklep.sh` (jar na stdin → /opt/sklep/releases, symlink
+  /opt/sklep/sklep.jar); deploy key `~/.ssh/deploy_sklep_repo` (read-only) i klon repo sklep. GitHub: konto
+  anna-kowalska, repo `sklep` (git 2.43, gałąź main). sklep na lubuntu-nauka ma (do debugowania) JDWP na 127.0.0.1:5005.
+  Pozostałe lekcje (`_lx_34`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -250,7 +264,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_33_ssh`** (lekcje 32/07-09 czekają na decyzję użytkownika), potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_34_transfer_i_synchronizacja`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
