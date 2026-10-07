@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Każdy nasłuchujący port to potencjalne wejście do systemu. Notatki kursu (LN27) wymieniają typowe pytania, na które odpowiada `netstat -plnt` (dziś `ss -tlnp`, rozdział 32): czy Apache działa, czy SSH działa, co zajmuje port 8080, czy MySQL nasłuchuje. Z punktu widzenia bezpieczeństwa to pytanie trzeba odwrócić: **co nasłuchuje, choć nie powinno?** Serwery z czasem obrastają w usługi — instalowane razem z pakietami (Avahi i CUPS z pulpitem Lubuntu), uruchomione „na chwilę” do testów (Elasticsearch z rozdziału 35), pozostawione po migracji (rpcbind po przejściu na NFSv4) — i każda z nich to kod, który trzeba aktualizować i który może mieć luki.\n\nW tej lekcji przeprowadzisz **przegląd usług nasłuchujących** na `lubuntu-nauka`: lista gniazd TCP i UDP z procesami, powiązanie procesu z pakietem i jednostką systemd, decyzja dla każdej pozycji (potrzebna i ograniczona / do ograniczenia / do wyłączenia), skuteczne wyłączenie usług (z uwzględnieniem aktywacji gniazdem, przez którą „wyłączona” usługa wraca), a na koniec porównanie stanu z **listą oczekiwanych portów** zapisaną w repozytorium i weryfikacja z zewnątrz. Taki przegląd warto powtarzać po każdej większej zmianie i okresowo."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Lista gniazd** — `sudo ss -tulpn` (TCP i UDP, nasłuch, numery, procesy); `-H` bez nagłówka do skryptów; dawniej `netstat -plnt` (notatki).\n- **Adres nasłuchu** — `0.0.0.0`/`[::]`/`*` (wszystkie interfejsy), konkretny adres karty, `127.0.0.1`/`[::1]` (tylko lokalnie), `%lo`, `%enp0s8` (powiązanie z interfejsem).\n- **Od procesu do pakietu i usługi** — PID z `ss` → `systemctl status PID` (która jednostka), `readlink /proc/PID/exe` → `dpkg -S ŚCIEŻKA` (który pakiet), `apt-cache show PAKIET` (do czego służy).\n- **Aktywacja gniazdem** — port może trzymać **systemd** (`users:((\"systemd\",pid=1,...))`) dla jednostki `.socket` (`ssh.socket`, `cups.socket`, `avahi-daemon.socket`); `systemctl list-sockets`.\n- **Wyłączenie usługi** — `systemctl disable --now USLUGA` (nie startuje przy uruchomieniu) + to samo dla `USLUGA.socket`; **`systemctl mask`** — całkowita blokada (także jako zależność innych jednostek); `apt purge` — usunięcie pakietu, jeśli niepotrzebny.\n- **Typowe zbędne usługi na serwerze** — `avahi-daemon` (mDNS, 5353/udp), `cups`/`cups-browsed` (drukowanie, 631), `rpcbind` (111 — potrzebny tylko dla NFSv3), `ModemManager`, `bluetooth`, serwery testowe i deweloperskie.\n- **Lista oczekiwana** — plik w repozytorium z dozwolonymi parami `adres:port proces`; skrypt porównujący z `ss` (różnica = alarm).\n- **Weryfikacja z zewnątrz** — skan portów z innej maszyny (rozdział 32), bo zapora może ukrywać lub przepuszczać więcej, niż wynika z listy gniazd."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Przegląd usług nasłuchujących to **obchód budynku i sprawdzenie, które drzwi i okna są otwarte**. Każde otwarte okno (port) to możliwe wejście — także okno w składziku, o którym nikt nie pamięta (usługa zainstalowana z pakietem). Dla każdego otworu pytasz: czy ktoś przez niego naprawdę wchodzi (potrzebna usługa)? czy wystarczy uchylić je tylko od podwórka (nasłuch lokalny, zapora)? a może zamurować (wyłączyć i zamaskować)? Aktywacja gniazdem to **drzwi z dzwonkiem, za którymi nikt nie siedzi, ale gdy ktoś zadzwoni, ochrona natychmiast wpuszcza lokatora** — wyłączenie samego lokatora (usługi) nic nie da, trzeba też odłączyć dzwonek (gniazdo)."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Przegląd nasłuchujących usług `lubuntu-nauka`",
+      "body": "Wynik inwentaryzacji i decyzja dla każdej pozycji:",
+      "code": " ADRES:PORT          PROCES / JEDNOSTKA                   PAKIET              DECYZJA\n 0.0.0.0:22          systemd / ssh.socket                 openssh-server      zostaje (zapora: tylko lab, limit)\n *:80                nginx / nginx.service                nginx               zostaje (publiczny)\n 0.0.0.0:111         systemd,rpcbind / rpcbind.socket     rpcbind             NFSv4 tylko -> wylacz + maskuj\n 0.0.0.0:2049        - (jadro) / nfs-server.service       nfs-kernel-server   zostaje (zapora: lab)\n 0.0.0.0:139,445     smbd / smbd.service                  samba               zostaje (zapora: lab)\n 0.0.0.0:5353/udp    avahi-daemon / avahi-daemon.socket   avahi-daemon        zbedne na serwerze -> purge\n 127.0.0.1:631       cupsd / cups.socket                  cups                zbedne -> purge\n 127.0.0.1:5432      postgres                             postgresql-16       zostaje (lokalnie + 192.168.56.10)\n 127.0.0.1:8080/8082 java / sklep@8080, sklep@8082        (aplikacja)         zostaje (za Nginx)\n 127.0.0.1:8081      java (Actuator)                      (aplikacja)         zostaje (lokalnie)\n 127.0.0.1:9200,9300 java / elasticsearch.service         elasticsearch       testy zakonczone -> wylacz\n 127.0.0.1:5005      java (JDWP)                          (aplikacja)         debugowanie zakonczone -> usun z JAVA_OPTS"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Lista gniazd i powiązanie z jednostkami oraz pakietami",
+      "body": "Pełna lista nasłuchujących gniazd, a dla wybranych — jednostka systemd i pakiet (przykładowy wynik):",
+      "code": "$ sudo ss -tulpnH | awk '{printf \"%-5s %-22s %s\\n\", $1, $5, $7}' | sed 's/users:((//; s/,pid=/ /; s/,fd=.*//' | sort -k2\ntcp   0.0.0.0:111            \"systemd\" 1\ntcp   0.0.0.0:139            \"smbd\" 1530\ntcp   0.0.0.0:2049           -\ntcp   0.0.0.0:22             \"systemd\" 1\ntcp   0.0.0.0:445            \"smbd\" 1530\ntcp   127.0.0.1:5005         \"java\" 15210\ntcp   127.0.0.1:5432         \"postgres\" 1488\ntcp   127.0.0.1:631          \"cupsd\" 1117\ntcp   127.0.0.1:8080         \"java\" 15210\ntcp   127.0.0.1:8081         \"java\" 15210\ntcp   127.0.0.1:8082         \"java\" 17120\ntcp   127.0.0.1:9200         \"java\" 19822\ntcp   192.168.56.10:5432     \"postgres\" 1488\ntcp   *:80                   \"nginx\" 1204\nudp   0.0.0.0:5353           \"avahi-daemon\" 1098\n$ systemctl status 1098 --no-pager | head -1\n* avahi-daemon.service - Avahi mDNS/DNS-SD Stack\n$ dpkg -S \"$(readlink /proc/1098/exe)\"\navahi-daemon: /usr/sbin/avahi-daemon\n$ systemctl list-sockets --no-legend | awk '{print $1, $2}' | grep -E ':(22|111|631)$|avahi|cups'\n0.0.0.0:22 ssh.socket\n0.0.0.0:111 rpcbind.socket\n/run/avahi-daemon/socket avahi-daemon.socket\n/run/cups/cups.sock cups.socket"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Wyłączenie zbędnych usług i porównanie z listą oczekiwanych portów",
+      "body": "Usunięcie Avahi i CUPS, wyłączenie rpcbind (NFSv4) i testowego Elasticsearcha, zdjęcie JDWP z opcji Javy; skrypt porównujący stan z listą z repozytorium (przykładowy wynik):",
+      "code": "$ sudo apt purge -y avahi-daemon cups cups-browsed > /dev/null 2>&1\n$ sudo systemctl disable --now rpcbind.service rpcbind.socket elasticsearch.service 2>&1 | grep -c Removed\n3\n$ sudo systemctl mask rpcbind.service rpcbind.socket\nCreated symlink /etc/systemd/system/rpcbind.service -> /dev/null.\nCreated symlink /etc/systemd/system/rpcbind.socket -> /dev/null.\n$ sudo sed -i 's/ -agentlib:jdwp=[^ ]*//' /etc/sklep/sklep.env && sudo /usr/local/bin/wdroz-sklep.sh --wycofaj 1.3.2 > /dev/null\n$ cat ~/infra/porty-oczekiwane.txt\ntcp 0.0.0.0:22 systemd\ntcp *:80 nginx\ntcp 0.0.0.0:139 smbd\ntcp 0.0.0.0:445 smbd\ntcp 0.0.0.0:2049 -\ntcp 127.0.0.1:5432 postgres\ntcp 192.168.56.10:5432 postgres\ntcp 127.0.0.1:8080 java\ntcp 127.0.0.1:8081 java\ntcp 127.0.0.1:8082 java\n$ cat ~/infra/sprawdz-porty.sh\n#!/bin/bash\n# Porownuje nasluchujace gniazda z lista oczekiwana; kod 1 = roznica\nsudo ss -tulpnH | awk '{p=$7; gsub(/users:\\(\\(\"|\".*/,\"\",p); if(p==\"\") p=\"-\"; print $1, $5, p}' | sort -u > /tmp/porty-teraz.txt\ndiff <(sort -u ~/infra/porty-oczekiwane.txt) /tmp/porty-teraz.txt && echo \"OK: zgodne z lista\"\n$ ~/infra/sprawdz-porty.sh\nOK: zgodne z lista\nanna@srv-test:~$ sudo nmap -n -p- -T4 --open 192.168.56.10 | grep -E '^[0-9]'\n22/tcp   open  ssh\n80/tcp   open  http\n139/tcp  open  netbios-ssn\n445/tcp  open  microsoft-ds\n2049/tcp open  nfs"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Przegląd usług nasłuchujących krok po kroku",
+      "body": "1. **Inwentaryzacja**: `sudo ss -tulpn` — każde gniazdo TCP i UDP z procesem (pamiętaj o UDP!).\n2. **Identyfikacja**: dla każdego procesu — jednostka (`systemctl status PID`), pakiet (`dpkg -S $(readlink /proc/PID/exe)`), cel (`apt-cache show`, dokumentacja).\n3. **Decyzja**: potrzebna → nasłuch możliwie wąski (lokalny / jedna karta) + reguła zapory (rozdział 35); niepotrzebna → wyłączenie lub usunięcie pakietu.\n4. **Wyłączenie skuteczne**: `systemctl disable --now USLUGA` **i** `USLUGA.socket`; gdy inne jednostki mogą ją uruchomić — `systemctl mask`; pakiet zbędny — `apt purge`.\n5. **Lista oczekiwana**: zapisz wynik w repozytorium (`porty-oczekiwane.txt`) i porównuj skryptem — ręcznie po zmianach i automatycznie z timera (rozdział 27) z powiadomieniem przy różnicy.\n6. **Z zewnątrz**: skan portów z innej maszyny i z innej sieci (rozdział 32) — porównanie z oczekiwaniami."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się przegląd usług",
+      "body": "- **Nowy serwer** — po instalacji systemu i pakietów, przed wystawieniem do sieci.\n- **Po wdrożeniach i zmianach** — nowa wersja aplikacji, nowy pakiet, zmiana konfiguracji (np. debugger zostawiony na produkcji).\n- **Okresowo** — skrypt z timera porównujący stan z listą (zmiana = sygnał do sprawdzenia, także możliwego włamania — nowy nasłuch to typowy objaw tylnej furtki).\n- **Serwery z obrazów** — obrazy chmurowe i szablony VM często zawierają usługi niepotrzebne w danej roli.\n- **Kontenery i hosty Dockera** — porty publikowane przez kontenery (`docker ps`, `ss`), omijające zaporę (rozdział 35).\n- **Audyty bezpieczeństwa** — udokumentowana lista portów z uzasadnieniem każdego."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Usługi pulpitu na serwerze i porty UDP",
+      "body": "`lubuntu-nauka` to maszyna z pulpitem (LXQt), więc ma usługi typowe dla stacji roboczej: **Avahi** (rozgłaszanie i wykrywanie usług w sieci lokalnej — mDNS na 5353/udp), **CUPS** (drukowanie, port 631, z `cups-browsed` wyszukującym drukarki w sieci), ModemManager, Bluetooth. Na serwerze żadna z nich nie jest potrzebna, a każda była w przeszłości źródłem poważnych luk (np. łańcuch błędów w `cups-browsed` z 2024 roku pozwalał na zdalne wykonanie kodu przez pakiet UDP). Instalacja Ubuntu Server ich nie zawiera — kolejny argument, by serwery stawiać z obrazów serwerowych, nie desktopowych. Zwróć też uwagę na **UDP**: `ss -tlnp` (bez `-u`) pokazuje tylko TCP, a mDNS, DNS (dnsmasq na `srv-test`), NTP, SNMP czy NFS po UDP łatwo przeoczyć — przegląd zawsze rób z `-u`."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Usługa „wyłączona”, która wraca",
+      "body": "Klasyczny problem przy wyłączaniu usług: `sudo systemctl stop cups` — port znika, przegląd wygląda dobrze, a po restarcie maszyny (albo wcześniej, przy pierwszym odwołaniu do gniazda) usługa działa znowu. Przyczyny: `stop` nie wyłącza autostartu (potrzebne `disable`), a usługi z **aktywacją gniazdem** (`cups.socket`, `avahi-daemon.socket`, `rpcbind.socket`) są uruchamiane przez systemd przy pierwszym połączeniu z gniazdem — samo `disable` usługi nie wystarcza, trzeba wyłączyć także jednostkę `.socket`. Do tego inne pakiety mogą wymagać usługi jako zależności (`nfs-server` przy NFSv3 uruchamia `rpcbind`) — `mask` blokuje także taki start, ale wtedy zależna usługa może się nie uruchomić, więc trzeba sprawdzić jej działanie."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Zatrzymana usługa uruchomiona ponownie przez gniazdo",
+      "body": "`stop` i `disable` samej usługi — systemd nadal nasłuchuje na gnieździe i uruchamia ją przy pierwszym połączeniu (przykładowy wynik):",
+      "code": "$ sudo systemctl disable --now rpcbind.service\nRemoved \"/etc/systemd/system/multi-user.target.wants/rpcbind.service\".\n$ sudo ss -tlnpH 'sport = :111' | grep -o 'users:.*'\nusers:((\"systemd\",pid=1,fd=58))\nanna@srv-test:~$ rpcinfo -p 192.168.56.10 | head -2\n   program vers proto   port  service\n    100000    4   tcp    111  portmapper\n$ systemctl is-active rpcbind.service\nactive"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Wyłączenie usługi i gniazda oraz maskowanie",
+      "body": "Usługa i gniazdo wyłączone i zamaskowane — port znika, a próby uruchomienia (także jako zależność) są blokowane; NFSv4 działa dalej (przykładowy wynik):",
+      "code": "$ sudo systemctl disable --now rpcbind.service rpcbind.socket && sudo systemctl mask rpcbind.service rpcbind.socket > /dev/null 2>&1\n$ sudo ss -tulnH | grep -c ':111 '\n0\n$ sudo systemctl start rpcbind\nFailed to start rpcbind.service: Unit rpcbind.service is masked.\n$ grep -E '^vers' /etc/nfs.conf\nvers3=n\nanna@srv-test:~$ sudo mount -t nfs4 192.168.56.10:/srv/dane/wspolne /mnt/wspolne && ls /mnt/wspolne | head -2\nnotatki.txt\nprojekty"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Usługa potrzebna, dostęp tylko lokalny** — nasłuch `127.0.0.1` w jej konfiguracji.\n- **Usługa potrzebna dla wybranych** — konkretny adres karty + reguła zapory dla źródła.\n- **Usługa niepotrzebna teraz, może się przydać** — `systemctl disable --now` (usługa + `.socket`).\n- **Usługa nie może się uruchomić w żadnych okolicznościach** — `systemctl mask`.\n- **Pakiet zbędny w roli serwera** — `apt purge` (mniej kodu do aktualizowania).\n- **Kontrola stała** — lista oczekiwanych portów w repozytorium + skrypt porównujący + skan z zewnątrz."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Każdy nasłuchujący port to potencjalne wejście — przegląd zaczyna się od `sudo ss -tulpn` (TCP i UDP, z procesami).\n- Proces wiąże się z jednostką (`systemctl status PID`) i pakietem (`dpkg -S`); dla każdej pozycji decydujesz: zostaje (wąsko), ograniczyć, wyłączyć.\n- Wyłączenie skuteczne to `disable --now` usługi **i** jej gniazda, a w razie potrzeby `mask`; niepotrzebne pakiety najlepiej usunąć.\n- Usługi pulpitu (Avahi, CUPS) nie powinny działać na serwerze; serwery stawiaj z obrazów serwerowych.\n- Lista oczekiwanych portów w repozytorium, skrypt porównujący i skan z zewnątrz pozwalają wykryć każdą zmianę."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
