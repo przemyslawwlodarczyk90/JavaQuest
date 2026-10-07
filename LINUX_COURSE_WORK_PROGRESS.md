@@ -230,7 +230,20 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   formacie `czasy` z `conf.d/log-czasy.conf`), druga instancja `sklep@8082`; strona `pomoc.lab.local` (/var/www/pomoc).
   `app01` (produkcja, 203.0.113.40): certbot 2.9.0, certyfikat Let's Encrypt dla sklep.firma.example + www (do
   2027-01-05), `listen 443 ssl http2`, HSTS 1 rok, ufw 'Nginx Full'.
-  Pozostałe lekcje (`_lx_37`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_37_bazy_danych_na_serwerze` (8 lekcji) — ZROBIONY (2026-10-08). srv-test: MySQL Community 8.4.6 z paczki
+  `.deb` (dpkg + `apt --fix-broken install`, ~/mysql-deb), `mysql_secure_installation`; konta `root@localhost`,
+  `admin@localhost` (ALL, panel), `strona@localhost` (DML na `strona`), `kopie@localhost` (odczyt; hasło w
+  `/root/.my.cnf`); datadir przeniesiony do **/srv/mysql** (alias AppArmor), `/var/lib/mysql.stary`; skrypt
+  `/usr/local/bin/kopia-mysql.sh` (cron root 3:00, `/srv/kopie/mysql`, 14 dni); `require_secure_transport = ON`
+  (`mysql.conf.d/90-tls.cnf`). PHP na srv-test przełączone na **php8.3-fpm** z pakietów (moduł ze źródeł wyłączony,
+  MPM z powrotem `event`); phpMyAdmin 5.2.1 z pakietu + `conf-available/phpmyadmin-dostep.conf` (Require ip 127.0.0.1
+  192.168.56.0/24). lubuntu-nauka: PostgreSQL 16.10 (klaster 16/main), role `sklep` (DML), **`sklep_migracje`**
+  (właściciel bazy, `FLYWAY_USER` w sklep.env), `raporty` (SELECT, CONNECTION LIMIT 5); `conf.d/90-siec.conf`
+  listen 'localhost,192.168.56.10'; pg_hba: linia 131 `hostssl sklep raporty 192.168.56.20/32 scram-sha-256`; ufw 5432
+  tylko z 192.168.56.20; `conf.d/80-dziennik.conf` (log_connections). kopia-sklep.sh zapisuje też
+  `globalne-DATA.sql` (pg_dumpall --globals-only). deb-lab: PostgreSQL 17.6 z PGDG (`/etc/apt/sources.list.d/pgdg.sources`),
+  odtworzona baza sklep z kopii.
+  Pozostałe lekcje (`_lx_38`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -300,7 +313,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_37_bazy_danych_na_serwerze`** (MySQL planowo na srv-test obok Apache/PHP — phpMyAdmin; PostgreSQL na lubuntu-nauka), potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_38_java_na_serwerze`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
