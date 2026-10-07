@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "W WSL2 pracujesz z dwoma zupełnie różnymi systemami plików naraz. **Pliki Linuksa** (`/`, `/home/anna`, `/etc`) leżą w obrazie dysku wirtualnego **`ext4.vhdx`** — jednym dużym pliku na dysku Windows, wewnątrz którego jest normalny system plików ext4 z właścicielami, prawami i dowiązaniami. **Dyski Windows** są automatycznie montowane w `/mnt/c`, `/mnt/d` i dalej — to NTFS widziany przez protokół sieciowy 9P, z prawami dostępu emulowanymi na podstawie konta Windows. W drugą stronę — pliki Linuksa są widoczne w Eksploratorze Windows pod ścieżką `\\\\wsl.localhost\\Ubuntu-24.04\\`.\n\nTa dwoistość ma konsekwencje praktyczne: wydajność (lekcja 2), prawa plików (`chmod` na `/mnt/c` domyślnie nic nie zmienia), wielkość liter w nazwach (NTFS zwykle ich nie rozróżnia), rozmiar dysku (plik `.vhdx` rośnie, ale sam nie maleje). W tej lekcji znajdziesz plik `.vhdx` swojej dystrybucji, poznasz opcje montowania dysków Windows w `/etc/wsl.conf` (`metadata`, `umask`), nauczysz się odzyskiwać miejsce po usuniętych danych i zobaczysz klasyczny błąd: klucz SSH na dysku C:, którego `ssh` odmawia użycia, bo „ma za szerokie uprawnienia”."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`ext4.vhdx`** — dysk wirtualny dystrybucji WSL2; lokalizacja: `%LOCALAPPDATA%\\wsl\\{GUID}\\` (nowe instalacje), `%LOCALAPPDATA%\\Packages\\...\\LocalState\\` (starsze, ze Sklepu) lub katalog wskazany przy `--import`/`--move`; ścieżkę pokazuje rejestr `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss` (wartość `BasePath`).\n- **Wzrost i odzyskiwanie miejsca** — `.vhdx` rośnie wraz z danymi, ale po ich usunięciu nie maleje sam; `wsl --manage NAZWA --set-sparse true` (plik rzadki — zwalnia miejsce automatycznie) lub ręczne kompaktowanie (`Optimize-VHD`, `diskpart compact vdisk`) po `wsl --shutdown`.\n- **`/mnt/c` (drvfs)** — dyski Windows montowane automatycznie; `mount | grep drvfs` pokazuje opcje; dostęp przez 9P (wolniejszy przy wielu małych plikach).\n- **Prawa na `/mnt/c`** — domyślnie wszystkie pliki należą do bieżącego użytkownika, prawa wynikają z `umask`/`fmask`, a `chmod` i `chown` nie zapisują zmian; opcja **`metadata`** zapisuje prawa i właściciela Linuksa w rozszerzonych atrybutach NTFS.\n- **`/etc/wsl.conf` — `[automount]`** — `enabled`, `root = /mnt/`, `options = \"metadata,umask=22,fmask=11\"`, `mountFsTab = true` (wczytanie `/etc/fstab`).\n- **Wielkość liter** — NTFS domyślnie nie rozróżnia `Plik.java` i `plik.java`; katalogi tworzone z WSL mają włączone rozróżnianie (`fsutil.exe file queryCaseSensitiveInfo`), katalogi utworzone w Windows — nie.\n- **Dostęp z Windows** — `\\\\wsl.localhost\\NAZWA\\` (dawniej `\\\\wsl$\\NAZWA\\`), `explorer.exe .`, `wslpath -w`; nie edytuj plików wewnątrz `.vhdx` innymi metodami.\n- **Inne dyski** — `wsl --mount \\\\.\\PHYSICALDRIVE2 --partition 1` (dysk z ext4 podłączony do WSL2), pendrive USB przez `usbipd-win`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Dystrybucja WSL2 to **sejf stojący w Twoim pokoju** (plik `.vhdx` na dysku Windows). W środku jest porządek po linuksowemu: szuflady z etykietami właścicieli, zamki na każdej teczce (prawa ext4). Pokój — dysk C: — ma swoje zasady: nikt nie przypina tam etykiet z nazwiskiem do kartek, więc gdy z sejfu sięgasz do pokoju (`/mnt/c`), „zamki” są tylko udawane. Sejf rośnie, gdy wkładasz do niego rzeczy, ale po wyjęciu rzeczy jego obudowa się nie kurczy — trzeba go „ścisnąć” (kompaktowanie), żeby odzyskać miejsce w pokoju."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Dwa systemy plików i drogi między nimi",
+      "body": "Co leży gdzie i jak wygląda z każdej strony:",
+      "code": " DYSK D: (NTFS)                                      w WSL (Ubuntu-24.04)\n D:\\wsl\\ubuntu\\ext4.vhdx  (11.4 GB)  ---- ext4 ---> /            szybko, prawa Linuksa\n                                                    /home/anna/projekty/sklep\n DYSK C: (NTFS)\n C:\\Users\\anna\\Downloads  ------------- 9P/drvfs -> /mnt/c/Users/anna/Downloads\n                                                    wolniej, prawa emulowane:\n                                                    -rwxrwxrwx anna anna  (bez metadata)\n                                                    chmod 600 -> bez zmian\n\n z Windows:  \\\\wsl.localhost\\Ubuntu-24.04\\home\\anna\\projekty\\sklep    (Eksplorator, IDE)\n z WSL:      wslpath -w ~/projekty/sklep  ->  \\\\wsl.localhost\\Ubuntu-24.04\\home\\anna\\projekty\\sklep\n             wslpath 'C:\\Users\\anna'      ->  /mnt/c/Users/anna\n\n rozmiar .vhdx:  dane 20 GB -> usuniete 12 GB -> plik nadal ~20 GB\n                 wsl --shutdown + Optimize-VHD / --set-sparse true -> ~8 GB"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Gdzie jest dysk dystrybucji i jak montowany jest C:",
+      "body": "Odczyt ścieżki `.vhdx` z rejestru, porównanie zajętości z obu stron i opcje montowania `/mnt/c` (przykładowy wynik):",
+      "code": "PS C:\\Users\\anna> Get-ChildItem HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss | ForEach-Object { Get-ItemProperty $_.PSPath } | Select-Object DistributionName, BasePath\n\nDistributionName BasePath\n---------------- --------\nUbuntu-24.04     D:\\wsl\\ubuntu\nDebian           C:\\Users\\anna\\AppData\\Local\\Packages\\TheDebianProject.DebianGNULinux_76v4gfsz19hv4\\LocalState\nAlmaLinux-9      C:\\Users\\anna\\AppData\\Local\\wsl\\{3c9a1f5e-8d2b-4e71-9a0c-5b6d7e8f9a01}\ndocker-desktop   C:\\Users\\anna\\AppData\\Local\\Docker\\wsl\\main\nPS C:\\Users\\anna> (Get-Item D:\\wsl\\ubuntu\\ext4.vhdx).Length / 1GB\n11.4\nPS C:\\Users\\anna> wsl\nanna@laptop-anna:~$ df -h / | tail -1\n/dev/sdd       1007G  9.6G  947G   2% /\nanna@laptop-anna:~$ mount | grep -E ' /mnt/[cd] '\nC:\\ on /mnt/c type 9p (rw,noatime,aname=drvfs;path=C:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=5,access=client,msize=65536,trans=fd,rfd=5,wfd=5)\nD:\\ on /mnt/d type 9p (rw,noatime,aname=drvfs;path=D:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=5,access=client,msize=65536,trans=fd,rfd=5,wfd=5)\nanna@laptop-anna:~$ ls -l /mnt/c/Users/anna/Downloads/sprzedaz.csv\n-rwxrwxrwx 1 anna anna 18342 Oct  9 21:14 /mnt/c/Users/anna/Downloads/sprzedaz.csv\nanna@laptop-anna:~$ chmod 600 /mnt/c/Users/anna/Downloads/sprzedaz.csv; stat -c '%a' /mnt/c/Users/anna/Downloads/sprzedaz.csv\n777"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Opcja `metadata` i odzyskiwanie miejsca",
+      "body": "Montowanie z zapisem praw Linuksa, sprawdzenie wielkości liter i zmniejszenie pliku `.vhdx` po usunięciu dużych danych (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ cat /etc/wsl.conf\n[boot]\nsystemd=true\n\n[interop]\nappendWindowsPath=false\n\n[automount]\noptions = \"metadata,umask=22,fmask=11\"\nanna@laptop-anna:~$ exit\nPS C:\\Users\\anna> wsl --shutdown; wsl\nanna@laptop-anna:~$ ls -l /mnt/c/Users/anna/Downloads/sprzedaz.csv\n-rwxrw-rw- 1 anna anna 18342 Oct  9 21:14 /mnt/c/Users/anna/Downloads/sprzedaz.csv\nanna@laptop-anna:~$ chmod 640 /mnt/c/Users/anna/Downloads/sprzedaz.csv; stat -c '%a' /mnt/c/Users/anna/Downloads/sprzedaz.csv\n640\nanna@laptop-anna:~$ mkdir /mnt/c/Users/anna/test-wsl; fsutil.exe file queryCaseSensitiveInfo 'C:\\Users\\anna\\test-wsl'\nCase sensitive attribute on directory C:\\Users\\anna\\test-wsl is enabled.\nanna@laptop-anna:~$ du -sh ~/kopie/zrzuty-bazy; rm -rf ~/kopie/zrzuty-bazy\n12G\t/home/anna/kopie/zrzuty-bazy\nanna@laptop-anna:~$ sudo fstrim -v /\n/: 12.1 GiB (12987654144 bytes) trimmed\nanna@laptop-anna:~$ exit\nPS C:\\Users\\anna> wsl --shutdown\nPS C:\\Users\\anna> wsl --manage Ubuntu-24.04 --set-sparse true\nPS C:\\Users\\anna> (Get-Item D:\\wsl\\ubuntu\\ext4.vhdx).Length / 1GB\n21.7\nPS C:\\Users\\anna> # rozmiar logiczny bez zmian; miejsce faktycznie zajete (Wlasciwosci -> Rozmiar na dysku): ok. 9.6 GB"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak uporządkować pliki między Windows a WSL",
+      "body": "1. Ustal, gdzie leży `.vhdx` każdej dystrybucji (rejestr `Lxss`, wartość `BasePath`) i czy jest na właściwym dysku (`wsl --manage --move`).\n2. Projekty, klucze SSH, konfigurację i bazy trzymaj w systemie plików Linuksa (`~`); `/mnt/c` używaj do wymiany plików z Windows.\n3. Jeśli potrzebujesz praw Linuksa na dyskach Windows — dodaj `options = \"metadata,umask=22,fmask=11\"` w `[automount]` i zrestartuj WSL (`wsl --shutdown`).\n4. Pliki Linuksa otwieraj w Windows przez `\\\\wsl.localhost\\NAZWA\\` lub `explorer.exe .`, nigdy przez grzebanie w `.vhdx`.\n5. Po usunięciu dużych danych: `sudo fstrim -v /`, `wsl --shutdown`, a potem `--set-sparse true` lub kompaktowanie (`Optimize-VHD -Mode Full`).\n6. Uważaj na wielkość liter w katalogach utworzonych w Windows — Java i Git rozróżniają `Produkt.java` i `produkt.java`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Typowe operacje na plikach w WSL",
+      "body": "- **Wymiana plików z Windows** — pobrane pliki z `/mnt/c/Users/anna/Downloads`, wyniki zapisywane do `/mnt/c/...` dla programów Windows.\n- **Projekty i repozytoria** — w `~/projekty`, otwierane w IDE przez `\\\\wsl.localhost`.\n- **Kopie dystrybucji** — `wsl --export` do `D:\\kopie-wsl` (pełna kopia systemu plików ext4).\n- **Brak miejsca na dysku C:** — przeniesienie `.vhdx` (`--move`), plik rzadki, kompaktowanie.\n- **Dane z dysku linuksowego** — `wsl --mount` dysku z ext4 (np. z innego komputera) bez maszyny wirtualnej.\n- **Skrypty działające na plikach Windows** — `find /mnt/c/... -name` (wolniej) lub PowerShell po stronie Windows."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Nie edytuj plików Linuksa „od środka” Windows inaczej niż przez `\\\\wsl.localhost`",
+      "body": "W czasach WSL1 pliki dystrybucji leżały wprost na NTFS w katalogu `rootfs` i powszechnym błędem było edytowanie ich Notatnikiem z poziomu `%LOCALAPPDATA%` — Windows nie zapisywał metadanych Linuksa, przez co pliki stawały się niewidoczne lub uszkodzone. W WSL2 pliki są zamknięte w `.vhdx`, a ścieżka `\\\\wsl.localhost\\` to udział sieciowy obsługiwany przez samą dystrybucję — to bezpieczna droga. Nie montuj `.vhdx` w Windows (Zarządzanie dyskami) przy działającej dystrybucji i nie kopiuj go jako kopii zapasowej podczas pracy WSL — do kopii służy `wsl --export` (lub kopia pliku po `wsl --shutdown`). Programy antywirusowe skanujące `.vhdx` przy każdym zapisie potrafią mocno spowolnić WSL — w firmach wyjątki ustala dział IT."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Klucz SSH na `/mnt/c` — „UNPROTECTED PRIVATE KEY FILE”",
+      "body": "Wygodne wydaje się korzystanie w WSL z kluczy SSH, które już są w Windows (`C:\\Users\\anna\\.ssh`), np. przez dowiązanie `~/.ssh -> /mnt/c/Users/anna/.ssh` albo `ssh -i /mnt/c/...`. Bez opcji `metadata` każdy plik na `/mnt/c` ma prawa `777`, a `chmod 600` nic nie zmienia — `ssh` odmawia wtedy użycia klucza prywatnego, który mogliby czytać inni („bad permissions”), i prosi o hasło albo kończy się `Permission denied (publickey)`. Podobnie zachowuje się `~/.ssh/config` (`Bad owner or permissions`) oraz pliki typu `~/.pgpass`. Rozwiązanie: skopiuj klucze do systemu plików Linuksa (`~/.ssh`, prawa `700`/`600`) albo — świadomie — włącz `metadata` dla `/mnt/c`. Lepsza alternatywa: osobny klucz dla WSL."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Klucz prywatny z dysku Windows",
+      "body": "Dowiązanie `~/.ssh` do katalogu Windows — `ssh` ignoruje klucz z powodu praw `0777` (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ ls -ld ~/.ssh\nlrwxrwxrwx 1 anna anna 22 Oct 10 09:12 /home/anna/.ssh -> /mnt/c/Users/anna/.ssh\nanna@laptop-anna:~$ chmod 600 ~/.ssh/id_ed25519; ssh lubuntu-nauka hostname\nBad owner or permissions on /home/anna/.ssh/config\nanna@laptop-anna:~$ ssh -F /dev/null -i ~/.ssh/id_ed25519 anna@192.168.56.10 hostname\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nPermissions 0777 for '/home/anna/.ssh/id_ed25519' are too open.\nIt is required that your private key files are NOT accessible by others.\nThis private key will be ignored.\nLoad key \"/home/anna/.ssh/id_ed25519\": bad permissions\nanna@192.168.56.10's password:"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Klucze w systemie plików Linuksa z właściwymi prawami",
+      "body": "Kopia kluczy do `~/.ssh` w ext4, prawa `700`/`600` — logowanie kluczem działa (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ rm ~/.ssh && install -d -m 700 ~/.ssh\nanna@laptop-anna:~$ cp /mnt/c/Users/anna/.ssh/{id_ed25519,id_ed25519.pub,config,known_hosts} ~/.ssh/\nanna@laptop-anna:~$ chmod 600 ~/.ssh/id_ed25519 ~/.ssh/config; stat -c '%a %n' ~/.ssh ~/.ssh/*\n700 /home/anna/.ssh\n600 /home/anna/.ssh/config\n600 /home/anna/.ssh/id_ed25519\n644 /home/anna/.ssh/id_ed25519.pub\n644 /home/anna/.ssh/known_hosts\nanna@laptop-anna:~$ ssh lubuntu-nauka hostname\nlubuntu-nauka"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Projekty, klucze, konfiguracja, bazy** — system plików Linuksa (`~`).\n- **Wymiana plików z programami Windows** — `/mnt/c/...` lub `\\\\wsl.localhost\\...`.\n- **Potrzebne prawa Linuksa na `/mnt/c`** — opcja `metadata` w `[automount]` w `/etc/wsl.conf`.\n- **Plik `.vhdx` zajmuje za dużo** — `fstrim`, `wsl --shutdown`, `--set-sparse true` lub `Optimize-VHD`.\n- **Mało miejsca na C:** — `wsl --manage NAZWA --move D:\\...`.\n- **Kopia zapasowa dystrybucji** — `wsl --export`, a nie kopiowanie `.vhdx` przy działającym WSL."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Pliki Linuksa w WSL2 leżą w dysku wirtualnym `ext4.vhdx`; jego położenie pokazuje rejestr `Lxss` (`BasePath`).\n- Dyski Windows są montowane w `/mnt/c`, `/mnt/d` (9P/drvfs); bez `metadata` prawa są emulowane, a `chmod` nie działa.\n- Z Windows pliki Linuksa otwierasz przez `\\\\wsl.localhost\\NAZWA\\`; `wslpath` tłumaczy ścieżki.\n- `.vhdx` nie maleje sam — pomaga `fstrim`, plik rzadki (`--set-sparse true`) lub kompaktowanie po `wsl --shutdown`.\n- Klucze SSH i pliki z wrażliwymi prawami trzymaj w `~`, nie na `/mnt/c`."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
