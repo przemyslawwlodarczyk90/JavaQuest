@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Aplikacja Java rzadko startuje „gołym” `java -jar`. Między systemem a JVM prawie zawsze stoi skrypt: `entrypoint.sh` w obrazie Dockera, skrypt `bin/aplikacja` w dystrybucji zbudowanej przez Gradle (`installDist`), skrypt startowy na serwerze bez systemd lub — jak w laboratorium — skrypt wdrożeniowy `wdroz-sklep.sh`, który podmienia wydanie i restartuje instancje. Taki skrypt wybiera wersję Javy, składa opcje JVM, wczytuje plik ze zmiennymi, przekazuje argumenty, a na koniec oddaje sterowanie JVM. Od kilku linii w nim zależy, czy aplikacja zatrzyma się łagodnie (dokończy żądania, zamknie połączenia z bazą), czy zostanie zabita po limicie czasu.\n\nW tej lekcji zbudujesz poprawny skrypt startowy (`exec`, tablica opcji, wybór `JAVA_HOME`, plik `.env`), zobaczysz, dlaczego brak `exec` psuje zatrzymywanie kontenera, napiszesz skrypt czekający na gotowość aplikacji i zatrzymujący ją z limitem czasu, a na koniec przejdziesz przez budowę skryptu wdrożeniowego z wydaniami w osobnych katalogach, atomową podmianą dowiązania, sprawdzeniem gotowości i automatycznym wycofaniem. To połączenie wszystkiego z rozdziałów 38, 41 i 42."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`exec java ...`** — zastępuje proces powłoki procesem JVM (ten sam PID); sygnały (`SIGTERM` z `systemctl stop`, `docker stop`, Kubernetesa) trafiają prosto do JVM, która uruchamia łagodne zamykanie (shutdown hooks, `server.shutdown=graceful` w Spring Boot).\n- **Opcje JVM w tablicy** — `opcje=(-XX:MaxRAMPercentage=60 -XX:+UseG1GC)`; dopisanie `opcje+=(\"-Dapp.nazwa=Sklep testowy\")`; wywołanie `exec \"$JAVA\" \"${opcje[@]}\" -jar \"$JAR\" \"$@\"` — wartości ze spacjami nie zostaną rozbite.\n- **`JAVA_OPTS` z zewnątrz** — napis ze zmiennej środowiskowej dzielony na słowa: `read -r -a dodatkowe <<< \"${JAVA_OPTS:-}\"` (bez wartości ze spacjami); `JAVA_TOOL_OPTIONS` JVM czyta sama, bez udziału skryptu.\n- **Wybór Javy** — `JAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java`, sprawdzenie `command -v` i wersji (`java -version 2>&1`, `Runtime.version()` w `jshell`), pełna ścieżka dla aplikacji wymagającej konkretnej wersji.\n- **Plik środowiska** — `set -a; source /etc/sklep/sklep.env; set +a` (eksport wszystkich zmiennych z pliku) — odpowiednik `EnvironmentFile=` w systemd.\n- **Gotowość** — pętla `curl -fs localhost:PORT/actuator/health/readiness` z limitem prób; `wait`/`kill -0 PID` wykrywa, że JVM padła w trakcie startu.\n- **Zatrzymanie z limitem** — `kill -TERM PID`, czekanie do N sekund (`kill -0`), dopiero potem `kill -KILL`; kod wyjścia JVM po `SIGTERM` to `143` (128+15), po `SIGKILL` — `137`.\n- **Wdrożenie z wydaniami** — `/opt/sklep/releases/WERSJA/sklep.jar`, dowiązanie wskazujące bieżące wydanie, atomowa podmiana `ln -sfn` do pliku tymczasowego + `mv -T`, restart instancji po kolei, retencja N wydań, `--wycofaj`."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Skrypt startowy jest jak **kierownik sceny w teatrze**. Przed spektaklem sprawdza oświetlenie (wersję Javy), rozdaje scenariusze (opcje JVM, zmienne środowiskowe) i wypuszcza aktora na scenę. Dobry kierownik po wypuszczeniu aktora **schodzi z drogi** (`exec`) — gdy dyrektor ogłasza koniec przedstawienia, mówi to wprost aktorowi, który kończy scenę i kłania się. Zły kierownik zostaje między dyrektorem a sceną i nie przekazuje komunikatu dalej: aktor gra do momentu, aż ochrona po kwadransie wyłączy światło i wyprowadzi go siłą (`SIGKILL`) — w połowie zdania."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Drzewo procesów z `exec` i bez",
+      "body": "Kto dostaje `SIGTERM` przy `docker stop` lub `systemctl stop`:",
+      "code": " BEZ exec:  entrypoint.sh  ->  java -jar sklep.jar\n   PID 1  bash entrypoint.sh      <- SIGTERM trafia TUTAJ; bash jako PID 1 go ignoruje\n     PID 7  java -jar sklep.jar   <- nic nie wie o zatrzymaniu, obsluguje zadania dalej\n   ... 10 s (docker) / 90 s (systemd) ...\n   SIGKILL dla wszystkich -> brak lagodnego zamkniecia, kod 137\n\n Z exec:    exec java -jar sklep.jar\n   PID 1  java -jar sklep.jar     <- SIGTERM trafia do JVM\n          -> shutdown hooks: \"Commencing graceful shutdown\", koniec zadan, zamkniecie puli polaczen\n          -> kod 143 po ~1-2 s\n\n WDROZENIE (wdroz-sklep.sh 1.4.1 sklep.jar)\n   /opt/sklep/releases/1.4.1/sklep.jar   <- nowy katalog, sha256 sprawdzony\n   ln -sfn releases/1.4.1/sklep.jar .sklep.jar.nowy; mv -T .sklep.jar.nowy sklep.jar   <- atomowo\n   restart sklep@8082 -> readiness OK? -> restart sklep@8080 -> readiness OK? -> retencja 5 wydan\n                     \\-> NIE: dowiazanie z powrotem na poprzednie wydanie, restart, kod 1"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Poprawny skrypt startowy",
+      "body": "Skrypt `entrypoint.sh` z obrazu sklepu na srv-docker: opcje w tablicy, `JAVA_OPTS` z zewnątrz, argumenty przekazane dalej i `exec` (przykładowy wynik):",
+      "code": "anna@srv-docker:~/sklep-obraz$ cat entrypoint.sh\n#!/bin/bash\nset -euo pipefail\nJAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java\nJAR=${JAR:-/app/sklep.jar}\n\nopcje=(-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError)\nread -r -a dodatkowe <<< \"${JAVA_OPTS:-}\"\nopcje+=(\"${dodatkowe[@]}\")\n\n[[ -r $JAR ]] || { echo \"brak pliku $JAR\" >&2; exit 1; }\necho \"start: $(\"$JAVA\" -version 2>&1 | head -1), opcje: ${opcje[*]}\" >&2\nexec \"$JAVA\" \"${opcje[@]}\" -jar \"$JAR\" \"$@\"\nanna@srv-docker:~/sklep-obraz$ grep -E 'ENTRYPOINT|CMD' Dockerfile\nENTRYPOINT [\"/app/entrypoint.sh\"]\nCMD [\"--server.port=8080\"]\nanna@srv-docker:~/sklep-obraz$ docker run -d --name sklep -e JAVA_OPTS=\"-Xss512k\" -p 8080:8080 sklep:1.4.1 > /dev/null\nanna@srv-docker:~/sklep-obraz$ docker logs sklep 2>&1 | head -1\nstart: openjdk version \"21.0.8\" 2025-07-15, opcje: -XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Xss512k\nanna@srv-docker:~/sklep-obraz$ docker exec sklep ps -o pid,comm\n    PID COMMAND\n      1 java\n     68 ps"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Uruchamianie z gotowością i zatrzymanie z limitem",
+      "body": "Skrypt dla serwera bez systemd (testy w CI na srv-test): start w tle, czekanie na gotowość z wykryciem awarii, łagodne zatrzymanie, a potem `SIGKILL` (przykładowy wynik):",
+      "code": "ci@srv-test:~$ sed -n '/^start()/,$p' ~/bin/sklep-testowy.sh\nstart() {\n    set -a; source ~/sklep-test.env; set +a\n    java -jar target/sklep.jar --server.port=18080 > sklep-test.log 2>&1 &\n    PID=$!\n    for (( i = 1; i <= 60; i++ )); do\n        kill -0 \"$PID\" 2>/dev/null || { echo \"JVM zakonczyla sie przy starcie\" >&2; tail -5 sklep-test.log >&2; return 1; }\n        curl -fs -m 2 localhost:18080/actuator/health/readiness > /dev/null && { echo \"gotowa po ${i} s (PID $PID)\"; return 0; }\n        sleep 1\n    done\n    echo \"brak gotowosci po 60 s\" >&2; return 1\n}\nzatrzymaj() {\n    kill -TERM \"$PID\" 2>/dev/null || return 0\n    for (( i = 0; i < 30; i++ )); do kill -0 \"$PID\" 2>/dev/null || break; sleep 1; done\n    kill -0 \"$PID\" 2>/dev/null && { echo \"brak reakcji na TERM, SIGKILL\" >&2; kill -KILL \"$PID\"; }\n    wait \"$PID\" 2>/dev/null; echo \"zatrzymana, kod $?\"\n}\ntrap zatrzymaj EXIT\nstart\n./mvnw -q -Pintegracyjne verify -Dsklep.url=http://localhost:18080\nci@srv-test:~$ ~/bin/sklep-testowy.sh\ngotowa po 9 s (PID 61842)\n[INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0\nzatrzymana, kod 143\nci@srv-test:~$ grep -E 'graceful|Closing JPA|HikariPool-1 - Shutdown completed' sklep-test.log\n2026-10-09T22:41:07.512+02:00  INFO 61842 --- [ionShutdownHook] o.s.b.w.e.tomcat.GracefulShutdown : Commencing graceful shutdown. Waiting for active requests to complete\n2026-10-09T22:41:07.530+02:00  INFO 61842 --- [ionShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'\n2026-10-09T22:41:07.541+02:00  INFO 61842 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource : HikariPool-1 - Shutdown completed."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zbudować skrypt wdrożeniowy aplikacji Java",
+      "body": "1. Przyjmij wersję i plik JAR jako argumenty; sprawdź format wersji (`[[ $wersja =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]`) i sumę kontrolną (`sha256sum -c`).\n2. Skopiuj JAR do nowego katalogu `/opt/sklep/releases/WERSJA/` (nigdy nie nadpisuj działającego pliku).\n3. Zapamiętaj bieżące wydanie (`readlink -f /opt/sklep/sklep.jar`), żeby móc wrócić.\n4. Podmień dowiązanie atomowo: `ln -sfn releases/WERSJA/sklep.jar .sklep.jar.nowy && mv -T .sklep.jar.nowy sklep.jar`.\n5. Restartuj instancje **po kolei** (najpierw 8082, potem 8080) i po każdej czekaj na gotowość z limitem czasu.\n6. Gdy gotowość nie nadejdzie — przywróć dowiązanie na poprzednie wydanie, zrestartuj, zaloguj błąd i zakończ kodem `1`.\n7. Po sukcesie usuń najstarsze wydania ponad limit (retencja), zaloguj wersję i kto wdrażał (`${SUDO_USER:-$USER}`).\n8. Zapewnij `flock` (jedno wdrożenie naraz) i `trap` do sprzątania plików tymczasowych."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie występują skrypty dla aplikacji Java",
+      "body": "- **Obrazy Dockera** — `entrypoint.sh` przygotowujący konfigurację i kończący się `exec java`.\n- **Dystrybucje Gradle/Maven** — skrypty `bin/aplikacja` generowane przez `installDist` (`DEFAULT_JVM_OPTS`, `JAVA_OPTS`, `APLIKACJA_OPTS`) lub `appassembler`.\n- **Serwery bez systemd lub z ograniczonym dostępem** — skrypt start/stop z plikiem PID, gotowością i limitem zatrzymania.\n- **CI i testy integracyjne** — uruchomienie aplikacji w tle, testy, zatrzymanie w `trap`.\n- **Wdrożenia** — `wdroz-sklep.sh`: wydania w katalogach, dowiązanie, restart kolejnych instancji, wycofanie.\n- **Zadania wsadowe** — `java -jar raporty.jar --zadanie=eksport` z cron/timera z kodem wyjścia przekazanym dalej."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Gdy jest systemd, skrypt startowy zwykle nie jest potrzebny",
+      "body": "Na serwerze z systemd jednostka `sklep@.service` robi to, co skrypt startowy: `EnvironmentFile=` wczytuje zmienne, `ExecStart=` uruchamia JVM bezpośrednio (systemd sam jest „kierownikiem sceny”, który przekazuje sygnały), `TimeoutStopSec=` ustala limit łagodnego zatrzymania, `Restart=on-failure` restartuje po awarii, a `LoadCredential=` podaje sekrety. Dodatkowa warstwa skryptu wprowadza tylko ryzyko (brak `exec`, utracone sygnały, ukryte kody wyjścia). Skrypt ma sens dla logiki, której jednostka nie wyrazi: wdrożenia z wieloma krokami, przygotowania konfiguracji z szablonów w kontenerze, testów w CI. Jeśli jednostka uruchamia skrypt, ten skrypt i tak musi kończyć się `exec java`, a `Type=` i `KillMode=` powinny pozostać domyślne."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Brak `exec` — JVM nie dostaje `SIGTERM`",
+      "body": "Skrypt kończący się samym `java -jar app.jar` (bez `exec`) zostaje procesem nadrzędnym JVM. W kontenerze jest PID 1, a jądro nie dostarcza procesowi PID 1 sygnałów, dla których nie ustawił obsługi — bash ignoruje więc `SIGTERM` z `docker stop`, JVM go w ogóle nie widzi, a po 10 sekundach Docker zabija wszystko `SIGKILL`. Skutki: przerwane żądania użytkowników, niezamknięte transakcje, niezapisane bufory, kod wyjścia `137` i każde zatrzymanie trwające pełny limit. Ten sam problem dotyczy potoków (`java -jar app.jar | tee log` — `exec` wtedy nie pomoże, użyj przekierowania) i skryptów uruchamiających JVM w tle bez przekazania sygnału. Objaw do zapamiętania: zatrzymanie trwa dokładnie tyle, ile limit (10 s, 90 s), a w logu brak „Commencing graceful shutdown”."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Skrypt startowy bez `exec`",
+      "body": "Zatrzymanie kontenera trwa pełne 10 sekund, JVM zostaje zabita bez łagodnego zamknięcia (przykładowy wynik):",
+      "code": "anna@srv-docker:~/sklep-obraz$ tail -2 entrypoint-stary.sh\necho \"start sklepu\" >&2\njava $JAVA_OPTS -jar /app/sklep.jar \"$@\"\nanna@srv-docker:~/sklep-obraz$ docker exec sklep-stary ps -o pid,comm\n    PID COMMAND\n      1 entrypoint-star\n      7 java\n     74 ps\nanna@srv-docker:~/sklep-obraz$ time docker stop sklep-stary\nsklep-stary\n\nreal\t0m10.412s\nanna@srv-docker:~/sklep-obraz$ docker inspect -f '{{.State.ExitCode}}' sklep-stary; docker logs sklep-stary 2>&1 | grep -c graceful\n137\n0"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Skrypt z `exec` — łagodne zatrzymanie w sekundę",
+      "body": "JVM jest PID 1, dostaje `SIGTERM` i zamyka się sama (przykładowy wynik):",
+      "code": "anna@srv-docker:~/sklep-obraz$ tail -2 entrypoint.sh\necho \"start: $(\"$JAVA\" -version 2>&1 | head -1), opcje: ${opcje[*]}\" >&2\nexec \"$JAVA\" \"${opcje[@]}\" -jar \"$JAR\" \"$@\"\nanna@srv-docker:~/sklep-obraz$ time docker stop sklep\nsklep\n\nreal\t0m1.236s\nanna@srv-docker:~/sklep-obraz$ docker inspect -f '{{.State.ExitCode}}' sklep; docker logs sklep 2>&1 | grep -c 'Commencing graceful shutdown'\n143\n1"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Każdy skrypt uruchamiający JVM na pierwszym planie** — ostatnia linia `exec java ...`.\n- **Opcje JVM ze spacjami lub dopisywane warunkowo** — tablica i `\"${opcje[@]}\"`.\n- **Opcje podawane z zewnątrz** — `JAVA_OPTS` przez `read -r -a` albo `JAVA_TOOL_OPTIONS`.\n- **Serwer z systemd** — jednostka zamiast skryptu startowego; skrypt tylko dla wdrożeń.\n- **Testy w CI** — start w tle, pętla gotowości z `kill -0`, zatrzymanie w `trap` z limitem i `SIGKILL`.\n- **Wdrożenie** — nowy katalog wydania, atomowa podmiana dowiązania, restart po kolei, wycofanie przy braku gotowości."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Skrypt startowy musi kończyć się `exec java ...` — wtedy `SIGTERM` trafia do JVM i działa łagodne zamykanie (kod `143`, nie `137`).\n- Opcje JVM trzymaj w tablicy, `JAVA_OPTS` z zewnątrz dziel `read -r -a`, argumenty przekazuj przez `\"$@\"`.\n- `set -a; source plik.env; set +a` wczytuje zmienne jak `EnvironmentFile=`; Javę wybieraj przez `JAVA_HOME` lub pełną ścieżkę.\n- Start w tle wymaga pętli gotowości z wykrywaniem awarii (`kill -0`), a zatrzymanie — `SIGTERM`, limitu i dopiero potem `SIGKILL`.\n- Wdrożenie: osobne katalogi wydań, atomowe dowiązanie (`ln -sfn` + `mv -T`), restart instancji po kolei z gotowością i automatyczne wycofanie."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
