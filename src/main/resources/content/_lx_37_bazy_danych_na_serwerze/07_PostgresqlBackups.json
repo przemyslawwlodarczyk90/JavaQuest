@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Kopia bazy `sklep` powstaje co noc od rozdziału 27: skrypt `kopia-sklep.sh` wykonuje `pg_dump --format=custom` i sprawdza czytelność zrzutu poleceniem `pg_restore --list`. To dobry początek, ale pełna strategia kopii PostgreSQL wymaga odpowiedzi na kilka pytań, które ta lekcja omawia: który **format** zrzutu wybrać i dlaczego, co z **rolami i uprawnieniami** (których `pg_dump` nie zapisuje), jak **odtworzyć** całą bazę, jedną tabelę albo bazę pod inną nazwą, jak zrobić to szybko dla dużej bazy (równoległość) i co zrobić, gdy potrzebny jest stan sprzed godziny, a nie z nocy.\n\nPrzejdziesz przez cztery formaty `pg_dump`, zrzut obiektów globalnych `pg_dumpall --globals-only`, odtworzenie do bazy testowej `sklep_test` z weryfikacją, odtworzenie pojedynczej tabeli z listy zawartości zrzutu i zrzut równoległy w formacie katalogowym. Poznasz też kopie **fizyczne** — `pg_basebackup` i archiwizację dziennika WAL — które pozwalają odtworzyć bazę do dowolnej chwili (PITR) i są podstawą narzędzi takich jak pgBackRest czy Barman."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`pg_dump`** — spójny zrzut logiczny **jednej bazy** (w jednej transakcji, bez blokowania zapisu): `pg_dump [OPCJE] BAZA`.\n- **Formaty** — `-Fp` (*plain*, tekst SQL — odtwarzany `psql`), **`-Fc`** (*custom* — skompresowany, wybiórcze odtwarzanie przez `pg_restore`, zalecany), `-Fd` (*directory* — katalog, równoległy zrzut `-j 4`), `-Ft` (tar).\n- **`pg_dumpall --globals-only`** — role, hasła (skróty), członkostwa, przestrzenie tabel — elementy **wspólne dla klastra**, których `pg_dump` nie obejmuje.\n- **`pg_restore`** — `-d BAZA` (odtwórz do bazy), `--clean --if-exists` (usuń obiekty przed odtworzeniem), `-j N` (równolegle), `--no-owner` (bez ustawiania właściciela), `-t TABELA`, `-l` (lista zawartości), `-L lista.txt` (odtwórz tylko wybrane pozycje), `--exit-on-error`.\n- **Odtworzenie zrzutu SQL** — `psql -v ON_ERROR_STOP=1 -d BAZA -f plik.sql` (bez `ON_ERROR_STOP` błędy są tylko wypisywane, a odtwarzanie trwa dalej).\n- **Kopia fizyczna** — `pg_basebackup -D KATALOG -Ft -z -P` (kopia plików klastra z działającego serwera) + **archiwizacja WAL** (`archive_mode = on`, `archive_command`) → odtworzenie do punktu w czasie (*PITR*, `recovery_target_time`).\n- **Narzędzia** — pgBackRest, Barman, WAL-G (pełne + przyrostowe kopie, retencja, PITR, kopie do S3).\n- **Uprawnienia do zrzutu** — właściciel bazy, superużytkownik lub rola z `pg_read_all_data` (PostgreSQL 14+)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "`pg_dump` to **inwentaryzacja jednego działu firmy**: spis wszystkiego, co jest w dziale (tabele, dane, indeksy), sporządzony tak, jakby zatrzymano czas w jednej chwili. Ale lista pracowników z ich identyfikatorami (role, hasła) jest prowadzona **centralnie dla całej firmy** — w spisie działu jej nie ma; trzeba ją skopiować osobno (`pg_dumpall --globals-only`). Format `custom` to **segregator z ponumerowanymi przegródkami** — możesz wyjąć tylko jedną (pojedynczą tabelę), podczas gdy format SQL to **jeden długi rulon**, który czyta się od początku do końca. Kopia fizyczna z archiwum WAL to **nagranie z monitoringu**: możesz przewinąć do dowolnej minuty — także do chwili tuż przed tym, jak ktoś przez pomyłkę usunął dane."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Strategia kopii PostgreSQL dla `sklep`",
+      "body": "Co powstaje co noc, co odtwarza się czym i jak daleko wstecz można wrócić:",
+      "code": " 02:30 kopia-sklep.sh (rozdzial 27)\n   pg_dumpall --globals-only            -> /srv/kopie/sklep/baza/globalne-DATA.sql   (role: sklep, raporty)\n   pg_dump --format=custom sklep        -> /srv/kopie/sklep/baza/sklep-DATA.dump     (1.8 MB)\n   pg_restore --list ... > /dev/null    -> czy zrzut jest czytelny\n   (retencja 14 dni, kopia off-site - rozdzial 34)\n\n ODTWORZENIE:\n   cala baza:        createdb sklep_test && pg_restore -d sklep_test --no-owner sklep-DATA.dump\n   jedna tabela:     pg_restore -l ... | grep 'TABLE DATA public kupony' > lista; pg_restore -L lista -d ...\n   role:             psql -f globalne-DATA.sql   (przed odtwarzaniem bazy na nowym serwerze)\n\n ILE DANYCH MOZNA STRACIC:\n   pg_dump co noc            -> do 24 h  (stan z 02:30)\n   pg_basebackup + WAL       -> minuty   (PITR: recovery_target_time = '2026-10-08 11:42:00')"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Zrzut bazy i ról, lista zawartości zrzutu",
+      "body": "Ręczny zrzut w formacie `custom`, zrzut obiektów globalnych i przegląd zawartości zrzutu (przykładowy wynik):",
+      "code": "$ sudo -u postgres pg_dump --format=custom --file=/tmp/sklep.dump sklep\n$ sudo -u postgres pg_dumpall --globals-only --file=/tmp/globalne.sql\n$ ls -lh /tmp/sklep.dump /tmp/globalne.sql\n-rw-r--r-- 1 postgres postgres 1.4K Oct  8 00:12 /tmp/globalne.sql\n-rw-r--r-- 1 postgres postgres 1.8M Oct  8 00:12 /tmp/sklep.dump\n$ grep -E '^(CREATE|ALTER) ROLE' /tmp/globalne.sql | cut -c1-60\nCREATE ROLE postgres;\nALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB\nCREATE ROLE raporty;\nALTER ROLE raporty WITH NOSUPERUSER INHERIT NOCREATEROLE NOCRE\nCREATE ROLE sklep;\nALTER ROLE sklep WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATE\n$ sudo -u postgres pg_restore --list /tmp/sklep.dump | grep -E 'TABLE DATA' | head -4\n3412; 0 16412 TABLE DATA public klienci sklep\n3414; 0 16430 TABLE DATA public kupony sklep\n3416; 0 16441 TABLE DATA public produkty sklep\n3418; 0 16459 TABLE DATA public zamowienia sklep"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Odtworzenie do bazy testowej, jednej tabeli i zrzut równoległy",
+      "body": "Pełne odtworzenie zrzutu nocnego do `sklep_test` z porównaniem, odtworzenie tylko tabeli `kupony` (usuniętej przez pomyłkę) i zrzut równoległy formatu katalogowego (przykładowy wynik):",
+      "code": "$ sudo -u postgres createdb sklep_test\n$ sudo -u postgres pg_restore --dbname=sklep_test --no-owner --role=sklep -j 2 --exit-on-error /srv/kopie/sklep/baza/sklep-2026-10-07.dump\n$ for b in sklep sklep_test; do echo \"$b: $(sudo -u postgres psql -Atc 'SELECT count(*) FROM zamowienia' $b)\"; done\nsklep: 412311\nsklep_test: 412290\n# -> roznica = zamowienia zlozone po 02:30 (zrzut nocny); reszta zgodna\n$ sudo -u postgres psql -c 'DROP TABLE kupony CASCADE' sklep_test\nDROP TABLE\n$ sudo -u postgres pg_restore --list /srv/kopie/sklep/baza/sklep-2026-10-07.dump | grep -E ' kupony ' > /tmp/lista-kupony.txt\n$ cat /tmp/lista-kupony.txt\n225; 1259 16424 TABLE public kupony sklep\n3414; 0 16430 TABLE DATA public kupony sklep\n3260; 2606 16436 CONSTRAINT public kupony kupony_pkey sklep\n$ sudo -u postgres pg_restore --dbname=sklep_test --no-owner --role=sklep -L /tmp/lista-kupony.txt /srv/kopie/sklep/baza/sklep-2026-10-07.dump\n$ sudo -u postgres psql -Atc 'SELECT count(*) FROM kupony' sklep_test\n318\n$ time sudo -u postgres pg_dump -Fd -j 2 -f /srv/kopie/sklep/baza/sklep-katalog sklep\n\nreal\t0m2.814s\nuser\t0m3.102s\nsys\t0m0.390s\n$ sudo -u postgres dropdb sklep_test"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Odtworzenie bazy na nowym serwerze",
+      "body": "1. Zainstaluj PostgreSQL w tej samej lub nowszej wersji głównej (lekcja 5) — `pg_restore` nowszej wersji czyta zrzuty starszych.\n2. Odtwórz obiekty globalne: `sudo -u postgres psql -f globalne-DATA.sql` (role, hasła; błąd „already exists” dla `postgres` jest normalny).\n3. Utwórz pustą bazę: `sudo -u postgres createdb -O sklep sklep` (z właściwym kodowaniem i locale).\n4. Odtwórz dane: `sudo -u postgres pg_restore -d sklep -j 4 --exit-on-error sklep-DATA.dump`.\n5. Uruchom `ANALYZE;` (statystyki dla planisty zapytań) i sprawdź liczbę wierszy w kluczowych tabelach oraz działanie aplikacji.\n6. Skonfiguruj dostęp (`pg_hba.conf`, lekcja 6) i kopie na nowym serwerze."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydają się te techniki",
+      "body": "- **Codzienna kopia** — `pg_dump -Fc` + `pg_dumpall --globals-only` (skrypt z rozdziału 27).\n- **Odtworzenie pojedynczej tabeli lub danych** — `pg_restore -l` + `-L`, do bazy pomocniczej, potem `INSERT ... SELECT` do produkcji.\n- **Środowisko testowe** — kopia produkcji (po anonimizacji) do bazy `sklep_test`.\n- **Migracja na nowy serwer lub nową wersję główną** — zrzut + odtworzenie (alternatywa: `pg_upgrade`, replikacja logiczna).\n- **Duże bazy** — `-Fd -j N` (zrzut i odtworzenie równoległe), kopie fizyczne pgBackRest/Barman.\n- **Utrata danych z ostatnich godzin niedopuszczalna** — archiwizacja WAL i PITR albo replika z opóźnieniem."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kopia logiczna a fizyczna — ile danych możesz stracić",
+      "body": "Zrzut `pg_dump` zrobiony o 2:30 pozwala wrócić **dokładnie do 2:30** — wszystko, co klienci zamówili w ciągu dnia, przepada, jeśli serwer padnie wieczorem. Dla wielu aplikacji to za dużo. Rozwiązaniem jest kopia fizyczna: `pg_basebackup` kopiuje pliki klastra z działającego serwera (bez przestoju, w przeciwieństwie do kopiowania `datadir` w MySQL z lekcji 2), a włączona **archiwizacja WAL** (`archive_mode = on`, `archive_command` kopiujące każdy 16-megabajtowy segment dziennika na serwer kopii) zapisuje wszystkie późniejsze zmiany. Odtworzenie polega na rozpakowaniu kopii podstawowej i „odegraniu” dziennika do wybranej chwili (`recovery_target_time`). Ręczna konfiguracja jest pracochłonna — w praktyce używa się pgBackRest lub Barmana. Kopie logiczne nadal warto robić równolegle: są przenośne i pozwalają łatwo odtworzyć pojedyncze tabele."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Odtworzenie bez ról i zrzut SQL bez `ON_ERROR_STOP`",
+      "body": "Dwa błędy, które wychodzą na jaw dopiero przy awarii. Pierwszy: kopie samych baz (`pg_dump`), bez obiektów globalnych. Na nowym serwerze odtwarzanie zgłasza setki błędów `role \"sklep\" does not exist` przy `ALTER ... OWNER TO` i `GRANT`, a nawet jeśli dane się odtworzą (`--no-owner`), aplikacja nie ma swojego konta, a raporty — swoich uprawnień. Drugi: zrzut w formacie SQL odtwarzany `psql -f plik.sql` **bez** `-v ON_ERROR_STOP=1`. `psql` wypisuje błędy i jedzie dalej — przy brakującej roli, braku rozszerzenia czy kolizji nazw część tabel zostaje pusta lub nie powstaje wcale, a całość kończy się kodem 0, który skrypt odtwarzający uznaje za sukces."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Odtworzenie na nowym serwerze bez ról i bez zatrzymania na błędzie",
+      "body": "Na `deb-lab` (zrzut w formacie SQL skopiowany do `/tmp/sklep.sql`) nie ma ról `sklep` i `raporty`; `psql` wypisuje błędy, ale kończy się kodem 0 (przykładowy wynik):",
+      "code": "anna@deb-lab:~$ sudo -u postgres createdb sklep\nanna@deb-lab:~$ sudo -u postgres psql -q -d sklep -f /tmp/sklep.sql 2>&1 | grep -c ERROR; echo \"kod psql: ${PIPESTATUS[0]}\"\n37\nkod psql: 0\nanna@deb-lab:~$ sudo -u postgres psql -q -d sklep -f /tmp/sklep.sql 2>&1 | grep -m2 ERROR\npsql:/tmp/sklep.sql:41: ERROR:  role \"sklep\" does not exist\npsql:/tmp/sklep.sql:1220: ERROR:  role \"raporty\" does not exist"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Najpierw role, potem baza — z zatrzymaniem na pierwszym błędzie",
+      "body": "Obiekty globalne odtworzone przed bazą, odtwarzanie przerywane przy pierwszym błędzie, statystyki po odtworzeniu (przykładowy wynik):",
+      "code": "anna@deb-lab:~$ sudo -u postgres psql -q -f /tmp/globalne-2026-10-07.sql 2>&1 | grep -v 'role \"postgres\" already exists'\nanna@deb-lab:~$ sudo -u postgres createdb -O sklep sklep\nanna@deb-lab:~$ sudo -u postgres pg_restore -d sklep -j 2 --exit-on-error /tmp/sklep-2026-10-07.dump; echo \"kod: $?\"\nkod: 0\nanna@deb-lab:~$ sudo -u postgres psql -d sklep -Atc 'ANALYZE; SELECT count(*) FROM zamowienia;'\n412290\nanna@deb-lab:~$ sudo -u postgres psql -d sklep -Atc \"SELECT tableowner FROM pg_tables WHERE tablename='zamowienia'\"\nsklep"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Codzienna kopia bazy** — `pg_dump -Fc` (+ `pg_dumpall --globals-only`).\n- **Duża baza, mało czasu** — `pg_dump -Fd -j N` / `pg_restore -j N` albo kopie fizyczne.\n- **Odtworzenie wybranych obiektów** — format `custom`/`directory` + `pg_restore -l` i `-L`.\n- **Przeniesienie do innego narzędzia lub ręczna edycja** — format SQL (`-Fp`), odtwarzany `psql -v ON_ERROR_STOP=1`.\n- **Minimalna utrata danych (minuty)** — `pg_basebackup` + archiwizacja WAL (pgBackRest, Barman).\n- **Każda strategia** — regularne próbne odtworzenie do bazy testowej i porównanie danych."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `pg_dump` tworzy spójny zrzut jednej bazy bez blokowania zapisu; format `custom` (`-Fc`) jest skompresowany i pozwala odtwarzać wybiórczo.\n- Role i hasła zapisuje osobno `pg_dumpall --globals-only` — odtwarza się je przed bazą.\n- `pg_restore` odtwarza całą bazę (`-d`, `-j`, `--exit-on-error`) lub wybrane obiekty (`-l` + `-L`); zrzut SQL odtwarzaj `psql -v ON_ERROR_STOP=1`.\n- Kopia logiczna przywraca stan z chwili zrzutu; do odtworzenia stanu sprzed minut potrzebne są `pg_basebackup` i archiwizacja WAL.\n- Kopię trzeba regularnie odtwarzać próbnie i sprawdzać (liczba wierszy, właściciele, działanie aplikacji)."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
