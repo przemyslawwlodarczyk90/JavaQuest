@@ -401,16 +401,21 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
   poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
 - Stan: `_lx_01/01_WhatIsLinux` — 30/100 GOTOWE (pilotaż). Pozostałe lekcje — 0/0.
-- **Do decyzji (sugestia użytkownika z 2026-10-07): nie każda lekcja potrzebuje 30/100** — „niektóre tematy po
-  macoszemu, a niektóre porządnie”. Propozycja poziomów: **A** (główne polecenia: grep, find, sed/awk, prawa,
-  systemctl, ssh, rsync, ip...) 30/100; **B** (standardowe, m.in. nano/Vim) ok. 15/40; **C** (teoretyczne/poboczne:
-  rozdział 2, historia, legalność, Zenmap, „czym jest X”) ok. 5/15. Przed krokiem 3: przypisać poziom każdej
-  lekcji w tabeli i dać użytkownikowi do akceptacji; walidacja w `lx_build_practice.js` (dziś sztywne 30/100)
-  do dostosowania.
+- **DECYZJA UŻYTKOWNIKA (2026-10-12): dwa poziomy, przypisane per rozdział** (bez trzeciego poziomu; „zależy mi na
+  solidnym materiale, nawet do nauki”):
+  - **PEŁNY = 30 ćwiczeń / 100 pytań** — rozdziały 03-07, 10-18, 21, 22, 24-28, 30-42, 45.
+  - **NIEPEŁNY = 20 ćwiczeń / 60 pytań** — rozdziały 01 (wprowadzenie), 02 (wirtualizacja), 08-09 (nano/Vim),
+    19 (pakiety innych dystrybucji), 20 (kompilacja ze źródeł), 23 (start systemu), 29 (jądro i sprzęt),
+    43 (powłoki i terminale), 44 (WSL), 46 (projekt końcowy — synteza wcześniejszych rozdziałów).
+  - Wyjątek: `_lx_01/01_WhatIsLinux` zostaje 30/100 (pilotaż już gotowy).
+  - Budowanie: `node scripts/content-migration/lx_build_practice.js PLIK.txt LEKCJA.json 20 60` dla poziomu niepełnego
+    (skrypt przyjmuje oczekiwane liczby jako 3. i 4. argument; domyślnie 30/100).
+- Lekcje 32/07-09 (nmap): użytkownik chce uzupełnić wszystkie lekcje; dwie próby napisania tych trzech lekcji zostały
+  zatrzymane przez filtr bezpieczeństwa — wymagają innego ujęcia tematu (do ustalenia z użytkownikiem).
 
 ## Następny krok
 
-**Krok 2 zakończony (poza 32/07-09). Następnie: decyzja użytkownika co do 32/07-09, potem Krok 3 — przypisanie poziomów A/B/C do lekcji i dostosowanie `lx_build_practice.js`** (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 3 — ćwiczenia i quiz według poziomów (pełny 30/100, niepełny 20/60), od `_lx_01/02` po kolei** (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
