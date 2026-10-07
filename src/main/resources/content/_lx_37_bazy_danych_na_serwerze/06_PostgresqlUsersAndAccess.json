@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "O tym, kto i skąd może połączyć się z PostgreSQL, decydują trzy niezależne warstwy: **adres nasłuchu** (`listen_addresses` w `postgresql.conf` — czy serwer w ogóle przyjmuje połączenia z sieci), **reguły uwierzytelniania** w `pg_hba.conf` (która baza, który użytkownik, z jakiego adresu, jaką metodą) i **uprawnienia ról** w samej bazie (`GRANT` — co zalogowany użytkownik może zrobić). Do tego dochodzi zapora systemu (rozdział 35). Brak którejkolwiek warstwy daje inny komunikat błędu — i każdy z nich warto umieć rozpoznać.\n\nW tej lekcji poznasz role PostgreSQL (użytkownicy i grupy to w PostgreSQL to samo), przejrzysz konto aplikacji `sklep` i utworzysz rolę `raporty` z prawem **tylko do odczytu** dla narzędzia raportowego na `srv-test`. Zrozumiesz format `pg_hba.conf` i zasadę pierwszego dopasowania, metody `peer`, `scram-sha-256` i niebezpieczne `trust`, a następnie otworzysz PostgreSQL na `lubuntu-nauka` dla jednego adresu — wpis przygotowany w `pg_hba.conf` w rozdziale 30 zostanie zastąpiony węższym. Na koniec przejdziesz przez komunikaty błędów od strony klienta i dziennika serwera."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Rola** — użytkownik lub grupa: `CREATE ROLE nazwa LOGIN PASSWORD '...'` (= `CREATE USER`), atrybuty `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `NOLOGIN` (grupa), `CONNECTION LIMIT`, `VALID UNTIL`; członkostwo: `GRANT grupa TO rola`.\n- **Uprawnienia** — `GRANT CONNECT ON DATABASE`, `GRANT USAGE ON SCHEMA public`, `GRANT SELECT ON ALL TABLES IN SCHEMA public`, `ALTER DEFAULT PRIVILEGES ... GRANT SELECT ON TABLES` (dla tabel tworzonych w przyszłości); od PostgreSQL 15 zwykłe role nie mogą tworzyć obiektów w schemacie `public` cudzej bazy; gotowe role `pg_read_all_data`, `pg_write_all_data`.\n- **Hasła** — `\\password ROLA` w `psql` (hasło nie trafia do historii ani logów); przechowywane jako skrót SCRAM (`password_encryption = scram-sha-256`).\n- **`listen_addresses`** — `localhost` (domyślnie), `'localhost,192.168.56.10'`, `'*'`; zmiana wymaga **restartu**; port `port = 5432`.\n- **`pg_hba.conf`** — linie `TYP BAZA UŻYTKOWNIK [ADRES] METODA`: typy `local` (gniazdo), `host` (TCP, z TLS lub bez), `hostssl` (tylko TLS), `hostnossl`; czytane od góry — **pierwsza pasująca linia decyduje** (dalszych nie sprawdza).\n- **Metody** — `peer` (nazwa użytkownika systemu, tylko `local`), `scram-sha-256` (hasło, zalecane), `md5` (starsze), `reject`, **`trust`** (bez hasła — tylko w wyjątkowych sytuacjach lokalnych), `cert` (certyfikat klienta).\n- **Przeładowanie** — `pg_hba.conf` i większość ustawień: `SELECT pg_reload_conf();` lub `systemctl reload postgresql@16-main`; podgląd reguł i błędów: `SELECT * FROM pg_hba_file_rules;`.\n- **Komunikaty** — `Connection refused` (brak nasłuchu/zapora z REJECT), `timeout` (zapora DROP), `no pg_hba.conf entry for host ...` (brak reguły), `password authentication failed` (złe hasło), `permission denied for table ...` (brak `GRANT`)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Dostęp do PostgreSQL przypomina **wejście do archiwum w urzędzie**. `listen_addresses` to **drzwi wejściowe** — otwarte tylko od zaplecza (`localhost`) albo także od ulicy (adres sieciowy). `pg_hba.conf` to **ochroniarz z listą** czytaną od góry: „pracownicy z identyfikatorem (peer) — wejście bocznym korytarzem”, „księgowy z działu raportów (adres 192.168.56.20) do archiwum *sklep* — po okazaniu hasła”; pierwsza pasująca linijka rozstrzyga sprawę. Role i `GRANT` to **uprawnienia w środku**: księgowy wejdzie do archiwum, ale może tylko czytać akta (`SELECT`), nie wolno mu niczego dopisywać ani wynosić."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Trzy warstwy dostępu dla narzędzia raportowego na `srv-test`",
+      "body": "Połączenie `raporty@srv-test` → baza `sklep` na `lubuntu-nauka` i miejsce, w którym może się zatrzymać:",
+      "code": " srv-test 192.168.56.20: psql \"host=192.168.56.10 dbname=sklep user=raporty sslmode=require\"\n   |\n [0] zapora lubuntu-nauka:  ufw allow from 192.168.56.20 to any port 5432 proto tcp   (brak -> timeout)\n [1] postgresql.conf:       listen_addresses = 'localhost,192.168.56.10'              (brak -> refused)\n [2] pg_hba.conf (od gory, pierwsza pasujaca):\n       local   all       postgres                         peer\n       local   all       all                              peer\n       host    all       all       127.0.0.1/32           scram-sha-256\n       hostssl sklep     raporty   192.168.56.20/32       scram-sha-256    <- PASUJE\n       (brak pasujacej linii -> \"no pg_hba.conf entry\")                    (zle haslo -> \"password authentication failed\")\n [3] uprawnienia roli raporty w bazie sklep:\n       CONNECT na bazie, USAGE na schemacie public, SELECT na tabelach   (INSERT -> \"permission denied\")"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Role, bazy i rola tylko do odczytu",
+      "body": "Przegląd ról na `lubuntu-nauka`, rola `raporty` z hasłem ustawionym przez `\\password` i uprawnieniami tylko do czytania (przykładowy wynik):",
+      "code": "$ sudo -u postgres psql\npostgres=# \\du\n                             List of roles\n Role name |                         Attributes\n-----------+------------------------------------------------------------\n postgres  | Superuser, Create role, Create DB, Replication, Bypass RLS\n sklep     |\npostgres=# CREATE ROLE raporty LOGIN CONNECTION LIMIT 5;\nCREATE ROLE\npostgres=# \\password raporty\nEnter new password for user \"raporty\":\nEnter it again:\npostgres=# \\c sklep\nYou are now connected to database \"sklep\" as user \"postgres\".\nsklep=# GRANT CONNECT ON DATABASE sklep TO raporty;\nGRANT\nsklep=# GRANT USAGE ON SCHEMA public TO raporty;\nGRANT\nsklep=# GRANT SELECT ON ALL TABLES IN SCHEMA public TO raporty;\nGRANT\nsklep=# ALTER DEFAULT PRIVILEGES FOR ROLE sklep IN SCHEMA public GRANT SELECT ON TABLES TO raporty;\nALTER DEFAULT PRIVILEGES\nsklep=# \\dp zamowienia\n                                  Access privileges\n Schema |    Name    | Type  |  Access privileges  | Column privileges | Policies\n--------+------------+-------+---------------------+-------------------+----------\n public | zamowienia | table | sklep=arwdDxtm/sklep+|                   |\n        |            |       | raporty=r/sklep     |                   |"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Nasłuch, reguła dla jednego adresu, zapora i test z `srv-test`",
+      "body": "Nasłuch na karcie host-only, zawężenie reguły z rozdziału 30 do jednego hosta i roli z wymaganym TLS, reguła zapory i testy (przykładowy wynik):",
+      "code": "$ echo \"listen_addresses = 'localhost,192.168.56.10'\" | sudo tee /etc/postgresql/16/main/conf.d/90-siec.conf\nlisten_addresses = 'localhost,192.168.56.10'\n$ grep -nE '^(host|local)' /etc/postgresql/16/main/pg_hba.conf\n118:local   all             postgres                                peer\n121:local   all             all                                     peer\n123:host    all             all             127.0.0.1/32            scram-sha-256\n125:host    all             all             ::1/128                 scram-sha-256\n131:host    sklep           all             192.168.56.0/24         scram-sha-256\n$ sudo sed -i '131s#.*#hostssl sklep           raporty         192.168.56.20/32        scram-sha-256#' /etc/postgresql/16/main/pg_hba.conf\n$ sudo systemctl restart postgresql@16-main && sudo ss -tlnp | grep 5432 | awk '{print $4}'\n127.0.0.1:5432\n192.168.56.10:5432\n$ sudo ufw allow from 192.168.56.20 to any port 5432 proto tcp comment 'PostgreSQL - raporty z srv-test'\nRule added\n$ sudo -u postgres psql -c \"SELECT line_number, type, database, user_name, address, auth_method FROM pg_hba_file_rules WHERE type LIKE 'host%'\"\n line_number |  type   | database  | user_name |    address    |  auth_method\n-------------+---------+-----------+-----------+---------------+---------------\n         123 | host    | {all}     | {all}     | 127.0.0.1     | scram-sha-256\n         125 | host    | {all}     | {all}     | ::1           | scram-sha-256\n         131 | hostssl | {sklep}   | {raporty} | 192.168.56.20 | scram-sha-256\nanna@srv-test:~$ psql \"host=192.168.56.10 dbname=sklep user=raporty sslmode=require\" -c 'SELECT count(*) FROM zamowienia'\nPassword for user raporty:\n count\n--------\n 412311\n(1 row)\nanna@srv-test:~$ psql \"host=192.168.56.10 dbname=sklep user=raporty sslmode=require\" -c \"DELETE FROM zamowienia WHERE id=1\"\nPassword for user raporty:\nERROR:  permission denied for table zamowienia\nanna@srv-test:~$ psql \"host=192.168.56.10 dbname=sklep user=sklep\" -c 'SELECT 1'\npsql: error: connection to server at \"192.168.56.10\", port 5432 failed: FATAL:  no pg_hba.conf entry for host \"192.168.56.20\", user \"sklep\", database \"sklep\", SSL encryption"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Dostęp do bazy z innego serwera — krok po kroku",
+      "body": "1. Rola i uprawnienia: `CREATE ROLE ... LOGIN`, `\\password`, `GRANT` tylko tego, co potrzebne (dla raportów — `SELECT` + domyślne uprawnienia dla nowych tabel).\n2. Nasłuch: `listen_addresses` z konkretnym adresem karty (nie `*`, jeśli nie trzeba) w `conf.d/`, **restart** klastra, sprawdzenie `ss -tlnp`.\n3. Reguła w `pg_hba.conf`: najwęższa możliwa — konkretna baza, rola, adres `/32`, `hostssl`, `scram-sha-256`; umieść ją **przed** ogólniejszymi regułami, które mogłyby pasować wcześniej.\n4. Przeładowanie (`SELECT pg_reload_conf();`) i kontrola `pg_hba_file_rules` (kolumna `error` pokazuje błędy składni).\n5. Zapora: reguła tylko dla adresu klienta (rozdział 35).\n6. Test z klienta i odczyt komunikatów: `refused`/`timeout` → nasłuch/zapora, `no pg_hba.conf entry` → reguła, `password authentication failed` → hasło, `permission denied` → `GRANT`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Typowe konfiguracje dostępu",
+      "body": "- **Aplikacja na tym samym serwerze** — rola aplikacji, `host BAZA ROLA 127.0.0.1/32 scram-sha-256`, `listen_addresses = 'localhost'` (jak `sklep`).\n- **Aplikacja na osobnym serwerze** — `hostssl BAZA ROLA ADRES_APP/32 scram-sha-256` + zapora tylko dla adresu aplikacji.\n- **Raporty, BI, analitycy** — rola tylko do odczytu lub `pg_read_all_data`; najlepiej na replice, nie na głównej bazie.\n- **Administracja** — `sudo -u postgres psql` lokalnie (peer) lub tunel SSH (rozdział 33) zamiast otwierania portu.\n- **Migracje schematu (Flyway/Liquibase)** — osobna rola właściciela schematu używana tylko przy wdrożeniu; aplikacja ma prawa DML.\n- **Pula połączeń** — `CONNECTION LIMIT` na rolach, `max_connections` na serwerze, PgBouncer przy wielu instancjach aplikacji."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kolejność reguł w `pg_hba.conf`",
+      "body": "PostgreSQL czyta `pg_hba.conf` od góry i używa **pierwszej** linii, która pasuje do typu połączenia, bazy, użytkownika i adresu — dalszych nie sprawdza, nawet jeśli uwierzytelnienie z pierwszej linii się nie powiedzie. Konsekwencje: linia `host all all 192.168.56.0/24 reject` umieszczona nad Twoją regułą dla `192.168.56.20` zablokuje i ją; linia `host all all 0.0.0.0/0 scram-sha-256` na górze sprawi, że Twoje późniejsze `hostssl` nigdy nie zostanie użyte (połączenia bez TLS też przejdą). Dlatego szczegółowe reguły umieszcza się wyżej, ogólne niżej, a na końcu ewentualnie jawne `reject`. Zmiana pliku działa dopiero po przeładowaniu; błąd składni w nowym pliku powoduje, że PostgreSQL przy przeładowaniu **zachowuje stare reguły** i zapisuje błąd w logu — `pg_hba_file_rules` pokazuje go w kolumnie `error` jeszcze przed przeładowaniem."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "`trust` i `0.0.0.0/0` „na chwilę”",
+      "body": "Najgroźniejszy skrót w konfiguracji PostgreSQL to `host all all 0.0.0.0/0 trust` z `listen_addresses = '*'` — dodany, „żeby aplikacja wreszcie się połączyła”. Oznacza: **każdy**, kto dotrze do portu 5432, może zalogować się jako **dowolna rola**, także `postgres` (superużytkownik), bez hasła — a superużytkownik PostgreSQL może czytać pliki serwera i uruchamiać polecenia systemowe (`COPY ... FROM PROGRAM`) jako użytkownik `postgres`. Takie bazy są wyszukiwane automatycznie i przejmowane w ciągu godzin (np. do kopania kryptowalut lub szyfrowania danych dla okupu). Nawet `scram-sha-256` dla `0.0.0.0/0` wystawia bazę na zgadywanie haseł z całego internetu. Reguły zawsze dla konkretnych adresów, ról i baz, `trust` — nigdy dla połączeń sieciowych."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Baza otwarta dla wszystkich bez hasła",
+      "body": "„Tymczasowa” konfiguracja — z dowolnej maszyny w sieci można zalogować się jako superużytkownik bez hasła (przykład — NIE stosuj):",
+      "code": "$ tail -1 /etc/postgresql/16/main/pg_hba.conf\nhost    all             all             0.0.0.0/0               trust\n$ cat /etc/postgresql/16/main/conf.d/90-siec.conf\nlisten_addresses = '*'\nanna@srv-docker:~$ psql -h 192.168.56.10 -U postgres -c 'SELECT current_user, inet_client_addr()'\n current_user | inet_client_addr\n--------------+------------------\n postgres     | 192.168.56.30\n(1 row)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Wąska reguła, hasło SCRAM, TLS i odmowa dla pozostałych",
+      "body": "Tylko jedna rola z jednego adresu do jednej bazy, przez TLS i z hasłem; inne próby kończą się odmową (przykładowy wynik):",
+      "code": "$ grep -E '^hostssl|^host ' /etc/postgresql/16/main/pg_hba.conf\nhost    all             all             127.0.0.1/32            scram-sha-256\nhost    all             all             ::1/128                 scram-sha-256\nhostssl sklep           raporty         192.168.56.20/32        scram-sha-256\n$ sudo -u postgres psql -Atc 'SHOW password_encryption; SHOW ssl;'\nscram-sha-256\non\nanna@srv-docker:~$ psql -h 192.168.56.10 -U postgres -c 'SELECT 1'\npsql: error: connection to server at \"192.168.56.10\", port 5432 failed: Connection timed out\n\tIs the server running on that host and accepting TCP/IP connections?\n# -> zapora wpuszcza na 5432 tylko 192.168.56.20; nawet przy otwartej zaporze: \"no pg_hba.conf entry\""
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Administracja lokalna** — `local ... peer` i `sudo -u postgres psql`.\n- **Aplikacja lokalna** — `host BAZA ROLA 127.0.0.1/32 scram-sha-256`, nasłuch tylko `localhost`.\n- **Klient z innego serwera** — `hostssl BAZA ROLA ADRES/32 scram-sha-256` + nasłuch na konkretnej karcie + zapora.\n- **Dostęp tylko do odczytu** — rola z `SELECT` (+ `ALTER DEFAULT PRIVILEGES`) lub `pg_read_all_data`.\n- **Dostęp doraźny programisty** — tunel SSH do `localhost:5432` zamiast nowych reguł.\n- **`trust`** — nigdy dla połączeń sieciowych; lokalnie tylko w awaryjnej procedurze (np. odzyskanie hasła), na chwilę i z przeładowaniem po wszystkim."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Dostęp do PostgreSQL kontrolują: `listen_addresses` (nasłuch), `pg_hba.conf` (kto, skąd, do której bazy, jaką metodą), uprawnienia ról (`GRANT`) i zapora systemu.\n- Role to użytkownicy i grupy; hasła ustawiaj `\\password`, uprawnienia nadawaj minimalne (dla raportów `SELECT` + domyślne uprawnienia dla nowych tabel).\n- `pg_hba.conf` czytany jest od góry, decyduje pierwsza pasująca linia; zmiany wymagają przeładowania, zmiana `listen_addresses` — restartu.\n- Metody: `peer` lokalnie dla administracji, `scram-sha-256` (najlepiej z `hostssl`) dla połączeń sieciowych, `trust` — nigdy przez sieć.\n- Komunikaty `refused`/`timeout`, `no pg_hba.conf entry`, `password authentication failed`, `permission denied` wskazują kolejno warstwę, w której zatrzymało się połączenie."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
