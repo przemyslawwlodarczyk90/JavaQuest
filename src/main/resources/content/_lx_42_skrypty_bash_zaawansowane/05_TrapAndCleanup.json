@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Skrypt rzadko kończy się dokładnie tam, gdzie zaplanowałeś: tryb ścisły przerywa go przy błędzie (lekcja 4), użytkownik naciska `Ctrl+C`, systemd przy zatrzymaniu usługi wysyła `SIGTERM`, a SSH zrywa połączenie. W każdym z tych przypadków mogą zostać po nim **śmieci**: pliki i katalogi tymczasowe (rozpakowany import, zrzut bazy w `/tmp`), plik blokady, który uniemożliwia kolejne uruchomienie, zatrzymana usługa, która miała zostać wznowiona, tryb konserwacji włączony na stałe. Polecenie wbudowane **`trap`** pozwala zarejestrować kod wykonywany przy wyjściu ze skryptu (`EXIT`), przy sygnałach (`INT`, `TERM`) i przy błędzie (`ERR`) — tak jak `finally` w Javie.\n\nW tej lekcji poznasz `trap` i pseudosygnały `EXIT` oraz `ERR`, bezpieczne tworzenie plików i katalogów tymczasowych (`mktemp`), funkcję sprzątającą, która zachowuje kod wyjścia skryptu, raportowanie miejsca błędu (`$LINENO`, `$BASH_COMMAND`) i blokadę przed równoległym uruchomieniem (`flock`). Napiszesz skrypt importu cennika od hurtowni (z rozdziału 34), który zawsze sprząta po sobie i nigdy nie zostawia sklepu w trybie konserwacji — niezależnie od tego, jak się zakończy."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`trap 'POLECENIA' SYGNAŁY`** — zarejestruj kod obsługi; `trap - SYGNAŁY` (przywróć domyślne), `trap '' SYGNAŁ` (ignoruj), `trap -p` (lista).\n- **Pseudosygnały** — `EXIT` (każde zakończenie skryptu: normalne, `exit N`, błąd `set -e`, a także po obsłużeniu sygnału), `ERR` (polecenie zakończone błędem — w tych samych miejscach co `set -e`), `RETURN`, `DEBUG`.\n- **Sygnały** — `INT` (Ctrl+C), `TERM` (`kill`, `systemctl stop`), `HUP` (zamknięcie terminala/sesji); `KILL` (9) i `STOP` **nie** dają się przechwycić (rozdział 21).\n- **Funkcja sprzątająca** — `sprzataj() { local kod=$?; rm -rf -- \"$tmp\"; ...; exit \"$kod\"; }` + `trap sprzataj EXIT` — `$?` na początku to kod, z jakim skrypt się kończy.\n- **`mktemp`** — bezpieczna, unikalna nazwa: `tmp=$(mktemp -d)` (katalog, `/tmp/tmp.XXXXXXXXXX`, prawa 700), `mktemp /tmp/import.XXXXXX` (plik), `mktemp -p \"$KATALOG\"`.\n- **Miejsce błędu** — w pułapce `ERR`: `$LINENO` (linia), `$BASH_COMMAND` (polecenie), `${FUNCNAME[*]}`; `set -E` (`errtrace`) — pułapka `ERR` także w funkcjach.\n- **Blokada** — `exec 9> /run/lock/import.lock; flock -n 9 || { echo \"juz dziala\"; exit 1; }` — tylko jedna kopia skryptu naraz; blokada zwalniana automatycznie przy zakończeniu procesu.\n- **Cudzysłowy w `trap`** — `trap 'rm -rf \"$tmp\"' EXIT` (apostrofy — `$tmp` rozwijane przy wykonaniu) vs `trap \"rm -rf $tmp\" EXIT` (rozwinięcie przy rejestracji)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "`trap ... EXIT` to **kartka na drzwiach „przed wyjściem: zgaś światło, zamknij okna, wyłącz tryb serwisowy”** — przypięta na początku dnia, wykonana zawsze, niezależnie od tego, czy wychodzisz o czasie, w pośpiechu (błąd), czy dlatego, że ktoś ogłosił ewakuację (`SIGTERM`, `Ctrl+C`). `mktemp` to **wypożyczenie własnej, zamykanej szafki** zamiast zostawiania rzeczy na wspólnym stole w `/tmp`. `flock` to **tabliczka „zajęte” na drzwiach pomieszczenia** — drugi pracownik nie wejdzie, dopóki pierwszy nie wyjdzie, a tabliczka zdejmuje się sama, gdy pierwszy opuści budynek (zakończenie procesu). Jedynie wyrzucenie kogoś przez okno (`SIGKILL`) sprawia, że kartka na drzwiach nie zostaje przeczytana."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Przebieg skryptu importu z pułapkami",
+      "body": "Kod sprzątający wykonuje się na każdej ścieżce zakończenia:",
+      "code": " import-cennika.sh\n   exec 9>/run/lock/import-cennika.lock; flock -n 9   <- druga kopia: \"juz dziala\", koniec\n   tmp=$(mktemp -d)                                  <- /tmp/tmp.k3Zq9W1aXb (700)\n   trap sprzataj EXIT                                <- ZAWSZE na wyjsciu\n   trap 'echo \"BLAD w linii $LINENO: $BASH_COMMAND\" >&2' ERR\n   trap 'exit 130' INT;  trap 'exit 143' TERM        <- sygnal -> exit -> EXIT -> sprzataj\n   sklep-ctl tryb-serwisowy on\n   unzip / walidacja / psql \\copy ...                <- tu moze byc blad, Ctrl+C, systemctl stop\n\n sprzataj():  kod=$?   rm -rf \"$tmp\"   tryb-serwisowy off   loguj \"koniec, kod $kod\"   exit $kod\n\n ZAKONCZENIE           EXIT wykona sie?    kod\n normalne              TAK                 0\n blad (set -e)         TAK (+ ERR)         1\n Ctrl+C / SIGTERM      TAK                 130 / 143\n SIGKILL (kill -9)     NIE (smieci zostaja) 137"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "`trap EXIT`, `mktemp` i sygnały",
+      "body": "Sprzątanie przy normalnym zakończeniu, przy błędzie i po `Ctrl+C` (przykładowy wynik):",
+      "code": "$ cat ~/bin/demo-trap.sh\n#!/bin/bash\nset -euo pipefail\ntmp=$(mktemp -d)\nsprzataj() { local kod=$?; rm -rf -- \"$tmp\"; echo \"sprzatnieto $tmp (kod $kod)\"; exit \"$kod\"; }\ntrap sprzataj EXIT\ntrap 'exit 130' INT\ntrap 'exit 143' TERM\necho \"pracuje w $tmp\"; touch \"$tmp/dane.csv\"\ncase \"${1:-ok}\" in\n    ok)     echo \"wszystko dobrze\" ;;\n    blad)   ls /nie-ma ;;\n    czekaj) sleep 60 ;;\nesac\n$ demo-trap.sh\npracuje w /tmp/tmp.k3Zq9W1aXb\nwszystko dobrze\nsprzatnieto /tmp/tmp.k3Zq9W1aXb (kod 0)\n$ demo-trap.sh blad\npracuje w /tmp/tmp.Pn2Lw8sQe4\nls: cannot access '/nie-ma': No such file or directory\nsprzatnieto /tmp/tmp.Pn2Lw8sQe4 (kod 2)\n$ demo-trap.sh czekaj\npracuje w /tmp/tmp.Xa7Rm3uVb0\n^Csprzatnieto /tmp/tmp.Xa7Rm3uVb0 (kod 130)\n$ ls -d /tmp/tmp.* 2>/dev/null | wc -l\n0"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Import cennika: blokada, tryb serwisowy, raport miejsca błędu",
+      "body": "Skrypt importujący cennik od hurtowni (konto SFTP z rozdziału 34) — sprząta i wyłącza tryb serwisowy niezależnie od przebiegu (przykładowy wynik):",
+      "code": "$ cat /usr/local/bin/import-cennika.sh\n#!/bin/bash\nset -Eeuo pipefail\nsource /usr/local/lib/sklep/funkcje.sh\nexec 9> /run/lock/import-cennika.lock\nflock -n 9 || zakoncz \"import juz trwa (blokada)\"\ntmp=$(mktemp -d)\ntryb_serwisowy=off\nsprzataj() {\n    local kod=$?\n    [[ $tryb_serwisowy == on ]] && curl -fs -X POST localhost:8081/actuator/serwis/wylacz > /dev/null && loguj \"tryb serwisowy wylaczony\"\n    rm -rf -- \"$tmp\"\n    loguj \"koniec importu, kod $kod\"\n    exit \"$kod\"\n}\ntrap sprzataj EXIT\ntrap 'loguj \"BLAD w linii $LINENO: $BASH_COMMAND\"' ERR\ntrap 'exit 130' INT; trap 'exit 143' TERM\nplik=$(ls -1t /srv/sftp/hurtownia/do-sklepu/cennik-*.csv | head -1)\ncp -- \"$plik\" \"$tmp/cennik.csv\"\n[[ $(head -1 \"$tmp/cennik.csv\") == \"kod;nazwa;cena_netto\" ]] || zakoncz \"zly naglowek w $plik\"\ncurl -fs -X POST localhost:8081/actuator/serwis/wlacz > /dev/null && tryb_serwisowy=on\nsudo -u postgres psql -v ON_ERROR_STOP=1 -q -d sklep -c \"\\copy cennik_import FROM '$tmp/cennik.csv' WITH (FORMAT csv, DELIMITER ';', HEADER)\"\nloguj \"zaimportowano $(($(wc -l < \"$tmp/cennik.csv\") - 1)) pozycji z ${plik##*/}\"\n$ sudo import-cennika.sh\n2026-10-08 21:10:02 [import-cennika.sh] zaimportowano 1204 pozycji z cennik-hurt-2026-10.csv\n2026-10-08 21:10:02 [import-cennika.sh] tryb serwisowy wylaczony\n2026-10-08 21:10:02 [import-cennika.sh] koniec importu, kod 0\n$ sudo import-cennika.sh & sleep 0.2; sudo import-cennika.sh\n2026-10-08 21:11:40 [import-cennika.sh] BLAD: import juz trwa (blokada)\n2026-10-08 21:11:40 [import-cennika.sh] koniec importu, kod 1\n$ sudo import-cennika.sh 2>&1 | grep -E 'BLAD|wylaczony'\n2026-10-08 21:14:05 [import-cennika.sh] BLAD w linii 27: sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d sklep -c \"\\copy cennik_import FROM ...\"\n2026-10-08 21:14:05 [import-cennika.sh] tryb serwisowy wylaczony"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Szkielet skryptu, który zawsze po sobie sprząta",
+      "body": "1. `set -Eeuo pipefail` (`-E` — pułapka `ERR` działa także w funkcjach).\n2. Jeśli skrypt nie może działać w dwóch kopiach naraz — blokada `flock` na początku.\n3. Zasoby tymczasowe twórz `mktemp -d` (nie stałe nazwy w `/tmp`).\n4. Napisz funkcję `sprzataj`: zapamiętaj `local kod=$?`, cofnij zmiany stanu (tryb serwisowy, zatrzymane usługi), usuń pliki tymczasowe, zaloguj, `exit \"$kod\"`; zarejestruj `trap sprzataj EXIT` **zaraz po** utworzeniu pierwszego zasobu.\n5. `trap 'exit 130' INT` i `trap 'exit 143' TERM` — sygnał zamienia się w zwykłe wyjście, a to uruchamia `EXIT`; dodaj `trap '... $LINENO ...' ERR` do raportowania miejsca błędu.\n6. Przetestuj: zakończenie normalne, błąd w środku, `Ctrl+C`, `kill PID` — po każdym sprawdź, że nic nie zostało (pliki, blokady, stan usług)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się `trap`",
+      "body": "- **Pliki tymczasowe** — rozpakowane archiwa, zrzuty, wyniki pośrednie importów i eksportów.\n- **Zmiany stanu do cofnięcia** — tryb serwisowy aplikacji, wyłączona instancja w `upstream` Nginx, zatrzymany timer, zamontowany dysk.\n- **Blokady** — `flock` przed równoległym uruchomieniem z crona i ręcznie.\n- **Diagnoza** — pułapka `ERR` z numerem linii i poleceniem w logu skryptu.\n- **Skrypty w usługach systemd** — `systemctl stop` wysyła `SIGTERM`: pułapka pozwala zakończyć się porządnie w czasie `TimeoutStopSec`.\n- **Skrypty interaktywne** — przywrócenie ustawień terminala po `Ctrl+C` (`stty echo` po `read -s`)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kod wyjścia w pułapce i sygnały, których nie złapiesz",
+      "body": "W funkcji uruchamianej przez `trap ... EXIT` zmienna `$?` na samym początku zawiera kod, z jakim skrypt właśnie się kończy — trzeba go zapisać (`local kod=$?`) przed jakimkolwiek innym poleceniem, bo `rm` czy `echo` od razu go nadpiszą. Zakończenie funkcji `exit \"$kod\"` sprawia, że skrypt zwraca kod oryginalnego błędu, a nie wynik ostatniego polecenia sprzątającego — ważne dla systemd i crona (rozdział 41). Pułapki nie pomogą przy `SIGKILL` (`kill -9`, OOM killer, przekroczony `TimeoutStopSec` w systemd) ani przy awarii zasilania — tam proces znika natychmiast. Dlatego dobry skrypt jest też **odporny na pozostałości po poprzednim, przerwanym uruchomieniu**: `mktemp` zamiast stałych nazw (stare katalogi nie przeszkadzają), `flock` zamiast plików `.pid` (blokada znika z procesem), a stan „tryb serwisowy włączony” sprawdzany na starcie."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Brak sprzątania i `trap` w podwójnych cudzysłowach",
+      "body": "Dwa typowe błędy. Pierwszy: skrypt bez `trap`, który po `Ctrl+C` lub błędzie zostawia w `/tmp` gigabajty rozpakowanych importów, a — gorzej — **aplikację w trybie serwisowym** albo zatrzymaną instancję; klienci widzą stronę „przerwa techniczna” do rana. Drugi: pułapka zapisana w cudzysłowach podwójnych przed ustawieniem zmiennej — `trap \"rm -rf $tmp\" EXIT` w linii **przed** `tmp=$(mktemp -d)` rozwija `$tmp` od razu do pustego napisu, więc sprzątanie nic nie robi (albo, przy `\"rm -rf $tmp/\"*`, zamienia się w `rm -rf /*`). Zawsze apostrofy w `trap` i rejestracja pułapki **po** utworzeniu zasobu albo z warunkiem `[[ -n ${tmp:-} ]]`."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Przerwany import zostawia tryb serwisowy i pliki tymczasowe",
+      "body": "Skrypt bez pułapek przerwany w trakcie importu (przykładowy wynik):",
+      "code": "$ cat ~/bin/import-zle.sh\n#!/bin/bash\nmkdir -p /tmp/import && cp /srv/sftp/hurtownia/do-sklepu/cennik-hurt-2026-10.csv /tmp/import/\ncurl -fs -X POST localhost:8081/actuator/serwis/wlacz\nsudo -u postgres psql -q -d sklep -c \"\\copy cennik_import FROM '/tmp/import/cennik-hurt-2026-10.csv' WITH (FORMAT csv, DELIMITER ';', HEADER)\"\ncurl -fs -X POST localhost:8081/actuator/serwis/wylacz\nrm -rf /tmp/import\n$ sudo ~/bin/import-zle.sh\n^C\n$ curl -s localhost:8081/actuator/serwis | grep -o '\"tryb\":\"[a-z]*\"'\n\"tryb\":\"wlaczony\"\n$ ls /tmp/import/\ncennik-hurt-2026-10.csv"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Ten sam scenariusz ze skryptem z pułapkami",
+      "body": "`import-cennika.sh` przerwany w tym samym miejscu — tryb serwisowy wyłączony, pliki usunięte, kod 130 (przykładowy wynik):",
+      "code": "$ sudo import-cennika.sh\n^C2026-10-08 21:20:31 [import-cennika.sh] tryb serwisowy wylaczony\n2026-10-08 21:20:31 [import-cennika.sh] koniec importu, kod 130\n$ curl -s localhost:8081/actuator/serwis | grep -o '\"tryb\":\"[a-z]*\"'\n\"tryb\":\"wylaczony\"\n$ ls -d /tmp/tmp.* 2>/dev/null | wc -l\n0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Skrypt tworzy pliki tymczasowe** — `mktemp -d` + `trap sprzataj EXIT`.\n- **Skrypt zmienia stan systemu na czas działania** — cofnięcie zmiany w funkcji sprzątającej.\n- **Skrypt nie może działać równolegle** — `flock -n` na deskryptorze pliku blokady.\n- **Diagnoza błędów w długich skryptach** — `trap '... $LINENO: $BASH_COMMAND' ERR` z `set -E`.\n- **Skrypt uruchamiany jako usługa** — obsługa `TERM` i `TimeoutStopSec` z zapasem na sprzątanie.\n- **Zawsze** — apostrofy w `trap` i odporność na pozostałości po `kill -9`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `trap 'KOD' SYGNAŁY` rejestruje obsługę zakończenia skryptu (`EXIT`), błędu (`ERR`) i sygnałów (`INT`, `TERM`, `HUP`) — jak `finally` w Javie.\n- Funkcja sprzątająca zapisuje `kod=$?`, cofa zmiany stanu, usuwa pliki tymczasowe i kończy się `exit \"$kod\"`.\n- `mktemp -d` tworzy unikalne katalogi tymczasowe, a `flock -n` zapobiega równoległemu uruchomieniu.\n- Pułapka `ERR` z `$LINENO` i `$BASH_COMMAND` wskazuje miejsce błędu; `set -E` rozszerza ją na funkcje.\n- `SIGKILL` nie da się przechwycić — skrypty powinny też tolerować pozostałości po przerwanych uruchomieniach."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
