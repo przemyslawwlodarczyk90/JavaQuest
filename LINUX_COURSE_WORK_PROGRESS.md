@@ -329,7 +329,18 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   Desktop 28.4, integracja z Ubuntu-24.04, kontekst `srv-docker` przez SSH): `~/projekty/sklep/compose.yaml` (db z
   healthcheck, app build ., pgadmin w profilu narzedzia, `.env` w .gitignore), wolumeny `sklep_pgdata`, `pgdata`, `m2`;
   kontener pg-dev na 5433. lubuntu-nauka: Docker rootless dla kuby (UID 1003, subuid 296608, linger).
-  Pozostałe lekcje (`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_46_projekt_koncowy` (9 lekcji) — ZROBIONY (2026-10-12). Nowy serwer **sklep01** (chmura, KVM, Ubuntu
+  24.04, 2 vCPU, 4 GB, 203.0.113.50, sklep.firma.example + www, strefa Etc/UTC, LANG C.UTF-8): konta anna (sudo z hasłem),
+  deploy (sudo tylko wdroz-sklep.sh), sklep (systemowe 998), ubuntu zablokowane; SSH `sshd_config.d/10-sklep01.conf`
+  (grupa ssh-uzytkownicy, 50-cloud-init.conf usunięty), ufw (limit 22, 80/443), fail2ban; openjdk-21-jre-headless,
+  PostgreSQL 16 (rola/baza sklep, `conf.d/90-sklep01.conf` shared_buffers 512MB, max_connections 50), hasło w
+  `/etc/sklep/poswiadczenia/spring.datasource.password`; `sklep.service` (MemoryMax=2G, piaskownica, ReadWritePaths
+  /var/lib/sklep + /srv/sklep/raporty, ekspozycja 3.4), wydanie 1.5.0; Nginx + certbot (HSTS, strona serwisowa,
+  /actuator/ → 404, SERVER_FORWARD_HEADERS_STRATEGY=framework); journald 1G, timery sprawdz-sklep (1 min, OnFailure=
+  powiadom@), kopia-bazy (02:30 UTC, pg_dump -Fc, rsync na kopie.firma.example), proba-odtworzenia (nd 04:00);
+  `kontrola-sklep01.sh`. Repozytorium `~/infra/sklep01` na laptopie (README, pliki/, instaluj.sh idempotentny,
+  kontrola-zewnetrzna.sh, cwiczenie-odtworzenia.sh — RTO 14 min). sklep02 (203.0.113.51) — kopia testowa ze skryptu.
+  **KROK 2 (teoria) ZAKOŃCZONY** dla wszystkich lekcji poza 32/07-09 (nmap — czekają na decyzję użytkownika). Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -399,7 +410,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_46_projekt_koncowy`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 zakończony (poza 32/07-09). Następnie: decyzja użytkownika co do 32/07-09, potem Krok 3 — przypisanie poziomów A/B/C do lekcji i dostosowanie `lx_build_practice.js`** (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
