@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "WSL2 ma prawdziwe jądro Linuksa i zwykłą dystrybucję, więc zdecydowana większość tego, czego nauczyłeś się w kursie, działa w nim tak samo. Jest jednak kilka obszarów, w których WSL **z założenia** różni się od serwera czy maszyny wirtualnej — i właśnie tam pojawiają się niespodzianki: aplikacja działa z przeglądarki na laptopie, ale kolega z tej samej sieci jej nie widzi; adres IP dystrybucji zmienia się po każdym restarcie; usługa „sama znika” po zamknięciu terminala; obserwowanie zmian plików nie działa na `/mnt/c`; nie da się załadować modułu jądra dla sterownika; maszyna wirtualna zabiera połowę pamięci RAM.\n\nW tej lekcji przejdziesz przez najważniejsze ograniczenia: sieć (NAT, zmienny adres, dostęp z sieci lokalnej, tryb **mirrored**, zapora Hyper-V), jądro (dostarczane przez Microsoft, ograniczone moduły), cykl życia (zatrzymywanie dystrybucji po bezczynności), zasoby (`.wslconfig`: pamięć, procesory, swap), sprzęt (USB, GPU) i system plików (9P, brak powiadomień `inotify` dla zmian z Windows). Dla każdego zobaczysz, jak go obejść — albo kiedy lepiej przenieść pracę na maszynę wirtualną lub serwer testowy."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Sieć NAT (domyślna)** — dystrybucja ma adres w wewnętrznej sieci (np. `172.27.144.83`), **zmieniający się po restarcie WSL**; Windows łączy się z nią przez `localhost` (przekierowanie portów `localhostForwarding`), ale inne komputery w sieci — nie.\n- **Tryb mirrored** — `networkingMode=mirrored` w `[wsl2]` pliku `%UserProfile%\\.wslconfig` (Windows 11 22H2+): WSL ma te same adresy i interfejsy co Windows, działa IPv6, usługi w WSL są osiągalne z sieci lokalnej po dopuszczeniu w zaporze.\n- **Zapora Hyper-V** — ruch przychodzący do WSL filtruje zapora Windows dla maszyn wirtualnych: `Get-NetFirewallHyperVVMSetting`, `New-NetFirewallHyperVRule -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'` (identyfikator WSL); `iptables`/`nftables` w WSL działają tylko wewnątrz maszyny.\n- **`netsh interface portproxy`** — w trybie NAT przekierowanie portu z adresu Windows na adres WSL (trzeba je aktualizować po zmianie adresu).\n- **Jądro** — budowane przez Microsoft (`uname -r`), aktualizowane przez `wsl --update`; zestaw modułów ograniczony, brak DKMS dla sterowników sprzętu (VirtualBox, karty sieciowe); własne jądro: `kernel=` w `.wslconfig`.\n- **Cykl życia** — dystrybucja zatrzymuje się, gdy nie działa w niej żaden proces terminala ani usługa (przy systemd usługi utrzymują ją przy życiu, dopóki działa maszyna); maszyna wyłącza się po `vmIdleTimeout`; `wsl --shutdown` zatrzymuje wszystko.\n- **Zasoby — `.wslconfig`** — `memory=` (domyślnie 50% RAM), `processors=`, `swap=`, `[experimental] autoMemoryReclaim=gradual`; zmiany działają po `wsl --shutdown`.\n- **Sprzęt i pliki** — USB przez `usbipd-win` (`usbipd attach --wsl`), GPU przez sterowniki Windows (CUDA, DirectX), brak dostępu do GRUB, BIOS, konsoli; na `/mnt/c` brak powiadomień `inotify` o zmianach zrobionych w Windows."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "WSL jest jak **mieszkanie w hotelu apartamentowym**. Masz własną kuchnię, łazienkę i klucz — mieszka się prawie jak w domu (prawdziwy Linux). Ale portiernia decyduje o kilku sprawach: goście z zewnątrz nie wejdą do Ciebie bez zgłoszenia w recepcji (NAT i zapora), numer pokoju potrafi się zmienić przy każdym zameldowaniu (zmienny adres IP), sprzątanie wyłącza światło, gdy nikogo nie ma w pokoju (zatrzymanie po bezczynności), a przebudować instalacji elektrycznej nie wolno (moduły jądra). Do mieszkania i pracy — świetnie. Do prowadzenia w nim sklepu dla klientów — nie."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kto widzi aplikację uruchomioną w WSL",
+      "body": "Aplikacja sklep na porcie 8080 w WSL, tryb NAT i tryb mirrored:",
+      "code": " TRYB NAT (domyslny)\n   kolega 192.168.1.40 ---X---> laptop-anna 192.168.1.23:8080      (brak przekierowania)\n   przegladarka na laptopie ---> localhost:8080 ---localhostForwarding---> 172.27.144.83:8080  OK\n   WSL ---> brama 172.27.144.1 (= Windows) ---> internet, lubuntu-nauka 192.168.56.10       OK\n   adres WSL po restarcie: 172.27.144.83 -> 172.22.208.15 -> ...   (zmienny!)\n\n TRYB MIRRORED (.wslconfig: networkingMode=mirrored)\n   kolega 192.168.1.40 ---> 192.168.1.23:8080 ---[zapora Hyper-V: regula 8080]---> WSL      OK\n   WSL ma te same adresy co Windows: 192.168.1.23, 192.168.56.1, IPv6\n\n INNE OGRANICZENIA                        OBEJSCIE\n modprobe vboxdrv -> brak modulu          VM lub komputer z Linuksem\n dystrybucja zatrzymana po zamknieciu     systemd + uslugi / wsl --exec sleep infinity\n 50% RAM dla VM                           .wslconfig: memory=8GB\n zmiany w C:\\ niewidoczne dla inotify     projekt w ~ (ext4), nie w /mnt/c\n pendrive USB                             usbipd attach --wsl"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Sieć w trybie NAT",
+      "body": "Zmienny adres IP, dostęp z Windows przez `localhost`, adres Windows widziany z WSL (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ ip -4 -br addr show eth0; ip route show default\neth0             UP             172.27.144.83/20\ndefault via 172.27.144.1 dev eth0 proto kernel\nanna@laptop-anna:~$ cd ~/projekty/sklep && ./mvnw -q spring-boot:run > /tmp/sklep.log 2>&1 &\n[1] 2214\nanna@laptop-anna:~/projekty/sklep$ exit\nPS C:\\Users\\anna> curl.exe -s localhost:8080/actuator/health\n{\"status\":\"UP\"}\nPS C:\\Users\\anna> wsl --shutdown; wsl hostname -I\n172.22.208.15\nPS C:\\Users\\anna> Test-NetConnection 192.168.1.23 -Port 8080 -InformationLevel Quiet\nFalse"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Zasoby i ograniczenia jądra",
+      "body": "Plik `.wslconfig` z limitem pamięci i procesorów, sprawdzenie w WSL i próba załadowania modułu sterownika (przykładowy wynik):",
+      "code": "PS C:\\Users\\anna> Get-Content $env:USERPROFILE\\.wslconfig\n[wsl2]\nmemory=8GB\nprocessors=4\nswap=4GB\nvmIdleTimeout=120000\n\n[experimental]\nautoMemoryReclaim=gradual\nPS C:\\Users\\anna> wsl --shutdown; wsl\nanna@laptop-anna:~$ nproc; free -h | awk 'NR==2 {print $2} NR==3 {print $2}'\n4\n7.8Gi\n4.0Gi\nanna@laptop-anna:~$ lsmod | wc -l\n6\nanna@laptop-anna:~$ sudo modprobe vboxdrv\nmodprobe: FATAL: Module vboxdrv not found in directory /lib/modules/6.6.87.2-microsoft-standard-WSL2\nanna@laptop-anna:~$ ls /dev/sd* /dev/ttyUSB* 2>&1 | head -3\n/dev/sda\n/dev/sdb\n/dev/sdc\nanna@laptop-anna:~$ exit\nPS C:\\Users\\anna> usbipd list | Select-String Serial\n2-3    10c4:ea60  CP210x USB to UART Bridge Controller                        Shared\nPS C:\\Users\\anna> usbipd attach --wsl --busid 2-3\nusbipd: info: Using WSL distribution 'Ubuntu-24.04' to attach; the device will be available in all WSL 2 distributions.\nPS C:\\Users\\anna> wsl ls /dev/ttyUSB0\n/dev/ttyUSB0"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak sprawdzić, czy problem wynika z ograniczeń WSL",
+      "body": "1. Ustal wersję i tryb: `wsl -l -v`, `uname -r`, `wsl --version`, zawartość `%UserProfile%\\.wslconfig`.\n2. Problem z dostępem sieciowym z zewnątrz — sprawdź tryb sieci (NAT/mirrored), regułę zapory Hyper-V lub `portproxy`.\n3. Usługa „znika” — sprawdź, czy działa systemd (`ps -p 1 -o comm=`) i czy dystrybucja nie została zatrzymana (`wsl -l -v`).\n4. Brak sterownika lub modułu — `modprobe` i `lsmod`; jeśli modułu nie ma w jądrze WSL, przenieś zadanie na maszynę wirtualną.\n5. Za mało lub za dużo pamięci — `memory=`, `processors=`, `swap=` w `.wslconfig` i `wsl --shutdown`.\n6. Nie działa obserwowanie plików (DevTools, `watch`) — przenieś projekt z `/mnt/c` do `~`.\n7. Jeśli test ma odzwierciedlać serwer (zapora, sieć, rozruch) — wykonaj go na VM lub srv-test."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie ograniczenia WSL dają o sobie znać",
+      "body": "- **Pokaz aplikacji na innym urządzeniu** (telefon, laptop kolegi) — wymaga trybu mirrored i reguły zapory lub `portproxy`.\n- **Stały adres dla innych narzędzi** — w trybie NAT nie wpisuj adresu WSL na sztywno; używaj `localhost` z Windows.\n- **Sterowniki, VirtualBox w WSL, moduły sieciowe** — niedostępne; potrzebna VM lub fizyczny Linux.\n- **Hot reload aplikacji Spring Boot** z projektem na `/mnt/c` edytowanym w Windows — zmiany niewidoczne dla `inotify`.\n- **Laptop z 16 GB RAM** — ograniczenie `memory=` zapobiega spowalnianiu Windows przy dużych buildach.\n- **Urządzenia USB** (konsola szeregowa, czytniki) — `usbipd-win`."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Tryb mirrored i tunelowanie DNS — nowsze rozwiązania starych problemów",
+      "body": "Wiele poradników o WSL powstało, zanim Microsoft dodał tryb **mirrored** i **tunelowanie DNS** (`dnsTunneling=true`, domyślnie włączone w nowych wersjach). Stare porady zalecają skrypty aktualizujące `portproxy` po każdym restarcie, ręczne wpisy w `/etc/resolv.conf` przy VPN czy odczytywanie adresu Windows z linii `nameserver` w `/etc/resolv.conf` — przy tunelowaniu DNS jest tam adres `10.255.255.254`, który nie jest adresem Windows. Przed zastosowaniem porady sprawdź jej datę i swoją wersję WSL. W trybie mirrored adres Windows jest po prostu `localhost` także z wnętrza WSL (przy `hostAddressLoopback=true` w `[experimental]`), a VPN-y firmowe zwykle działają lepiej. W trybie NAT adres Windows to brama domyślna (`ip route show default`)."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Usługa w WSL niedostępna z sieci lokalnej",
+      "body": "Typowa sytuacja: aplikacja uruchomiona w WSL działa w przeglądarce na laptopie (`localhost:8080`), więc wydaje się, że „serwer działa”. Kolega z tej samej sieci wpisuje adres laptopa `192.168.1.23:8080` — i nic. Szukanie błędu w aplikacji (`server.address`), `ufw` w WSL czy restart nie pomagają, bo przyczyna leży po stronie Windows: w trybie NAT port nie jest wystawiony na interfejsie Windows, a w trybie mirrored ruch blokuje zapora Hyper-V. Rozwiązanie: tryb mirrored i reguła zapory Hyper-V dla konkretnego portu (lub `portproxy` + reguła zapory Windows w trybie NAT). I pamiętaj — wystawianie aplikacji z laptopa to rozwiązanie na pokaz, nie na stałe udostępnianie usługi."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Aplikacja widoczna tylko z laptopa",
+      "body": "Z laptopa działa, z komputera kolegi w tej samej sieci — przekroczenie czasu (przykładowy wynik):",
+      "code": "PS C:\\Users\\anna> curl.exe -s -o NUL -w \"%{http_code}\\n\" localhost:8080/\n200\nPS C:\\Users\\anna> Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias Wi-Fi | Select-Object -ExpandProperty IPAddress\n192.168.1.23\nPS C:\\Users\\kuba> curl.exe -s -m 5 -o NUL -w \"%{http_code}\\n\" 192.168.1.23:8080/\n000\nPS C:\\Users\\anna> wsl -e bash -c \"sudo ufw status\"\nStatus: inactive"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Tryb mirrored i reguła zapory Hyper-V",
+      "body": "Sieć współdzielona z Windows i dopuszczony port 8080 — aplikacja osiągalna z sieci lokalnej (przykładowy wynik):",
+      "code": "PS C:\\Users\\anna> Get-Content $env:USERPROFILE\\.wslconfig | Select-String networkingMode\nnetworkingMode=mirrored\nPS C:\\Users\\anna> New-NetFirewallHyperVRule -Name sklep-8080 -DisplayName \"Sklep w WSL (8080)\" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8080 | Out-Null\nPS C:\\Users\\anna> wsl --shutdown; wsl -e bash -c \"ip -4 -br addr | grep -v '^lo'\"\neth0             UP             192.168.1.23/24\neth1             UP             192.168.56.1/24\nPS C:\\Users\\kuba> curl.exe -s -m 5 -o NUL -w \"%{http_code}\\n\" 192.168.1.23:8080/\n200"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Dostęp do aplikacji z Windows** — `localhost:PORT` (działa w obu trybach sieci).\n- **Dostęp z innych urządzeń** — tryb mirrored + `New-NetFirewallHyperVRule`; w NAT — `portproxy` + reguła zapory.\n- **Ograniczenie zużycia pamięci i procesorów** — `.wslconfig` (`memory`, `processors`, `swap`).\n- **Urządzenie USB w Linuksie** — `usbipd attach --wsl`.\n- **Moduły jądra, sterowniki, rozruch, zapora jak na serwerze** — maszyna wirtualna lub srv-test.\n- **Projekt z automatycznym przeładowaniem** — pliki w `~`, nie na `/mnt/c`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- W trybie NAT WSL ma osobny, zmienny adres; Windows łączy się przez `localhost`, sieć lokalna — nie.\n- Tryb mirrored (`networkingMode=mirrored`) i reguła zapory Hyper-V udostępniają usługę w sieci lokalnej.\n- Jądro dostarcza Microsoft — brak dowolnych modułów i sterowników; USB przez `usbipd-win`.\n- `.wslconfig` ogranicza pamięć, procesory i swap całej maszyny WSL2; zmiany po `wsl --shutdown`.\n- Zachowanie serwera (zapora, sieć, dyski, rozruch) sprawdzaj na VM lub serwerze testowym, nie w WSL."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
