@@ -258,7 +258,20 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   aktualnie działa 1.3.2 (po ręcznym wycofaniu z 1.4.0). srv-test: openjdk-21-jdk-headless, konto `ci` (/var/lib/ci,
   `~/.m2/settings.xml` z lustrem nexus.firma.example), usługa **`raporty.service`** (konto raporty, /opt/raporty,
   port 8090, sandbox z oceną 3.1, ExecStartPost czekające na readiness, łagodne zatrzymanie 30 s / TimeoutStopSec 45).
-  Pozostałe lekcje (`_lx_39`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_39_bezpieczenstwo` (9 lekcji) — ZROBIONY (2026-10-08). lubuntu-nauka: `/etc/sudoers.d/deploy` tylko
+  `wdroz-sklep.sh` i `systemctl restart sklep@8080/8082`; konto `test` (było z pustym hasłem) i `onowak` (odejście z
+  zespołu) zablokowane `usermod -L -e 1`; `libpam-pwquality` (minlen 12, minclass 3), `pam_faillock` (deny 5,
+  unlock 900); kuba usunięty z grupy docker (Docker rootless); usunięte avahi-daemon, cups; rpcbind (usługa +
+  gniazdo) zamaskowany, NFS tylko v4 (`vers3=n`); Elasticsearch wyłączony; JDWP zdjęty z JAVA_OPTS;
+  `~/infra/porty-oczekiwane.txt` + `sprawdz-porty.sh`; SSH lubuntu-nauka: `20-zabezpieczenia.conf` (bez roota i haseł);
+  auditd z regułami `50-serwer.rules`; `~/infra/kontrola-bezpieczenstwa.sh` (10 punktów OK/UWAGA), Lynis (64 → 71).
+  srv-test: auditd (`/etc/audit/rules.d/50-serwer.rules`: konta, sudoers, ssh_konfig, polecenia_root; `99-zablokuj.rules`
+  z `-e 2`), rsyslog `90-centralny.conf` (auth → logi.firma.example), AIDE (`aide.conf.d/90_serwer`, baza kopiowana na
+  lubuntu-nauka `~/kopie/aide/`), AppArmor: `local/usr.sbin.mysqld` (+ /srv/kopie/raporty), `secure-file-priv =
+  /srv/kopie/raporty` (`91-eksport.cnf`), profil `kopia-mysql` (enforce); timer `kontrola-bezpieczenstwa.timer`
+  (7:00, OnFailure=powiadom@); `~/infra/wyjatki.md`. rocky-lab: SELinux enforcing, `httpd_can_network_connect on`,
+  fcontext `/srv/www(/.*)?` → httpd_sys_content_t.
+  Pozostałe lekcje (`_lx_40`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -328,7 +341,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_39_bezpieczenstwo`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_40_zmienne_srodowiskowe`** (część IV), potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
