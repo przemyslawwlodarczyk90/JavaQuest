@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Siedem poprzednich lekcji to kilkadziesiąt poleceń wykonanych ręcznie na sklep01. Gdyby serwer trzeba było postawić jeszcze raz — po awarii u dostawcy, dla środowiska testowego albo drugiego serwera aplikacji — odtwarzanie tego z pamięci lub z historii powłoki trwałoby godzinami i z pewnością coś by pominięto. Siódmy etap projektu zamienia całą procedurę w **skrypt** `instaluj.sh` w repozytorium `~/infra/sklep01`, razem z plikami konfiguracyjnymi z katalogu `pliki/`. Nowy serwer to wtedy: utworzenie maszyny, jedno polecenie, kilka minut oczekiwania, odtworzenie bazy z kopii.\n\nKluczowa cecha takiego skryptu to **idempotentność**: można go uruchomić wiele razy, a każde kolejne uruchomienie doprowadza serwer do tego samego stanu, nie psując niczego, co już jest poprawne. Nie tworzy drugi raz istniejącego konta, nie dopisuje drugi raz tej samej linii, przeładowuje usługę tylko wtedy, gdy jej konfiguracja się zmieniła. W tej lekcji zbudujesz taki skrypt z technik z rozdziałów 41–42 (funkcje, tryb ścisły, `trap`, `getopts`, tryb symulacji) i zobaczysz, jak wygląda skrypt, który działa tylko za pierwszym razem."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Idempotentność** — wielokrotne wykonanie daje ten sam wynik co jednokrotne; każdy krok najpierw sprawdza stan („czy konto istnieje?”), potem ewentualnie działa.\n- **Struktura repozytorium** — `instaluj.sh`, `pliki/` (kopie docelowych plików: `sshd_config.d/10-sklep01.conf`, `sklep.service`, `nginx/sklep`, `journald`, timery, skrypty), `zmienne.conf` (domena, adresy, wersje), `README.md`.\n- **Etapy jako funkcje** — `etap_system`, `etap_konta`, `etap_ssh`, `etap_zapora`, `etap_java_baza`, `etap_usluga`, `etap_nginx`, `etap_monitoring`; wybór etapów argumentami.\n- **Kopiowanie plików z wykryciem zmiany** — funkcja `wgraj ZRODLO CEL TRYB [WLASCICIEL]` porównuje `cmp -s`; zwraca informację o zmianie, na podstawie której wykonuje się `reload` tylko w razie potrzeby.\n- **Strażniki (guards)** — `id sklep &>/dev/null || useradd ...`, `grep -qxF \"linia\" plik || echo \"linia\" >> plik`, `psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='sklep'\" | grep -q 1 || ...`, `[[ -e plik ]] || ...`.\n- **Walidacja przed przeładowaniem** — `sshd -t`, `nginx -t`, `visudo -cf`, `systemd-analyze verify` — błąd przerywa skrypt, zanim zepsuje działającą usługę.\n- **Uruchamianie zdalne** — `rsync -a ~/infra/sklep01/ anna@SERWER:infra/` i `ssh -t anna@SERWER sudo infra/instaluj.sh`; dziennik do `/var/log/instaluj-sklep01.log` (`exec > >(tee -a ...) 2>&1`).\n- **Kolejny krok** — narzędzia zarządzania konfiguracją (Ansible, Salt) robią to samo deklaratywnie; skrypt bash dobrze uczy zasad, Ansible skaluje je na wiele serwerów."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Skrypt instalacyjny jest jak **przepis na ciasto pisany dla robota kuchennego**. Zwykły przepis mówi „dodaj dwa jajka” — jeśli robot przerwie w połowie i zacznie od nowa, doda cztery. Przepis idempotentny mówi „**w misce mają być** dwa jajka” — robot najpierw patrzy do miski i dodaje tylko tyle, ile brakuje. Taki przepis można powtarzać bez obaw: po awarii zasilania, po zmianie jednego składnika, na nowej kuchni. Zawsze kończy się tym samym ciastem."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Przebieg skryptu `instaluj.sh`",
+      "body": "Etapy, sprawdzenia i reakcja na zmiany:",
+      "code": " laptop-anna: ~/infra/sklep01 (git)\n   rsync -a ./ anna@203.0.113.50:infra/   ->   ssh -t ... sudo infra/instaluj.sh [-n] [etapy...]\n                                                  |\n sklep01: set -euo pipefail, trap ERR (numer linii), log -> /var/log/instaluj-sklep01.log\n   etap_system      apt pakiety (zainstaluj brakujace), hostname, strefa, unattended-upgrades\n   etap_konta       id anna/deploy/sklep ?  -> utworz brakujace; katalogi: install -d -o -g -m\n   etap_ssh         wgraj 10-sklep01.conf   -> zmiana? -> sshd -t -> reload ssh\n   etap_zapora      ufw status ma regule?   -> dodaj brakujace -> ufw --force enable\n   etap_java_baza   rola/baza istnieja?     -> utworz; wgraj 90-sklep01.conf -> zmiana? -> restart\n   etap_usluga      wgraj sklep.service     -> zmiana? -> verify -> daemon-reload -> restart\n   etap_nginx       wgraj nginx/sklep       -> zmiana? -> nginx -t -> reload; certbot (jesli brak cert.)\n   etap_monitoring  wgraj timery i skrypty  -> enable --now\n   podsumowanie:    \"zmieniono: 3 pliki, 1 usluga przeladowana\"  /  \"bez zmian\"\n\n 1. uruchomienie: wszystko tworzy    2. uruchomienie: \"bez zmian\"    po edycji pliku: tylko ten etap"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Funkcje pomocnicze: strażniki i wgrywanie plików",
+      "body": "Fragment `instaluj.sh` — tryb ścisły, dziennik, funkcja `wgraj` z wykryciem zmiany i strażnik konta (przykładowy wynik):",
+      "code": "anna@laptop-anna:~/infra/sklep01$ sed -n '1,40p' instaluj.sh\n#!/bin/bash\n# instaluj.sh - doprowadza serwer do stanu z README.md (idempotentnie)\n# Uzycie: sudo ./instaluj.sh [-n] [etap...]   -n symulacja\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\nsource ./zmienne.conf\nexec > >(tee -a /var/log/instaluj-sklep01.log) 2>&1\ntrap 'echo \"BLAD w linii $LINENO: $BASH_COMMAND\" >&2' ERR\nSYMULACJA=0; ZMIANY=0\n\nuruchom() { if (( SYMULACJA )); then echo \"[symulacja] $*\"; else \"$@\"; fi; }\n\n# wgraj ZRODLO CEL TRYB [WLASCICIEL] - zwraca 0, gdy plik zmieniono\nwgraj() {\n    local zrodlo=pliki/$1 cel=$2 tryb=$3 wlasciciel=${4:-root:root}\n    if [[ -f $cel ]] && cmp -s \"$zrodlo\" \"$cel\"; then return 1; fi\n    echo \"  zmiana: $cel\"\n    uruchom install -D -m \"$tryb\" -o \"${wlasciciel%%:*}\" -g \"${wlasciciel##*:}\" \"$zrodlo\" \"$cel\"\n    ZMIANY=$((ZMIANY + 1))\n}\n\nkonto_systemowe() {\n    id \"$1\" &>/dev/null && return 0\n    echo \"  nowe konto systemowe: $1\"\n    uruchom useradd --system --home-dir \"$2\" --shell /usr/sbin/nologin \"$1\"\n}\n\nlinia_w_pliku() {\n    grep -qxF \"$1\" \"$2\" 2>/dev/null && return 0\n    echo \"  dopisano do $2: $1\"\n    uruchom sh -c \"printf '%s\\n' \\\"\\$1\\\" >> \\\"\\$2\\\"\" _ \"$1\" \"$2\"\n}\nanna@laptop-anna:~/infra/sklep01$ bash -n instaluj.sh && shellcheck -x instaluj.sh && echo \"skrypt OK\"\nskrypt OK"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Etapy w praktyce: drugie uruchomienie i zmiana jednego pliku",
+      "body": "Etap usługi z walidacją przed restartem; pierwsze uruchomienie na nowej maszynie, drugie bez zmian, trzecie po edycji konfiguracji Nginx (przykładowy wynik):",
+      "code": "anna@laptop-anna:~/infra/sklep01$ sed -n '/^etap_usluga()/,/^}/p' instaluj.sh\netap_usluga() {\n    echo \"== usluga sklep\"\n    if wgraj sklep.service /etc/systemd/system/sklep.service 644; then\n        uruchom systemd-analyze verify /etc/systemd/system/sklep.service\n        uruchom systemctl daemon-reload\n        uruchom systemctl enable sklep\n        [[ -L /opt/sklep/sklep.jar ]] && uruchom systemctl restart sklep\n    fi\n    wgraj sklep.env /etc/sklep/sklep.env 640 root:sklep && uruchom systemctl try-restart sklep || true\n}\nanna@laptop-anna:~/infra/sklep01$ rsync -a ./ anna@203.0.113.51:infra/ && ssh -t anna@203.0.113.51 sudo infra/instaluj.sh | tail -4\n  zmiana: /etc/nginx/sites-available/sklep\n== monitoring\n  zmiana: /etc/systemd/system/sprawdz-sklep.timer\nPODSUMOWANIE: zmieniono 27 plikow, utworzono 3 konta, czas 4 min 12 s\nanna@laptop-anna:~/infra/sklep01$ ssh -t anna@203.0.113.51 sudo infra/instaluj.sh | tail -1\nPODSUMOWANIE: bez zmian, czas 21 s\nanna@laptop-anna:~/infra/sklep01$ sed -i 's/client_max_body_size 20m/client_max_body_size 50m/' pliki/nginx/sklep && git commit -qam \"nginx: limit 50 MB\"\nanna@laptop-anna:~/infra/sklep01$ rsync -a ./ anna@203.0.113.51:infra/ && ssh -t anna@203.0.113.51 sudo infra/instaluj.sh nginx\n== nginx\n  zmiana: /etc/nginx/sites-available/sklep\nnginx: configuration file /etc/nginx/nginx.conf test is successful\nPODSUMOWANIE: zmieniono 1 plik, przeladowano: nginx, czas 3 s"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zbudować idempotentny skrypt instalacyjny",
+      "body": "1. Skopiuj wszystkie docelowe pliki konfiguracyjne z serwera do `pliki/` w repozytorium (z zachowaniem struktury).\n2. Zmienne środowiska (domena, adresy, wersje) przenieś do `zmienne.conf`; sekretów nie trzymaj w repozytorium — skrypt je generuje, jeśli ich brak.\n3. Napisz funkcje pomocnicze: `uruchom` (tryb `-n`), `wgraj` (porównanie i zmiana), strażniki dla kont, linii, ról w bazie.\n4. Każdy etap jako funkcja: sprawdź → zmień tylko to, czego brakuje → zweryfikuj (`-t`, `verify`) → przeładuj tylko przy zmianie.\n5. Dodaj tryb ścisły, `trap ERR` z numerem linii i dziennik działania.\n6. Sprawdź `bash -n` i `shellcheck`, uruchom z `-n` na istniejącym serwerze (powinno być „bez zmian”).\n7. Przetestuj na **świeżej** maszynie dwa razy z rzędu; drugie uruchomienie musi nic nie zmienić."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się skrypt instalacyjny",
+      "body": "- **Odtworzenie po awarii** — nowa maszyna + skrypt + kopia bazy = serwer w kilkanaście minut.\n- **Środowisko testowe** — kopia produkcji (z innymi zmiennymi) do testów aktualizacji i wdrożeń.\n- **Zmiany konfiguracji** — edycja w repozytorium, przegląd w Git, wdrożenie skryptem zamiast edycji na serwerze.\n- **Wykrywanie dryfu** — uruchomienie z `-n` pokazuje, czy ktoś zmienił serwer ręcznie.\n- **Dokumentacja** — skrypt jest najdokładniejszym opisem konfiguracji serwera.\n- **Przejście na Ansible** — gotowe pliki i etapy przekłada się na role i zadania."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Skrypt bash czy Ansible?",
+      "body": "Dla jednego serwera i jednego administratora skrypt bash w repozytorium jest w pełni wystarczający — i świetnie uczy myślenia o idempotentności, walidacji i kolejności kroków. Przy kilku serwerach, zespole i wielu środowiskach (test, produkcja) warto przejść na narzędzie zarządzania konfiguracją, np. **Ansible**: łączy się przez SSH (bez agenta na serwerze), opisuje stan deklaratywnie (`user: name=sklep system=yes`, `template:`, `notify: reload nginx`), ma gotowe moduły idempotentne dla pakietów, plików, usług i baz, raport „changed/ok” oraz tryb `--check`. Funkcje z tej lekcji (`wgraj`, strażniki, przeładowanie przy zmianie) to dokładnie to, co moduły Ansible robią za Ciebie."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Skrypt, który działa tylko za pierwszym razem",
+      "body": "Najprostszy skrypt instalacyjny to spisana historia poleceń: `useradd sklep`, `echo \"...\" >> /etc/hosts`, `echo \"host sklep ...\" >> pg_hba.conf`, `CREATE ROLE sklep ...`. Na świeżej maszynie działa doskonale. Przy drugim uruchomieniu — po zmianie jednego pliku albo po przerwaniu w połowie — `useradd` kończy się błędem „user already exists”, a przy `set -e` skrypt staje w połowie, zostawiając serwer w stanie pośrednim; bez `set -e` jedzie dalej i dopisuje **drugi raz** te same linie do `/etc/hosts` i `pg_hba.conf`. Po kilku uruchomieniach pliki konfiguracyjne mają zduplikowane wpisy, a nikt już nie wie, który skrypt zostawił co. Każdy krok musi najpierw sprawdzać stan."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Drugie uruchomienie skryptu bez strażników",
+      "body": "Skrypt zatrzymuje się na istniejącym koncie, a wcześniejsze kroki zdążyły zduplikować wpisy (przykładowy wynik):",
+      "code": "anna@sklep02:~$ sudo infra/instaluj-stary.sh\n+ echo '203.0.113.51 sklep02.firma.example sklep02' >> /etc/hosts\n+ echo 'host sklep sklep 127.0.0.1/32 scram-sha-256' >> /etc/postgresql/16/main/pg_hba.conf\n+ useradd --system --home-dir /var/lib/sklep --shell /usr/sbin/nologin sklep\nuseradd: user 'sklep' already exists\nanna@sklep02:~$ grep -c sklep02 /etc/hosts; grep -c '^host sklep' /etc/postgresql/16/main/pg_hba.conf\n3\n3"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Strażniki i powtarzalny wynik",
+      "body": "Ten sam etap ze strażnikami — kolejne uruchomienia niczego nie dopisują ani nie przerywają skryptu (przykładowy wynik):",
+      "code": "anna@sklep02:~$ sed -n '/^etap_konta()/,/^}/p' infra/instaluj.sh | head -5\netap_konta() {\n    echo \"== konta\"\n    linia_w_pliku \"$ADRES $FQDN $NAZWA_HOSTA\" /etc/hosts\n    konto_systemowe sklep /var/lib/sklep\n    uruchom install -d -o sklep -g sklep -m 750 /var/lib/sklep\nanna@sklep02:~$ sudo infra/instaluj.sh konta baza; sudo infra/instaluj.sh konta baza | tail -1\n== konta\n== baza\nPODSUMOWANIE: bez zmian, czas 2 s\nanna@sklep02:~$ sudo awk '!seen[$0]++' /etc/hosts | sudo tee /etc/hosts.nowy > /dev/null && sudo mv /etc/hosts.nowy /etc/hosts\nanna@sklep02:~$ grep -c sklep02 /etc/hosts\n1"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Każdy serwer, który może trzeba będzie odtworzyć** — skrypt instalacyjny w repozytorium razem z plikami.\n- **Zmiana konfiguracji** — edycja w `pliki/`, commit, uruchomienie wybranego etapu.\n- **Dopisywanie linii, tworzenie kont i ról** — zawsze ze strażnikiem.\n- **Przeładowanie usług** — tylko po zmianie i po udanej walidacji (`-t`, `verify`).\n- **Sprawdzenie dryfu** — `instaluj.sh -n` na działającym serwerze.\n- **Wiele serwerów i zespół** — Ansible lub inne narzędzie zarządzania konfiguracją."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- `instaluj.sh` z plikami z `pliki/` odtwarza konfigurację sklep01 na dowolnej świeżej maszynie.\n- Skrypt jest idempotentny: sprawdza stan przed każdą zmianą, a drugie uruchomienie kończy się „bez zmian”.\n- `wgraj` porównuje pliki (`cmp -s`) i zgłasza zmianę, po której następuje walidacja i przeładowanie tylko tej usługi.\n- Tryb ścisły, `trap ERR`, dziennik i tryb `-n` czynią skrypt bezpiecznym i przejrzystym.\n- Skrypt bez strażników działa tylko raz — przy kolejnych uruchomieniach przerywa się lub duplikuje konfigurację."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
