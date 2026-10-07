@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Baza danych to na dysku zwykłe pliki — ale pliki szczególne: serwer trzyma część danych w pamięci, zapisuje zmiany najpierw do dziennika, a dopiero potem do plików tabel, i zakłada, że **tylko on** ma do nich dostęp. Notatki kursu wskazują główny katalog danych MySQL — **`/var/lib/mysql`** — z katalogami baz, plikami tabel i dziennikami binarnymi, i dodają najważniejsze ostrzeżenie: przed ręcznym kopiowaniem plików **MySQL musi być zatrzymany**.\n\nW tej lekcji przejrzysz katalog danych na `srv-test`: co oznaczają pliki `ibdata1`, `mysql.ibd`, `undo_00X`, katalogi `#innodb_redo` i `#innodb_temp`, dziennik binarny `binlog.*`, pliki `.ibd` tabel w katalogu bazy `strona`. Poznasz pliki konfiguracji (`/etc/mysql/my.cnf` i katalogi dołączane), sprawdzisz w SQL, gdzie są dane i ile zajmują, oraz zobaczysz, jak bezpiecznie przenieść katalog danych na osobny dysk (z zatrzymanym serwerem, z zachowaniem właściciela i z uwzględnieniem AppArmor) — i dlaczego kopiowanie plików działającego serwera daje kopię, której nie da się uruchomić."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`datadir`** — katalog danych, domyślnie `/var/lib/mysql/` (właściciel `mysql:mysql`, prawa `750`); `SELECT @@datadir;`.\n- **InnoDB** — domyślny silnik tabel (transakcje, klucze obce, odporność na awarie); każda tabela we własnym pliku **`.ibd`** w katalogu bazy (`/var/lib/mysql/strona/produkty.ibd`, `innodb_file_per_table=ON`).\n- **Pliki systemowe InnoDB** — `ibdata1` (przestrzeń systemowa), `mysql.ibd` (słownik danych i tabele systemowe), `undo_001`/`undo_002` (dziennik wycofań — stare wersje wierszy), `#innodb_redo/` (dziennik ponowień — zmiany zatwierdzone, ale jeszcze nie zapisane w plikach tabel), `#innodb_temp/` (tabele tymczasowe).\n- **Dziennik binarny** — `binlog.000001`, `binlog.index` — wszystkie zmiany danych w kolejności; służy do replikacji i odtwarzania do punktu w czasie; `binlog_expire_logs_seconds` (domyślnie 30 dni) usuwa stare pliki.\n- **Inne pliki** — `auto.cnf` (UUID serwera), `*.pem` (certyfikaty TLS wygenerowane przy instalacji), dziennik błędów `/var/log/mysql/error.log`, gniazdo `/var/run/mysqld/mysqld.sock`.\n- **Konfiguracja** — `/etc/mysql/my.cnf` → `!includedir /etc/mysql/conf.d/` i `/etc/mysql/mysql.conf.d/` (w pakietach Oracle — `mysqld.cnf` z `datadir`, `socket`, `log-error`, `pid-file`); sekcje `[mysqld]` (serwer), `[client]`, `[mysqldump]`.\n- **Zajętość** — `du -sh /var/lib/mysql/*` (z roota) lub SQL: `information_schema.tables` (`data_length + index_length`).\n- **AppArmor** — profil `/etc/apparmor.d/usr.sbin.mysqld` ogranicza, do jakich katalogów `mysqld` ma dostęp; zmiana `datadir` wymaga aliasu w `/etc/apparmor.d/tunables/alias` lub zmiany profilu."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Katalog danych to **zaplecze magazynu prowadzone przez jednego magazyniera** (serwer). Nowe dostawy magazynier najpierw zapisuje w **zeszycie przyjęć** (dziennik redo), żeby niczego nie zgubić przy awarii prądu, a na półki (pliki `.ibd`) układa je, gdy ma chwilę; stare wersje towaru odkłada na bok, dopóki ktoś mógłby o nie zapytać (undo). Jeśli w trakcie pracy wyniesiesz z zaplecza połowę półek i zeszyt sprzed godziny (kopia plików działającego serwera), nikt nie złoży z tego spójnego stanu magazynu. Dlatego notatki mówią: kopiowanie plików — tylko gdy magazynier skończył pracę i zamknął zaplecze (`systemctl stop mysql`)."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Zawartość `/var/lib/mysql` na `srv-test`",
+      "body": "Najważniejsze pliki i katalogi oraz droga zapisu zmiany:",
+      "code": " /var/lib/mysql/                       (mysql:mysql 750)\n |-- ibdata1             przestrzen systemowa InnoDB\n |-- mysql.ibd           slownik danych, uzytkownicy, uprawnienia\n |-- undo_001, undo_002  stare wersje wierszy (transakcje, MVCC)\n |-- #innodb_redo/       dziennik ponowien  (#ib_redo10 ...)\n |-- #innodb_temp/       tabele tymczasowe\n |-- binlog.000001..3    dziennik binarny (replikacja, odtwarzanie do punktu w czasie)\n |-- binlog.index\n |-- auto.cnf, *.pem     UUID serwera, certyfikaty TLS\n |-- mysql/ sys/ performance_schema/   bazy systemowe\n `-- strona/             BAZA strony\n      |-- artykuly.ibd   tabela (dane + indeksy)\n      `-- kontakty.ibd\n\n UPDATE kontakty ... COMMIT\n   -> pamiec (bufor InnoDB) -> #innodb_redo (zapis na dysk przy COMMIT) -> binlog\n   -> pozniej: zapis stron do kontakty.ibd   => pliki .ibd same w sobie NIE sa spojne w trakcie pracy"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Katalog danych i pliki konfiguracji",
+      "body": "Przegląd katalogu danych (wymaga roota), konfiguracja serwera i to samo z poziomu SQL (przykładowy wynik):",
+      "code": "anna@srv-test:~$ ls -ld /var/lib/mysql\ndrwxr-x--- 8 mysql mysql 4096 Oct  7 23:05 /var/lib/mysql\nanna@srv-test:~$ sudo ls /var/lib/mysql\n'#ib_16384_0.dblwr'  '#innodb_redo'   auto.cnf        binlog.index      client-cert.pem   mysql       performance_schema  public_key.pem   server-key.pem   undo_001\n'#ib_16384_1.dblwr'  '#innodb_temp'   binlog.000001   ca-key.pem        client-key.pem    mysql.ibd   private_key.pem     server-cert.pem  strona           undo_002\n ca.pem               ibdata1          binlog.000002   ibtmp1            mysql.sock.lock   sys\nanna@srv-test:~$ sudo ls -l /var/lib/mysql/strona/\n-rw-r----- 1 mysql mysql 114688 Oct  7 23:04 artykuly.ibd\n-rw-r----- 1 mysql mysql 131072 Oct  7 23:05 kontakty.ibd\nanna@srv-test:~$ grep -vE '^\\s*(#|$)' /etc/mysql/mysql.conf.d/mysqld.cnf\n[mysqld]\npid-file\t= /var/run/mysqld/mysqld.pid\nsocket\t\t= /var/run/mysqld/mysqld.sock\ndatadir\t\t= /var/lib/mysql\nlog-error\t= /var/log/mysql/error.log\nanna@srv-test:~$ mysql -u root -p -e \"SELECT @@datadir, @@innodb_file_per_table, @@log_bin, @@binlog_expire_logs_seconds/86400 AS binlog_dni\"\nEnter password:\n+-----------------+-------------------------+-----------+------------+\n| @@datadir       | @@innodb_file_per_table | @@log_bin | binlog_dni |\n+-----------------+-------------------------+-----------+------------+\n| /var/lib/mysql/ |                       1 |         1 |    30.0000 |\n+-----------------+-------------------------+-----------+------------+"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Zajętość baz i przeniesienie katalogu danych na osobny dysk",
+      "body": "Rozmiar baz w SQL i na dysku; potem przeniesienie danych na wolumin `/srv/mysql` (nowy dysk z rozdziału 25) — przy zatrzymanym serwerze, z aliasem AppArmor (przykładowy wynik):",
+      "code": "anna@srv-test:~$ mysql -u root -p -e \"SELECT table_schema AS baza, ROUND(SUM(data_length+index_length)/1024/1024,1) AS MB FROM information_schema.tables GROUP BY table_schema ORDER BY MB DESC\"\nEnter password:\n+--------------------+------+\n| baza               | MB   |\n+--------------------+------+\n| mysql              |  2.6 |\n| strona             |  0.2 |\n| sys                |  0.0 |\n| information_schema |  0.0 |\n| performance_schema |  0.0 |\n+--------------------+------+\nanna@srv-test:~$ sudo du -sh /var/lib/mysql\n196M\t/var/lib/mysql\nanna@srv-test:~$ sudo systemctl stop mysql\nanna@srv-test:~$ sudo rsync -aHAX /var/lib/mysql/ /srv/mysql/\nanna@srv-test:~$ sudo sed -i 's#^datadir\\t\\t= /var/lib/mysql#datadir\\t\\t= /srv/mysql#' /etc/mysql/mysql.conf.d/mysqld.cnf\nanna@srv-test:~$ echo 'alias /var/lib/mysql/ -> /srv/mysql/,' | sudo tee -a /etc/apparmor.d/tunables/alias\nalias /var/lib/mysql/ -> /srv/mysql/,\nanna@srv-test:~$ sudo systemctl restart apparmor && sudo systemctl start mysql\nanna@srv-test:~$ mysql -u root -p -Nse 'SELECT @@datadir'\nEnter password:\n/srv/mysql/\nanna@srv-test:~$ sudo mv /var/lib/mysql /var/lib/mysql.stary"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Fizyczna kopia lub przeniesienie katalogu danych",
+      "body": "1. Zatrzymaj serwer: `sudo systemctl stop mysql` — i sprawdź, że proces `mysqld` nie działa (`pgrep mysqld` pusty).\n2. Skopiuj katalog z zachowaniem właściciela i praw: `sudo rsync -aHAX /var/lib/mysql/ CEL/` (lub `cp -a`).\n3. Przy przeniesieniu: zmień `datadir` w `mysqld.cnf`, dodaj alias AppArmor (Ubuntu) lub kontekst SELinux (Rocky: `semanage fcontext -a -t mysqld_db_t \"/srv/mysql(/.*)?\"` + `restorecon`).\n4. Uruchom serwer i sprawdź `error.log` oraz `SELECT @@datadir`.\n5. Sprawdź aplikacje (logowanie, zapis danych) i dopiero po kilku dniach usuń starą kopię.\n6. Do codziennych kopii zapasowych nie używaj tej metody — wymaga przestoju; użyj `mysqldump` (lekcja 3)."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Kiedy zaglądasz do katalogu danych",
+      "body": "- **Planowanie miejsca** — rozmiar baz, tabel i dziennika binarnego; alarm przy zapełnianiu partycji (rozdział 28).\n- **Osobny dysk na dane** — przeniesienie `datadir` na wolumin LVM (łatwe powiększanie i migawki — rozdział 25).\n- **Migracja serwera** — fizyczna kopia przy zatrzymanym serwerze tej samej wersji MySQL.\n- **Diagnoza** — `error.log` przy problemach ze startem (brak miejsca, uszkodzony dziennik, błędne prawa).\n- **Porządkowanie dziennika binarnego** — `PURGE BINARY LOGS BEFORE NOW() - INTERVAL 7 DAY;` zamiast ręcznego usuwania plików.\n- **Bezpieczeństwo** — prawa `750 mysql:mysql`, katalog poza kopiami dostępnymi dla innych użytkowników."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Nie usuwaj „starych” plików ręcznie",
+      "body": "Katalog danych kusi do porządków: pliki `binlog.000042` zajmują gigabajty, `ibdata1` rośnie, a `#ib_16384_0.dblwr` wygląda na śmieć. Ręczne usunięcie któregokolwiek z tych plików przy działającym (albo nawet zatrzymanym) serwerze może uniemożliwić jego start lub uszkodzić dane — `binlog.index` nadal wskazuje usunięte pliki, a pliki `dblwr` (*doublewrite buffer*) chronią przed częściowo zapisanymi stronami po awarii. Dziennik binarny czyści się poleceniem SQL `PURGE BINARY LOGS` albo ustawieniem `binlog_expire_logs_seconds`; jeśli dziennik binarny nie jest potrzebny (brak replikacji i odtwarzania do punktu w czasie), można go wyłączyć (`disable_log_bin` w `[mysqld]`) — świadomie, wiedząc, że odbiera to możliwość odtworzenia zmian z ostatnich godzin. Plik `ibdata1` nie zmniejsza się po usunięciu danych — dlatego `innodb_file_per_table` (domyślne) jest tak ważne."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Kopia plików działającego serwera",
+      "body": "Najczęstszy błąd z notatek: kopia zapasowa robiona przez `cp -r /var/lib/mysql /backup/` lub `rsync` (rozdział 34) **bez zatrzymania** MySQL — np. w nocnym zadaniu, „bo i tak nikt wtedy nie pracuje”. Pliki `.ibd`, dziennik redo i undo są kopiowane w różnych momentach, a część zmian jest tylko w pamięci serwera. Taka kopia wygląda poprawnie (wszystkie pliki są, rozmiary się zgadzają) i wychodzi na jaw dopiero przy próbie odtworzenia: serwer nie startuje albo uruchamia odzyskiwanie po awarii i zgłasza uszkodzone strony. Drugi błąd: kopia przez `cp -r` jako root bez `-a` — pliki dostają właściciela `root` i serwer uruchamiany jako `mysql` nie może ich odczytać."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Kopia `datadir` w trakcie pracy serwera i próba odtworzenia",
+      "body": "Nocna „kopia” przez rsync działającego serwera; przy odtworzeniu na serwerze testowym MySQL nie startuje (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo crontab -l | grep mysql\n0 3 * * * rsync -a /var/lib/mysql/ /srv/kopie/mysql-pliki/\nanna@deb-lab:~$ sudo rsync -a srv-test:/srv/kopie/mysql-pliki/ /var/lib/mysql/ && sudo systemctl start mysql\nJob for mysql.service failed because the control process exited with error code.\nanna@deb-lab:~$ sudo grep -m2 -E 'ERROR|corrupt' /var/log/mysql/error.log | cut -c1-120\n2026-10-08T08:12:40.118412Z 1 [ERROR] [MY-012153] [InnoDB] Trying to access page number 4 in space 7, space name strona/kon\n2026-10-08T08:12:40.118650Z 1 [ERROR] [MY-011906] [InnoDB] Database page corruption on disk or a failed file read of page"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Kopia logiczna działającego serwera lub fizyczna po zatrzymaniu",
+      "body": "Codzienna kopia przez `mysqldump` (bez przestoju, lekcja 3); kopia fizyczna tylko przy zatrzymanym serwerze, np. przed aktualizacją (przykładowy wynik):",
+      "code": "anna@srv-test:~$ sudo crontab -l | grep -E 'mysql|kopia'\n0 3 * * * /usr/local/bin/kopia-mysql.sh\nanna@srv-test:~$ sudo systemctl stop mysql && pgrep -c mysqld; echo \"procesow mysqld: $?\"\n0\nprocesow mysqld: 1\nanna@srv-test:~$ sudo rsync -aHAX /srv/mysql/ /srv/kopie/mysql-przed-aktualizacja-$(date +%F)/ && sudo systemctl start mysql\nanna@srv-test:~$ systemctl is-active mysql\nactive"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Sprawdzenie, gdzie są dane** — `SELECT @@datadir;` (konfiguracja może wskazywać inny katalog niż domyślny).\n- **Rozmiar baz** — zapytanie do `information_schema.tables`; rozmiar całości — `sudo du -sh DATADIR`.\n- **Dane na osobnym dysku** — przeniesienie `datadir` przy zatrzymanym serwerze + AppArmor/SELinux.\n- **Codzienna kopia zapasowa** — `mysqldump` (lekcja 3), nie pliki.\n- **Kopia całego serwera przed aktualizacją lub migracją** — pliki po `systemctl stop mysql`.\n- **Miejsce zajmowane przez dziennik binarny** — `PURGE BINARY LOGS`/`binlog_expire_logs_seconds`, nigdy `rm`."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Dane MySQL leżą w `/var/lib/mysql` (`@@datadir`): pliki systemowe InnoDB, dziennik redo i undo, dziennik binarny i katalogi baz z plikami `.ibd` tabel.\n- Konfiguracja serwera jest w `/etc/mysql/my.cnf` i dołączanych katalogach (`mysql.conf.d/mysqld.cnf`).\n- Pliki działającego serwera nie są spójne — kopiowanie ich bez zatrzymania MySQL daje uszkodzoną kopię.\n- Przeniesienie `datadir`: zatrzymanie, `rsync -aHAX`, zmiana konfiguracji, alias AppArmor (lub kontekst SELinux), start i weryfikacja.\n- Plików w katalogu danych nie usuwa się ręcznie — dziennik binarny czyści się poleceniami SQL."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
