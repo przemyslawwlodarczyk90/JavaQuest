@@ -243,7 +243,22 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   tylko z 192.168.56.20; `conf.d/80-dziennik.conf` (log_connections). kopia-sklep.sh zapisuje też
   `globalne-DATA.sql` (pg_dumpall --globals-only). deb-lab: PostgreSQL 17.6 z PGDG (`/etc/apt/sources.list.d/pgdg.sources`),
   odtworzona baza sklep z kopii.
-  Pozostałe lekcje (`_lx_38`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_38_java_na_serwerze` (9 lekcji) — ZROBIONY (2026-10-08). lubuntu-nauka: Java — openjdk-21-jdk-headless +
+  jre (21.0.8), temurin-21-jdk (Adoptium), openjdk-17-jre-headless (dla `raporty-legacy.service`, Spring Boot 2.7,
+  pełna ścieżka do Javy 17); domyślna Java w trybie auto (21); `~/.bashrc` anny z JAVA_HOME, `/etc/environment` z
+  JAVA_HOME, `/etc/profile.d/java.sh` (JAVA_HOME z alternatywy javac), `/etc/profile.d/gradle.sh`; Maven 3.8.7 z apt,
+  wrapper projektu 3.9.11, Gradle 9.1.0 w `/opt/gradle-9.1.0` (+ dowiązanie /opt/gradle). sklep: szablon
+  **`sklep@.service`** (instancje `sklep@8080` i `sklep@8082`, `--server.port=%i`), drop-iny `java.conf` (pełna
+  ścieżka), `poswiadczenia.conf` (`LoadCredential=spring.datasource.password:/etc/sklep/poswiadczenia/...`,
+  `SPRING_CONFIG_IMPORT=optional:configtree:${CREDENTIALS_DIRECTORY}/`), hasło usunięte z sklep.env; JAVA_OPTS:
+  `-XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError
+  -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep`; `/etc/sklep/sklep-8082.env` dla instancji 8082;
+  wydania w **`/opt/sklep/releases/WERSJA/sklep.jar`** (1.2.0 … 1.4.0), dowiązanie `/opt/sklep/sklep.jar`, skrypt
+  `/usr/local/bin/wdroz-sklep.sh WERSJA JAR | --wycofaj WERSJA` (restart 8082 → 8080, readiness, retencja 5);
+  aktualnie działa 1.3.2 (po ręcznym wycofaniu z 1.4.0). srv-test: openjdk-21-jdk-headless, konto `ci` (/var/lib/ci,
+  `~/.m2/settings.xml` z lustrem nexus.firma.example), usługa **`raporty.service`** (konto raporty, /opt/raporty,
+  port 8090, sandbox z oceną 3.1, ExecStartPost czekające na readiness, łagodne zatrzymanie 30 s / TimeoutStopSec 45).
+  Pozostałe lekcje (`_lx_39`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -313,7 +328,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_38_java_na_serwerze`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_39_bezpieczenstwo`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.

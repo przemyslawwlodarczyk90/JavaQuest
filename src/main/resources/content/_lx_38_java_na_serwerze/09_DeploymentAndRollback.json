@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Wdrożenie nowej wersji to najbardziej ryzykowny moment w życiu aplikacji: większość awarii produkcyjnych zaczyna się od zmiany. Dlatego proces wdrożenia powinien odpowiadać na dwa pytania, zanim cokolwiek pójdzie nie tak: **jak wdrożyć bez przerwy dla klientów** i **jak w minutę wrócić do poprzedniej wersji**. W poprzednich rozdziałach przygotowaliśmy wszystkie klocki: katalog wydań `/opt/sklep/releases/` z dowiązaniem do bieżącej wersji (rozdział 33), dwie instancje `sklep@8080` i `sklep@8082` za Nginx z `upstream` (rozdział 36 i lekcja 6), czekanie na gotowość aplikacji (`readiness`) i łagodne zatrzymanie.\n\nW tej lekcji złożysz z nich **procedurę wdrożenia i wycofania**: wgranie wydania z sumą kontrolną, przełączenie dowiązania, restart instancji **po kolei** (najpierw zapasowa, potem główna — Nginx w tym czasie kieruje ruch do działającej), sprawdzenie zdrowia i automatyczne wycofanie, gdy nowa wersja nie wstaje. Zobaczysz, jak to wygląda w skrypcie `wdroz-sklep.sh`, jak wycofać zmianę ręcznie jednym poleceniem, ile wydań trzymać i dlaczego **migracje bazy danych** muszą być zgodne wstecz, żeby wycofanie w ogóle było możliwe."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Wydanie (release)** — niezmienny katalog lub plik konkretnej wersji: `/opt/sklep/releases/1.4.0/sklep.jar` (lub z datą); nigdy nie nadpisuje się działającego jara.\n- **Dowiązanie bieżące** — `/opt/sklep/sklep.jar -> releases/1.4.0/sklep.jar`; przełączenie atomowe: `ln -sfn` (lub `mv -T` nowego dowiązania).\n- **Wdrożenie stopniowe (rolling)** — instancje restartowane po jednej; reverse proxy kieruje ruch do działających (`max_fails`, `proxy_next_upstream`, instancja `backup` — rozdział 36).\n- **Blue-green** — dwa kompletne środowiska (np. porty 8080 i 8082), przełączenie ruchu w Nginx po sprawdzeniu nowego; wycofanie = przełączenie z powrotem.\n- **Sprawdzenie zdrowia** — `curl -fs http://127.0.0.1:PORT/actuator/health/readiness` (czeka `ExecStartPost` z lekcji 6), testy dymne (`/api/produkty`), wersja (`/actuator/info` z `build.version`).\n- **Wycofanie (rollback)** — przełączenie dowiązania na poprzednie wydanie + restart instancji tą samą procedurą; możliwe tylko przy wstecznie zgodnych migracjach bazy.\n- **Migracje expand/contract** — zmiany schematu w dwóch krokach: najpierw dodanie (nowa kolumna, stara nadal działa), w późniejszym wydaniu usunięcie; Flyway/Liquibase uruchamiane osobnym kontem (`sklep_migracje`, rozdział 37).\n- **Retencja wydań** — kilka ostatnich wydań na dysku (np. 5) do szybkiego wycofania."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Wdrożenie stopniowe to **wymiana kół w autobusie bez wysadzania pasażerów** — da się, jeśli autobus ma koła bliźniacze: zdejmujesz jedno, drugie niesie ciężar, zakładasz nowe, sprawdzasz, potem drugie. Dowiązanie do bieżącego wydania to **zwrotnica**: nowy i stary pociąg stoją na swoich torach, a przełączenie trwa ułamek sekundy w obie strony. Migracje expand/contract to **przebudowa mostu bez zamykania ruchu**: najpierw dobudowujesz nowy pas obok starego (oba działają), przenosisz ruch, a stary pas rozbierasz dopiero wtedy, gdy na pewno nikt nie będzie chciał nim wracać."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Wdrożenie stopniowe 1.3.2 → 1.4.0 z możliwością wycofania",
+      "body": "Kolejne kroki skryptu i stan ruchu w Nginx:",
+      "code": " /opt/sklep/releases/1.3.2/sklep.jar     /opt/sklep/releases/1.4.0/sklep.jar  (nowe, sha256 OK)\n /opt/sklep/sklep.jar -> releases/1.3.2  ==ln -sfn==>  releases/1.4.0\n\n upstream sklep_app { server 127.0.0.1:8080 max_fails=2 fail_timeout=10s;  server 127.0.0.1:8082 backup; }\n\n KROK                                   8080 (glowna)     8082 (zapasowa)    RUCH KLIENTOW\n 0. start                               1.3.2 UP          1.3.2 UP           -> 8080\n 1. przelacz dowiazanie na 1.4.0        1.3.2 UP          1.3.2 UP           -> 8080\n 2. restart 8082, czekaj na readiness   1.3.2 UP          1.4.0 UP           -> 8080\n 3. test dymny na 8082 (/actuator/info)                    wersja 1.4.0 ?     (nie -> WYCOFAJ)\n 4. restart 8080 (graceful stop)        restart...        1.4.0 UP           -> 8082 (backup)\n 5. czekaj na readiness 8080            1.4.0 UP          1.4.0 UP           -> 8080\n WYCOFANIE: ln -sfn releases/1.3.2 + ta sama procedura (kroki 2-5)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Wydania, dowiązanie i wersja działająca w instancjach",
+      "body": "Struktura katalogu wydań na `lubuntu-nauka` (od tej lekcji katalogi nazywane wersją zamiast datą jak w rozdziale 33) i sprawdzenie, która wersja działa w każdej instancji (przykładowy wynik):",
+      "code": "$ ls -l /opt/sklep/ /opt/sklep/releases/\n/opt/sklep/:\ndrwxr-xr-x 7 root sklep 4096 Oct  8 14:40 releases\nlrwxrwxrwx 1 root root    28 Oct  6 18:12 sklep.jar -> releases/1.3.2/sklep.jar\n\n/opt/sklep/releases/:\ndrwxr-xr-x 2 root sklep 4096 Sep 22 10:02 1.2.0\ndrwxr-xr-x 2 root sklep 4096 Sep 29 11:15 1.3.0\ndrwxr-xr-x 2 root sklep 4096 Oct  2 16:40 1.3.1\ndrwxr-xr-x 2 root sklep 4096 Oct  6 18:11 1.3.2\n$ grep ExecStart= /etc/systemd/system/sklep@.service | grep -o '\\-jar [^ ]*'\n-jar /opt/sklep/sklep.jar\n$ for p in 8080 8082; do echo \"$p: $(curl -s localhost:$p/actuator/info | grep -o '\"version\":\"[^\"]*\"')\"; done\n8080: \"version\":\"1.3.2\"\n8082: \"version\":\"1.3.2\"\n$ sudo sha256sum -c /tmp/sklep-1.4.0.jar.sha256\n/tmp/sklep-1.4.0.jar: OK"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Skrypt wdrożenia z automatycznym wycofaniem i ręczne wycofanie",
+      "body": "Skrypt `wdroz-sklep.sh` (restart instancji po kolei, sprawdzenie wersji, wycofanie przy błędzie), udane wdrożenie 1.4.0, nieudane 1.4.1 i ręczny powrót (przykładowy wynik):",
+      "code": "$ cat /usr/local/bin/wdroz-sklep.sh\n#!/bin/bash\n# Uzycie: wdroz-sklep.sh WERSJA PLIK_JAR   (lub: wdroz-sklep.sh --wycofaj WERSJA)\nset -euo pipefail\nR=/opt/sklep/releases; LINK=/opt/sklep/sklep.jar\npoprzednia=$(basename \"$(dirname \"$(readlink \"$LINK\")\")\")\ngotowa() { for i in $(seq 60); do curl -fs \"localhost:$1/actuator/health/readiness\" > /dev/null && return 0; sleep 2; done; return 1; }\nprzelacz() { ln -sfn \"releases/$1/sklep.jar\" \"$LINK\"; }\nrestartuj() { for p in 8082 8080; do systemctl restart \"sklep@$p\" && gotowa \"$p\" || return 1; done; }\nif [ \"$1\" = \"--wycofaj\" ]; then przelacz \"$2\"; restartuj; echo \"wycofano do $2\"; exit 0; fi\ninstall -d -o root -g sklep -m 755 \"$R/$1\" && install -o root -g sklep -m 644 \"$2\" \"$R/$1/sklep.jar\"\nprzelacz \"$1\"\nif restartuj && curl -s localhost:8082/actuator/info | grep -q \"\\\"version\\\":\\\"$1\\\"\"; then\n    ls -1d \"$R\"/*/ | sort -V | head -n -5 | xargs -r rm -rf; echo \"wdrozono $1 (poprzednia: $poprzednia)\"\nelse\n    echo \"BLAD wdrozenia $1 - wycofuje do $poprzednia\" >&2; przelacz \"$poprzednia\"; restartuj; exit 1\nfi\n$ sudo /usr/local/bin/wdroz-sklep.sh 1.4.0 /tmp/sklep-1.4.0.jar\nwdrozono 1.4.0 (poprzednia: 1.3.2)\n$ ls /opt/sklep/releases/; readlink /opt/sklep/sklep.jar\n1.2.0  1.3.0  1.3.1  1.3.2  1.4.0\nreleases/1.4.0/sklep.jar\n$ sudo /usr/local/bin/wdroz-sklep.sh 1.4.1 /tmp/sklep-1.4.1.jar; echo \"kod: $?\"\nBLAD wdrozenia 1.4.1 - wycofuje do 1.4.0\nkod: 1\n$ journalctl -u sklep@8082 --since '-5min' -o cat | grep -m1 -E 'APPLICATION FAILED|Caused by' | cut -c1-110\nCaused by: org.flywaydb.core.api.exception.FlywayValidateException: Validate failed: Migrations have failed validation\n$ grep -c '\" 502 ' /var/log/nginx/sklep-access.log\n0\n$ sudo /usr/local/bin/wdroz-sklep.sh --wycofaj 1.3.2\nwycofano do 1.3.2"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Wdrożenie nowej wersji na produkcję",
+      "body": "1. **Przed**: zbudowany i przetestowany artefakt z sumą SHA-256, zrzut bazy (rozdział 37), sprawdzenie, że migracje schematu są wstecznie zgodne (stara wersja zadziała na nowym schemacie).\n2. **Wgranie**: jar do nowego katalogu wydania (`/opt/sklep/releases/WERSJA/`), weryfikacja sumy; nigdy nie nadpisuj działającego pliku.\n3. **Przełączenie**: `ln -sfn` dowiązania bieżącego na nowe wydanie.\n4. **Restart po kolei**: najpierw instancja zapasowa → czekaj na `readiness` → test dymny (wersja, kluczowy endpoint); potem główna (ruch idzie do zapasowej) → `readiness`.\n5. **Weryfikacja**: logi aplikacji, błędy 5xx w `sklep-access.log` (rozdział 36), metryki; przez pierwsze minuty bądź gotów na wycofanie.\n6. **Wycofanie** (gdy coś nie działa): dowiązanie na poprzednie wydanie i ta sama procedura restartu; usuwaj stare wydania dopiero, gdy jest ich więcej niż ustalona liczba."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się ta wiedza",
+      "body": "- **Wdrożenia na maszyny wirtualne i serwery** — skrypt uruchamiany ręcznie lub przez CI (klucz z ograniczeniem `command=`, rozdział 33).\n- **Wdrożenia bez przestojów** — dwie instancje za Nginx lub load balancerem; więcej serwerów — ta sama procedura serwer po serwerze.\n- **Szybki powrót po błędzie** — wycofanie w minutę zamiast budowania „poprawki poprawki”.\n- **Zmiany schematu bazy** — expand/contract, osobne konto migracji, zrzut przed wdrożeniem.\n- **Narzędzia** — Ansible (rolling update z `serial: 1`), Capistrano-podobne katalogi wydań, w kontenerach — Kubernetes (rolling update, `readinessProbe` = ten sam endpoint Actuatora).\n- **Audyt** — log wdrożeń (kto, kiedy, jaka wersja) w dzienniku (`logger -t wdrozenie`) i w repozytorium."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Wycofanie a migracje bazy danych",
+      "body": "Przełączenie jara na poprzednią wersję zajmuje sekundy — ale baza danych nie „cofa się” razem z nim. Jeśli wersja 1.4.0 przy starcie wykonała migrację Flyway, która **usunęła** kolumnę lub zmieniła jej typ, wersja 1.3.2 po wycofaniu nie uruchomi się (Flyway odmówi walidacji albo zapytania trafią na nieistniejącą kolumnę) — wycofanie stanie się odtwarzaniem bazy z kopii, z utratą danych z ostatnich godzin. Dlatego zmiany schematu wdraża się techniką **expand/contract**: wydanie N dodaje nową kolumnę i zapisuje do obu (stara wersja nadal działa na tym schemacie), wydanie N+1 czyta już tylko z nowej, a dopiero wydanie N+2 usuwa starą — gdy wycofanie do N jest już nieprawdopodobne. W połączeniu z osobnym kontem migracji (rozdział 37) i zrzutem bazy przed każdym wdrożeniem (rozdział 37, lekcja 7) daje to bezpieczną ścieżkę powrotu."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Nadpisanie działającego jara i restart obu instancji naraz",
+      "body": "Dwa najczęstsze błędy przy ręcznych wdrożeniach. Pierwszy: `cp sklep.jar /opt/sklep/sklep.jar` na **działający** plik. JVM czyta klasy z jara leniwie — po nadpisaniu pliku działająca aplikacja przy pierwszym ładowaniu nowej klasy (rzadko używana funkcja, obsługa błędu) zgłasza dziwne błędy (`ZipException`, `NoClassDefFoundError`), a poprzedniej wersji nie ma już na dysku, więc nie ma do czego wrócić. Drugi: `systemctl restart sklep@8080 sklep@8082` naraz — przez czas startu (kilkanaście sekund) obie instancje są niedostępne i klienci dostają 502 z Nginx; a jeśli nowa wersja nie wstaje, nie działa nic."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Nadpisany jar i jednoczesny restart obu instancji",
+      "body": "Ręczne „wdrożenie” bez katalogu wydań — błędy w działającej aplikacji, przerwa dla klientów i brak poprzedniej wersji (przykładowy wynik):",
+      "code": "$ sudo cp /tmp/sklep-1.4.1.jar /opt/sklep/releases/1.3.2/sklep.jar\n$ journalctl -u sklep@8080 --since '-2min' -o cat | grep -m1 -E 'ZipException|NoClassDefFound' | cut -c1-100\njava.util.zip.ZipException: invalid LOC header (bad signature)\n$ sudo systemctl restart sklep@8080 sklep@8082\n$ grep -c '\" 502 ' /var/log/nginx/sklep-access.log\n214\n$ systemctl is-active sklep@8080 sklep@8082\nfailed\nfailed\n$ ls /opt/sklep/releases/1.3.2/\nsklep.jar\n# -> w katalogu 1.3.2 lezy teraz jar 1.4.1 - nie ma do czego wrocic bez kopii zapasowej"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Nowy katalog wydania i restart po kolei",
+      "body": "To samo wdrożenie skryptem: działający plik nietknięty, instancje restartowane pojedynczo, przy błędzie automatyczny powrót bez przerwy dla klientów (przykładowy wynik):",
+      "code": "$ sudo /usr/local/bin/wdroz-sklep.sh 1.4.1 /tmp/sklep-1.4.1.jar; echo \"kod: $?\"\nBLAD wdrozenia 1.4.1 - wycofuje do 1.4.0\nkod: 1\n$ systemctl is-active sklep@8080 sklep@8082\nactive\nactive\n$ for p in 8080 8082; do curl -s localhost:$p/actuator/info | grep -o '\"version\":\"[^\"]*\"'; done\n\"version\":\"1.4.0\"\n\"version\":\"1.4.0\"\n$ grep -c '\" 502 ' /var/log/nginx/sklep-access.log\n0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Każde wdrożenie** — nowy katalog wydania, weryfikacja sumy, przełączenie dowiązania, możliwość powrotu.\n- **Jedna instancja, krótka przerwa dopuszczalna** — restart z czekaniem na `readiness` i stroną 502 „przerwa techniczna” (rozdział 36).\n- **Bez przerwy dla klientów** — dwie instancje za Nginx i restart po kolei (rolling) lub blue-green.\n- **Nowa wersja nie wstaje lub zwraca błędy** — natychmiastowe wycofanie (`--wycofaj POPRZEDNIA`), analiza później.\n- **Zmiany schematu** — expand/contract + zrzut bazy przed wdrożeniem.\n- **Wiele serwerów** — automatyzacja (Ansible, CI) tej samej procedury, serwer po serwerze."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Każde wydanie trafia do własnego katalogu (`/opt/sklep/releases/WERSJA/`), a aplikacja uruchamia jar przez dowiązanie przełączane atomowo `ln -sfn`.\n- Wdrożenie bez przestoju: instancje restartowane po kolei (zapasowa, potem główna) z czekaniem na `readiness`, Nginx kieruje ruch do działającej.\n- Wycofanie to przełączenie dowiązania na poprzednie wydanie i ta sama procedura restartu — kilka ostatnich wydań zostaje na dysku.\n- Wycofanie działa tylko przy wstecznie zgodnych migracjach bazy (expand/contract) i ze zrzutem bazy przed wdrożeniem.\n- Nigdy nie nadpisuj działającego jara i nie restartuj wszystkich instancji naraz."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
