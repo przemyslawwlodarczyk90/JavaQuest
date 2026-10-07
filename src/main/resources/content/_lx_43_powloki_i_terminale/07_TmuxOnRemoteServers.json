@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Połączenie SSH jest kruche: laptop przechodzi w uśpienie, Wi-Fi gubi zasięg, VPN rozłącza się co kilka godzin, a pośredniczący firewall zamyka bezczynne połączenia. Gdy połączenie zostaje zerwane, `sshd` kończy sesję, a programy uruchomione w niej dostają sygnał **SIGHUP** i zwykle kończą działanie — w połowie importu bazy, aktualizacji pakietów, kopiowania danych czy migracji schematu. Skutki bywają gorsze niż brak działania: pół zaimportowanej bazy, przerwany `apt` z zablokowanym `dpkg`, niespójne pliki.\n\nRozwiązaniem jest uruchamianie długiej i ważnej pracy **wewnątrz tmux na serwerze**. Serwer tmux działa na maszynie zdalnej niezależnie od połączenia SSH — po zerwaniu wystarczy połączyć się ponownie i wykonać `tmux attach`. W tej lekcji ustawisz automatyczne podłączanie do sesji przy logowaniu (`tmux new -A`, `RemoteCommand` w `~/.ssh/config`), nauczysz się obsługiwać tmux zagnieżdżony w lokalnym tmux, zapiszesz wynik pracy do pliku (`pipe-pane`, `capture-pane`), poprowadzisz wspólną sesję z drugim administratorem i poznasz alternatywy dla zadań, które w ogóle nie potrzebują terminala (`systemd-run`, `nohup`)."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **SIGHUP** — sygnał „rozłączenia terminala” wysyłany procesom sesji po zamknięciu połączenia; domyślnie kończy proces. Programy w tmux go nie dostają, bo ich terminalem jest tmux, a nie sesja SSH.\n- **`tmux new -A -s NAZWA`** — podłącz do sesji `NAZWA`, a jeśli nie istnieje — utwórz ją; idealne do `ssh -t serwer tmux new -A -s praca`.\n- **`RemoteCommand` + `RequestTTY yes`** — w `~/.ssh/config` dla osobnego aliasu hosta (np. `srv-test-t`): każde logowanie od razu trafia do sesji tmux.\n- **Zagnieżdżony tmux** — lokalny tmux, a w nim SSH i tmux na serwerze: `Ctrl+b` trafia do **zewnętrznego**; `Ctrl+b Ctrl+b` przekazuje prefiks do wewnętrznego (np. `Ctrl+b Ctrl+b d` odłącza sesję na serwerze). Pomaga inny kolor lub położenie paska stanu na serwerach (`set -g status-style bg=red`).\n- **Zapis wyniku** — `tmux pipe-pane -o 'cat >> ~/logi/tmux-#S-#W.log'` (wszystko, co pojawia się w panelu, od teraz do pliku); `tmux capture-pane -p -S - > plik.txt` (cała dotychczasowa historia panelu).\n- **Wspólna sesja** — drugi użytkownik na tym samym koncie: `tmux attach -t NAZWA` (`-r` tylko do odczytu); na różnych kontach: gniazdo `tmux -S /srv/tmux/wspolne` z prawami grupy i (od tmux 3.3) `server-access -a LOGIN`.\n- **Logowanie a procesy użytkownika** — przy `KillUserProcesses=yes` w `/etc/systemd/logind.conf` systemd zabija procesy po wylogowaniu (także tmux); domyślnie w Ubuntu i Debianie `no`; obejście: `loginctl enable-linger` lub `systemd-run --scope --user tmux`.\n- **Alternatywy** — `systemd-run --unit=NAZWA POLECENIE` (zadanie jako jednostka systemd z logiem w dzienniku), `nohup POLECENIE > log 2>&1 &`, `mosh` (połączenie odporne na zmianę sieci)."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Praca przez SSH bez tmux jest jak **rozmowa telefoniczna z kucharzem, który gotuje według Twoich poleceń** — gdy połączenie się zrywa, kucharz odkłada wszystko i wychodzi z kuchni, zostawiając garnki na gazie. Z tmux wydajesz polecenia kucharzowi, który **ma przed sobą kartkę z przepisem i pracuje dalej**, nawet gdy rozmowa się urwie. Gdy oddzwonisz (`tmux attach`), mówi: „zupa gotowa, właśnie kroję chleb” — i możesz kontynuować dokładnie w tym miejscu, nawet z innego telefonu."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kto trzyma procesy: sesja SSH czy serwer tmux",
+      "body": "Co dzieje się z importem bazy po zerwaniu połączenia:",
+      "code": " BEZ tmux                                      Z tmux NA SERWERZE\n laptop ---ssh---> sshd (srv-test)             laptop ---ssh---> sshd (srv-test)\n                     +-- bash                                      +-- bash\n                          +-- mysql < zrzut.sql                         +-- tmux attach (klient)\n                                                                  serwer tmux (osobny proces)\n                                                                     +-- bash\n                                                                          +-- mysql < zrzut.sql\n [Wi-Fi znika]                                  [Wi-Fi znika]\n sshd konczy sesje -> SIGHUP                    sshd konczy sesje -> ginie tylko KLIENT tmux\n   -> bash i mysql koncza dzialanie               -> serwer tmux i mysql dzialaja dalej\n   -> pol bazy zaimportowane                    ssh srv-test; tmux attach -> widac postep\n\n ZAGNIEZDZENIE (lokalny tmux + tmux na serwerze)\n   Ctrl+b d          -> odlacza LOKALNA sesje (zewnetrzna)\n   Ctrl+b Ctrl+b d   -> odlacza sesje na SERWERZE (wewnetrzna)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Sesja na serwerze i powrót po rozłączeniu",
+      "body": "Automatyczne podłączanie do sesji `praca` na srv-test i powrót po zerwaniu połączenia (przykładowy wynik):",
+      "code": "~ > grep -A6 '^Host srv-test-t' ~/.ssh/config\nHost srv-test-t\n    HostName 192.168.56.20\n    Port 2222\n    User anna\n    RequestTTY yes\n    RemoteCommand tmux new -A -s praca\n~ > ssh srv-test-t\n# na srv-test, w sesji tmux \"praca\"\nanna@srv-test:~$ sudo apt-get -y full-upgrade 2>&1 | tee ~/logi/upgrade-$(date +%F).log\n(...fragment wyniku)\nUnpacking linux-image-6.8.0-86-generic (6.8.0-86.87) ...\nclient_loop: send disconnect: Broken pipe\n~ > ssh srv-test-t\n# ta sama sesja - apt pracuje dalej\nSetting up linux-image-6.8.0-86-generic (6.8.0-86.87) ...\nProcessing triggers for libc-bin (2.39-0ubuntu8.6) ...\nanna@srv-test:~$ tmux ls\npraca: 1 windows (created Fri Oct  9 23:21:40 2026) (attached)"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Zapis wyniku, zagnieżdżenie i wspólna sesja",
+      "body": "Zapis panelu do pliku, wyróżniony pasek stanu na serwerze i sesja współdzielona z drugim administratorem w trybie tylko do odczytu (przykładowy wynik):",
+      "code": "anna@srv-test:~$ cat ~/.tmux.conf\nset -g status-style \"bg=colour52,fg=white\"        # czerwony pasek = SERWER (odroznienie od lokalnego tmux)\nset -g status-left \"[#H:#S] \"\nset -g history-limit 100000\nanna@srv-test:~$ tmux pipe-pane -o 'cat >> ~/logi/tmux-#S-#W.log'\nanna@srv-test:~$ mysql sklep_raporty < /srv/kopie/raporty/import-2026-10.sql\nanna@srv-test:~$ ls -lh ~/logi/tmux-praca-*.log | awk '{print $5, $9}'\n4,1K /home/anna/logi/tmux-praca-bash.log\nanna@srv-test:~$ tmux capture-pane -p -S - | wc -l\n1283\nanna@srv-test:~$ # sesja dla dwoch kont: gniazdo w katalogu grupy adminow\nanna@srv-test:~$ stat -c '%A %U %G %n' /srv/tmux\ndrwxrws--- root admini /srv/tmux\nanna@srv-test:~$ tmux -S /srv/tmux/awaria new -d -s awaria\nanna@srv-test:~$ chgrp admini /srv/tmux/awaria && chmod 660 /srv/tmux/awaria\nanna@srv-test:~$ tmux -S /srv/tmux/awaria server-access -a -r kuba\n# kuba (na swoim koncie): tmux -S /srv/tmux/awaria attach -t awaria  -> widzi ekran anny, nie moze pisac\nanna@srv-test:~$ tmux -S /srv/tmux/awaria list-clients\n/dev/pts/1: awaria [180x46 xterm-256color] (attached,UTF-8)\n/dev/pts/3: awaria [180x46 xterm-256color] (attached,read-only,UTF-8)"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak bezpiecznie wykonać długą operację na serwerze",
+      "body": "1. Zaloguj się i od razu wejdź do tmux: `ssh -t serwer tmux new -A -s praca` (lub alias z `RemoteCommand`).\n2. Jeśli wynik będzie potrzebny później, włącz zapis: `tmux pipe-pane -o 'cat >> ~/logi/...'` albo `polecenie | tee plik.log`.\n3. Uruchom operację (aktualizacja, import, migracja, `rsync`).\n4. Możesz się odłączyć (`prefiks d`; przy zagnieżdżeniu `Ctrl+b Ctrl+b d`) albo zamknąć laptopa — praca trwa.\n5. Po powrocie: `ssh -t serwer tmux new -A -s praca` — ten sam ekran, ten sam postęp.\n6. Po zakończeniu zapisz historię panelu, jeśli potrzebna (`tmux capture-pane -p -S - > plik`), i zamknij sesję (`exit` lub `tmux kill-session`).\n7. Dla zadań bez interakcji rozważ `systemd-run --unit=NAZWA` — log w dzienniku, stan w `systemctl status`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Typowe zastosowania tmux na serwerze",
+      "body": "- **Aktualizacje systemu** — `apt full-upgrade`, `dnf upgrade` (aktualizacja wydania `do-release-upgrade` sama uruchamia się w GNU screen przy pracy przez SSH).\n- **Operacje na bazach** — import i eksport zrzutów, `VACUUM FULL`, migracje schematu, odbudowa indeksów.\n- **Kopiowanie danych** — `rsync`, `scp`, `zfs send` trwające godzinami.\n- **Diagnoza awarii w zespole** — wspólna sesja, drugi administrator patrzy w trybie tylko do odczytu.\n- **Stałe stanowisko na serwerze przesiadkowym** (bastion) — sesje do wielu maszyn w oknach tmux, dostępne z dowolnego miejsca.\n- **Praca przez niestabilne łącze** — tmux na serwerze, opcjonalnie `mosh` zamiast `ssh`."
+    },
+    {
+      "type": "NOTE",
+      "heading": "tmux to nie usługa",
+      "body": "tmux chroni przed zerwaniem połączenia, ale nie przed restartem serwera, zabiciem procesu przez OOM killera ani wylogowaniem przy `KillUserProcesses=yes`. Nie nadaje się też do uruchamiania aplikacji „na stałe” — aplikacja w oknie tmux nie wystartuje po restarcie, nie ma limitów zasobów, automatycznego restartu ani logów w dzienniku, a następca nie wie, że działa „gdzieś w tmux u anny”. Stałe procesy (sklep, raporty) uruchamia się jako usługi systemd (rozdział 22 i 38); jednorazowe zadania bez interakcji — przez `systemd-run --unit=import-cennika --property=... polecenie` (log: `journalctl -u import-cennika`). tmux jest narzędziem dla **człowieka przy terminalu**: interaktywnych, długich operacji, które chcesz obserwować."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Długa operacja uruchomiona bezpośrednio w sesji SSH",
+      "body": "Najczęstszy scenariusz: „to potrwa tylko chwilę” — import bazy, `apt full-upgrade` czy migracja uruchomione wprost w sesji SSH. Po kilkunastu minutach VPN się rozłącza lub laptop zasypia, `sshd` kończy sesję, a proces dostaje SIGHUP. `mysql` przerywa import w połowie (część tabel jest, części nie), `apt` zostawia pakiety w stanie częściowo skonfigurowanym (`dpkg was interrupted, you must manually run 'sudo dpkg --configure -a'`). Co gorsza, nie widać, w którym miejscu operacja się zatrzymała, bo wynik zniknął razem z terminalem. Nawyk na każdy serwer: **zanim uruchomisz coś, co trwa dłużej niż minutę lub czego nie da się bezpiecznie przerwać — wejdź do tmux**."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Import bazy przerwany zerwaniem połączenia",
+      "body": "Import uruchomiony bezpośrednio w sesji SSH; po rozłączeniu baza jest niekompletna (przykładowy wynik):",
+      "code": "~ > ssh srv-test\nanna@srv-test:~$ mysql sklep_raporty < /srv/kopie/raporty/import-2026-10.sql\nclient_loop: send disconnect: Broken pipe\n~ > ssh srv-test\nanna@srv-test:~$ pgrep -af 'mysql sklep_raporty' || echo \"import nie dziala\"\nimport nie dziala\nanna@srv-test:~$ mysql -N -e \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='sklep_raporty'\"\n7\nanna@srv-test:~$ grep -c '^CREATE TABLE' /srv/kopie/raporty/import-2026-10.sql\n12"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Import w sesji tmux na serwerze",
+      "body": "To samo zerwanie połączenia — import trwa dalej, po powrocie widać jego zakończenie (przykładowy wynik):",
+      "code": "~ > ssh -t srv-test tmux new -A -s import\nanna@srv-test:~$ time mysql sklep_raporty < /srv/kopie/raporty/import-2026-10.sql\nclient_loop: send disconnect: Broken pipe\n~ > ssh -t srv-test tmux new -A -s import\nanna@srv-test:~$ time mysql sklep_raporty < /srv/kopie/raporty/import-2026-10.sql\n\nreal\t18m42.113s\nuser\t0m51.004s\nsys\t0m6.320s\nanna@srv-test:~$ mysql -N -e \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='sklep_raporty'\"\n12"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Interaktywna, długa operacja przez SSH** — tmux na serwerze (`ssh -t serwer tmux new -A -s praca`).\n- **Każde logowanie na dany serwer ma trafiać do tmux** — alias hosta z `RemoteCommand` i `RequestTTY yes`.\n- **Lokalny tmux i tmux na serwerze** — `Ctrl+b Ctrl+b` dla wewnętrznego, inny kolor paska na serwerze.\n- **Potrzebny ślad z pracy** — `pipe-pane` lub `tee` do pliku, `capture-pane -p -S -` po fakcie.\n- **Zadanie bez interakcji** — `systemd-run --unit=...` (dziennik, status) lub `nohup`; aplikacja na stałe — usługa systemd.\n- **Wspólna diagnoza** — gniazdo `-S` z prawami grupy i `server-access -r` dla obserwatora."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Zerwanie SSH kończy sesję i wysyła SIGHUP — procesy uruchomione wprost w sesji zwykle giną w połowie pracy.\n- Serwer tmux działa na maszynie zdalnej niezależnie od połączenia; `ssh -t serwer tmux new -A -s praca` łączy lub tworzy sesję.\n- Przy zagnieżdżeniu `Ctrl+b Ctrl+b` przekazuje prefiks do tmux na serwerze; pomaga wyróżniony pasek stanu.\n- `pipe-pane` i `capture-pane` zapisują wynik pracy; gniazdo `-S` i `server-access` pozwalają współdzielić sesję.\n- tmux nie zastępuje usług systemd — do zadań bez interakcji służy `systemd-run`, do stałych procesów — jednostki."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
