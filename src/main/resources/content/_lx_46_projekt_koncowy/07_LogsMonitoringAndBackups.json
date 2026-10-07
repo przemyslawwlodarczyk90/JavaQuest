@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Serwer, który działa, to dopiero połowa sukcesu. Druga połowa to wiedza, **że** działa (monitoring), **co** się na nim działo (logi) i **czy** da się go odtworzyć po awarii (kopie zapasowe). Szósty etap projektu domyka te trzy obszary na sklep01: trwały i ograniczony rozmiarem dziennik systemd, rotację logów Nginx, cykliczne sprawdzanie zdrowia aplikacji, ważności certyfikatu, miejsca na dysku i stanu usług z powiadomieniem przy problemie, a także codzienną kopię bazy z retencją, wysyłaną poza serwer.\n\nNajważniejsza zasada tej lekcji: **kopia, której nie odtworzono, nie jest kopią**. Skrypty kopii potrafią przez miesiące „działać” — timer kończy się sukcesem, pliki powstają — a w środku jest pusty lub uszkodzony zrzut, bo błąd jednego polecenia w potoku zginął po drodze. Dlatego oprócz kopii zbudujesz **próbę odtworzenia**: zrzut ładowany do bazy testowej i porównanie liczby wierszy. Wykorzystasz rozdziały 22 (timery), 27–28 (logi), 34 (rsync), 37 (bazy) i 41–42 (skrypty)."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Dziennik systemd** — trwały w `/var/log/journal`; limit `SystemMaxUse=1G` w `/etc/systemd/journald.conf.d/90-sklep01.conf`; `journalctl -u sklep`, `--since`, `-p warning`, `journalctl --disk-usage`.\n- **Logi Nginx** — `/var/log/nginx/access.log`, `error.log`, rotowane przez `logrotate` (`/etc/logrotate.d/nginx`: codziennie, 14 kopii, kompresja).\n- **Sprawdzanie stanu** — timer co minutę uruchamia `sprawdz-sklep.sh`: gotowość (`/actuator/health/readiness`), dni do wygaśnięcia certyfikatu, zajętość dysku, jednostki w stanie `failed`; wynik przez `logger -t sprawdz-sklep`, kod `1` przy problemie.\n- **Powiadomienia** — `OnFailure=powiadom@%n.service` w jednostce sprawdzającej; szablon `powiadom@.service` wysyła wiadomość (webhook komunikatora lub e-mail).\n- **Kopia bazy** — `pg_dump -Fc` (format własny, skompresowany, do `pg_restore`) do `/var/backups/sklep/sklep-DATA.dump`; timer `kopia-bazy.timer` o 02:30 UTC; retencja `find -mtime +6 -delete`.\n- **Kopia poza serwerem** — `rsync` z kluczem przeznaczonym tylko do kopii na `kopie.firma.example`, po stronie odbiorcy ograniczonym do jednego katalogu (`rrsync`).\n- **Próba odtworzenia** — `pg_restore -l` (spis zawartości), odtworzenie do bazy `sklep_proba` i porównanie liczności tabel; cyklicznie (np. co tydzień) timerem.\n- **`set -o pipefail`** — kod wyjścia potoku to kod pierwszego polecenia, które zawiodło — bez tego błąd `pg_dump` w `pg_dump | gzip` ginie."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Logi, monitoring i kopie to **czarna skrzynka, kontrolki i koło zapasowe** samochodu. Czarna skrzynka (dziennik) zapisuje, co się działo, ale musi mieć ograniczoną pojemność, żeby nie zająć bagażnika. Kontrolki (monitoring) zapalają się, zanim silnik stanie, a nie po fakcie. Koło zapasowe (kopia) ma sens tylko wtedy, gdy jest napompowane i pasuje do auta — dlatego co jakiś czas trzeba je **założyć na próbę**. Wiele osób odkrywa, że ich zapas jest przebity, dopiero na poboczu autostrady."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Logi, monitoring i kopie na sklep01",
+      "body": "Co, kiedy i dokąd:",
+      "code": " LOGI\n   journald (trwaly, max 1G)   <- sklep.service, nginx, postgresql, sshd, sprawdz-sklep, kopia-bazy\n   /var/log/nginx/*.log        <- logrotate: codziennie, 14 kopii, gzip\n   /var/log/postgresql/*.log   <- logrotate: co tydzien\n\n MONITORING (co 1 min)          sprawdz-sklep.timer -> sprawdz-sklep.service (oneshot)\n   readiness   curl 127.0.0.1:8080/actuator/health/readiness == UP\n   certyfikat  dni do konca >= 14\n   dysk        / i /var < 85 %\n   uslugi      systemctl --failed == 0\n     blad -> exit 1 -> OnFailure=powiadom@sprawdz-sklep.service -> webhook zespolu\n\n KOPIE\n   02:30 UTC  kopia-bazy.timer:  pg_dump -Fc -> /var/backups/sklep/sklep-2026-10-12.dump\n                                 weryfikacja pg_restore -l, rozmiar > 1 MB\n                                 retencja 7 dni  ->  rsync -> kopie.firma.example:/kopie/sklep01/\n   nd 04:00   proba-odtworzenia.timer:  pg_restore -> baza sklep_proba -> porownanie licznosci"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Dziennik, rotacja logów i sprawdzanie stanu",
+      "body": "Limit dziennika, rotacja Nginx, skrypt sprawdzający i jego timer z powiadomieniem (przykładowy wynik):",
+      "code": "anna@sklep01:~$ cat /etc/systemd/journald.conf.d/90-sklep01.conf\n[Journal]\nSystemMaxUse=1G\nanna@sklep01:~$ sudo systemctl restart systemd-journald; journalctl --disk-usage\nArchived and active journals take 212.0M in the file system.\nanna@sklep01:~$ grep -E 'daily|rotate|compress$' /etc/logrotate.d/nginx\n\tdaily\n\trotate 14\n\tcompress\nanna@sklep01:~$ sed -n '/^main()/,/^}/p' /usr/local/bin/sprawdz-sklep.sh\nmain() {\n    local blad=0 dni zajete\n    curl -fs -m 5 127.0.0.1:8080/actuator/health/readiness | grep -q '\"UP\"' || { loguj err \"aplikacja nie jest gotowa\"; blad=1; }\n    dni=$(( ($(date -d \"$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/sklep.firma.example/cert.pem | cut -d= -f2)\" +%s) - $(date +%s)) / 86400 ))\n    (( dni >= 14 )) || { loguj err \"certyfikat wygasa za $dni dni\"; blad=1; }\n    while read -r zajete; do (( ${zajete%\\%} < 85 )) || { loguj err \"dysk zajety w $zajete\"; blad=1; }; done < <(df --output=pcent / /var | tail -n +2)\n    [[ -z $(systemctl --failed --plain --no-legend) ]] || { loguj err \"jednostki failed: $(systemctl --failed --plain --no-legend | awk '{print $1}' | xargs)\"; blad=1; }\n    return \"$blad\"\n}\nanna@sklep01:~$ systemctl cat sprawdz-sklep.service | grep -E 'OnFailure|ExecStart'\nOnFailure=powiadom@%n.service\nExecStart=/usr/local/bin/sprawdz-sklep.sh\nanna@sklep01:~$ systemctl list-timers sprawdz-sklep.timer kopia-bazy.timer --no-pager | awk 'NR>1 && NF {print $(NF-1)}'\nsprawdz-sklep.timer\nkopia-bazy.timer"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Kopia bazy z weryfikacją i próba odtworzenia",
+      "body": "Skrypt kopii z `pipefail`, kopią poza serwerem i próbą odtworzenia do bazy testowej (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sed -n '/^main()/,/^}/p' /usr/local/bin/kopia-bazy.sh\nmain() {\n    local plik=/var/backups/sklep/sklep-$(date -u +%F).dump\n    runuser -u postgres -- pg_dump -Fc sklep > \"$plik.tmp\"\n    runuser -u postgres -- pg_restore -l \"$plik.tmp\" > /dev/null || zakoncz 1 \"zrzut nieczytelny\"\n    (( $(stat -c %s \"$plik.tmp\") > 1000000 )) || zakoncz 1 \"zrzut podejrzanie maly: $(stat -c %s \"$plik.tmp\") B\"\n    mv \"$plik.tmp\" \"$plik\"\n    find /var/backups/sklep -name 'sklep-*.dump' -mtime +6 -delete\n    rsync -a --delete -e \"ssh -i /root/.ssh/kopie_sklep01\" /var/backups/sklep/ kopie@kopie.firma.example:sklep01/\n    loguj info \"kopia OK: ${plik##*/} ($(du -h \"$plik\" | cut -f1))\"\n}\nanna@sklep01:~$ grep -n 'pipefail' /usr/local/bin/kopia-bazy.sh\n3:set -euo pipefail\nanna@sklep01:~$ sudo systemctl start kopia-bazy.service; journalctl -t kopia-bazy.sh -n 1 -o cat\nkopia OK: sklep-2026-10-12.dump (38M)\nanna@sklep01:~$ sudo /usr/local/bin/proba-odtworzenia.sh\nodtworzono sklep-2026-10-12.dump do sklep_proba w 41 s\ntabela        produkcja  proba\nprodukty      214        214\nzamowienia    18342      18342\nklienci       2911       2911\nWYNIK: zgodne"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zapewnić logi, monitoring i kopie",
+      "body": "1. Ustaw limit dziennika (`SystemMaxUse=`) i sprawdź rotację logów Nginx i PostgreSQL.\n2. Napisz skrypt sprawdzający (gotowość, certyfikat, dysk, jednostki `failed`) z kodem wyjścia `1` przy problemie.\n3. Uruchamiaj go timerem co minutę; `OnFailure=` z szablonem powiadomienia; przetestuj, zatrzymując aplikację.\n4. Napisz skrypt kopii z `set -euo pipefail`: zrzut do pliku tymczasowego, weryfikacja (`pg_restore -l`, rozmiar), zmiana nazwy, retencja.\n5. Wysyłaj kopie poza serwer kluczem z ograniczonymi uprawnieniami po stronie odbiorcy.\n6. Zaplanuj cykliczną próbę odtworzenia do osobnej bazy i porównanie danych; jej wynik też monitoruj.\n7. Zapisz procedurę odtworzenia (krok po kroku) w repozytorium infrastruktury."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydają się te mechanizmy",
+      "body": "- **Diagnoza awarii** — `journalctl -u sklep --since` i logi Nginx z tego samego okresu.\n- **Wczesne ostrzeganie** — kończący się certyfikat, zapełniający się dysk, aplikacja niegotowa po wdrożeniu.\n- **Odtworzenie po błędzie użytkownika** — zrzut z wczoraj odtworzony do bazy pomocniczej i wybiórczy import danych.\n- **Awaria serwera** — nowy serwer ze skryptu (lekcja 8) + ostatnia kopia z `kopie.firma.example`.\n- **Audyt i zgodność** — dowód wykonywania kopii i prób odtworzenia w dzienniku.\n- **Większa skala** — Prometheus i Grafana, centralne logi (rozdział 39), kopie ciągłe PostgreSQL (WAL, pgBackRest)."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Kopie „3-2-1” i odtworzenie do punktu w czasie",
+      "body": "Zasada **3-2-1** mówi: trzy kopie danych, na dwóch różnych nośnikach, w tym jedna poza lokalizacją. Na sklep01 mamy dane produkcyjne, zrzuty lokalne (7 dni) i kopię na `kopie.firma.example` — warto dodać jeszcze kopię niezmienialną (np. magazyn obiektowy z blokadą usuwania), która przetrwa także włamanie, w którym ktoś usunie kopie z serwera. Codzienny zrzut oznacza, że w najgorszym razie tracisz dane z jednego dnia. Jeśli to za dużo, potrzebna jest archiwizacja WAL i odtwarzanie do punktu w czasie (PITR) — narzędzia takie jak pgBackRest czy Barman. Ile danych firma może stracić (RPO) i jak długo może trwać odtworzenie (RTO), musi ustalić biznes, nie administrator."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Kopia, która „działa”, a jest pusta",
+      "body": "Klasyczny skrypt kopii: `pg_dump sklep | gzip > /var/backups/sklep/sklep-$(date +%F).sql.gz`. Bez `set -o pipefail` kod wyjścia potoku to kod **ostatniego** polecenia — `gzip`, który zawsze się udaje. Gdy `pg_dump` zawiedzie (zmienione hasło, uprawnienia, brak miejsca na dysku tymczasowym, baza niedostępna), skrypt kończy się sukcesem, timer jest zielony, a codziennie powstaje plik o rozmiarze kilkudziesięciu bajtów — skompresowany pusty strumień. Retencja posłusznie usuwa starsze, dobre kopie. Problem wychodzi dopiero przy próbie odtworzenia po awarii. Obrona: `pipefail`, weryfikacja zrzutu (`pg_restore -l`, minimalny rozmiar), monitorowanie wyniku i cykliczna próba odtworzenia."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Tydzień „udanych” kopii po 20 bajtów",
+      "body": "Po zmianie uprawnień `pg_dump` zawodzi, ale skrypt bez `pipefail` kończy się sukcesem (przykładowy wynik):",
+      "code": "anna@sklep01:~$ cat /usr/local/bin/kopia-stara.sh\n#!/bin/bash\npg_dump -U sklep -h 127.0.0.1 sklep | gzip > /var/backups/sklep/sklep-$(date +%F).sql.gz\nfind /var/backups/sklep -name '*.sql.gz' -mtime +6 -delete\nanna@sklep01:~$ systemctl show kopia-stara.service -p Result -p ExecMainStatus\nResult=success\nExecMainStatus=0\nanna@sklep01:~$ ls -l /var/backups/sklep/ | awk 'NR>1 {print $5, $9}' | tail -3\n20 sklep-2026-10-10.sql.gz\n20 sklep-2026-10-11.sql.gz\n20 sklep-2026-10-12.sql.gz\nanna@sklep01:~$ sudo journalctl -u kopia-stara --since -1d -o cat | grep -m1 'pg_dump:'\npg_dump: error: connection to server at \"127.0.0.1\", port 5432 failed: fe_sendauth: no password supplied"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "`pipefail`, weryfikacja zrzutu i zgłoszony błąd",
+      "body": "Ten sam problem z uprawnieniami — nowy skrypt kończy się błędem, nie usuwa dobrych kopii, a monitoring powiadamia zespół (przykładowy wynik):",
+      "code": "anna@sklep01:~$ sudo systemctl start kopia-bazy.service; systemctl show kopia-bazy.service -p Result -p ExecMainStatus\nResult=exit-code\nExecMainStatus=1\nanna@sklep01:~$ journalctl -t kopia-bazy.sh -n 2 -o cat\npg_dump: error: connection to server on socket \"/var/run/postgresql/.s.PGSQL.5432\" failed: FATAL:  permission denied for database \"sklep\"\nzrzut nieczytelny\nanna@sklep01:~$ ls -l /var/backups/sklep/ | awk 'NR>1 {print $5, $9}' | tail -2\n39124511 sklep-2026-10-10.dump\n39208736 sklep-2026-10-11.dump\nanna@sklep01:~$ journalctl -u 'powiadom@*' --since -5min -o cat | tail -1\npowiadomienie wyslane: kopia-bazy.service - failed"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Logi aplikacji i usług** — dziennik systemd z limitem rozmiaru; logi Nginx z `logrotate`.\n- **Wykrywanie problemów** — skrypt sprawdzający co minutę z `OnFailure=` i powiadomieniem.\n- **Kopia bazy** — `pg_dump -Fc` z `pipefail`, weryfikacją i retencją, kopia poza serwerem.\n- **Pewność, że kopia działa** — cykliczna próba odtworzenia i porównanie danych.\n- **Mała dopuszczalna utrata danych** — archiwizacja WAL i PITR (pgBackRest, Barman).\n- **Wiele serwerów** — centralny monitoring i logi zamiast skryptów na każdym serwerze."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Dziennik systemd jest trwały i ograniczony (`SystemMaxUse=`); logi Nginx rotuje `logrotate`.\n- Skrypt sprawdzający uruchamiany timerem co minutę zgłasza problemy kodem wyjścia, a `OnFailure=` wysyła powiadomienie.\n- Kopia bazy: `pg_dump -Fc` do pliku, weryfikacja, retencja i wysyłka poza serwer — wszystko w skrypcie z `set -euo pipefail`.\n- Bez `pipefail` błąd `pg_dump` w potoku ginie, a skrypt codziennie tworzy puste kopie.\n- Kopię uznaje się za działającą dopiero po udanej próbie odtworzenia."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
