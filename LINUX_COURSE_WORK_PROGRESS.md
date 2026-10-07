@@ -340,7 +340,12 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   powiadom@), kopia-bazy (02:30 UTC, pg_dump -Fc, rsync na kopie.firma.example), proba-odtworzenia (nd 04:00);
   `kontrola-sklep01.sh`. Repozytorium `~/infra/sklep01` na laptopie (README, pliki/, instaluj.sh idempotentny,
   kontrola-zewnetrzna.sh, cwiczenie-odtworzenia.sh — RTO 14 min). sklep02 (203.0.113.51) — kopia testowa ze skryptu.
-  **KROK 2 (teoria) ZAKOŃCZONY** dla wszystkich lekcji poza 32/07-09 (nmap — czekają na decyzję użytkownika). Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  **KROK 2 (teoria) ZAKOŃCZONY DLA WSZYSTKICH 437 LEKCJI** (2026-10-12). Lekcje 32/07-09 za zgodą użytkownika przeniesione
+  z tematów nmap na audyt własnych systemów: `07_OpenPortsAudit` (ss/lsof, `~/infra/porty-oczekiwane.txt`,
+  `~/bin/porty-roznice.sh`, JDWP raporty-legacy przeniesiony na 127.0.0.1), `08_ExposedServicesAndBanners`
+  (server_tokens off, SERVER_ERROR_INCLUDE_STACKTRACE=never, Actuator: health,info,metrics + port zarządzania
+  127.0.0.1:9080), `09_LocalNetworkInventory` (arp-scan, dzierżawy dnsmasq, `~/infra/urzadzenia.csv`, nieznany host
+  kali-kuba 192.168.56.117); zmienione slugi w ChapterSeedData i plan w LINUX_COURSE_STAGE_PROMPT.md. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -400,7 +405,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 - Narzędzie: `scripts/content-migration/lx_build_practice.js <plik.txt> <lekcja.json>` (format `#EX` P:/H:/S:,
   `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
   poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
-- Stan: `_lx_01/01_WhatIsLinux` — 30/100 GOTOWE (pilotaż). Pozostałe lekcje — 0/0.
+- Stan: `_lx_01/01` — 30/100, `_lx_01/02` — 20/60 GOTOWE. Pozostałe lekcje — 0/0 (kolejność: po kolei od 01/03).
 - **DECYZJA UŻYTKOWNIKA (2026-10-12): dwa poziomy, przypisane per rozdział** (bez trzeciego poziomu; „zależy mi na
   solidnym materiale, nawet do nauki”):
   - **PEŁNY = 30 ćwiczeń / 100 pytań** — rozdziały 03-07, 10-18, 21, 22, 24-28, 30-42, 45.
@@ -410,8 +415,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   - Wyjątek: `_lx_01/01_WhatIsLinux` zostaje 30/100 (pilotaż już gotowy).
   - Budowanie: `node scripts/content-migration/lx_build_practice.js PLIK.txt LEKCJA.json 20 60` dla poziomu niepełnego
     (skrypt przyjmuje oczekiwane liczby jako 3. i 4. argument; domyślnie 30/100).
-- Lekcje 32/07-09 (nmap): użytkownik chce uzupełnić wszystkie lekcje; dwie próby napisania tych trzech lekcji zostały
-  zatrzymane przez filtr bezpieczeństwa — wymagają innego ujęcia tematu (do ustalenia z użytkownikiem).
+- Lekcje 32/07-09: przepisane na audyt własnych systemów (decyzja użytkownika 2026-10-12: „rób wszystko”).
 
 ## Następny krok
 
