@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Wszystkie dotychczasowe narzędzia pokazywały **skutki**: `ss` — że gniazdo istnieje, `nc` — że połączenie się udało albo nie, nmap — jak port wygląda z zewnątrz. Czasem to za mało: klient twierdzi, że wysyła żądanie, serwer twierdzi, że nic nie dostał; zapytanie DNS „czasem” trwa 5 sekund; połączenie z bazą zrywa się po minucie bezczynności. Wtedy trzeba zobaczyć **same pakiety** — co faktycznie przechodzi przez kartę sieciową, w jakiej kolejności i z jakimi flagami. Do tego służy **tcpdump**: przechwytuje ruch na interfejsie, filtruje go i wypisuje skrótowo albo zapisuje do pliku `.pcap`, który otworzysz później w Wiresharku.\n\nW tej lekcji wybierzesz interfejs, zbudujesz filtry (host, port, protokół, kierunek), przeczytasz linię tcpdump (znacznik czasu, adresy, flagi TCP `[S]`, `[S.]`, `[.]`, `[P.]`, `[F.]`, `[R]`), zobaczysz trójstronne uzgadnianie połączenia i odmowę `RST`, podejrzysz zapytanie DNS i zawartość nieszyfrowanego HTTP, a na koniec zapiszesz przechwycenie do pliku z rotacją. Przechwytujemy wyłącznie ruch własnego laboratorium."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **Instalacja i uprawnienia** — `sudo apt install tcpdump`; przechwytywanie wymaga roota (lub uprawnień `CAP_NET_RAW`/`CAP_NET_ADMIN`), więc zwykle `sudo tcpdump`.\n- **Interfejs** — `-i enp0s8`, `-i any` (wszystkie, bez adresów MAC), `tcpdump -D` (lista interfejsów).\n- **Wyjście** — `-n` (bez zamiany adresów na nazwy — szybciej i bez dodatkowego ruchu DNS), `-nn` (także bez nazw portów), `-c 20` (zakończ po 20 pakietach), `-v`/`-vv` (więcej pól nagłówka), `-A` (zawartość jako ASCII), `-X` (hex + ASCII), `-e` (adresy MAC), `-tttt` (pełna data i godzina), `-s 0` (cały pakiet — domyślne w nowych wersjach).\n- **Zapis i odczyt** — `-w plik.pcap` (zapis surowych pakietów), `-r plik.pcap` (odczyt), `-C 100` (nowy plik co 100 MB), `-W 5` (z `-C`: najwyżej 5 plików, nadpisywanych w kółko), `-G 3600` (nowy plik co godzinę, z `%F-%H` w nazwie; z `-W` tcpdump kończy pracę po N plikach), `-Z anna` (po otwarciu interfejsu zmień użytkownika).\n- **Filtry BPF** — `host 192.168.56.20`, `src`/`dst host`, `net 192.168.56.0/24`, `port 5432`, `portrange 8000-8100`, `tcp`/`udp`/`icmp`/`arp`, łączone `and`/`or`/`not` i nawiasami (w cudzysłowie): `'tcp port 80 and not host 10.0.2.2'`; flagi: `'tcp[tcpflags] & (tcp-syn|tcp-rst) != 0'`.\n- **Flagi TCP w wyniku** — `[S]` SYN (prośba o połączenie), `[S.]` SYN-ACK, `[.]` sam ACK, `[P.]` dane (PUSH+ACK), `[F.]` zakończenie (FIN), `[R]`/`[R.]` reset (odmowa lub zerwanie).\n- **Wireshark / tshark** — graficzny (i tekstowy) analizator plików `.pcap` z dekodowaniem setek protokołów; tcpdump na serwerze + Wireshark na laptopie to standardowy duet."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Jeśli `ss` to lista rozmów telefonicznych w toku, a `nc` — próbne połączenie, to tcpdump jest **podsłuchem na linii z nagrywarką**: słyszysz każde słowo obu stron w kolejności, w jakiej padło, łącznie z „halo?” (SYN), „słucham” (SYN-ACK), „pomyłka” (RST) i „do widzenia” (FIN). Filtr BPF to polecenie dla nagrywarki: „nagrywaj tylko rozmowy z tym numerem”. I podobnie jak podsłuch telefonu — wolno go zakładać tylko na **własnej** linii albo za zgodą właściciela, bo nagrywasz także treść cudzych rozmów."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jak czytać linię tcpdump i przebieg połączenia TCP",
+      "body": "Rozbiór jednej linii i pełny przebieg krótkiego połączenia HTTP:",
+      "code": " 12:21:07.415203 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [S], seq 3011..., length 0\n |               |  |                    | |                  |            |              |\n czas            |  zrodlo: adres.port   | cel: adres.port    flagi TCP    numer sekw.    bajty danych\n                 protokol warstwy 3      kierunek\n\n KLIENT (srv-test :48712)                        SERWER (lubuntu-nauka :80)\n   [S]   ---------------------------------------->        \"chce sie polaczyc\"\n         <----------------------------------------  [S.]  \"zgoda\"\n   [.]   ---------------------------------------->        polaczenie nawiazane\n   [P.]  --- GET / HTTP/1.1 (length 78) ---------->\n         <--- HTTP/1.1 200 OK (length 612) -------  [P.]\n   [F.]  ---------------------------------------->        \"koncze\"\n         <----------------------------------------  [F.]\n   [.]   ---------------------------------------->\n\n PORT ZAMKNIETY:   [S] ---->    <---- [R.]        (refused - lekcja 11)\n ZAPORA DROP:      [S] ---->  [S] ---->  [S] ---->  (retransmisje, brak odpowiedzi)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Instalacja, interfejsy i pierwsze przechwycenie z filtrem",
+      "body": "Na `lubuntu-nauka` podglądasz ruch do Nginx na karcie host-only, podczas gdy z `srv-test` ktoś wykonuje `curl http://192.168.56.10/` (przykładowy wynik):",
+      "code": "$ sudo apt install -y tcpdump > /dev/null 2>&1; tcpdump --version | head -1\ntcpdump version 4.99.4\n$ sudo tcpdump -D | head -4\n1.enp0s3 [Up, Running, Connected]\n2.enp0s8 [Up, Running, Connected]\n3.any (Pseudo-device that captures on all interfaces) [Up, Running]\n4.lo [Up, Running, Loopback]\n$ sudo tcpdump -i enp0s8 -nn -c 10 'tcp port 80'\ntcpdump: verbose output suppressed, use -v[v]... for full protocol decode\nlistening on enp0s8, link-type EN10MB (Ethernet), snapshot length 262144 bytes\n12:21:07.415203 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [S], seq 3011736405, win 64240, options [mss 1460,sackOK,TS val 912384 ecr 0,nop,wscale 7], length 0\n12:21:07.415241 IP 192.168.56.10.80 > 192.168.56.20.48712: Flags [S.], seq 1720548811, ack 3011736406, win 65160, options [mss 1460,sackOK,TS val 401233 ecr 912384,nop,wscale 7], length 0\n12:21:07.415612 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [.], ack 1, win 502, length 0\n12:21:07.415700 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [P.], seq 1:79, ack 1, win 502, length 78: HTTP: GET / HTTP/1.1\n12:21:07.415722 IP 192.168.56.10.80 > 192.168.56.20.48712: Flags [.], ack 79, win 509, length 0\n12:21:07.421980 IP 192.168.56.10.80 > 192.168.56.20.48712: Flags [P.], seq 1:613, ack 79, win 509, length 612: HTTP: HTTP/1.1 200 OK\n12:21:07.422304 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [.], ack 613, win 498, length 0\n12:21:07.422511 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [F.], seq 79, ack 613, win 501, length 0\n12:21:07.422601 IP 192.168.56.10.80 > 192.168.56.20.48712: Flags [F.], seq 613, ack 80, win 509, length 0\n12:21:07.422893 IP 192.168.56.20.48712 > 192.168.56.10.80: Flags [.], ack 614, win 501, length 0\n10 packets captured\n10 packets received by filter\n0 packets dropped by kernel"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Odmowa RST, zapytania DNS, treść HTTP i zapis do pliku z rotacją",
+      "body": "Diagnoza trzech sytuacji: połączenie do zamkniętego portu 5432, zapytanie DNS do dnsmasq na `srv-test`, podgląd treści żądania do sklepu na `lo`; na koniec przechwycenie ruchu PostgreSQL do plików do analizy w Wiresharku (przykładowy wynik):",
+      "code": "$ sudo tcpdump -i enp0s8 -nn -c 2 'tcp port 5432'\nlistening on enp0s8, link-type EN10MB (Ethernet), snapshot length 262144 bytes\n12:30:02.118034 IP 192.168.56.10.51544 > 192.168.56.20.5432: Flags [S], seq 2201995113, win 64240, length 0\n12:30:02.118410 IP 192.168.56.20.5432 > 192.168.56.10.51544: Flags [R.], seq 0, ack 2201995114, win 0, length 0\n2 packets captured\n$ sudo tcpdump -i enp0s8 -nn -c 2 'udp port 53'\nlistening on enp0s8, link-type EN10MB (Ethernet), snapshot length 262144 bytes\n12:31:40.502117 IP 192.168.56.10.41022 > 192.168.56.20.53: 28411+ A? srv-docker.lab.local. (38)\n12:31:40.502689 IP 192.168.56.20.53 > 192.168.56.10.41022: 28411* 1/0/0 A 192.168.56.30 (54)\n2 packets captured\n$ sudo tcpdump -i lo -nn -A -c 4 'tcp dst port 8080 and tcp[tcpflags] & tcp-push != 0' | grep -E '^(GET|POST|Host|X-Forwarded-For)'\nPOST /api/zamowienia HTTP/1.1\nHost: sklep.lab.local\nX-Forwarded-For: 192.168.56.20\n$ sudo tcpdump -i enp0s8 -nn -w /var/tmp/pg-%F-%H.pcap -G 3600 -Z tcpdump 'tcp port 5432' &\n[1] 23108\n# -> nowy plik co godzine; stare usuwa np. find /var/tmp -name \"pg-*.pcap\" -mmin +1440 -delete\n$ ls -l /var/tmp/*.pcap\n-rw-r--r-- 1 tcpdump tcpdump 1843200 Oct  7 12:58 /var/tmp/pg-2026-10-07-12.pcap\n$ sudo tcpdump -nn -r /var/tmp/pg-2026-10-07-12.pcap 'tcp[tcpflags] & (tcp-rst|tcp-fin) != 0' | head -2\nreading from file /var/tmp/pg-2026-10-07-12.pcap, link-type EN10MB (Ethernet), snapshot length 262144\n12:41:15.009761 IP 192.168.56.20.5432 > 192.168.56.10.38144: Flags [R], seq 912377410, win 0, length 0"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak zdiagnozować problem siecią krok po kroku z tcpdump",
+      "body": "1. Ustal, na której maszynie i karcie przechwytywać: `ip route get ADRES` pokaże interfejs (rozdział 31); najlepiej przechwytuj **po obu stronach** połączenia.\n2. Zbuduj wąski filtr: `host ADRES and port PORT` — bez filtra wynik zaleją inne pakiety (na serwerze przez SSH — także Twoja własna sesja; dodaj `not port 22`).\n3. Uruchom `sudo tcpdump -i KARTA -nn 'FILTR'`, odtwórz problem (np. `curl` z klienta), zatrzymaj `Ctrl+C`.\n4. Odczytaj wzorzec: brak pakietów po stronie serwera → ruch nie dociera (trasa, zapora po drodze); `[S]` bez odpowiedzi → zapora lub usługa nie odbiera; `[R]` → nikt nie nasłuchuje lub aplikacja zrywa połączenie; dane płyną, ale długo → sprawdź czasy (`-tttt`, różnice między pakietami).\n5. Dla złożonych przypadków zapisz plik: `-w problem.pcap`, skopiuj go na laptop (`scp`, rozdział 34) i otwórz w Wiresharku.\n6. Zatrzymaj przechwytywanie w tle (`kill %1`) i usuń pliki `.pcap` — zawierają cudze dane."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie przydaje się tcpdump",
+      "body": "- **„Czy pakiety w ogóle dochodzą?”** — rozstrzyga spór sieć kontra aplikacja.\n- **Zapory i NAT** — porównanie ruchu przed i za zaporą, przekierowania Dockera (interfejs `docker0`).\n- **DNS** — opóźnienia, brakujące odpowiedzi, zapytania do niewłaściwego serwera (`udp port 53`).\n- **Zrywane połączenia aplikacji Javy** — RST po czasie bezczynności (zapora lub load balancer gubi stan), problemy z pulą połączeń do bazy.\n- **Analiza protokołów** — nieszyfrowane HTTP między Nginx a aplikacją na `lo`, nagłówki `X-Forwarded-*`.\n- **Dowody do zgłoszeń** — plik `.pcap` dla dostawcy usługi lub zespołu sieciowego."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Ruch szyfrowany i ruch na `lo`",
+      "body": "Przechwytywanie ruchu HTTPS czy SSH pokaże nagłówki IP i TCP (kto, z kim, kiedy, ile bajtów, flagi), ale **nie treść** — ta jest zaszyfrowana. Dla diagnozy to często wystarcza (czy połączenie się nawiązało, kto je zerwał, ile trwał handshake TLS). Treść zobaczysz tylko w ruchu nieszyfrowanym — np. między Nginx a aplikacją na `127.0.0.1:8080` (interfejs `lo`, nie `enp0s8`!). To częsty błąd: ruch do adresu lokalnego nigdy nie przechodzi przez fizyczną kartę, więc `tcpdump -i enp0s8 port 8080` niczego nie pokaże. Druga uwaga: przy `-i any` tcpdump nie widzi nagłówków Ethernet (link-type `LINUX_SLL2`) — adresów MAC tak nie odczytasz. Trzecia: na zajętym serwerze komunikat `N packets dropped by kernel` oznacza, że bufor nie nadążał — zawęź filtr albo zapisuj do pliku (`-w`), zamiast wypisywać na ekran."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Pułapki: podsłuch cudzego ruchu, rozmiar plików i zwrotne DNS",
+      "body": "**Prawo i prywatność** — tcpdump zapisuje także treść nieszyfrowanych połączeń: hasła z protokołów bez TLS, ciasteczka sesyjne, dane osobowe w żądaniach. Przechwytywanie cudzego ruchu (sieć kawiarni, firmowa sieć bez zlecenia) to nie diagnostyka, tylko podsłuch — art. 267 §3 Kodeksu karnego dotyczy właśnie zakładania urządzeń podsłuchowych na sieć. Pliki `.pcap` z produkcji traktuj jak dane wrażliwe. **Zapełnienie dysku** — `-w` bez `-C`/`-W`/`-G` na ruchliwym serwerze potrafi w godzinę zapełnić partycję i zatrzymać inne usługi. **Brak `-n`** — każdy adres wywołuje zapytanie zwrotne DNS, które samo generuje ruch (widoczny w przechwyceniu, jeśli łapiesz port 53) i spowalnia wyjście."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Przechwytywanie bez filtra i bez limitu do katalogu domowego",
+      "body": "Na serwerze produkcyjnym przez SSH: bez filtra (łapie własną sesję SSH, która generuje kolejne pakiety), bez `-n`, z zapisem całego ruchu bez rotacji (przykład — NIE wykonuj na produkcji):",
+      "code": "anna@serwer:~$ sudo tcpdump -i any\n# -> kazda linia wypisana przez SSH generuje nowe pakiety SSH -> lawina wyniku\nanna@serwer:~$ sudo tcpdump -i any -w ~/wszystko.pcap &\n# -> po kilku godzinach:\nanna@serwer:~$ df -h /home | tail -1\n/dev/sda2        29G   29G     0 100% /\n# -> pelny dysk: PostgreSQL i aplikacja nie moga zapisywac; w pliku hasla i dane klientow"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Wąski filtr, bez własnej sesji SSH, limit pakietów i rotacja",
+      "body": "Filtr na konkretny host i port, wykluczenie SSH, limit liczby pakietów przy podglądzie i rotacja przy zapisie (przykładowy wynik):",
+      "code": "anna@serwer:~$ sudo tcpdump -i enp0s3 -nn -c 50 'host 10.0.2.15 and tcp port 5432 and not port 22' | tail -3\n12:52:10.311207 IP 10.0.2.15.5432 > 10.0.2.20.40118: Flags [P.], seq 1:130, ack 92, win 509, length 129\n50 packets captured\n0 packets dropped by kernel\nanna@serwer:~$ sudo tcpdump -i enp0s3 -nn -w /var/tmp/pg.pcap -C 50 -W 4 -Z tcpdump 'tcp port 5432' &\n[1] 23544\nanna@serwer:~$ ls /var/tmp/ | grep pcap\npg.pcap0\npg.pcap1\n# -> najwyzej 4 pliki po 50 MB (200 MB), potem nadpisywane od najstarszego"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co wybrać",
+      "body": "- **Czy gniazdo istnieje, kto nasłuchuje** — `ss`/`lsof` (lekcje 4-5), nie tcpdump.\n- **Czy port odpowiada** — `nc -zv` (lekcja 11).\n- **Co faktycznie przechodzi przez sieć, w jakiej kolejności, kto zrywa połączenie** — tcpdump z wąskim filtrem.\n- **Dłuższa analiza, wiele protokołów, statystyki** — `tcpdump -w` na serwerze + Wireshark na laptopie.\n- **Ruch między Nginx a aplikacją** — `-i lo`; ruch z sieci — konkretna karta (`ip route get`).\n- **Zawsze** — tylko własny ruch lub za zgodą; pliki `.pcap` usuwaj po analizie."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- tcpdump przechwytuje pakiety na interfejsie: `sudo tcpdump -i KARTA -nn -c N 'FILTR'`.\n- Filtry BPF (`host`, `port`, `tcp`/`udp`, `and`/`or`/`not`, flagi TCP) zawężają wynik — bez nich nie da się nic odczytać.\n- Flagi: `[S]` → `[S.]` → `[.]` to nawiązanie połączenia, `[P.]` dane, `[F.]` zakończenie, `[R]` odmowa lub zerwanie; `[S]` bez odpowiedzi — zapora.\n- `-w` zapisuje do `.pcap` (z rotacją `-C`/`-W`/`-G`), `-r` odczytuje; pliki analizuje się w Wiresharku.\n- Ruch do `127.0.0.1` łap na `lo`; treść szyfrowaną widać tylko jako nagłówki; przechwytuj wyłącznie własny ruch."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }

@@ -172,11 +172,14 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   NetworkManager, połączenie „hostonly” na enp0s8: 192.168.56.10/24 + fd00:56::10/64, never-default,
   DNS 192.168.56.20, search lab.local; zapis `/etc/netplan/90-NM-6f1c2a7e-....yaml`), ping/tracepath/mtr,
   dig/host/nslookup. Po migracji sklep.firma.example = 203.0.113.40 (AAAA 2001:db8:4c2a:10::40), TTL 60.
-  Rozdział `_lx_32_diagnostyka_sieci` — CZĘŚCIOWO (2026-10-07): gotowe lekcje 01-06 (netstat, -plnt, potoki
-  i uprawnienia, ss, lsof -i, podstawy nmap — skany tylko własnego laboratorium i scanme.nmap.org).
-  Lekcje 07-12 PUSTE. Lekcje 07-09 (rodzaje skanów TCP/UDP, wykrywanie usług i systemu, skrypty NSE)
-  wstrzymane — generowanie treści o technikach skanowania zostało zatrzymane przez filtr bezpieczeństwa;
-  wymagają decyzji użytkownika co do zakresu (np. wersja czysto defensywna/koncepcyjna).
+  Rozdział `_lx_32_diagnostyka_sieci` — PRAWIE GOTOWY (2026-10-07): lekcje 01-06 i 10-12 gotowe (netstat,
+  -plnt, potoki i uprawnienia, ss, lsof -i, podstawy nmap; 10 legalność skanowania + Zenmap/ndiff, plik zakresu
+  `~/skany/zakres-2026-10.txt` na srv-test; 11 netcat — warianty, `nc -zv -w`, prowizoryczny serwer, UDP, `/dev/tcp`;
+  12 tcpdump — filtry BPF, flagi TCP, `-i lo` dla ruchu Nginx→sklep, `-w`/`-C`/`-W`/`-G`, Wireshark).
+  Lekcje 07-09 (rodzaje skanów TCP/UDP, wykrywanie usług i systemu, skrypty NSE) PUSTE — generowanie treści
+  zatrzymał filtr bezpieczeństwa DWUKROTNIE (2026-10-06 i 2026-10-07, także przy ujęciu „audyt własnego
+  laboratorium”). Nie próbować ponownie bez decyzji użytkownika (np. napisze sam, scali tematy z lekcją 06
+  w ogólnym zarysie albo lekcje zostaną usunięte ze struktury).
   Pozostałe lekcje (`_lx_33`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
@@ -238,10 +241,16 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
   poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
 - Stan: `_lx_01/01_WhatIsLinux` — 30/100 GOTOWE (pilotaż). Pozostałe lekcje — 0/0.
+- **Do decyzji (sugestia użytkownika z 2026-10-07): nie każda lekcja potrzebuje 30/100** — „niektóre tematy po
+  macoszemu, a niektóre porządnie”. Propozycja poziomów: **A** (główne polecenia: grep, find, sed/awk, prawa,
+  systemctl, ssh, rsync, ip...) 30/100; **B** (standardowe, m.in. nano/Vim) ok. 15/40; **C** (teoretyczne/poboczne:
+  rozdział 2, historia, legalność, Zenmap, „czym jest X”) ok. 5/15. Przed krokiem 3: przypisać poziom każdej
+  lekcji w tabeli i dać użytkownikowi do akceptacji; walidacja w `lx_build_practice.js` (dziś sztywne 30/100)
+  do dostosowania.
 
 ## Następny krok
 
-**Krok 2 — teoria: dokończyć `_lx_32` (lekcje 10-12; 07-09 po decyzji użytkownika), potem `_lx_33_ssh`**, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_33_ssh`** (lekcje 32/07-09 czekają na decyzję użytkownika), potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
