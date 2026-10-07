@@ -309,7 +309,19 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   srv-test: `~/.tmux.conf` z czerwonym paskiem, alias `srv-test-t` (RemoteCommand tmux new -A -s praca) w
   ~/.ssh/config anny na lubuntu-nauka, `/srv/tmux` (grupa admini), baza `sklep_raporty` (import-2026-10.sql, 12
   tabel), `~/.screenrc`, screen 4.9.1. rocky-lab: EPEL + screen 4.8.
-  Pozostałe lekcje (`_lx_44`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
+  Rozdział `_lx_44_wsl` (9 lekcji) — ZROBIONY (2026-10-10). laptop-anna (Windows 11 w wersji ANGIELSKIEJ — wyniki
+  poleceń Windows po angielsku, bez polskich znaków w kodzie; prompt `PS C:\Users\anna>`, w WSL `anna@laptop-anna:~$`):
+  WSL 2.6.1.0, jądro 6.6.87.2-1, WSLg 1.0.66; dystrybucje: **Ubuntu-24.04** (domyślna, systemd domyślnie, przeniesiona
+  do `D:\wsl\ubuntu`), **Debian** (skonwertowany z WSL1 do WSL2, systemd włączony ręcznie, PostgreSQL 15,
+  `/etc/binfmt.d/WSLInterop.conf`, timer użytkownika `zrzut-sklep`, zadanie Harmonogramu „WSL Debian”),
+  AlmaLinux-9, docker-desktop; klon Ubuntu-test usunięty. `/etc/wsl.conf` Ubuntu: `[boot] systemd=true`,
+  `[interop] appendWindowsPath=false` (VS Code dopisany do PATH w ~/.profile), `[automount] options=metadata,umask=22,fmask=11`.
+  `.wslconfig`: memory=8GB, processors=4, swap=4GB, vmIdleTimeout, autoMemoryReclaim=gradual, **networkingMode=mirrored**;
+  reguła zapory Hyper-V `sklep-8080`. W Ubuntu: openjdk-21-jdk (pełne) + maven, visualvm, x11-apps, klucze SSH
+  skopiowane do `~/.ssh` (z C:), git `core.autocrlf input` + credential.helper GCM z Windows, projekt w
+  `~/projekty/sklep` (`.gitattributes` eol=lf), `~/bin/srodowisko.sh` (wizytówka środowiska). app01: KVM, 2 GB RAM,
+  strefa Etc/UTC; srv-test: VirtualBox, 2 CPU, ~4 GB. Docker Desktop na laptopie (obraz eclipse-temurin:21-jre).
+  Pozostałe lekcje (`_lx_45`…`_lx_46`) nadal PUSTE. Ćwiczenia i quiz — 0 wszędzie (krok 3).
 - **Uwaga do weryfikacji live (2026-10-02):** port 5432 zajmuje teraz kontener Postgresa innego
   projektu (`offerbrowserprototype-postgres-1`) — NIE uruchamiaj na nim backendu platformy
   (ContentReset czyści tabele treści). Do czasu zwolnienia portu weryfikacja = build skryptem
@@ -379,7 +391,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 2 — teoria: `_lx_44_wsl`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
+**Krok 2 — teoria: `_lx_45_kontenery_i_docker`**, potem kolejne (lekcje 32/07-09 czekają na decyzję użytkownika). Dyrektywa 2026-10-07: pracować bez pytania o zgodę także między rozdziałami; dużo commitów, BEZ push, bez stopki współautorstwa, potem kolejne rozdziały
 po kolei (dyrektywa użytkownika 2026-10-04: „zrób wszystkie lekcje”, bez pytania o zgodę między
 rozdziałami). Ćwiczenia i quiz dopiero w kroku 3 (liczby do potwierdzenia z użytkownikiem). Commit
 po każdym rozdziale, komunikat po polsku, bez stopki o współautorstwie.
