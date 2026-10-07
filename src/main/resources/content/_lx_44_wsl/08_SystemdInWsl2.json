@@ -1,5 +1,81 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Wprowadzenie",
+      "body": "Na serwerze pierwszym procesem po starcie jądra (PID 1) jest **systemd** — uruchamia usługi, timery, montowania i pilnuje ich przez cały czas działania systemu (rozdział 22). WSL przez lata działał inaczej: zamiast systemd jako PID 1 startował własny, mały proces `init` Microsoftu, który uruchamiał po prostu powłokę użytkownika. Skutek: `systemctl` kończył się komunikatem `System has not been booted with systemd as init system (PID 1). Can't operate.`, a usługi uruchamiało się ręcznie (`sudo service postgresql start`), przez `nohup` albo w tmux. W WSL1 systemd nie może działać w ogóle — nie ma tam jądra Linuksa.\n\nOd 2022 roku WSL2 obsługuje systemd: wystarczy `systemd=true` w sekcji `[boot]` pliku `/etc/wsl.conf` i restart dystrybucji. Obraz Ubuntu w WSL ma tę opcję włączoną domyślnie, inne dystrybucje (np. Debian) — nie. W tej lekcji włączysz systemd w Debianie, uruchomisz PostgreSQL jako usługę z automatycznym startem, dodasz timer użytkownika, poznasz typowe „uszkodzone” jednostki w WSL i sposób, w jaki systemd potrafi zepsuć uruchamianie programów Windows (`systemd-binfmt`). Zobaczysz też najważniejszą różnicę względem serwera: usługi startują dopiero, gdy uruchomisz dystrybucję, i znikają, gdy WSL ją zatrzyma."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Kluczowe pojęcia",
+      "body": "- **`/etc/wsl.conf` — `[boot]`** — `systemd=true` włącza systemd jako PID 1 (od następnego startu dystrybucji); `command = \"...\"` — polecenie uruchamiane jako root przy każdym starcie dystrybucji (alternatywa bez systemd).\n- **Sprawdzenie** — `ps -p 1 -o comm=` (`systemd` lub `init`), `systemctl is-system-running` (`running`, często `degraded` w WSL), `systemctl --failed`.\n- **Co działa** — `systemctl start|stop|enable|status`, usługi (ssh, cron, PostgreSQL, MySQL, Nginx, Docker Engine), timery, `journalctl`, `systemd --user`, `loginctl`, `timedatectl`, `hostnamectl` (częściowo).\n- **Czego nie ma lub nie ma sensu** — rozruch z GRUB, `systemctl reboot`/`poweroff` (restart to `wsl --shutdown`/`-t`), zarządzanie sprzętem, `systemd-networkd` (sieć konfiguruje WSL), pełne montowanie z `fstab` (opcja `mountFsTab`), część jednostek kończy się błędem.\n- **`systemd-binfmt.service`** — przy starcie wczytuje formaty z `/usr/lib/binfmt.d` i może usunąć wpis `WSLInterop`, przez co programy `.exe` przestają się uruchamiać (`Exec format error`); naprawa: plik `/etc/binfmt.d/WSLInterop.conf` z wpisem `:WSLInterop:M::MZ::/init:PF`.\n- **Autostart w WSL** — `systemctl enable` uruchamia usługę przy **starcie dystrybucji**, nie przy starcie Windows; dystrybucja startuje przy pierwszym `wsl` i zatrzymuje się kilkanaście sekund po zakończeniu ostatniego procesu `wsl.exe` — razem z usługami.\n- **Utrzymanie dystrybucji przy życiu** — otwarty terminal, zadanie Harmonogramu zadań Windows przy logowaniu (`wsl.exe -d NAZWA --exec sleep infinity`) lub Docker Desktop dla kontenerów.\n- **Alternatywy bez systemd** — `sudo service NAZWA start` (skrypty SysV), `[boot] command=`, `nohup`, tmux, supervisord."
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Analogia",
+      "body": "Dystrybucja WSL z systemd jest jak **biuro z recepcjonistą, który przychodzi razem z pierwszym pracownikiem**. Gdy ktoś otwiera drzwi (`wsl`), recepcjonista (systemd) od razu włącza ekspres do kawy, drukarkę i serwer plików (usługi `enable`). Pracuje sumiennie, dopóki w biurze jest choć jedna osoba z przepustką (`wsl.exe`). Gdy ostatnia wychodzi, budynek zamyka się po kilkunastu sekundach — recepcjonista wyłącza wszystko i też wychodzi, nawet jeśli drukarka jeszcze drukowała. Na prawdziwym serwerze recepcjonista jest w budynku całą dobę, niezależnie od tego, czy ktoś jest w środku."
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Start dystrybucji z systemd i bez",
+      "body": "Kto jest PID 1 i kiedy działają usługi:",
+      "code": " BEZ systemd (/etc/wsl.conf bez [boot] systemd=true)\n   wsl -d Debian\n     PID 1  /init (WSL)\n       +-- -bash  (anna)\n   systemctl status ssh -> \"System has not been booted with systemd as init system (PID 1)\"\n   sudo service ssh start   (skrypt SysV - jesli istnieje)\n\n Z systemd ([boot] systemd=true + wsl -t Debian)\n   wsl -d Debian\n     PID 1  systemd\n       +-- systemd-journald, cron, ssh, postgresql@15-main   (uslugi \"enabled\")\n       +-- systemd --user (anna)  -> timery uzytkownika\n       +-- /init (WSL) -> -bash (anna)\n\n CYKL ZYCIA (serwer vs WSL)\n   serwer:  wlaczenie -> systemd -> uslugi ------------------------------------> wylaczenie\n   WSL:     [Windows dziala, nic sie nie dzieje]  wsl -> systemd -> uslugi --> ostatni\n            terminal zamkniety -> ok. 15 s -> dystrybucja zatrzymana (uslugi tez!)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Włączenie systemd w Debianie",
+      "body": "Stan przed zmianą, wpis w `/etc/wsl.conf`, restart dystrybucji i sprawdzenie (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ ps -p 1 -o comm=; systemctl status ssh 2>&1 | head -1\ninit\nSystem has not been booted with systemd as init system (PID 1). Can't operate.\nanna@laptop-anna:~$ sudo tee -a /etc/wsl.conf > /dev/null <<'EOF'\n> [boot]\n> systemd=true\n> EOF\nanna@laptop-anna:~$ exit\nPS C:\\Users\\anna> wsl -t Debian; wsl -d Debian\nanna@laptop-anna:~$ ps -p 1 -o comm=\nsystemd\nanna@laptop-anna:~$ systemctl is-system-running\ndegraded\nanna@laptop-anna:~$ systemctl --failed --plain --no-legend\nsystemd-networkd-wait-online.service loaded failed failed Wait for Network to be Configured\nanna@laptop-anna:~$ sudo systemctl disable --now systemd-networkd-wait-online.service 2>/dev/null; sudo systemctl reset-failed\nanna@laptop-anna:~$ systemctl is-system-running\nrunning"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Baza jako usługa i timer użytkownika",
+      "body": "PostgreSQL z automatycznym startem w dystrybucji, timer użytkownika robiący zrzut bazy i zadanie Windows utrzymujące dystrybucję po zalogowaniu (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ sudo apt install -y postgresql > /dev/null 2>&1; systemctl is-enabled postgresql; systemctl is-active postgresql@15-main\nenabled\nactive\nanna@laptop-anna:~$ sudo -u postgres createuser anna; sudo -u postgres createdb -O anna sklep_dev\nanna@laptop-anna:~$ cat ~/.config/systemd/user/zrzut-sklep.service ~/.config/systemd/user/zrzut-sklep.timer\n[Unit]\nDescription=Zrzut bazy sklep_dev\n\n[Service]\nType=oneshot\nExecStart=/bin/sh -c 'pg_dump -Fc sklep_dev > %h/kopie/sklep_dev-$(date +%%F).dump'\n[Unit]\nDescription=Codzienny zrzut bazy sklep_dev\n\n[Timer]\nOnCalendar=*-*-* 12:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\nanna@laptop-anna:~$ systemctl --user daemon-reload && systemctl --user enable --now zrzut-sklep.timer\nCreated symlink /home/anna/.config/systemd/user/timers.target.wants/zrzut-sklep.timer -> /home/anna/.config/systemd/user/zrzut-sklep.timer.\nanna@laptop-anna:~$ systemctl --user list-timers --no-pager | head -2\nNEXT                        LEFT     LAST PASSED UNIT              ACTIVATES\nSat 2026-10-10 12:00:00 CEST 2h 41min -    -      zrzut-sklep.timer zrzut-sklep.service\nanna@laptop-anna:~$ exit\nPS C:\\Users\\anna> $a = New-ScheduledTaskAction -Execute \"wsl.exe\" -Argument \"-d Debian --exec sleep infinity\"\nPS C:\\Users\\anna> Register-ScheduledTask -TaskName \"WSL Debian\" -Action $a -Trigger (New-ScheduledTaskTrigger -AtLogOn -User anna) -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0) | Out-Null\nPS C:\\Users\\anna> Start-ScheduledTask \"WSL Debian\"; wsl -l -v | Select-String Debian\n  Debian            Running         2"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Jak przygotować usługi w WSL z systemd",
+      "body": "1. Sprawdź, czy systemd działa: `ps -p 1 -o comm=`; jeśli widzisz `init`, dopisz `[boot]` i `systemd=true` do `/etc/wsl.conf`.\n2. Zrestartuj dystrybucję z PowerShella (`wsl -t NAZWA`) i ponownie sprawdź PID 1.\n3. Sprawdź `systemctl is-system-running` i `systemctl --failed`; wyłącz jednostki, które w WSL nie mają sensu (np. czekanie na sieć).\n4. Upewnij się, że programy Windows dalej się uruchamiają (`/mnt/c/Windows/System32/cmd.exe /c ver`); jeśli nie — dodaj `/etc/binfmt.d/WSLInterop.conf`.\n5. Instaluj i włączaj usługi jak na serwerze (`systemctl enable --now`), zadania cykliczne — jako timery (systemowe lub `--user`).\n6. Pamiętaj, że usługi działają tylko wtedy, gdy działa dystrybucja; jeśli muszą działać stale po zalogowaniu do Windows — zadanie Harmonogramu z `wsl.exe --exec sleep infinity`."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Jakie usługi mają sens w WSL",
+      "body": "- **Bazy danych do programowania** — PostgreSQL, MySQL, Redis jako usługi z autostartem w dystrybucji.\n- **Serwer WWW do testów** — Nginx lub Apache przed lokalnie uruchamianą aplikacją.\n- **Docker Engine bez Docker Desktop** — `docker.service` w dystrybucji (rozdział 45).\n- **`ssh`** — logowanie do WSL z innej maszyny lub narzędzia (w trybie mirrored, z regułą zapory).\n- **Timery** — lokalne kopie baz deweloperskich, porządki w katalogach projektów.\n- **Nauka systemd** — jednostki, zależności, `journalctl` — ćwiczenia z rozdziału 22 bez maszyny wirtualnej."
+    },
+    {
+      "type": "NOTE",
+      "heading": "Ubuntu ma systemd włączony domyślnie — sprawdź, zanim zmienisz",
+      "body": "Obraz Ubuntu instalowany przez `wsl --install` ma w `/etc/wsl.conf` wpis `[boot] systemd=true` — dlatego w lekcji 1 w Ubuntu-24.04 jako PID 1 widzieliśmy `systemd`. Debian, AlmaLinux i dystrybucje importowane z własnych archiwów zwykle startują bez systemd. Włączenie systemd wydłuża start dystrybucji o sekundę–dwie i zwiększa zużycie pamięci, więc jeśli w dystrybucji pracujesz tylko z narzędziami wiersza poleceń, nie musisz go włączać. Pamiętaj też, że dziennik systemd (`journalctl`) w WSL jest zapisywany w dysku `.vhdx` dystrybucji i przetrwa jej restart, ale „rozruch” w `journalctl --list-boots` oznacza tu start dystrybucji, a nie komputera."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "systemd psuje uruchamianie programów Windows",
+      "body": "Po włączeniu systemd w niektórych dystrybucjach i wersjach WSL nagle przestają działać programy Windows wywoływane z Linuksa: `explorer.exe .`, `code .`, `clip.exe`, `wsl.exe`. Komunikat wygląda jak uszkodzony plik: `cannot execute binary file: Exec format error`. Przyczyna: jednostka `systemd-binfmt.service` przy starcie czyści i na nowo rejestruje formaty plików wykonywalnych (`/proc/sys/fs/binfmt_misc`) na podstawie plików z `binfmt.d` — a wpisu `WSLInterop`, który WSL dodał wcześniej, w tych plikach nie ma. Rozwiązanie trwałe: dodać własny plik `/etc/binfmt.d/WSLInterop.conf` z wpisem WSL i zrestartować dystrybucję — wtedy systemd sam go odtworzy przy każdym starcie."
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Programy `.exe` po włączeniu systemd",
+      "body": "Interop przestał działać — brak wpisu `WSLInterop` w `binfmt_misc` (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ /mnt/c/Windows/System32/cmd.exe /c ver\n-bash: /mnt/c/Windows/System32/cmd.exe: cannot execute binary file: Exec format error\nanna@laptop-anna:~$ ls /proc/sys/fs/binfmt_misc/\npython3.11  register  status\nanna@laptop-anna:~$ systemctl status systemd-binfmt --no-pager | grep -E 'Active|Process'\n     Active: active (exited) since Sat 2026-10-10 09:18:02 CEST; 2min ago\n    Process: 214 ExecStart=/lib/systemd/systemd-binfmt (code=exited, status=0/SUCCESS)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Wpis `WSLInterop` w `binfmt.d`",
+      "body": "Plik konfiguracyjny odtwarzany przez systemd przy każdym starcie — programy Windows znów działają (przykładowy wynik):",
+      "code": "anna@laptop-anna:~$ echo ':WSLInterop:M::MZ::/init:PF' | sudo tee /etc/binfmt.d/WSLInterop.conf\n:WSLInterop:M::MZ::/init:PF\nanna@laptop-anna:~$ sudo systemctl restart systemd-binfmt\nanna@laptop-anna:~$ ls /proc/sys/fs/binfmt_misc/\nWSLInterop  python3.11  register  status\nanna@laptop-anna:~$ /mnt/c/Windows/System32/cmd.exe /c ver\n\nMicrosoft Windows [Version 10.0.26100.6584]"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy co zastosować",
+      "body": "- **Usługi deweloperskie z autostartem, timery, `journalctl`** — systemd w WSL2 (`[boot] systemd=true`).\n- **Tylko narzędzia wiersza poleceń** — systemd niepotrzebny; szybszy start, mniej pamięci.\n- **WSL1** — systemd niemożliwy; `sudo service ... start`, `nohup`, tmux.\n- **Jedno polecenie przy każdym starcie dystrybucji** — `[boot] command=` w `/etc/wsl.conf`.\n- **Usługi muszą działać przez cały dzień pracy** — zadanie Harmonogramu z `wsl.exe --exec sleep infinity`.\n- **Usługa dla innych, produkcja, wysoka dostępność** — serwer lub VM, nie WSL."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- WSL2 obsługuje systemd po wpisaniu `[boot]` `systemd=true` do `/etc/wsl.conf` i restarcie dystrybucji; Ubuntu ma to domyślnie.\n- `ps -p 1 -o comm=`, `systemctl is-system-running` i `systemctl --failed` pokazują stan systemd; w WSL częsty jest stan `degraded`.\n- Usługi i timery działają jak na serwerze, ale tylko gdy dystrybucja jest uruchomiona — startuje przy `wsl`, gaśnie po zamknięciu ostatniego terminala.\n- `systemd-binfmt` może usunąć wpis `WSLInterop`; plik `/etc/binfmt.d/WSLInterop.conf` przywraca uruchamianie `.exe`.\n- systemd w WSL służy do nauki i programowania, nie zastępuje serwera."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
