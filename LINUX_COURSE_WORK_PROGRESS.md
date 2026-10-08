@@ -405,7 +405,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 - Narzędzie: `scripts/content-migration/lx_build_practice.js <plik.txt> <lekcja.json>` (format `#EX` P:/H:/S:,
   `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
   poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
-- Stan: rozdziały `_lx_01`–`_lx_09` GOTOWE (01/01 30/100, 01-02 reszta 20/60, 03-07 — 30/100, 08-09 — 20/60). Pozostałe — 0/0, kolejność po kolei (następny: `_lx_10`, poziom pełny 30/100).
+- Stan: rozdziały `_lx_01`–`_lx_10` GOTOWE (01/01 30/100, 01-02 reszta 20/60, 03-07 i 10 — 30/100, 08-09 — 20/60). Pozostałe — 0/0, kolejność po kolei (następny: `_lx_11`, poziom pełny 30/100). Dane ~/szukaj: 28 plików (kopie 8 plików + 2 dowiązania, .tmp i kopie bazy w backup mają 0 B, pliki .java po 1 linii).
   Źródła w `scripts/content-migration/lx_practice/_lx_RR_LL.txt`.
 - **DECYZJA UŻYTKOWNIKA (2026-10-12): dwa poziomy, przypisane per rozdział** (bez trzeciego poziomu; „zależy mi na
   solidnym materiale, nawet do nauki”):
