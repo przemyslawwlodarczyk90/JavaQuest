@@ -416,6 +416,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
   - Wyjątek: `_lx_01/01_WhatIsLinux` zostaje 30/100 (pilotaż już gotowy).
   - Budowanie: `node scripts/content-migration/lx_build_practice.js PLIK.txt LEKCJA.json 20 60` dla poziomu niepełnego
     (skrypt przyjmuje oczekiwane liczby jako 3. i 4. argument; domyślnie 30/100).
+- **Do przeglądu (znalezione 2026-10-09):** ćwiczenia `_lx_07_07` i `_lx_11_05` podają statystyki `access.log` niezgodne z prawdziwym plikiem (np. 41×192.168.56.20, 18×/api/produkty, adres 10.0.0.7). Prawdziwe dane (teoria 13/10): 60 żądań; adresy 17×203.0.113.7, 17×192.168.1.10, 9×192.168.1.11, 9×10.0.0.5, 8×198.51.100.23; kody 200:27, 201:7, 302:7, 403:6, 404:7, 500:6; ścieżki bez parametrów po 8×/api/zamowienia, /api/produkty/1, /api/produkty.
 - Lekcje 32/07-09: przepisane na audyt własnych systemów (decyzja użytkownika 2026-10-12: „rób wszystko”).
 
 ## Następny krok
