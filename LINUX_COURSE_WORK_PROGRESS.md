@@ -405,7 +405,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 - Narzędzie: `scripts/content-migration/lx_build_practice.js <plik.txt> <lekcja.json>` (format `#EX` P:/H:/S:,
   `#Q` Q:/+/-/-/-/E:; waliduje 30/100, brak polskich liter w solution, 3 błędne opcje, rozkłada litery
   poprawnych odpowiedzi równo). Źródła .txt trzymane w `scripts/content-migration/lx_practice/`.
-- Stan: rozdziały `_lx_01`–`_lx_10` GOTOWE (01/01 30/100, 01-02 reszta 20/60, 03-07 i 10 — 30/100, 08-09 — 20/60). Pozostałe — 0/0, kolejność po kolei (następny: `_lx_11`, poziom pełny 30/100). Dane ~/szukaj: 28 plików (kopie 8 plików + 2 dowiązania, .tmp i kopie bazy w backup mają 0 B, pliki .java po 1 linii).
+- Stan: rozdziały `_lx_01`–`_lx_11` GOTOWE (01/01 30/100, 01-02 reszta 20/60, 03-07 i 10-11 — 30/100, 08-09 — 20/60). Pozostałe — 0/0, kolejność po kolei (następny: `_lx_12_sed`, poziom pełny 30/100). Od 2026-10-09: wyniki przykładów samowystarczalnych (`<<<`, `printf`) sprawdzane lokalnie w Git Bash (GNU grep 3.0; uwaga: grep z Git for Windows ignoruje `` we wzorcach z `-f` — na Linuksie nie); licencja GPL-3 identyczna z laboratoryjną jest w `C:/Program Files/Git/mingw64/share/licenses/xz/COPYING.GPLv3` (674 linie), a ripgrep 15 z VS Code w `.../Microsoft VS Code/*/resources/app/node_modules/@github/copilot-win32-x64/ripgrep/bin/win32-x64/rg.exe` (w Git Bash `--path-separator //`). Dane ~/szukaj: 28 plików (kopie 8 plików + 2 dowiązania, .tmp i kopie bazy w backup mają 0 B, pliki .java po 1 linii).
   Źródła w `scripts/content-migration/lx_practice/_lx_RR_LL.txt`.
 - **DECYZJA UŻYTKOWNIKA (2026-10-12): dwa poziomy, przypisane per rozdział** (bez trzeciego poziomu; „zależy mi na
   solidnym materiale, nawet do nauki”):
