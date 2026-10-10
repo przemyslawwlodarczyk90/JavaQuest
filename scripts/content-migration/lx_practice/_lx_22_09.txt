@@ -1,0 +1,985 @@
+#EX
+P: Odczytaj politykę restartu sklepu, odstęp, licznik restartów oraz parametry limitu uruchomień.
+H: systemctl show sklep -p Restart -p RestartUSec -p NRestarts -p StartLimitIntervalUSec -p StartLimitBurst.
+S:
+$ systemctl show sklep -p Restart -p RestartUSec -p NRestarts -p StartLimitIntervalUSec -p StartLimitBurst
+Restart=on-failure
+RestartUSec=10s
+NRestarts=0
+StartLimitIntervalUSec=5min
+StartLimitBurst=5
+#EX
+P: Zasymuluj awarię sklepu poleceniem systemctl kill z sygnałem KILL i od razu sprawdź linię Active.
+H: sudo systemctl kill -s KILL sklep; systemctl status sklep -n 0 | sed -n 3p.
+S:
+$ sudo systemctl kill -s KILL sklep
+$ systemctl status sklep --no-pager -n 0 | sed -n '3p'
+     Active: activating (auto-restart) (Result: signal) since Sat 2026-10-10 14:05:12 CEST; 3s ago
+#EX
+P: Po 12 sekundach sprawdź, czy sklep działa i ile ma restartów.
+H: sleep 12; systemctl is-active sklep; systemctl show sklep -p NRestarts.
+S:
+$ sleep 12; systemctl is-active sklep; systemctl show sklep -p NRestarts
+active
+NRestarts=1
+#EX
+P: Wyświetl z dziennika trzy linie systemd opisujące tę awarię i zaplanowany restart.
+H: journalctl -u sklep -o cat | grep -E '^sklep.service: (Main|Failed|Scheduled)' | tail -3.
+S:
+$ journalctl -u sklep --no-pager -o cat | grep -E '^sklep.service: (Main|Failed|Scheduled)' | tail -3
+sklep.service: Main process exited, code=killed, status=9/KILL
+sklep.service: Failed with result 'signal'.
+sklep.service: Scheduled restart job, restart counter is at 1.
+#EX
+P: Wyślij sklepowi SIGTERM (czyste zakończenie Javy kodem 143) i sprawdź, czy systemd go zrestartował.
+H: sudo systemctl kill -s TERM sklep; sleep 12; is-active; show -p NRestarts.
+S:
+$ sudo systemctl kill -s TERM sklep
+$ sleep 12; systemctl is-active sklep; systemctl show sklep -p NRestarts
+inactive
+NRestarts=1
+$ sudo systemctl start sklep
+#EX
+P: Sprawdź, że systemctl stop nie powoduje restartu nawet przy Restart=on-failure.
+H: sudo systemctl stop sklep; sleep 12; is-active.
+S:
+$ sudo systemctl stop sklep; sleep 12; systemctl is-active sklep
+inactive
+$ sudo systemctl start sklep
+#EX
+P: Utwórz testowy skrypt /usr/local/bin/awaria.sh kończący się kodem podanym w zmiennej KOD (po 1 sekundzie) oraz usługę awaria.service z Restart=on-failure i RestartSec=500ms.
+H: printf skryptu przez sudo tee; chmod +x; jednostka z Environment=KOD=1.
+S:
+$ printf '#!/bin/sh\necho "start, koncze kodem $KOD"\nsleep 1\nexit "$KOD"\n' | sudo tee /usr/local/bin/awaria.sh >/dev/null
+$ sudo chmod 755 /usr/local/bin/awaria.sh
+$ printf '%s\n' '[Unit]' 'Description=Test polityk restartu' '' '[Service]' 'Environment=KOD=1' \
+>   'ExecStart=/usr/local/bin/awaria.sh' 'Restart=on-failure' 'RestartSec=500ms' | sudo tee /etc/systemd/system/awaria.service >/dev/null
+$ sudo systemctl daemon-reload
+#EX
+P: Uruchom awaria.service i po 3,5 sekundy sprawdź licznik restartów i stan.
+H: sudo systemctl start awaria; sleep 3.5; systemctl show awaria -p NRestarts -p ActiveState -p SubState.
+S:
+$ sudo systemctl start awaria; sleep 3.5; systemctl show awaria -p NRestarts -p ActiveState -p SubState
+NRestarts=2
+ActiveState=active
+SubState=running
+#EX
+P: Poczekaj, aż awaria.service osiągnie limit uruchomień, i odczytaj wynik (Result).
+H: sleep 15; systemctl show awaria -p ActiveState -p Result; journalctl -u awaria | grep repeated.
+S:
+$ sleep 15; systemctl show awaria -p ActiveState -p Result
+ActiveState=failed
+Result=start-limit-hit
+$ journalctl -u awaria --no-pager -o cat | grep -E 'repeated|Failed to start' | tail -2
+awaria.service: Start request repeated too quickly.
+Failed to start awaria.service - Test polityk restartu.
+#EX
+P: Spróbuj uruchomić awaria.service po osiągnięciu limitu — bez reset-failed.
+H: sudo systemctl start awaria.
+S:
+$ sudo systemctl start awaria
+Job for awaria.service failed.
+See "systemctl status awaria.service" and "journalctl -xeu awaria.service" for details.
+#EX
+P: Zatrzymaj pętlę: zmień kod w usłudze na 0 przez drop-in, wyczyść stan failed i uruchom ponownie; sprawdź, że po czystym zakończeniu nie ma restartu.
+H: drop-in z [Service] Environment=KOD=0; daemon-reload; reset-failed; start; sleep 5; show.
+S:
+$ sudo mkdir -p /etc/systemd/system/awaria.service.d
+$ printf '[Service]\nEnvironment=KOD=0\n' | sudo tee /etc/systemd/system/awaria.service.d/kod.conf >/dev/null
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed awaria && sudo systemctl start awaria
+$ sleep 5; systemctl show awaria -p NRestarts -p ActiveState -p Result
+NRestarts=0
+ActiveState=inactive
+Result=success
+#EX
+P: Przestaw awaria.service na Restart=on-success (przy KOD=0) i po 4 sekundach sprawdź licznik restartów, a potem ją zatrzymaj.
+H: drop-in z Restart=on-success; daemon-reload; start; sleep 4; show -p NRestarts; stop.
+S:
+$ printf '[Service]\nRestart=on-success\n' | sudo tee /etc/systemd/system/awaria.service.d/polityka.conf >/dev/null
+$ sudo systemctl daemon-reload && sudo systemctl start awaria
+$ sleep 4; systemctl show awaria -p NRestarts
+NRestarts=2
+$ sudo systemctl stop awaria
+#EX
+P: Ustaw dla awaria.service Restart=on-abnormal i KOD=3, uruchom i sprawdź, czy kod niezerowy wywołał restart.
+H: zmień oba drop-iny; daemon-reload; reset-failed; start; sleep 6; show -p NRestarts -p Result.
+S:
+$ printf '[Service]\nRestart=on-abnormal\n' | sudo tee /etc/systemd/system/awaria.service.d/polityka.conf >/dev/null
+$ printf '[Service]\nEnvironment=KOD=3\n' | sudo tee /etc/systemd/system/awaria.service.d/kod.conf >/dev/null
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed awaria; sudo systemctl start awaria
+$ sleep 6; systemctl show awaria -p NRestarts -p Result -p ExecMainStatus
+NRestarts=0
+Result=exit-code
+ExecMainStatus=3
+#EX
+P: Dodaj SuccessExitStatus=3 do awaria.service (z Restart=on-failure) i sprawdź, że kod 3 nie jest już traktowany jako błąd.
+H: polityka.conf: Restart=on-failure, SuccessExitStatus=3; daemon-reload; reset-failed; start; sleep 5; show.
+S:
+$ printf '[Service]\nRestart=on-failure\nSuccessExitStatus=3\n' | sudo tee /etc/systemd/system/awaria.service.d/polityka.conf >/dev/null
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed awaria; sudo systemctl start awaria
+$ sleep 5; systemctl show awaria -p NRestarts -p Result -p ActiveState
+NRestarts=0
+Result=success
+ActiveState=inactive
+#EX
+P: Pokaż efekt RestartSteps= i RestartMaxDelaySec=: ustaw RestartSec=1, RestartSteps=3, RestartMaxDelaySec=8, wyłącz limit uruchomień, KOD=1 i odczytaj odstępy z dziennika.
+H: drop-in [Unit] StartLimitIntervalSec=0 oraz [Service]...; daemon-reload; start; sleep 25; journalctl -u awaria -o short-precise | grep start.
+S:
+$ printf '[Unit]\nStartLimitIntervalSec=0\n[Service]\nRestart=on-failure\nRestartSec=1\nRestartSteps=3\nRestartMaxDelaySec=8\n' | sudo tee /etc/systemd/system/awaria.service.d/polityka.conf >/dev/null
+$ printf '[Service]\nEnvironment=KOD=1\n' | sudo tee /etc/systemd/system/awaria.service.d/kod.conf >/dev/null
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed awaria; sudo systemctl start awaria
+$ sleep 25; journalctl -u awaria --no-pager -o short-precise | grep 'start, koncze' | tail -5 | awk '{print $3}'
+14:12:40.118204
+14:12:42.131566
+14:12:45.149012
+14:12:50.165733
+14:12:59.181390
+#EX
+P: Zatrzymaj i usuń usługę testową awaria wraz ze skryptem i drop-inami.
+H: stop; rm -r ...awaria.service.d; rm plików; daemon-reload; reset-failed.
+S:
+$ sudo systemctl stop awaria
+$ sudo rm -r /etc/systemd/system/awaria.service.d /etc/systemd/system/awaria.service /usr/local/bin/awaria.sh
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed
+$ systemctl list-unit-files --no-pager 'awaria*' | tail -1
+0 unit files listed.
+#EX
+P: Wyświetl zależności sklepu: wymagania (Wants, Requires) i kolejność (After).
+H: systemctl show sklep -p Wants -p Requires -p After.
+S:
+$ systemctl show sklep -p Requires -p Wants -p After
+Requires=system.slice sysinit.target -.mount
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service basic.target system.slice sysinit.target systemd-journald.socket -.mount
+#EX
+P: Wyświetl drzewo zależności sklepu (pierwsze 6 linii) i zinterpretuj kropki.
+H: systemctl list-dependencies sklep | head -6.
+S:
+$ systemctl list-dependencies sklep --no-pager | head -6
+sklep.service
+● ├─-.mount
+● ├─postgresql.service
+○ ├─network-online.target
+● ├─system.slice
+● └─sysinit.target
+#EX
+P: Sprawdź, które jednostki zależą od postgresql.service (zależności odwrotne).
+H: systemctl list-dependencies --reverse postgresql.
+S:
+$ systemctl list-dependencies --reverse postgresql --no-pager
+postgresql.service
+● ├─multi-user.target
+● │ └─graphical.target
+● └─sklep.service
+#EX
+P: Zatrzymaj PostgreSQL i sklep, potem uruchom tylko sklep — sprawdź, czy baza wstała dzięki Wants=.
+H: sudo systemctl stop postgresql sklep; sudo systemctl start sklep; is-active postgresql@16-main.
+S:
+$ sudo systemctl stop postgresql sklep && sudo systemctl start sklep
+$ systemctl is-active postgresql@16-main sklep
+active
+active
+#EX
+P: Sprawdź w dzienniku z bieżącego rozruchu kolejność: czy sklep zaczął startować po zakończeniu startu bazy.
+H: journalctl -b -o short-precise -u postgresql@16-main -u sklep | grep -E 'Started|Starting' | tail -3.
+S:
+$ journalctl -b --no-pager -o short-precise -u postgresql@16-main -u sklep | grep -E 'Starting|Started' | tail -3 | cut -c8-15,40-
+14:16:02 Starting postgresql@16-main.service - PostgreSQL Cluster 16-main...
+14:16:04 Started postgresql@16-main.service - PostgreSQL Cluster 16-main.
+14:16:04 Starting sklep.service - Aplikacja sklep (Spring Boot)...
+#EX
+P: Zatrzymaj samą bazę i sprawdź, czy przy Wants= sklep nadal działa; potem włącz bazę.
+H: sudo systemctl stop postgresql@16-main; is-active sklep; start postgresql.
+S:
+$ sudo systemctl stop postgresql@16-main
+$ systemctl is-active postgresql@16-main sklep
+inactive
+active
+$ sudo systemctl start postgresql
+#EX
+P: Wyświetl za pomocą systemd-analyze, na co czekał sklep przy ostatnim starcie (łańcuch krytyczny).
+H: systemd-analyze critical-chain sklep.service.
+S:
+$ systemd-analyze critical-chain sklep.service --no-pager
+The time when unit became active or started is printed after the "@" character.
+The time the unit took to start is printed after the "+" character.
+
+sklep.service @2min 31.408s
+`-postgresql@16-main.service @2min 29.317s +2.083s
+  `-basic.target @1.981s
+(...fragment wyniku)
+#EX
+P: Sprawdź różnicę między network.target i network-online.target: czy oba są aktywne i która usługa dostarcza drugi cel.
+H: systemctl is-active network.target network-online.target; systemctl list-dependencies network-online.target.
+S:
+$ systemctl is-active network.target network-online.target
+active
+active
+$ systemctl list-dependencies network-online.target --no-pager
+network-online.target
+● └─systemd-networkd-wait-online.service
+#EX
+P: Odczytaj, jakie zależności ma Nginx z pakietu i czy czeka na network-online.target.
+H: systemctl show nginx -p Wants -p After.
+S:
+$ systemctl show nginx -p Wants -p After | tr ' ' '\n' | grep -E '^(Wants|After)=|network'
+Wants=network-online.target
+After=network-online.target
+remote-fs.target
+nss-lookup.target
+#EX
+P: Pokaż działanie Conflicts=: sprawdź, z czym konfliktuje rescue.service i jaki jest efekt uruchomienia go (tylko odczyt).
+H: systemctl show rescue.service -p Conflicts.
+S:
+$ systemctl show rescue.service -p Conflicts
+Conflicts=shutdown.target
+$ systemctl show rescue.target -p Conflicts
+Conflicts=multi-user.target shutdown.target rescue.service
+#EX
+P: Utwórz parę usług demo-glowna i demo-pomocnik (sleep infinity), gdzie pomocnik ma PartOf=demo-glowna.service; zrestartuj główną i porównaj PID-y pomocnika.
+H: dwa pliki jednostek przez printf | sudo tee; daemon-reload; start obu; restart demo-glowna; MainPID pomocnika przed i po.
+S:
+$ printf '[Unit]\nDescription=Demo glowna\n[Service]\nExecStart=/usr/bin/sleep infinity\n' | sudo tee /etc/systemd/system/demo-glowna.service >/dev/null
+$ printf '[Unit]\nDescription=Demo pomocnik\nPartOf=demo-glowna.service\nAfter=demo-glowna.service\n[Service]\nExecStart=/usr/bin/sleep infinity\n' | sudo tee /etc/systemd/system/demo-pomocnik.service >/dev/null
+$ sudo systemctl daemon-reload && sudo systemctl start demo-glowna demo-pomocnik
+$ systemctl show -p MainPID --value demo-pomocnik
+7810
+$ sudo systemctl restart demo-glowna && systemctl show -p MainPID --value demo-pomocnik
+7826
+#EX
+P: Zatrzymaj demo-glowna i sprawdź stan pomocnika; potem zastąp PartOf= przez Requires= i porównaj zachowanie po zabiciu głównej sygnałem KILL.
+H: stop demo-glowna; is-active demo-pomocnik; zmiana PartOf na Requires; start obu; systemctl kill -s KILL demo-glowna; is-active.
+S:
+$ sudo systemctl stop demo-glowna; systemctl is-active demo-pomocnik
+inactive
+$ sudo sed -i 's/^PartOf=/Requires=/' /etc/systemd/system/demo-pomocnik.service
+$ sudo systemctl daemon-reload && sudo systemctl start demo-pomocnik
+$ systemctl is-active demo-glowna demo-pomocnik
+active
+active
+$ sudo systemctl kill -s KILL demo-glowna; sleep 1; systemctl is-active demo-glowna demo-pomocnik
+failed
+active
+#EX
+P: Zamień Requires= na BindsTo= w demo-pomocnik i powtórz zabicie głównej usługi; potem posprzątaj obie jednostki.
+H: sed Requires= -> BindsTo=; daemon-reload; reset-failed; start; kill -s KILL; is-active; stop; rm; daemon-reload.
+S:
+$ sudo sed -i 's/^Requires=/BindsTo=/' /etc/systemd/system/demo-pomocnik.service
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed && sudo systemctl restart demo-glowna demo-pomocnik
+$ sudo systemctl kill -s KILL demo-glowna; sleep 1; systemctl is-active demo-glowna demo-pomocnik
+failed
+inactive
+$ sudo systemctl stop demo-pomocnik demo-glowna
+$ sudo rm /etc/systemd/system/demo-glowna.service /etc/systemd/system/demo-pomocnik.service
+$ sudo systemctl daemon-reload && sudo systemctl reset-failed
+#EX
+P: Dodaj do sklepu powiadomienie o awarii: prosta usługa powiadom@.service zapisująca do dziennika nazwę jednostki (%i) i drop-in OnFailure= w sklepie; sprawdź konfigurację bez wywoływania awarii.
+H: powiadom@.service z Type=oneshot i ExecStart=/usr/bin/logger -t awaria "Usluga %i przeszla w failed"; drop-in [Unit] OnFailure=powiadom@%n.service; show -p OnFailure.
+S:
+$ printf '[Unit]\nDescription=Powiadomienie o awarii %%i\n[Service]\nType=oneshot\nExecStart=/usr/bin/logger -t awaria "Usluga %%i przeszla w failed"\n' | sudo tee /etc/systemd/system/powiadom@.service >/dev/null
+$ printf '[Unit]\nOnFailure=powiadom@%%n.service\n' | sudo tee /etc/systemd/system/sklep.service.d/powiadom.conf >/dev/null
+$ sudo systemctl daemon-reload
+$ systemctl show sklep -p OnFailure
+OnFailure=powiadom@sklep.service.service
+$ sudo systemctl start powiadom@test.service && journalctl -t awaria -n 1 --no-pager -o cat
+Usluga test przeszla w failed
+#Q
+Q: Jaka jest domyślna wartość Restart= w usłudze?
++ no
+- on-failure
+- always
+- on-abnormal
+E: Restart trzeba włączyć jawnie.
+#Q
+Q: Czy Restart=always uruchomi usługę ponownie po systemctl stop?
++ Nie — żadna polityka nie restartuje po stop ani restart wydanym przez administratora
+- Tak
+- Tak, po RestartSec
+- Tylko dla Type=forking
+E: Celowe zatrzymanie to nie awaria.
+#Q
+Q: Kiedy Restart=on-failure ponowi uruchomienie?
++ Po kodzie niezerowym (spoza SuccessExitStatus=), nieczystym sygnale, przekroczeniu czasu lub watchdogu
+- Tylko po kodzie 0
+- Zawsze
+- Tylko po SIGKILL
+E: Najczęstszy wybór dla aplikacji.
+#Q
+Q: Kiedy Restart=on-success ponowi uruchomienie?
++ Tylko po czystym zakończeniu (kod 0 lub z SuccessExitStatus=, czysty sygnał)
+- Po każdym błędzie
+- Nigdy
+- Po SIGKILL
+E: Rzadko używane — np. zadanie w pętli.
+#Q
+Q: Kiedy Restart=on-abnormal ponowi uruchomienie?
++ Po nieczystym sygnale, przekroczeniu czasu lub watchdogu — ale nie po niezerowym kodzie wyjścia
+- Po każdym niezerowym kodzie
+- Tylko po kodzie 0
+- Po systemctl stop
+E: Kod 3 nie wywoła restartu.
+#Q
+Q: Kiedy Restart=on-abort ponowi uruchomienie?
++ Tylko po zakończeniu nieobsłużonym sygnałem (np. SIGKILL, SIGSEGV)
+- Po każdym niezerowym kodzie
+- Po przekroczeniu czasu
+- Zawsze
+E: Najwęższa polityka.
+#Q
+Q: Które sygnały systemd uznaje za „czyste” zakończenie?
++ SIGHUP, SIGINT, SIGTERM, SIGPIPE
+- SIGKILL i SIGSEGV
+- Tylko SIGKILL
+- Żadnych
+E: Plus te z SuccessExitStatus=.
+#Q
+Q: Proces Javy z Restart=on-failure zabity przez SIGKILL (np. OOM killer). Co zrobi systemd?
++ Uruchomi go ponownie po RestartSec
+- Nic
+- Zamaskuje usługę
+- Zrestartuje system
+E: SIGKILL to nieczysty sygnał.
+#Q
+Q: Java ze SuccessExitStatus=143 dostała SIGTERM i zakończyła się kodem 143. Czy Restart=on-failure ją wznowi?
++ Nie — to zakończenie uznane za poprawne
+- Tak
+- Tak, po 90 s
+- Tylko gdy NRestarts=0
+E: Stan inactive.
+#Q
+Q: Jaka jest domyślna wartość RestartSec?
++ 100 ms
+- 1 s
+- 5 s
+- 1 min
+E: Za mało dla aplikacji czekającej na bazę.
+#Q
+Q: Do czego służy RestartSec=?
++ Ustala przerwę przed ponownym uruchomieniem usługi
+- Ustala czas działania
+- Ustala limit restartów
+- Ustala czas zatrzymania
+E: Daj zależnościom czas na powrót.
+#Q
+Q: Jakie są domyślne wartości limitu uruchomień?
++ StartLimitIntervalSec=10s i StartLimitBurst=5
+- 60 s i 3
+- 1 min i 10
+- Brak limitu
+E: Ustawienia z system.conf.
+#Q
+Q: W której sekcji umieszcza się StartLimitIntervalSec= i StartLimitBurst=?
++ [Unit]
+- [Service]
+- [Install]
+- [Restart]
+E: W [Service] są ignorowane w nowych wersjach.
+#Q
+Q: Co oznacza wynik start-limit-hit?
++ Usługa uruchamiała się zbyt często w oknie limitu i systemd przestał próbować
+- Przekroczono limit pamięci
+- Przekroczono limit procesów
+- Przekroczono limit czasu startu
+E: Start request repeated too quickly.
+#Q
+Q: Jaki komunikat dziennika oznacza osiągnięcie limitu uruchomień?
++ Start request repeated too quickly.
+- Main process exited, status=203/EXEC
+- Address already in use
+- Deactivated successfully.
+E: Usługa przechodzi w failed.
+#Q
+Q: Jak przywrócić możliwość uruchomienia usługi po start-limit-hit?
++ sudo systemctl reset-failed nazwa (a potem start)
+- sudo systemctl daemon-reexec
+- sudo reboot
+- Odczekać 24 h
+E: Najpierw usuń przyczynę awarii.
+#Q
+Q: Jak całkowicie wyłączyć limit uruchomień jednostki?
++ StartLimitIntervalSec=0 w [Unit]
+- StartLimitBurst=0 w [Service]
+- Restart=always
+- RestartSec=0
+E: Ostrożnie — możliwa niekończąca się pętla.
+#Q
+Q: Dlaczego Restart=always z RestartSec=100ms przy aplikacji padającej na starcie jest złe?
++ Pięć prób w ułamku sekundy wyczerpuje limit i usługa zostaje w failed, nawet gdy przyczyna zniknie
+- Bo always nie działa
+- Bo systemd się zawiesi
+- Bo zużywa dużo dysku
+E: Dziennik pełen tych samych błędów.
+#Q
+Q: Jaki zestaw ustawień poleca lekcja dla aplikacji serwerowej?
++ Restart=on-failure, RestartSec=5-10s, rozsądny StartLimitBurst= w dłuższym oknie
+- Restart=always, RestartSec=100ms
+- Restart=no
+- Restart=on-success
+E: Np. StartLimitIntervalSec=300.
+#Q
+Q: Co robią RestartSteps= i RestartMaxDelaySec=?
++ Stopniowo wydłużają odstęp między kolejnymi restartami, aż do maksimum
+- Ograniczają liczbę restartów
+- Ustalają czas zatrzymania
+- Restartują inne usługi
+E: Dostępne od systemd 254.
+#Q
+Q: Która właściwość pokazuje, ile razy systemd automatycznie zrestartował usługę?
++ NRestarts
+- RestartCount
+- Restarts
+- ExecMainStatus
+E: systemctl show -p NRestarts.
+#Q
+Q: Co pokazuje linia Active: activating (auto-restart) (Result: signal)?
++ Usługa padła od sygnału i czeka na zaplanowany restart
+- Usługa działa
+- Usługa jest zamaskowana
+- Usługa się zatrzymuje
+E: Odliczanie RestartSec.
+#Q
+Q: Jak bezpiecznie zasymulować awarię usługi?
++ sudo systemctl kill -s KILL nazwa
+- sudo systemctl stop nazwa
+- sudo systemctl mask nazwa
+- sudo reboot
+E: stop nie jest awarią.
+#Q
+Q: Czy Restart=always jest dozwolone dla Type=oneshot?
++ Nie — dla oneshot dozwolone są no i on-failure (i podobne), ale nie always ani on-success
+- Tak
+- Tylko z RemainAfterExit
+- Tylko w Fedorze
+E: Komunikat o niedozwolonym ustawieniu.
+#Q
+Q: Aplikacja celowo kończy się kodem 0 po migracji bazy. Co da Restart=always?
++ Niekończące się ponowne uruchamianie migracji
+- Jednorazowe uruchomienie
+- Stan masked
+- Nic
+E: Dla takich zadań oneshot bez Restart=.
+#Q
+Q: Czy polityka Restart= naprawi zły adres bazy w konfiguracji?
++ Nie — restarty tylko zaśmiecą dziennik, aż zadziała limit
+- Tak, po kilku próbach
+- Tak, jeśli RestartSec jest duży
+- Tak, z always
+E: Siatka bezpieczeństwa na losowe awarie.
+#Q
+Q: Co określają Wants= i Requires=?
++ Czy uruchomić inne jednostki razem z tą (wymagania)
+- Kolejność startu
+- Użytkownika usługi
+- Autostart
+E: Kolejność — After/Before.
+#Q
+Q: Co określają After= i Before=?
++ Kolejność startu i zatrzymywania
+- Czy uruchomić inne jednostki
+- Autostart
+- Limity zasobów
+E: Druga, niezależna oś.
+#Q
+Q: Co robi Wants=postgresql.service?
++ Przy starcie tej jednostki uruchamia też PostgreSQL; awaria bazy nie zatrzyma tej jednostki
+- Tylko ustala kolejność
+- Zatrzymuje bazę
+- Wymaga, by baza już działała
+E: Słaba zależność.
+#Q
+Q: Co robi Requires=postgresql.service?
++ Uruchamia bazę; jeśli baza się nie uruchomi lub zostanie zatrzymana — zatrzymuje też tę jednostkę
+- Tylko ustala kolejność
+- Sprawdza, czy baza działa, bez uruchamiania
+- Nic
+E: Silna zależność.
+#Q
+Q: Co robi Requisite=postgresql.service?
++ Wymaga, by baza już działała — sama jej nie uruchamia; inaczej start się nie powiedzie
+- Uruchamia bazę
+- Restartuje bazę
+- Ustala kolejność
+E: Rzadko używane.
+#Q
+Q: Czym BindsTo= różni się od Requires=?
++ BindsTo= zatrzymuje jednostkę także wtedy, gdy zależność nagle zniknie (np. padnie lub urządzenie zostanie odłączone)
+- Niczym
+- BindsTo= nie uruchamia zależności
+- BindsTo= dotyczy tylko timerów
+E: Przykład z lekcji: KILL głównej.
+#Q
+Q: Co robi PartOf=demo-glowna.service?
++ Zatrzymanie i restart demo-glowna przenoszą się na tę jednostkę
+- Uruchamia demo-glowna
+- Ustala kolejność
+- Wyklucza jednoczesne działanie
+E: Start nie jest przenoszony.
+#Q
+Q: Co robi Conflicts=apache2.service?
++ Uruchomienie tej jednostki zatrzyma apache2 i odwrotnie
+- Uruchamia apache2
+- Ustala kolejność
+- Wymaga apache2
+E: Nie mogą działać razem.
+#Q
+Q: Masz Requires=postgresql.service bez After=. Jak wystartują usługi?
++ Równolegle — Requires= nie ustala kolejności
+- Najpierw baza
+- Najpierw aplikacja
+- Wcale
+E: Potrzebne After=.
+#Q
+Q: Masz After=postgresql.service bez Wants=/Requires=. Co się stanie, gdy baza nie działa?
++ Aplikacja wystartuje bez bazy — After= nie uruchamia zależności
+- Baza zostanie uruchomiona
+- Aplikacja nie wystartuje
+- systemd zapyta
+E: Kolejność dotyczy tylko jednostek startujących razem.
+#Q
+Q: Jaka para dyrektyw jest typowa dla bazy na tym samym serwerze?
++ Wants=postgresql.service + After=postgresql.service
+- Before=postgresql.service
+- Conflicts=postgresql.service
+- PartOf=postgresql.service
+E: Uruchom i poczekaj.
+#Q
+Q: Kiedy zamiast Wants= użyć Requires= dla bazy?
++ Gdy zatrzymanie bazy ma zatrzymać aplikację
+- Zawsze
+- Nigdy
+- Gdy baza jest na innym serwerze
+E: Świadoma decyzja.
+#Q
+Q: Baza danych sklepu jest na innym serwerze. Czy After=postgresql.service pomoże?
++ Nie — systemd zna tylko jednostki lokalne; aplikacja musi sama ponawiać połączenia
+- Tak
+- Tak, z Requires=
+- Tak, z network.target
+E: HikariCP ponawia połączenia.
+#Q
+Q: Co oznacza network.target?
++ Stos sieciowy został uruchomiony — adresy mogły jeszcze nie zostać przydzielone
+- Sieć jest w pełni skonfigurowana
+- Internet jest osiągalny
+- DNS działa
+E: Ważne głównie przy zatrzymywaniu.
+#Q
+Q: Co oznacza network-online.target?
++ Sieć jest skonfigurowana (adresy przydzielone) wg usługi czekającej, np. systemd-networkd-wait-online
+- Internet jest osiągalny
+- Stos sieciowy uruchomiony
+- Zapora wyłączona
+E: Nie gwarantuje dostępności konkretnego hosta.
+#Q
+Q: Jak poprawnie zależeć od network-online.target?
++ Wants=network-online.target i After=network-online.target
+- Tylko After=network-online.target
+- Requires=network.target
+- Before=network-online.target
+E: Sam After= go nie uruchomi.
+#Q
+Q: Kiedy usługa potrzebuje network-online.target?
++ Gdy przy starcie łączy się z innymi hostami (zdalne API, NFS, baza na innym serwerze)
+- Zawsze
+- Gdy słucha na porcie
+- Nigdy
+E: Serwer nasłuchujący zwykle nie potrzebuje.
+#Q
+Q: Która usługa w Ubuntu Server realizuje oczekiwanie dla network-online.target?
++ systemd-networkd-wait-online.service
+- NetworkManager.service
+- networking.service
+- dhclient.service
+E: Na desktopie — NetworkManager-wait-online.
+#Q
+Q: Co robi OnFailure=powiadom@%n.service?
++ Uruchamia wskazaną jednostkę, gdy ta przejdzie w stan failed
+- Restartuje usługę
+- Wysyła e-mail bez konfiguracji
+- Zatrzymuje system
+E: %n — pełna nazwa jednostki.
+#Q
+Q: Co pokazuje systemctl list-dependencies nazwa?
++ Drzewo jednostek, których wymaga dana jednostka (Wants/Requires...)
+- Kolejność startu z czasami
+- Logi
+- Pliki jednostki
+E: Kolejność — critical-chain.
+#Q
+Q: Co pokazuje systemctl list-dependencies --reverse postgresql?
++ Jednostki, które wymagają PostgreSQL
+- Zależności bazy
+- Pliki bazy
+- Odwrotną kolejność startu
+E: Kto zależy od bazy.
+#Q
+Q: Co oznacza ○ przed network-online.target w drzewie zależności?
++ Jednostka jest nieaktywna (lub cel nieosiągnięty w tym momencie)
+- Jednostka działa
+- Jednostka ma błąd
+- Jednostka jest zamaskowana
+E: ● — aktywna.
+#Q
+Q: Które polecenie pokaże łańcuch, na który czekała usługa przy starcie?
++ systemd-analyze critical-chain nazwa.service
+- systemctl list-dependencies --time
+- systemd-analyze security
+- journalctl --chain
+E: @ — kiedy aktywna, + — ile trwał start.
+#Q
+Q: Co znaczy +2.083s przy postgresql@16-main.service w critical-chain?
++ Tyle trwało uruchamianie tej jednostki
+- Tyle czasu po starcie systemu
+- Tyle trwała przerwa restartu
+- Tyle wynosi limit
+E: @ — moment aktywacji.
+#Q
+Q: Dlaczego is-active postgresql pokazuje active, choć baza działa w postgresql@16-main?
++ postgresql.service to jednostka zbiorcza (oneshot z RemainAfterExit) dla wszystkich klastrów
+- To błąd pakietu
+- Bo baza działa dwa razy
+- Bo postgresql to alias
+E: Właściwy proces — instancja szablonu.
+#Q
+Q: Czy zatrzymanie postgresql@16-main przy Wants= w sklepie zatrzyma sklep?
++ Nie — Wants= to słaba zależność
+- Tak
+- Tak, po 90 s
+- Tylko przy Restart=always
+E: Requires= by zatrzymało.
+#Q
+Q: Requires=demo-glowna w pomocniku. Główna zabita SIGKILL. Co z pomocnikiem?
++ Działa dalej — Requires= reaguje na zatrzymanie przez systemd, a nie na nagłą awarię
+- Zostaje zatrzymany
+- Zostaje zrestartowany
+- Zostaje zamaskowany
+E: Na awarię reaguje BindsTo=.
+#Q
+Q: BindsTo=demo-glowna w pomocniku. Główna zabita SIGKILL. Co z pomocnikiem?
++ Zostaje zatrzymany
+- Działa dalej
+- Zostaje zrestartowany
+- Zostaje zamaskowany
+E: Ścisłe powiązanie.
+#Q
+Q: PartOf=demo-glowna. Restartujesz demo-glowna. Co z pomocnikiem?
++ Też zostaje zrestartowany (nowy PID)
+- Nic
+- Zostaje zatrzymany na stałe
+- Zostaje zamaskowany
+E: Restart propaguje się.
+#Q
+Q: PartOf=demo-glowna. Uruchamiasz demo-glowna. Czy pomocnik się uruchomi?
++ Nie — PartOf= przenosi tylko stop i restart, nie start
+- Tak
+- Tylko z After=
+- Tylko gdy enabled
+E: Do startu — Wants= w głównej.
+#Q
+Q: Jaka dyrektywa wyrazi „uruchom mnie przed nginx”?
++ Before=nginx.service
+- After=nginx.service
+- Wants=nginx.service
+- Conflicts=nginx.service
+E: Odwrotność After=.
+#Q
+Q: Jak kolejność After= działa przy zatrzymywaniu?
++ Odwrotnie — jednostka z After=X jest zatrzymywana przed X
+- Tak samo jak przy starcie
+- Nie działa
+- Losowo
+E: Aplikacja zamyka się przed bazą.
+#Q
+Q: Dlaczego przy zamykaniu systemu ważne jest, by aplikacja miała After=postgresql.service?
++ Aplikacja zatrzyma się przed bazą i zdąży zamknąć połączenia i transakcje
+- Baza zatrzyma się pierwsza
+- Bo inaczej system się nie wyłączy
+- Nie ma znaczenia
+E: Kolejność odwrócona.
+#Q
+Q: Gdzie w journalctl znajdziesz przyczynę start-limit-hit sklepu?
++ We wcześniejszych wpisach (np. wyjątek APPLICATION FAILED TO START, Port 8080 was already in use)
+- W ostatniej linii
+- W /var/log/syslog tylko
+- Nigdzie
+E: Szukaj pierwszego błędu.
+#Q
+Q: Port 8080 zajmuje stary proces java anny. Jak znaleźć jego PID?
++ sudo ss -tlnp | grep ':8080 '
+- systemctl status 8080
+- ps 8080
+- journalctl -p 8080
+E: Kolumna users.
+#Q
+Q: Jaka jest właściwa kolejność po usunięciu przyczyny start-limit-hit?
++ reset-failed, start, sprawdzenie stanu
+- start bez reset-failed
+- daemon-reload, reboot
+- mask, unmask
+E: Bez reset start może być odrzucony.
+#Q
+Q: Co oznacza Result=exit-code?
++ Usługa zakończyła się niezerowym kodem uznanym za błąd
+- Usługa zakończyła się sukcesem
+- Usługę zabito sygnałem
+- Przekroczono czas
+E: Inne: signal, timeout, start-limit-hit.
+#Q
+Q: Co oznacza Result=signal?
++ Proces został zakończony nieczystym sygnałem
+- Usługa zakończyła się sukcesem
+- Usługa ma zły plik
+- Osiągnięto limit
+E: Np. 9/KILL.
+#Q
+Q: Co oznacza Result=timeout?
++ Przekroczono czas startu lub zatrzymania (TimeoutStartSec/TimeoutStopSec)
+- Usługa działała za długo
+- Błąd sieci
+- Limit restartów
+E: Wliczane do on-failure.
+#Q
+Q: Jakie ustawienie spowoduje, że kod wyjścia 3 będzie uznany za sukces?
++ SuccessExitStatus=3
+- Restart=on-success
+- ExitCode=0
+- RestartPreventExitStatus=3
+E: Jak 143 dla Javy.
+#Q
+Q: Do czego służy RestartPreventExitStatus=?
++ Wymienione kody wyjścia nie wywołują restartu, nawet przy Restart=always
+- Wymusza restart przy danych kodach
+- Zmienia kod wyjścia
+- Ustala limit
+E: Np. kod „błędna konfiguracja”.
+#Q
+Q: Do czego służy RestartForceExitStatus=?
++ Wymienione kody zawsze wywołują restart, niezależnie od polityki
+- Blokuje restart
+- Zmienia kod na 0
+- Ustala kolejność
+E: Uzupełnienie Restart=.
+#Q
+Q: Jak w drop-inie zmienić tylko politykę restartu usługi z pakietu?
++ [Service] Restart=on-failure w /etc/systemd/system/nazwa.service.d/*.conf
+- Edytować /usr/lib/systemd/system/nazwa.service
+- Dodać Restart= w [Install]
+- Dodać Restart= w [Unit]
+E: Lekcja 7.
+#Q
+Q: Zmieniłeś Restart= w drop-inie i wykonałeś daemon-reload. Czy trzeba restartować usługę?
++ Nie dla samej polityki restartu — systemd stosuje ją od razu dla działającej jednostki
+- Tak, zawsze
+- Tak, i reboot
+- Tylko dla Javy
+E: Ustawienia procesu (limity, środowisko) wymagają restartu.
+#Q
+Q: Co pokaże systemctl show sklep -p StartLimitIntervalUSec przy StartLimitIntervalSec=300?
++ StartLimitIntervalUSec=5min
+- 300
+- 300000000
+- 5m
+E: Format czytelny dla człowieka.
+#Q
+Q: Która właściwość pokazuje kod wyjścia ostatniego głównego procesu?
++ ExecMainStatus
+- NRestarts
+- Result
+- MainPID
+E: Np. 3 albo 143.
+#Q
+Q: Jak w jednej jednostce wyrazić „dwa serwery na porcie 80 nie mogą działać razem”?
++ Conflicts=apache2.service w nginx (lub odwrotnie)
+- Requires=apache2.service
+- After=apache2.service
+- PartOf=apache2.service
+E: Albo mask jednego z nich.
+#Q
+Q: Która zależność pasuje do procesu pomocniczego restartowanego zawsze razem z główną usługą?
++ PartOf=
+- Conflicts=
+- Before=
+- Requisite=
+E: Np. eksporter metryk.
+#Q
+Q: Jakie dwa pytania rozdzielają zależności systemd?
++ CZY uruchomić inne jednostki (Wants/Requires) i KIEDY (After/Before)
+- KTO i GDZIE
+- ILE i JAK DŁUGO
+- CO i DLACZEGO
+E: Dwie niezależne osie.
+#Q
+Q: Gdzie trafia wynik dyrektywy WantedBy= w kontekście zależności?
++ Po enable tworzy zależność Wants= celu od tej jednostki (dowiązanie w .wants)
+- Ustala kolejność
+- Wymaga celu
+- Zabrania startu
+E: Odwrotny kierunek Wants=.
+#Q
+Q: Dlaczego jednostki bez After=/Before= startują równolegle?
++ systemd domyślnie zrównolegla start, by przyspieszyć rozruch
+- Bo to błąd
+- Bo nie mają [Install]
+- Bo są static
+E: Kolejność trzeba wyrazić jawnie.
+#Q
+Q: Jakie domyślne zależności dodaje systemd do każdej usługi?
++ Requires= i After= dla sysinit.target i basic.target oraz Conflicts=/Before= shutdown.target
+- Wants=network-online.target
+- After=postgresql.service
+- Żadne
+E: DefaultDependencies=yes.
+#Q
+Q: Co robi DefaultDependencies=no?
++ Wyłącza domyślne zależności — używane przez usługi wczesnego rozruchu
+- Wyłącza wszystkie zależności
+- Włącza autostart
+- Wyłącza restart
+E: Rzadko w aplikacjach.
+#Q
+Q: Aplikacja pada co godzinę przez OutOfMemoryError. Co da Restart=on-failure?
++ Szybki powrót usługi — ale przyczynę (pamięć, wyciek) trzeba i tak zbadać
+- Naprawi wyciek pamięci
+- Zwiększy RAM
+- Zablokuje usługę
+E: Siatka bezpieczeństwa, nie lekarstwo.
+#Q
+Q: Gdzie zmienić domyślne StartLimitIntervalSec= i StartLimitBurst= dla wszystkich usług?
++ /etc/systemd/system.conf (DefaultStartLimitIntervalSec=, DefaultStartLimitBurst=)
+- /etc/default/systemd
+- /usr/lib/systemd/limits.conf
+- /etc/security/limits.conf
+E: Najlepiej przez drop-in system.conf.d.
+#Q
+Q: Jakie polecenie wyślesz, by zabić tylko proces główny usługi, a nie całą grupę?
++ sudo systemctl kill --kill-whom=main -s KILL nazwa
+- sudo systemctl kill nazwa
+- sudo kill -9 0
+- sudo systemctl stop --main nazwa
+E: Domyślnie kill dotyczy wszystkich procesów.
+#Q
+Q: Dlaczego po kill -9 procesu Javy dziennik pokazuje „code=killed, status=9/KILL”?
++ Proces zakończył się sygnałem nr 9, a nie kodem wyjścia
+- Java zwróciła kod 9
+- systemd zabił proces
+- To limit
+E: Sygnał, nie kod.
+#Q
+Q: Co jest zaletą RestartSec=10s przy aplikacji zależnej od bazy?
++ Baza ma czas, by wstać po swojej awarii, zanim aplikacja spróbuje ponownie
+- Szybszy restart
+- Mniej pamięci
+- Wyłącza limit
+E: Mniej zmarnowanych prób.
+#Q
+Q: Która kombinacja na pewno uruchomi PostgreSQL przed sklepem przy starcie sklepu?
++ Wants=postgresql.service i After=postgresql.service w sklepie
+- After=sklep.service w sklepie
+- Before=postgresql.service w sklepie
+- Wants=sklep.service w bazie
+E: Zależność + kolejność.
+#Q
+Q: Co oznacza „Scheduled restart job, restart counter is at 5”?
++ systemd zaplanował piąty automatyczny restart
+- Usługa działa 5 minut
+- Limit wynosi 5 s
+- Pięć usług restartuje się
+E: Kolejny start może trafić w limit.
+#Q
+Q: Jak sprawdzić politykę restartu i dyrektywy limitu w samym pliku jednostki?
++ systemctl cat nazwa | grep -E '^(Restart|StartLimit)'
+- systemctl is-enabled nazwa
+- journalctl -u nazwa
+- systemctl list-dependencies nazwa
+E: Wartości efektywne — show.
+#Q
+Q: Co oznacza %n w OnFailure=powiadom@%n.service?
++ Pełną nazwę jednostki, w której zapisano dyrektywę (np. sklep.service)
+- Numer procesu
+- Nazwę hosta
+- Numer restartu
+E: %i — nazwa instancji szablonu.
+#Q
+Q: Co oznacza %i w pliku szablonu powiadom@.service?
++ Nazwę instancji — tekst między @ a .service
+- Identyfikator procesu
+- Numer portu zawsze
+- Nazwę użytkownika
+E: Np. powiadom@sklep.service.service -> sklep.service.
+#Q
+Q: Jak zapisać literalny znak % w printf, który tworzy plik jednostki?
++ Jako %% (printf zamienia go na pojedynczy %)
+- Jako \%
+- Jako %25
+- Nie da się
+E: Inaczej printf potraktuje go jako specyfikator.
+#Q
+Q: Które polecenie zapisuje komunikat do dziennika systemowego z własnym znacznikiem?
++ logger -t znacznik "tekst"
+- echo "tekst" > /dev/journal
+- journalctl --write "tekst"
+- systemd-cat -r
+E: Odczyt: journalctl -t znacznik.
+#Q
+Q: Kiedy uruchamiana jest jednostka z OnFailure=?
++ Gdy jednostka przejdzie w stan failed (także po start-limit-hit)
+- Przy każdym restarcie
+- Przy każdym stop
+- Przy starcie systemu
+E: Np. powiadomienie lub zebranie diagnostyki.
+#Q
+Q: Jak przetestować powiadomienie OnFailure= bez psucia sklepu?
++ Uruchomić ręcznie instancję szablonu, np. sudo systemctl start powiadom@test.service
+- Zrestartować serwer
+- Zamaskować sklep
+- Wykonać daemon-reexec
+E: Sprawdzasz samą akcję powiadomienia.
+#Q
+Q: Do czego może posłużyć OnFailure= na serwerze produkcyjnym?
++ Do wysłania powiadomienia (e-mail, Slack) lub zebrania diagnostyki po awarii
+- Do restartu systemu
+- Do zmiany preset
+- Do usunięcia logów
+E: Uzupełnia monitoring.
+#Q
+Q: Jaki jest skutek Restart=always w usłudze, która od razu kończy się kodem 0?
++ Ciągłe uruchamianie co RestartSec, aż do limitu uruchomień
+- Jednorazowe uruchomienie
+- Stan masked
+- Nic
+E: always restartuje także po sukcesie.
+#Q
+Q: Co jest pierwszym krokiem przy usłudze w stanie failed z start-limit-hit?
++ Znaleźć w dzienniku pierwszą przyczynę awarii i ją usunąć
+- Od razu reset-failed i start
+- Zwiększyć StartLimitBurst do 1000
+- Wyłączyć limit
+E: Bez tego pętla wróci.
+#Q
+Q: Jaki stan pokaże usługa, która czeka na zaplanowany restart?
++ activating (auto-restart)
+- active (running)
+- inactive (dead)
+- deactivating
+E: SubState=auto-restart.
+#Q
+Q: Która właściwość pokazuje przyczynę ostatniego zakończenia jednostki (np. success, signal)?
++ Result
+- ExecMainStatus
+- NRestarts
+- ActiveState
+E: success, exit-code, signal, timeout, start-limit-hit...
+#Q
+Q: Co oznacza Requires=system.slice sysinit.target w systemctl show usługi?
++ To domyślne zależności dodane przez systemd każdej usłudze
+- Administrator je dopisał
+- Usługa jest static
+- Usługa jest błędna
+E: DefaultDependencies=yes.
+#Q
+Q: Masz dwie usługi z After= wzajemnie na siebie. Co zrobi systemd?
++ Wykryje cykl kolejności i usunie jedno zadanie, zapisując ostrzeżenie w dzienniku
+- Uruchomi je równocześnie bez komunikatu
+- Zawiesi się
+- Zrestartuje system
+E: Ordering cycle found.
