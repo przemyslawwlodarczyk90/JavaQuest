@@ -1,0 +1,898 @@
+#EX
+P: Utwórz użytkownika kopie z prawami tylko do odczytu na potrzeby kopii zapasowych.
+H: CREATE USER i GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS.
+S:
+mysql -u root -p -e "CREATE USER 'kopie'@'localhost' IDENTIFIED BY 'Kopie-Haslo-2026!x'; GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS ON *.* TO 'kopie'@'localhost';"
+#EX
+P: Wyświetl uprawnienia użytkownika kopie.
+H: SHOW GRANTS.
+S:
+mysql -u root -p -e "SHOW GRANTS FOR 'kopie'@'localhost';"
+#EX
+P: Sprawdź, że użytkownik kopie nie może zmieniać danych.
+H: Próba INSERT jako kopie.
+S:
+mysql -u kopie -p strona -e "INSERT INTO kontakty (email) VALUES ('test@test.pl');"
+#EX
+P: Utwórz plik opcji /root/.my.cnf dla mysqldump z prawami 600.
+H: Sekcja [mysqldump], chmod 600.
+S:
+sudo tee /root/.my.cnf > /dev/null <<'EOF'
+[mysqldump]
+user=kopie
+password=Kopie-Haslo-2026!x
+EOF
+sudo chmod 600 /root/.my.cnf
+sudo ls -l /root/.my.cnf
+#EX
+P: Wykonaj spójny zrzut bazy strona z procedurami i zdarzeniami, kompresując wynik.
+H: mysqldump --single-transaction --routines --events --databases | gzip.
+S:
+sudo mysqldump --single-transaction --routines --events --databases strona | gzip > /tmp/strona.sql.gz
+ls -lh /tmp/strona.sql.gz
+#EX
+P: Sprawdź zawartość zrzutu: tworzenie bazy, tabele i znacznik zakończenia.
+H: gunzip -c | grep.
+S:
+gunzip -c /tmp/strona.sql.gz | grep -E '^(CREATE DATABASE|CREATE TABLE|-- Dump completed)'
+#EX
+P: Wykonaj zrzut jednej tabeli przed ryzykowną operacją.
+H: mysqldump baza tabela.
+S:
+sudo mysqldump --single-transaction strona kontakty > /tmp/kontakty.sql
+grep -c 'INSERT INTO' /tmp/kontakty.sql
+#EX
+P: Wykonaj zrzut wszystkich baz.
+H: mysqldump --all-databases.
+S:
+sudo mysqldump --single-transaction --routines --events --all-databases | gzip > /tmp/wszystkie.sql.gz
+ls -lh /tmp/wszystkie.sql.gz
+#EX
+P: Zapisz dane logowania przez mysql_config_editor i użyj ich w mysqldump.
+H: mysql_config_editor set --login-path, --login-path=.
+S:
+mysql_config_editor set --login-path=kopie --user=kopie --password
+mysql_config_editor print --all
+mysqldump --login-path=kopie --single-transaction --no-tablespaces strona | head -5
+#EX
+P: Utwórz skrypt kopii /usr/local/bin/kopia-mysql.sh z pipefail, kontrolą zakończenia i retencją 14 dni.
+H: set -euo pipefail, grep 'Dump completed', find -mtime +14 -delete.
+S:
+sudo tee /usr/local/bin/kopia-mysql.sh > /dev/null <<'EOF'
+#!/bin/bash
+set -euo pipefail
+CEL=/srv/kopie/mysql
+PLIK="$CEL/strona-$(date +%F).sql.gz"
+install -d -m 700 "$CEL"
+mysqldump --single-transaction --routines --events --databases strona | gzip > "$PLIK"
+gunzip -c "$PLIK" | tail -1 | grep -q 'Dump completed' || { logger -t kopia-mysql "BLAD: niepelny zrzut $PLIK"; exit 1; }
+find "$CEL" -name 'strona-*.sql.gz' -mtime +14 -delete
+logger -t kopia-mysql "OK $PLIK $(du -h "$PLIK" | cut -f1)"
+EOF
+sudo chmod 750 /usr/local/bin/kopia-mysql.sh
+#EX
+P: Uruchom skrypt kopii i odczytaj wpis w dzienniku.
+H: journalctl -t kopia-mysql.
+S:
+sudo /usr/local/bin/kopia-mysql.sh
+journalctl -t kopia-mysql -n 1 -o cat
+#EX
+P: Ustaw codzienne uruchamianie skryptu o 3:00 w crontab roota.
+H: sudo crontab -e lub dopisanie przez crontab -l | crontab -.
+S:
+( sudo crontab -l 2>/dev/null; echo '0 3 * * * /usr/local/bin/kopia-mysql.sh' ) | sudo crontab -
+sudo crontab -l | grep kopia-mysql
+#EX
+P: Utwórz bazę testową i odtwórz do niej kopię, zmieniając nazwę bazy w zrzucie.
+H: CREATE DATABASE strona_test, gunzip | sed | mysql.
+S:
+mysql -u root -p -e 'CREATE DATABASE strona_test'
+sudo gunzip -c /srv/kopie/mysql/strona-$(date +%F).sql.gz | sed 's/`strona`/`strona_test`/g' | mysql -u root -p
+#EX
+P: Porównaj liczbę wierszy w tabeli produkcyjnej i odtworzonej.
+H: SELECT COUNT(*) z obu baz.
+S:
+mysql -u root -p -e "SELECT (SELECT COUNT(*) FROM strona.kontakty) AS produkcja, (SELECT COUNT(*) FROM strona_test.kontakty) AS kopia;"
+#EX
+P: Usuń bazę testową po weryfikacji.
+H: DROP DATABASE.
+S:
+mysql -u root -p -e 'DROP DATABASE strona_test;'
+#EX
+P: Odtwórz pojedynczą tabelę ze zrzutu tabeli.
+H: mysql baza < plik.
+S:
+mysql -u root -p strona < /tmp/kontakty.sql
+#EX
+P: Odtwórz zrzut zrobiony bez --databases do nieistniejącej bazy i odczytaj błąd.
+H: mysql nowa_baza < plik.
+S:
+mysql -u root -p nowa_baza < /tmp/kontakty.sql
+#EX
+P: Odtwórz błąd potoku bez pipefail: zmień hasło w pliku opcji i uruchom starą wersję skryptu.
+H: Skrypt bez set -o pipefail, echo $?.
+S:
+sudo sed -i 's/^password=.*/password=ZLE/' /root/.my.cnf
+printf '#!/bin/bash\nmysqldump --databases strona | gzip > /tmp/strona-stara.sql.gz\n' | sudo tee /usr/local/bin/kopia-mysql-stara.sh > /dev/null
+sudo bash /usr/local/bin/kopia-mysql-stara.sh; echo "kod: $?"
+ls -l /tmp/strona-stara.sql.gz
+#EX
+P: Uruchom poprawny skrypt przy złym haśle i sprawdź kod wyjścia, a potem przywróć hasło.
+H: kopia-mysql.sh, echo $?, sed.
+S:
+sudo /usr/local/bin/kopia-mysql.sh; echo "kod: $?"
+sudo sed -i 's/^password=ZLE/password=Kopie-Haslo-2026!x/' /root/.my.cnf
+sudo /usr/local/bin/kopia-mysql.sh && echo 'kopia OK'
+#EX
+P: Odtwórz błąd ERROR 2002, zatrzymując MySQL, i sprawdź komunikat klienta.
+H: systemctl stop mysql, mysql -e.
+S:
+sudo systemctl stop mysql
+mysql -u root -p -e 'SELECT 1'
+sudo systemctl start mysql
+#EX
+P: Odtwórz ERROR 1045 z błędnym hasłem i z brakiem hasła.
+H: mysql -u strona -p (złe hasło), mysql -u strona bez -p.
+S:
+mysql -u strona -p -e 'SELECT 1'
+mysql -u strona -e 'SELECT 1'
+#EX
+P: Sprawdź konta, ich hosty i metody uwierzytelniania.
+H: SELECT user, host, plugin FROM mysql.user.
+S:
+mysql -u root -p -e "SELECT user, host, plugin FROM mysql.user;"
+#EX
+P: Odtwórz ERROR 1044 przy dostępie do cudzej bazy.
+H: mysql -u strona do bazy mysql.
+S:
+mysql -u strona -p mysql -e 'SELECT 1'
+#EX
+P: Sprawdź, czy dziennik binarny jest dostępny do odtwarzania zmian po zrzucie.
+H: SHOW BINARY LOGS, mysqlbinlog --start-datetime.
+S:
+mysql -u root -p -e 'SHOW BINARY LOGS;'
+sudo mysqlbinlog --start-datetime="$(date '+%F') 03:00:00" /var/lib/mysql/binlog.000003 | grep -cE '^(INSERT|UPDATE|DELETE|### )'
+#EX
+P: Przenieś kopie poza serwer, pobierając je z lubuntu-nauka (model pull).
+H: rsync -a z srv-test.
+S:
+rsync -a srv-test:/srv/kopie/mysql/ ~/kopie-offsite/mysql/
+ls -l ~/kopie-offsite/mysql | tail -3
+#EX
+P: Sprawdź prawa katalogu kopii na serwerze.
+H: ls -ld /srv/kopie/mysql.
+S:
+sudo ls -ld /srv/kopie/mysql
+sudo ls -l /srv/kopie/mysql | tail -3
+#EX
+P: Sprawdź, czy zrzut zawiera procedury i zdarzenia.
+H: grep CREATE PROCEDURE/EVENT.
+S:
+gunzip -c /tmp/strona.sql.gz | grep -cE 'CREATE DEFINER.*(PROCEDURE|FUNCTION|EVENT)'
+#EX
+P: Zmierz czas wykonania zrzutu.
+H: time mysqldump.
+S:
+time sudo mysqldump --single-transaction --routines --events --databases strona > /dev/null
+#EX
+P: Posprzątaj pliki tymczasowe zrzutów i usuń starą wersję skryptu.
+H: rm.
+S:
+rm -f /tmp/strona.sql.gz /tmp/kontakty.sql /tmp/wszystkie.sql.gz /tmp/strona-stara.sql.gz
+sudo rm -f /usr/local/bin/kopia-mysql-stara.sh
+#EX
+P: Napisz skrypt ~/bin/test-odtworzenia.sh, który odtwarza najnowszą kopię do bazy testowej, porównuje liczbę wierszy wybranej tabeli i usuwa bazę testową.
+H: ls -t | head -1, sed nazwy bazy, COUNT(*), DROP.
+S:
+cat > ~/bin/test-odtworzenia.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+kopia=$(sudo ls -t /srv/kopie/mysql/strona-*.sql.gz | head -1)
+mysql -e 'DROP DATABASE IF EXISTS strona_test; CREATE DATABASE strona_test'
+sudo gunzip -c "$kopia" | sed 's/`strona`/`strona_test`/g' | mysql
+p=$(mysql -Nse 'SELECT COUNT(*) FROM strona.kontakty'); k=$(mysql -Nse 'SELECT COUNT(*) FROM strona_test.kontakty')
+echo "kopia: $kopia  produkcja: $p  odtworzone: $k"
+mysql -e 'DROP DATABASE strona_test'
+EOF
+chmod +x ~/bin/test-odtworzenia.sh
+~/bin/test-odtworzenia.sh
+#Q
+Q: Czym jest kopia logiczna MySQL?
++ Zapisem bazy jako poleceń SQL (CREATE TABLE, INSERT)
+- Kopią plików /var/lib/mysql
+- Migawką dysku
+- Kopią konfiguracji
+E: mysqldump.
+#Q
+Q: Jakie są zalety kopii logicznej według notatek?
++ Bezpieczna, przenośna między wersjami i maszynami, bez zatrzymywania serwera
+- Najszybsza przy dużych bazach
+- Wymaga przestoju
+- Działa tylko na tej samej wersji
+E: Rekomendowana.
+#Q
+Q: Czym jest kopia fizyczna MySQL?
++ Kopią plików katalogu danych po zatrzymaniu serwera
+- Plikiem SQL
+- Kopią binlog
+- Eksportem CSV
+E: Lekcja 2.
+#Q
+Q: Jakie są wady kopii fizycznej?
++ Wymaga przestoju i tej samej wersji serwera
+- Jest przenośna
+- Jest wolna przy małych bazach
+- Nie zawiera danych
+E: Definicje.
+#Q
+Q: Jak wygląda podstawowe polecenie kopii z notatek?
++ mysqldump -u root -p baza > backup.sql
+- mysql -backup baza
+- cp /var/lib/mysql
+- mysqldump --restore
+E: Notatki kursu.
+#Q
+Q: Co robi opcja --single-transaction?
++ Wykonuje spójny zrzut tabel InnoDB w jednej transakcji bez blokowania zapisu
+- Blokuje wszystkie tabele
+- Zrzuca jedną tabelę
+- Kompresuje zrzut
+E: Kluczowa opcja.
+#Q
+Q: Co robi mysqldump domyślnie bez --single-transaction?
++ Blokuje tabele na czas zrzutu (--lock-tables)
+- Nic nie blokuje
+- Zatrzymuje serwer
+- Usuwa dane
+E: Wpływ na aplikację.
+#Q
+Q: Czym grozi zrzut bez --single-transaction w trakcie pracy aplikacji?
++ Niespójnymi danymi między tabelami, np. zamówieniem bez pozycji
+- Brakiem pliku
+- Utratą konfiguracji
+- Niczym
+E: PITFALL.
+#Q
+Q: Co dodaje opcja --routines?
++ Procedury i funkcje składowane
+- Tabele
+- Użytkowników
+- Konfigurację
+E: Bez niej brak procedur.
+#Q
+Q: Co dodaje opcja --events?
++ Zdarzenia (zaplanowane zadania) MySQL
+- Logi
+- Wyzwalacze
+- Tabele
+E: --triggers domyślnie.
+#Q
+Q: Czy wyzwalacze są domyślnie w zrzucie?
++ Tak - --triggers jest włączone domyślnie
+- Nie
+- Tylko z --events
+- Tylko w 8.4
+E: Definicje.
+#Q
+Q: Co robi opcja --databases?
++ Zrzuca wskazane bazy razem z poleceniami CREATE DATABASE i USE
+- Zrzuca wszystkie bazy
+- Zrzuca tylko schemat
+- Usuwa bazy
+E: Odtworzenie bez tworzenia bazy.
+#Q
+Q: Co robi opcja --all-databases?
++ Zrzuca wszystkie bazy serwera
+- Zrzuca jedną bazę
+- Zrzuca tylko tabele systemowe
+- Usuwa bazy
+E: -A.
+#Q
+Q: Do czego służy --no-tablespaces?
++ Pomija informacje o przestrzeniach tabel - nie wymaga uprawnienia PROCESS
+- Pomija tabele
+- Pomija dane
+- Pomija indeksy
+E: Konta bez PROCESS.
+#Q
+Q: Jak odtworzyć zrzut skompresowany gzipem?
++ gunzip -c plik.sql.gz | mysql BAZA
+- mysql < plik.sql.gz
+- gzip -d | mysqldump
+- unzip plik
+E: Potok.
+#Q
+Q: Jakie uprawnienia ma użytkownik kopie w lekcji?
++ SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS
+- ALL PRIVILEGES
+- Tylko SELECT
+- SUPER
+E: Odczyt bez zmian.
+#Q
+Q: Dlaczego kopie wykonuje osobny użytkownik?
++ Może czytać wszystko, ale nie może niczego zmienić - wyciek hasła nie daje zapisu
+- Bo root nie może robić kopii
+- Bo jest szybciej
+- Bez powodu
+E: Audytor bez długopisu.
+#Q
+Q: Gdzie przechowuje się hasło użytkownika kopii?
++ W pliku opcji z prawami 600, np. /root/.my.cnf
+- W skrypcie
+- W crontab
+- W argumencie -p
+E: Nigdy w poleceniu.
+#Q
+Q: Jaka sekcja pliku opcji dotyczy mysqldump?
++ [mysqldump] (lub ogólna [client])
+- [mysqld]
+- [server]
+- [backup]
+E: CODE_BASIC.
+#Q
+Q: Do czego służy mysql_config_editor?
++ Do zapisania danych logowania w zaciemnionym pliku ~/.mylogin.cnf
+- Do edycji konfiguracji serwera
+- Do kopii zapasowych
+- Do tworzenia użytkowników
+E: --login-path.
+#Q
+Q: Jak użyć zapisanych danych logowania w mysqldump?
++ mysqldump --login-path=NAZWA
+- mysqldump --config=NAZWA
+- mysqldump -u NAZWA
+- mysqldump --profile NAZWA
+E: Ćwiczenie.
+#Q
+Q: Jaki znacznik powinien kończyć poprawny zrzut?
++ -- Dump completed on DATA
+- END OF DUMP
+- COMMIT
+- OK
+E: Kontrola w skrypcie.
+#Q
+Q: Dlaczego skrypt kopii potrzebuje set -o pipefail?
++ Bez niego kod wyjścia potoku to kod gzip, więc błąd mysqldump zostaje ukryty
+- Bo gzip tego wymaga
+- Bez powodu
+- Aby przyspieszyć
+E: PITFALL.
+#Q
+Q: Jaki rozmiar ma „kopia” po błędzie mysqldump w potoku z gzip?
++ Kilkadziesiąt bajtów - pusty skompresowany strumień
+- Taki sam jak zwykle
+- 0 bajtów zawsze
+- Brak pliku
+E: CODE_WRONG.
+#Q
+Q: Jaki kod zwraca skrypt bez pipefail po błędzie mysqldump?
++ 0
+- 1
+- 2
+- 255
+E: Sukces zgłoszony mimo błędu.
+#Q
+Q: Jaki kod zwraca skrypt z pipefail po błędzie mysqldump w przykładzie?
++ 2
+- 0
+- 23
+- 255
+E: Kod mysqldump.
+#Q
+Q: Jak skrypt kopii realizuje retencję?
++ find KATALOG -name 'strona-*.sql.gz' -mtime +14 -delete
+- rm -rf KATALOG
+- logrotate
+- mysqldump --retention
+E: 14 dni.
+#Q
+Q: Jak skrypt kopii raportuje wynik?
++ logger -t kopia-mysql z informacją OK lub BLAD
+- echo do /dev/null
+- mail zawsze
+- Nie raportuje
+E: journalctl -t kopia-mysql.
+#Q
+Q: Jak odtworzyć kopię do bazy testowej o innej nazwie?
++ Utworzyć bazę testową i zamienić nazwę w zrzucie sed 's/`strona`/`strona_test`/g'
+- mysql strona_test < plik bez zmian
+- Zmienić nazwę pliku
+- Nie da się
+E: Zrzut z --databases zawiera USE strona.
+#Q
+Q: Dlaczego zrzut z --databases trzeba modyfikować przy odtwarzaniu do innej bazy?
++ Zawiera CREATE DATABASE i USE z oryginalną nazwą
+- Bo jest skompresowany
+- Bo zawiera hasła
+- Nie trzeba
+E: CODE_PRACTICAL.
+#Q
+Q: Jak zweryfikować odtworzoną kopię?
++ Porównać liczbę wierszy i sprawdzić kluczowe dane z produkcją
+- Sprawdzić tylko rozmiar pliku
+- Nie trzeba
+- Sprawdzić datę pliku
+E: Próbne odtworzenie.
+#Q
+Q: Jak często wykonywać próbne odtworzenie?
++ Przynajmniej raz w miesiącu
+- Raz na 5 lat
+- Nigdy
+- Co godzinę
+E: WHEN_TO_USE.
+#Q
+Q: Co oznacza ERROR 2002 Can't connect to local MySQL server through socket?
++ Serwer nie działa lub gniazdo jest w innym miejscu
+- Złe hasło
+- Brak uprawnień
+- Brak bazy
+E: STEP_BY_STEP.
+#Q
+Q: Co oznacza ERROR 1045 Access denied (using password: YES)?
++ Złe hasło lub użytkownik istnieje tylko dla innego hosta
+- Serwer nie działa
+- Brak bazy
+- Brak miejsca
+E: STEP_BY_STEP.
+#Q
+Q: Co oznacza Access denied (using password: NO)?
++ Klient nie wysłał hasła - brak -p lub nie wczytano pliku opcji
+- Złe hasło
+- Brak bazy
+- Serwer nie działa
+E: STEP_BY_STEP.
+#Q
+Q: Co oznacza ERROR 1044 Access denied for user ... to database?
++ Użytkownik nie ma uprawnień do tej bazy
+- Złe hasło
+- Serwer nie działa
+- Brak bazy
+E: SHOW GRANTS.
+#Q
+Q: Co oznacza ERROR 1049 Unknown database?
++ Wskazana baza nie istnieje
+- Złe hasło
+- Brak uprawnień
+- Serwer nie działa
+E: Przy odtwarzaniu.
+#Q
+Q: Jak naprawić ERROR 1049 przy odtwarzaniu zrzutu bez --databases?
++ Utworzyć bazę przed odtworzeniem
+- Zmienić hasło
+- Restart serwera
+- Użyć -A
+E: STEP_BY_STEP.
+#Q
+Q: Co sprawdzić przy ERROR 2002?
++ systemctl status mysql i /var/log/mysql/error.log
+- Hasło
+- GRANT
+- DNS
+E: STEP_BY_STEP.
+#Q
+Q: Dlaczego konto 'X'@'%' i 'X'@'localhost' to różne konta?
++ W MySQL konto to para użytkownik i host - każda ma własne hasło i uprawnienia
+- To samo konto
+- % to błąd
+- localhost jest ignorowany
+E: Częsta przyczyna 1045.
+#Q
+Q: Jak wyświetlić metody uwierzytelniania kont?
++ SELECT user, host, plugin FROM mysql.user
+- SHOW PLUGINS
+- SHOW AUTH
+- DESCRIBE users
+E: caching_sha2_password, auth_socket.
+#Q
+Q: Dlaczego aplikacja na innym serwerze może nie widzieć bazy?
++ bind-address 127.0.0.1, zapora lub brak konta dla adresu aplikacji
+- Bo MySQL nie działa w sieci
+- Bo hasło jest za krótkie
+- Bez powodu
+E: Lekcja 8.
+#Q
+Q: Jak odzyskać zapomniane hasło roota MySQL na własnym serwerze?
++ Uruchomić serwer z --skip-grant-tables --skip-networking, zmienić hasło ALTER USER i uruchomić normalnie
+- Przeinstalować system
+- Usunąć /var/lib/mysql
+- Nie da się
+E: NOTE.
+#Q
+Q: Dlaczego przy --skip-grant-tables dodaje się --skip-networking?
++ Aby nikt z sieci nie połączył się bez hasła w tym czasie
+- Aby przyspieszyć
+- Bez powodu
+- Bo jest wymagane składniowo
+E: Bezpieczeństwo.
+#Q
+Q: Co trzeba wykonać przed ALTER USER w trybie --skip-grant-tables?
++ FLUSH PRIVILEGES
+- SHOW GRANTS
+- DROP USER
+- RESET MASTER
+E: NOTE.
+#Q
+Q: Dlaczego ochrona dostępu do systemu chroni też bazę?
++ Root systemu może zresetować hasła bazy i czytać jej pliki
+- Bo baza jest w systemie plików zawsze szyfrowana
+- Bez powodu
+- Nie chroni
+E: NOTE.
+#Q
+Q: Jak zalogować się jako root MySQL z pakietu Ubuntu?
++ sudo mysql - przez gniazdo (auth_socket)
+- mysql -u root -pHASLO zawsze
+- Nie da się
+- Tylko zdalnie
+E: NOTE.
+#Q
+Q: Do czego służy mysqlbinlog?
++ Do odczytu dziennika binarnego i odtwarzania zmian po ostatnim zrzucie
+- Do tworzenia zrzutu
+- Do zmiany hasła
+- Do konfiguracji
+E: Odtwarzanie do punktu w czasie.
+#Q
+Q: Jak odtworzyć zmiany do konkretnej chwili?
++ Odtworzyć zrzut, a potem zmiany z binlog przez mysqlbinlog --stop-datetime
+- Tylko zrzut
+- Tylko binlog bez zrzutu
+- Nie da się
+E: WHEN_TO_USE.
+#Q
+Q: Jakie narzędzie MySQL Shell służy do równoległego zrzutu?
++ util.dumpInstance()
+- mysqlpump
+- mysqldump -j
+- xtrabackup
+E: Duże bazy.
+#Q
+Q: Do czego służy Percona XtraBackup?
++ Do fizycznej kopii na gorąco bez zatrzymywania serwera
+- Do kopii logicznej
+- Do zmiany haseł
+- Do replikacji
+E: Duże bazy.
+#Q
+Q: Czy mysqlpump jest dostępny w MySQL 8.4?
++ Nie - został usunięty
+- Tak
+- Tylko w Ubuntu
+- Tylko w Rocky
+E: Definicje.
+#Q
+Q: W analogii z lekcji, czym jest kopia logiczna?
++ Przepisaniem księgi rachunkowej na czysto
+- Fotografią zeszytu
+- Zamknięciem kasy
+- Audytorem
+E: Odtworzy ją każdy księgowy.
+#Q
+Q: W analogii z lekcji, czym jest --single-transaction?
++ Zdjęciem stanu z jednej chwili, choć kasjer dalej zapisuje operacje
+- Zamknięciem kasy
+- Kopią zeszytu
+- Audytem
+E: Spójność.
+#Q
+Q: W analogii z lekcji, czym jest użytkownik kopii?
++ Audytorem z prawem wglądu, ale bez długopisu
+- Kasjerem
+- Księgowym
+- Dyrektorem
+E: Tylko odczyt.
+#Q
+Q: W analogii z lekcji, czym jest kopia fizyczna?
++ Sfotografowaniem samego zeszytu przy zamkniętej kasie
+- Przepisaniem księgi
+- Audytem
+- Zdjęciem w trakcie pracy
+E: Przestój.
+#Q
+Q: Gdzie skrypt zapisuje kopie?
++ /srv/kopie/mysql z prawami 700
+- /tmp
+- /var/www
+- /home/anna
+E: install -d -m 700.
+#Q
+Q: Dlaczego katalog kopii ma prawa 700?
++ Kopie zawierają wszystkie dane bazy - dostęp tylko dla roota
+- Bo mysqldump wymaga
+- Bez powodu
+- Aby przyspieszyć
+E: Dane wrażliwe.
+#Q
+Q: Jak przenieść kopie poza serwer?
++ rsync w modelu pull z serwera kopii
+- Zostawić na serwerze
+- Wysłać mailem
+- Udostępnić przez HTTP
+E: Rozdział 34.
+#Q
+Q: Kiedy wykonać zrzut przed wdrożeniem?
++ Przed migracją schematu (Flyway, Liquibase), aby móc szybko wrócić
+- Po wdrożeniu
+- Nigdy
+- Raz w roku
+E: USAGE.
+#Q
+Q: Co należy zrobić z danymi osobowymi przy kopii produkcji do testów?
++ Zanonimizować je
+- Nic
+- Zaszyfrować hasłem 1234
+- Usunąć tabele
+E: USAGE.
+#Q
+Q: Jak zrzucić jedną tabelę?
++ mysqldump BAZA TABELA > plik.sql
+- mysqldump --table
+- mysql -e SELECT
+- cp tabela.ibd
+E: USAGE.
+#Q
+Q: Jak odtworzyć zrzut tabeli do istniejącej bazy?
++ mysql BAZA < plik.sql
+- mysqldump --restore
+- cp plik
+- mysql < plik bez bazy
+E: Ćwiczenie.
+#Q
+Q: Co zawiera zrzut tabeli przed INSERT?
++ DROP TABLE IF EXISTS i CREATE TABLE
+- Tylko INSERT
+- CREATE DATABASE
+- GRANT
+E: Odtworzenie nadpisuje tabelę.
+#Q
+Q: Czym grozi odtworzenie zrzutu tabeli na produkcję?
++ Nadpisaniem tabeli stanem z chwili zrzutu (DROP TABLE)
+- Niczym
+- Dodaniem danych
+- Zmianą haseł
+E: Świadoma operacja.
+#Q
+Q: Jakie są kroki diagnozy błędów MySQL według lekcji?
++ 2002 - serwer, 1045 - dane logowania, 1044 - uprawnienia, 1049 - baza, połączenie zdalne - bind-address i zapora
+- Restart przy każdym błędzie
+- Reinstalacja
+- Zmiana portu
+E: STEP_BY_STEP.
+#Q
+Q: Co robi skrypt test-odtworzenia.sh z ćwiczeń?
++ Odtwarza najnowszą kopię do bazy testowej, porównuje liczby wierszy i usuwa bazę testową
+- Usuwa produkcję
+- Robi kopię
+- Zmienia hasła
+E: Automatyczna weryfikacja.
+#Q
+Q: Dlaczego skrypt testu korzysta z DROP DATABASE IF EXISTS?
++ Aby usunąć ewentualną pozostałość po poprzednim teście
+- Aby usunąć produkcję
+- Bez powodu
+- Aby przyspieszyć
+E: Idempotencja.
+#Q
+Q: Jak sprawdzić, czy zrzut zawiera procedury?
++ grep CREATE DEFINER ... PROCEDURE w zrzucie
+- SHOW PROCEDURES
+- ls
+- du
+E: Ćwiczenie.
+#Q
+Q: Jak zmierzyć czas zrzutu?
++ time mysqldump ...
+- mysqldump --time
+- date
+- uptime
+E: Ćwiczenie.
+#Q
+Q: Co wpisano w crontab roota dla kopii?
++ 0 3 * * * /usr/local/bin/kopia-mysql.sh
+- * * * * *
+- @reboot
+- 0 0 1 1 *
+E: Codziennie o 3:00.
+#Q
+Q: Dlaczego skrypt kopii działa jako root?
++ Czyta /root/.my.cnf i zapisuje do /srv/kopie z prawami 700
+- Bo mysqldump wymaga roota
+- Bez powodu
+- Aby szybciej
+E: Konfiguracja.
+#Q
+Q: Jakie hasło w pliku opcji powoduje błąd 1045 w ćwiczeniu?
++ ZLE
+- Kopie-Haslo-2026!x
+- Brak hasła
+- root
+E: Symulacja.
+#Q
+Q: Dlaczego zrzut wszystkich baz zawiera bazę mysql?
++ --all-databases obejmuje bazy systemowe z kontami i uprawnieniami
+- Bo jest wymagana
+- Błąd
+- Nie zawiera
+E: Kopia całego serwera.
+#Q
+Q: Czy odtworzenie bazy mysql na innej wersji serwera jest bezpieczne?
++ Nie zawsze - tabele systemowe różnią się między wersjami
+- Tak, zawsze
+- Tylko w 8.4
+- Tylko w Ubuntu
+E: Lepiej odtwarzać bazy aplikacji i konta osobno.
+#Q
+Q: Jak przenieść konta użytkowników między serwerami w MySQL 8?
++ SHOW CREATE USER i SHOW GRANTS dla każdego konta (lub narzędzia MySQL Shell)
+- Kopiując mysql.ibd
+- Przez zrzut tabeli user wyłącznie
+- Nie da się
+E: Bezpieczny sposób.
+#Q
+Q: Co jest głównym przesłaniem pułapki z lekcji?
++ Skrypt kopii musi wykrywać błędy, a kopię trzeba próbnie odtwarzać
+- mysqldump zawsze działa
+- Kopie są zbędne
+- Wystarczy sprawdzić rozmiar pliku
+E: PITFALL.
+#Q
+Q: Jaki komunikat mysqldump pojawia się przy złym haśle?
++ Got error: 1045: Access denied for user ... when trying to connect
+- Dump completed
+- Unknown database
+- Can't connect through socket
+E: CODE_WRONG.
+#Q
+Q: Jak monitoring może wykryć brak kopii?
++ Sprawdzając datę i rozmiar najnowszego pliku oraz wpisy kopia-mysql w dzienniku
+- Nie może
+- Przez phpMyAdmin
+- Przez ping
+E: CODE_RIGHT.
+#Q
+Q: Co robi MAILTO w crontab?
++ Wysyła wynik i błędy zadania na wskazany adres
+- Wyłącza zadanie
+- Zmienia godzinę
+- Loguje do pliku
+E: Rozdział 27.
+#Q
+Q: Jaki jest skutek uruchomienia mysqldump jako anna bez pliku opcji?
++ Access denied lub pytanie o hasło - anna nie ma dostępu do /root/.my.cnf
+- Działa jak root
+- Tworzy pusty zrzut zawsze
+- Usuwa bazę
+E: Plik opcji per użytkownik systemu.
+#Q
+Q: Czy kopia logiczna jest odpowiednia dla bazy kilkuset GB?
++ Często za wolna - lepiej XtraBackup lub MySQL Shell
+- Zawsze najlepsza
+- Nie działa wcale
+- Tylko z --all-databases
+E: WHEN_TO_USE.
+#Q
+Q: Jakie dane zawiera zrzut SQL?
++ Definicje obiektów i dane jako polecenia INSERT
+- Tylko schemat
+- Tylko dane CSV
+- Pliki .ibd
+E: Definicje.
+#Q
+Q: Jak uzyskać sam schemat bez danych?
++ mysqldump --no-data
+- mysqldump --schema
+- mysqldump -d bez sensu
+- SHOW CREATE
+E: Np. do dokumentacji.
+#Q
+Q: Czy kopia logiczna przenosi się między MySQL a MariaDB?
++ Zwykle tak, z możliwymi drobnymi niezgodnościami
+- Nigdy
+- Zawsze bez zmian
+- Tylko w Rocky
+E: Przenośność.
+#Q
+Q: Gdzie skrypt kopii zapisuje informację o rozmiarze kopii?
++ W wpisie logger: OK plik rozmiar
+- W nazwie pliku
+- W bazie
+- Nigdzie
+E: du -h.
+#Q
+Q: Co należy zrobić po ćwiczeniach z plikami w /tmp?
++ Usunąć zrzuty - zawierają dane bazy
+- Zostawić
+- Udostępnić
+- Skopiować do /var/www
+E: Dane wrażliwe.
+#Q
+Q: Czy zrzut zawiera hasła użytkowników aplikacji?
++ Zrzut bazy aplikacji nie, ale zrzut bazy mysql zawiera skróty haseł kont MySQL
+- Nigdy
+- Tak, jawnym tekstem zawsze
+- Tylko z --routines
+E: Chroń kopie.
+#Q
+Q: Jak sprawdzić liczbę poleceń INSERT w zrzucie tabeli?
++ grep -c 'INSERT INTO' plik.sql
+- wc -c
+- du
+- ls
+E: Ćwiczenie.
+#Q
+Q: Czy mysqldump zatrzymuje aplikację korzystającą z bazy?
++ Nie przy --single-transaction - zapisy trwają dalej
+- Tak, zawsze
+- Tylko w nocy
+- Tylko przy -A
+E: Bez przestoju.
+#Q
+Q: Jakie tabele nie są objęte spójnością --single-transaction?
++ Tabele nietransakcyjne, np. MyISAM
+- Tabele InnoDB
+- Wszystkie
+- Żadne
+E: Tylko InnoDB.
+#Q
+Q: Jakie dwa podejścia do kopii MySQL opisują notatki?
++ Kopia logiczna mysqldump i kopia fizyczna katalogu danych
+- Kopia DNS i HTTP
+- Kopia SSH i SFTP
+- Tylko kopia fizyczna
+E: Wprowadzenie.
+#Q
+Q: Które podejście notatki rekomendują?
++ Kopię logiczną mysqldump
+- Kopię fizyczną w trakcie pracy
+- Brak kopii
+- Kopię przez phpMyAdmin wyłącznie
+E: Bezpieczna i przenośna.
+#Q
+Q: Do czego służy uprawnienie LOCK TABLES dla użytkownika kopii?
++ Pozwala blokować tabele, gdy zrzut odbywa się bez --single-transaction
+- Pozwala usuwać tabele
+- Pozwala zmieniać hasła
+- Jest zbędne zawsze
+E: Uprawnienia kopii.
+#Q
+Q: Do czego służy uprawnienie PROCESS przy mysqldump w MySQL 8?
++ Do odczytu informacji o przestrzeniach tabel (alternatywą jest --no-tablespaces)
+- Do zabijania procesów
+- Do restartu
+- Do replikacji
+E: Definicje.
+#Q
+Q: Jaka zmienna powłoki w skrypcie przechowuje ścieżkę kopii z datą?
++ PLIK="$CEL/strona-$(date +%F).sql.gz"
+- DATE
+- BACKUP
+- OUT
+E: CODE_PRACTICAL.
+#Q
+Q: Jak sprawdzić, które konta MySQL używają uwierzytelniania przez gniazdo?
++ Kolumna plugin z wartością auth_socket w mysql.user
+- SHOW SOCKETS
+- ls /var/run/mysqld
+- grep socket my.cnf
+E: Ubuntu.
+#Q
+Q: Czy można odtworzyć zrzut bezpośrednio z innego serwera?
++ Tak, np. ssh srv-test 'gunzip -c plik' | mysql BAZA
+- Nie
+- Tylko przez FTP
+- Tylko przez phpMyAdmin
+E: Potoki przez SSH.
+#Q
+Q: Jak sprawdzić, czy zadanie cron kopii zakończyło się sukcesem?
++ journalctl -t kopia-mysql lub wpisy CRON w dzienniku
+- crontab -l
+- ls /etc/cron.d
+- mysql -e
+E: Wpis OK lub BLAD.
+#Q
+Q: Co należy zrobić po zmianie hasła użytkownika kopie?
++ Zaktualizować plik opcji i sprawdzić, że skrypt kopii nadal działa
+- Nic
+- Restart serwera
+- Usunąć kopie
+E: CODE_WRONG.
