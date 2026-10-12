@@ -1,0 +1,39 @@
+const fs=require('fs');
+const ex=[
+['Rozpocznij w lxlab prywatne laboratorium. Wszystkie modyfikacje dotyczą nowego konta o unikatowej nazwie; nie używaj istniejących kont. Pracuj jako root w jednej sesji Bash.','Sprawdź brak kolizji przed tworzeniem.', 'account_mask=$(umask)\numask 077\naccount_lab=$(mktemp -d /tmp/javaquest-account.XXXXXX)\nlab_user=jqsec$$\nlab_group=jqteam$$\n! getent passwd "$lab_user"\n! getent group "$lab_user"\n! getent group "$lab_group"'],
+['Utwórz prywatny model passwd z kontem root, dodatkowym UID 0 i kontem usługi.','Model nie jest systemowym /etc/passwd.', 'printf "root:x:0:0:root:/root:/bin/bash\\nextra:x:0:0:fixture:/fixture:/bin/bash\\nsvc:x:1200:1200:fixture:/nonexistent:/usr/sbin/nologin\\n" > "$account_lab/passwd.fixture"'],
+['Wskaż wszystkie nazwy z UID 0 w modelu.','Sprawdź pole trzecie, nie nazwę.', 'awk -F: \'$3==0 {print $1}\' "$account_lab/passwd.fixture"'],
+['Utwórz model shadow ze skrótami oznaczonymi jako fikcyjne, blokadą i pustym polem. Nie używaj prawdziwych hashy.','Zachowaj dokładnie dziewięć pól.', 'cat > "$account_lab/shadow.fixture" <<\'EOF\'\nalice:$y$fixture$not-a-real-hash:20000:0:365:14:30::\nbob:!$6$fixture$not-a-real-hash:20000:0:365:14:30:20001:\nsvc:*:20000:0:99999:7:::\nempty::20000:0:365:14:30::\nEOF'],
+['W modelu znajdź nazwy kont z pustym polem hasła, bez wypisywania hashy.','Porównaj dokładnie drugie pole z pustym ciągiem.', 'awk -F: \'$2=="" {print $1}\' "$account_lab/shadow.fixture"'],
+['Wypisz jedynie nazwy kont z blokadą hasła w modelu.','Prefiks ! blokuje weryfikację hasła; nie utożsamiaj tego z odebraniem wszystkich metod dostępu.', 'awk -F: \'substr($2,1,1)=="!" {print $1}\' "$account_lab/shadow.fixture"'],
+['Wypisz nazwę i datę wygaśnięcia konta w modelu, bez drugiego pola.','Wygaśnięcie konta jest w polu ósmym.', 'awk -F: \'$8!="" {print $1,$8}\' "$account_lab/shadow.fixture"'],
+['Sprawdź liczbę pól w każdej linii modelu shadow.','NF powinno wynosić 9; nazwy mogą być raportowane bez hashy.', 'awk -F: \'{print $1,NF; if(NF!=9)bad=1} END {exit bad}\' "$account_lab/shadow.fixture"'],
+['Sprawdź prawa własnego modelu shadow.','Maska 077 powinna dać plik 600.', 'stat -c "%a %U %G" "$account_lab/shadow.fixture"'],
+['Utwórz nowe konto testowe bez katalogu domowego tworzonego automatycznie, z nologin i prywatną grupą.','-M i -U; żadnego pustego hasła nie ustawiaj.', 'useradd -M -U -d "$account_lab/home" -s /usr/sbin/nologin "$lab_user"\nlab_uid=$(id -u "$lab_user")\ngetent passwd "$lab_user"'],
+['Odczytaj stan hasła własnego konta testowego.','passwd -S nie pokazuje hasha.', 'passwd -S "$lab_user"'],
+['Utwórz własny katalog home, przypisz go nowemu kontu i ogranicz prawa.','Nie zmieniaj /home innych użytkowników.', 'mkdir "$account_lab/home"\nchown "$lab_user:$lab_user" "$account_lab/home"\nchmod 700 "$account_lab/home"\nstat -c "%a %U" "$account_lab/home"'],
+['Ustaw modelową politykę wieku hasła konta testowego: minimum 1, maksimum 90, ostrzeżenie 14, nieaktywność 7 dni.','To nie jest rekomendacja uniwersalnej rotacji; ćwiczysz pola chage.', 'chage -m 1 -M 90 -W 14 -I 7 "$lab_user"\nchage -l "$lab_user"'],
+['Ustaw datę wygaśnięcia konta testowego na 2030-12-31.','-E dotyczy konta, nie maksymalnego wieku hasła.', 'chage -E 2030-12-31 "$lab_user"\nchage -l "$lab_user"'],
+['Odczytaj z shadow wyłącznie pola polityki tego nowego konta.','Nie wypisuj drugiego pola nawet w raporcie.', 'awk -F: -v u="$lab_user" \'$1==u {print $1,$4,$5,$6,$7,$8}\' /etc/shadow'],
+['Zablokuj hasło własnego konta testowego.','-L nie usuwa kluczy SSH ani już działających procesów.', 'usermod -L "$lab_user"\npasswd -S "$lab_user"'],
+['Ustaw własnemu kontu testowemu datę wygaśnięcia równą dniowi 1 epoki.','Wygaśnięcie jest osobnym mechanizmem od blokady hasła.', 'usermod -e 1 "$lab_user"\nawk -F: -v u="$lab_user" \'$1==u {print $1,$8}\' /etc/shadow'],
+['Utwórz osobną grupę laboratorium i dodaj do niej tylko nowe konto.','-aG zachowuje inne grupy dodatkowe.', 'groupadd "$lab_group"\nusermod -aG "$lab_group" "$lab_user"\nid "$lab_user"'],
+['Usuń nowe konto z dodatkowej grupy testowej.','Nie odbieraj praw żadnemu istniejącemu użytkownikowi.', 'gpasswd -d "$lab_user" "$lab_group"\nid "$lab_user"'],
+['Przygotuj plik keys.fixture z dwiema etykietami kluczy modelowych.','To nie jest authorized_keys ani działający materiał kryptograficzny.', 'printf "fixture-key-alice\\nfixture-key-bob\\n" > "$account_lab/keys.fixture"'],
+['Usuń z modelu wyłącznie etykietę odchodzącej osoby bob.','Najpierw zbuduj nowy plik; zachowaj wpis alice.', 'grep -v "^fixture-key-bob$" "$account_lab/keys.fixture" > "$account_lab/keys.next"\nmv -- "$account_lab/keys.next" "$account_lab/keys.fixture"\ncat "$account_lab/keys.fixture"'],
+['Utwórz model inwentaryzacji cron, timerów i tokenów z właścicielami.','Nie modyfikuj systemowego cron ani prawdziwych tokenów.', 'printf "cron-report\\tbob\\nservice-timer\\tsvc\\napi-token-fixture\\tbob\\n" > "$account_lab/access.tsv"'],
+['Wskaż zasoby bob do przejęcia lub odebrania.','Filtruj dokładną kolumnę właściciela.', 'awk -F \'\\t\' \'$2=="bob" {print $1}\' "$account_lab/access.tsv"'],
+['Zapisz własny model ustawień jakości hasła. Nie wprowadzaj go do PAM.','Parametry konfiguracji nie dowodzą, że stos PAM je stosuje.', 'printf "minlen = 14\\nminclass = 3\\ndictcheck = 1\\nusercheck = 1\\nenforce_for_root\\n" > "$account_lab/pwquality.fixture"\ncat "$account_lab/pwquality.fixture"'],
+['Zapisz model faillock z progiem 5, oknem 900 s i odblokowaniem po 900 s.','To model pliku, nie aktywacja modułu.', 'printf "deny = 5\\nfail_interval = 900\\nunlock_time = 900\\n" > "$account_lab/faillock.fixture"'],
+['Zapisz plan odebrania dostępu obejmujący również istniejące sesje, klucze, tokeny, grupy i zadania.','Blokada hasła nie wyczerpuje procesu.', 'printf "scope=fixture only\\nsteps=password lock, account expiry, key revocation, token revocation, session review, group review, task handover\\nretain=required data before account removal\\n" > "$account_lab/offboarding.txt"'],
+['Potwierdź, że konto testowe nie ma procesu wymagającego zakończenia.','Sprawdź własny UID, nie stosuj pkill na cudzych kontach.', 'if pgrep -u "$lab_uid"; then printf "review own test processes before cleanup\\n"; else printf "no test processes\\n"; fi'],
+['Usuń nowe konto testowe bez opcji usuwania katalogów i usuń dodatkową grupę laboratorium.','Najpierw upewnij się, że konto nadal ma zapisany UID i własny home.', 'test "$(id -u "$lab_user")" = "$lab_uid"\ntest "$(getent passwd "$lab_user" | cut -d: -f6)" = "$account_lab/home"\nuserdel "$lab_user"\ngroupdel "$lab_group"\n! getent passwd "$lab_user"'],
+['Sprawdź pliki osieroconego UID wyłącznie we własnym laboratorium i zapisz granice testu.','Usunięcie konta nie usuwa jego plików poza automatyczną operacją -r.', 'find "$account_lab" -uid "$lab_uid" -print\nprintf "verified=own account lifecycle, shadow fields, group membership, fixture reports\\nnot_verified=PAM login, SSH key rejection, faillock enforcement, password quality enforcement\\n" > "$account_lab/scope.txt"'],
+['Usuń wyłącznie własny katalog i odtwórz maskę.','Sprawdź prefiks oraz kanoniczną ścieżkę.', 'case "$account_lab" in /tmp/javaquest-account.*) ;; *) exit 1;; esac\ntest "$(readlink -f "$account_lab")" = "$account_lab"\nrm -rf -- "$account_lab"\numask "$account_mask"\ntest ! -e "$account_lab"']
+];
+const rows=require('./write_lx_39_03_questions.cjs');
+if(ex.length!==30||rows.length!==100)throw Error(ex.length+'/'+rows.length);
+const path='scripts/content-migration/lx_practice/_lx_39_03.txt';
+if(fs.existsSync(path))throw Error('Preserve existing source');
+fs.writeFileSync(path,ex.map(([p,h,s])=>'#EX\nP: '+p+'\nH: '+h+'\nS:\n'+s+'\n').join('')+rows.map(([q,a,b,c,d,e])=>'#Q\nQ: '+q+'\n+ '+a+'\n- '+b+'\n- '+c+'\n- '+d+'\nE: '+e+'\n').join(''));
+
