@@ -34,7 +34,8 @@ function Compare-Lesson([string]$Chapter, [string]$Lesson) {
             }
         }
     }
-    if ($quiz.drawSize -ne 20 -or $quiz.passPercent -ne 80) {
+    $expectedDraw = [Math]::Min(20, $expected.quiz.Count)
+    if ($quiz.drawSize -ne $expectedDraw -or $quiz.passPercent -ne 80) {
         throw "Unexpected quiz policy for $Chapter/$Lesson"
     }
 }
