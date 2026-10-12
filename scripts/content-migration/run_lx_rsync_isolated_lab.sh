@@ -1,6 +1,12 @@
 #!/bin/sh
 # WSL docker-desktop: caly chroot w tmpfs /run, usuwany po tescie.
 set -eu
+profile=${1:-rsync}
+case "$profile" in
+    rsync) verifier=verify_lx_34_rsync_local.py; set -- rsync python3 ;;
+    nginx) verifier=verify_lx_36_nginx_local.py; set -- nginx python3 ;;
+    *) echo 'Supported profiles: rsync, nginx' >&2; exit 1 ;;
+esac
 test "$(stat -f -c %T /run)" = tmpfs
 lab=$(mktemp -d /run/javaquest-rsync.XXXXXX)
 dev_mounted=0
@@ -15,6 +21,7 @@ trap 'exit 130' INT TERM
 archive=/mnt/host/c/Users/kapit/AppData/Local/Temp/javaquest-ubuntu-base.tar.gz
 test -f "$archive"
 tar -xzf "$archive" -C "$lab"
+chmod 755 "$lab"
 cp /etc/resolv.conf "$lab/etc/resolv.conf"
 mount -t tmpfs tmpfs "$lab/dev"
 dev_mounted=1
@@ -24,9 +31,10 @@ mknod -m 666 "$lab/dev/random" c 1 8
 mknod -m 666 "$lab/dev/urandom" c 1 9
 printf '#!/bin/sh\nexit 101\n' > "$lab/usr/sbin/policy-rc.d"
 chmod 755 "$lab/usr/sbin/policy-rc.d"
-chroot "$lab" /bin/bash -c 'export DEBIAN_FRONTEND=noninteractive LANG=C; apt-get update -qq && apt-get install -y -qq rsync python3' > "$lab/tmp/install.log" 2>&1 || {
+chroot "$lab" /bin/bash -c 'export DEBIAN_FRONTEND=noninteractive LANG=C; apt-get update -qq && apt-get install -y -qq "$@"' javaquest-packages "$@" > "$lab/tmp/install.log" 2>&1 || {
     tail -20 "$lab/tmp/install.log"; exit 1;
 }
-cp /mnt/host/d/projekty/javaQuest/scripts/content-migration/verify_lx_34_rsync_local.py "$lab/tmp/verify_rsync.py"
-chroot "$lab" /usr/bin/rsync --version | head -1
-chroot "$lab" /usr/bin/python3 /tmp/verify_rsync.py
+cp "/mnt/host/d/projekty/javaQuest/scripts/content-migration/$verifier" "$lab/tmp/verify_lab.py"
+if [ "$profile" = rsync ]; then chroot "$lab" /usr/bin/rsync --version | head -1; fi
+if [ "$profile" = nginx ]; then chroot "$lab" /usr/sbin/nginx -v; fi
+chroot "$lab" /usr/bin/python3 /tmp/verify_lab.py
