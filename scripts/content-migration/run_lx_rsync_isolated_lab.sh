@@ -5,7 +5,8 @@ profile=${1:-rsync}
 case "$profile" in
     rsync) verifier=verify_lx_34_rsync_local.py; set -- rsync python3 ;;
     nginx) verifier=verify_lx_36_nginx_local.py; set -- nginx python3 ;;
-    *) echo 'Supported profiles: rsync, nginx' >&2; exit 1 ;;
+    postgresql) verifier=verify_lx_37_postgresql_local.py; set -- postgresql-16 python3 ;;
+    *) echo 'Supported profiles: rsync, nginx, postgresql' >&2; exit 1 ;;
 esac
 test "$(stat -f -c %T /run)" = tmpfs
 lab=$(mktemp -d /run/javaquest-rsync.XXXXXX)
@@ -29,6 +30,7 @@ mknod -m 666 "$lab/dev/null" c 1 3
 mknod -m 666 "$lab/dev/zero" c 1 5
 mknod -m 666 "$lab/dev/random" c 1 8
 mknod -m 666 "$lab/dev/urandom" c 1 9
+mkdir -m 1777 "$lab/dev/shm"
 printf '#!/bin/sh\nexit 101\n' > "$lab/usr/sbin/policy-rc.d"
 chmod 755 "$lab/usr/sbin/policy-rc.d"
 chroot "$lab" /bin/bash -c 'export DEBIAN_FRONTEND=noninteractive LANG=C; apt-get update -qq && apt-get install -y -qq "$@"' javaquest-packages "$@" > "$lab/tmp/install.log" 2>&1 || {
@@ -37,4 +39,5 @@ chroot "$lab" /bin/bash -c 'export DEBIAN_FRONTEND=noninteractive LANG=C; apt-ge
 cp "/mnt/host/d/projekty/javaQuest/scripts/content-migration/$verifier" "$lab/tmp/verify_lab.py"
 if [ "$profile" = rsync ]; then chroot "$lab" /usr/bin/rsync --version | head -1; fi
 if [ "$profile" = nginx ]; then chroot "$lab" /usr/sbin/nginx -v; fi
+if [ "$profile" = postgresql ]; then chroot "$lab" /usr/lib/postgresql/16/bin/postgres --version; fi
 chroot "$lab" /usr/bin/python3 /tmp/verify_lab.py
