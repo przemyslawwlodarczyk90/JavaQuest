@@ -1,0 +1,13 @@
+const fs=require('fs');
+const file='scripts/content-migration/lx_practice/_lx_32_12.txt';
+let text=fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n');
+if(text.includes('/var/tmp/kurs-tcpdump'))throw Error('Already scoped');
+text=text.replaceAll('/var/tmp','/var/tmp/kurs-tcpdump');
+text=text.replace('S:\nsudo tcpdump -i enp0s8 -nn -c 100 -w','S:\nsudo install -d -o anna -g tcpdump -m 0770 /var/tmp/kurs-tcpdump\nsudo tcpdump -i enp0s8 -nn -c 100 -w');
+text=text.replaceAll('sudo pkill tcpdump',"sudo pkill -INT -f '^(/usr/(s)?bin/)?tcpdump -i enp0s8 -nn -w /var/tmp/kurs-tcpdump/'");
+text=text.replaceAll('pgrep tcpdump ||',"pgrep -af '^(/usr/(s)?bin/)?tcpdump -i enp0s8 -nn -w /var/tmp/kurs-tcpdump/' ||");
+text=text.replace('H: kill %1 lub pkill tcpdump.','H: Zakończ tylko przechwytywanie zapisujące do katalogu tego ćwiczenia; -INT pozwala wypisać podsumowanie.');
+text=text.replace('P: Usuń pliki pcap starsze niż doba z katalogu /var/tmp/kurs-tcpdump.','P: Usuń pliki pcap starsze niż doba wyłącznie z katalogu przechwyceń kursu.');
+text=text.replace('H: rm plików w /var/tmp/kurs-tcpdump.','H: Usuń wyłącznie pliki z katalogu przechwyceń kursu, po zakończeniu własnych procesów.');
+text=text.replace('+ kill %1 lub sudo pkill -INT -f', '+ sudo pkill -INT -f');
+fs.writeFileSync(file,text);
