@@ -422,7 +422,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 3: od _lx_34_transfer_i_synchronizacja/02_Sftp.json do końca rozdziału 46.** Poziomy 30/100 i 20/60 są już uzgodnione. Pracować bez pytań o zgodę, bez raportów między rozdziałami, lokalne commity po polsku, bez push i stopki współautorstwa. Lekcje 32/07–09 obejmują audyt własnych systemów zgodnie z istniejącą decyzją użytkownika.
+**Krok 3: od _lx_35_zapora_sieciowa/04_Firewalld.json do końca rozdziału 46.** Poziomy 30/100 i 20/60 są już uzgodnione. Pracować bez pytań o zgodę, bez raportów między rozdziałami, lokalne commity po polsku, bez push i stopki współautorstwa. Lekcje 32/07–09 obejmują audyt własnych systemów zgodnie z istniejącą decyzją użytkownika.
 
 ## Kontynuacja praktyki — 2026-10-11
 
@@ -432,7 +432,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 - Doinstalowane w lxlab: at, rsync, PostgreSQL 16, sysstat 12.6.1, strace 6.8, openjdk-21-jdk-headless. Tymczasowe bazy oraz laboratoria plików/JVM/sar posprzątane. PostgreSQL uruchomiony przez pg_ctlcluster; nie testowano systemd.
 - LessonContentFilesTest: 2 testy, 0 błędów. Backend 8082 na osobnej bazie javaquest-linux-validation-db (127.0.0.1:55432): autoryzowane API wszystkich 10 lekcji 28 potwierdziło 30 ćwiczeń i 100 pytań. Regresja API Java 01/00 i JavaScript 01/01: teoria, ćwiczenia i stan quizu OK. Baza validation nie jest bazą użytkownika.
 - 29/01 KernelVersionAndUname: 20/60, wszystkie rozwiązania wykonane, asercje ABI i sortowania wersji. Źródło _lx_29_01.txt, generator write_lx_29_01.cjs, verifier verify_lx_29_01.py. Ta lekcja jest początkiem kolejnego rozdziału; wymaga odświeżenia zasobów i importu przy jego weryfikacji API.
-- **Następna brakująca lekcja: _lx_34_transfer_i_synchronizacja/02_Sftp.json**. Praktykę ma 324/437 lekcji; 113 nadal bez ćwiczeń i quizów. Weryfikacja pełnych usług, VM i regresja API nowszych rozdziałów pozostają do sprawdzenia. Cały kurs NIE jest ukończony.
+- **Następna brakująca lekcja: _lx_35_zapora_sieciowa/04_Firewalld.json**. Praktykę ma 338/437 lekcji; 99 nadal bez ćwiczeń i quizów. Weryfikacja pełnych usług, VM i regresja API nowszych rozdziałów pozostają do sprawdzenia. Cały kurs NIE jest ukończony.
 - Obowiązuje polecenie użytkownika: do końca, bez pytań o zgodę i bez raportów między rozdziałami. Heartbeat doko-czenie-kursu-linux-javaquest ACTIVE co 30 minut, powiadomienia failed_runs_only. Sprawdzać faktyczny stan JSON-ów przed kolejną lekcją. Nie wyłączać kontynuacji, dopóki nie ma kompletnej praktyki i weryfikacji.
 - Zachować niezwiązane zmiany użytkownika w application.properties, a/ i part.bin; nie commitować ich z treścią kursu. Najnowsze polecenie użytkownika: częste lokalne commity między lekcjami (każda ukończona lekcja osobno), po polsku, bez push i stopki współautorstwa.
 - Po weryfikacji zatrzymano własny backend testowy i kontener javaquest-linux-validation-db. Kontener zachowany do kolejnych kontroli; można go uruchomić ponownie. lxlab pozostaje dostępny. Do walidacji nie używać bazy innego projektu zajmującej port 5432.
