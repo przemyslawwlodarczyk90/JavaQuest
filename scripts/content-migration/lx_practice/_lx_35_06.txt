@@ -1,0 +1,905 @@
+#EX
+P: Zainstaluj fail2ban na srv-test i sprawdź wersję.
+H: apt install, fail2ban-client --version.
+S:
+sudo apt install -y fail2ban
+fail2ban-client --version
+#EX
+P: Wypisz pliki konfiguracji fail2ban dostarczone przez pakiet.
+H: ls /etc/fail2ban i jail.d.
+S:
+ls /etc/fail2ban /etc/fail2ban/jail.d
+cat /etc/fail2ban/jail.d/defaults-debian.conf
+#EX
+P: Wypisz dostępne gotowe filtry.
+H: ls filter.d.
+S:
+ls /etc/fail2ban/filter.d/ | head -30
+#EX
+P: Utwórz /etc/fail2ban/jail.local z ustawieniami domyślnymi i jail sshd dla portu 2222.
+H: Sekcje [DEFAULT] i [sshd].
+S:
+sudo tee /etc/fail2ban/jail.local > /dev/null <<'EOF'
+[DEFAULT]
+bantime = 1h
+bantime.increment = true
+findtime = 10m
+maxretry = 5
+ignoreip = 127.0.0.1/8 ::1 192.168.56.1 192.168.56.10
+banaction = nftables-multiport
+backend = systemd
+
+[sshd]
+enabled = true
+port = 2222
+maxretry = 3
+EOF
+#EX
+P: Sprawdź konfigurację wynikową fail2ban bez uruchamiania.
+H: fail2ban-client -d.
+S:
+sudo fail2ban-client -d | grep -E "sshd.*(port|maxretry|bantime)" | head
+#EX
+P: Włącz fail2ban i wyświetl listę jail.
+H: systemctl enable --now, fail2ban-client status.
+S:
+sudo systemctl enable --now fail2ban
+sudo fail2ban-client status
+#EX
+P: Wyświetl stan jail sshd.
+H: fail2ban-client status sshd.
+S:
+sudo fail2ban-client status sshd
+#EX
+P: Z srv-docker sprowokuj kilka nieudanych logowań na srv-test i sprawdź blokadę.
+H: ssh z nieistniejącym użytkownikiem, BatchMode.
+S:
+for i in 1 2 3 4; do ssh -p 2222 -o BatchMode=yes -o ConnectTimeout=3 nieistnieje@192.168.56.20 true; done
+#EX
+P: Sprawdź na srv-test, czy adres srv-docker został zablokowany.
+H: status sshd, Banned IP list.
+S:
+sudo fail2ban-client status sshd | grep 'Banned IP'
+#EX
+P: Zobacz zestaw zablokowanych adresów w nftables.
+H: nft list set inet f2b-table addr-set-sshd.
+S:
+sudo nft list set inet f2b-table addr-set-sshd
+#EX
+P: Odblokuj adres srv-docker ręcznie.
+H: set sshd unbanip.
+S:
+sudo fail2ban-client set sshd unbanip 192.168.56.30
+sudo fail2ban-client status sshd | grep 'Banned IP'
+#EX
+P: Zablokuj ręcznie testowy adres i sprawdź listę.
+H: set sshd banip.
+S:
+sudo fail2ban-client set sshd banip 203.0.113.99
+sudo fail2ban-client status sshd | grep 'Banned IP'
+sudo fail2ban-client set sshd unbanip 203.0.113.99
+#EX
+P: Odczytaj dziennik fail2ban o blokadach.
+H: journalctl -u fail2ban lub /var/log/fail2ban.log.
+S:
+sudo grep -E 'Ban|Unban' /var/log/fail2ban.log | tail -5
+#EX
+P: Wyświetl na lubuntu-nauka przykładowe wpisy o nieudanych logowaniach w aplikacji sklep.
+H: grep -m2 'Nieudane logowanie'.
+S:
+grep -m2 'Nieudane logowanie' /var/log/sklep/aplikacja.log
+#EX
+P: Utwórz filtr sklep-logowanie dla wpisów aplikacji.
+H: failregex z <HOST>, datepattern.
+S:
+sudo tee /etc/fail2ban/filter.d/sklep-logowanie.conf > /dev/null <<'EOF'
+[Definition]
+failregex = ^.*LogowanieListener\s*: Nieudane logowanie: email=\S* ip=<HOST>$
+ignoreregex =
+datepattern = ^%%Y-%%m-%%dT%%H:%%M:%%S
+EOF
+#EX
+P: Przetestuj filtr na prawdziwym logu aplikacji.
+H: fail2ban-regex LOG FILTR.
+S:
+sudo fail2ban-regex /var/log/sklep/aplikacja.log /etc/fail2ban/filter.d/sklep-logowanie.conf | grep -E '^(Failregex|Lines)'
+#EX
+P: Wyświetl adresy, które filtr wychwycił, z liczbą trafień.
+H: fail2ban-regex --print-all-matched i grep ip=.
+S:
+sudo fail2ban-regex --print-all-matched /var/log/sklep/aplikacja.log /etc/fail2ban/filter.d/sklep-logowanie.conf | grep -oP 'ip=\K[0-9.]+' | sort | uniq -c
+#EX
+P: Utwórz jail sklep-logowanie w jail.d.
+H: logpath, port http,https, progi.
+S:
+sudo tee /etc/fail2ban/jail.d/sklep.local > /dev/null <<'EOF'
+[sklep-logowanie]
+enabled  = true
+backend  = auto
+logpath  = /var/log/sklep/aplikacja.log
+port     = http,https
+maxretry = 10
+findtime = 5m
+bantime  = 30m
+EOF
+sudo fail2ban-client reload
+sudo fail2ban-client status sklep-logowanie
+#EX
+P: Sprawdź, jaki adres klienta loguje aplikacja za Nginx.
+H: tail logu i grep ip=.
+S:
+tail -3 /var/log/sklep/aplikacja.log | grep -o 'ip=.*'
+#EX
+P: Sprawdź nagłówki przekazywane przez Nginx do aplikacji.
+H: grep X-Forwarded-For i X-Real-IP.
+S:
+grep -E 'X-Forwarded-For|X-Real-IP' /etc/nginx/sites-available/sklep
+#EX
+P: Dodaj brakujące nagłówki do konfiguracji Nginx i przeładuj go.
+H: proxy_set_header w bloku location.
+S:
+sudo sed -i '/proxy_pass http:\/\/127.0.0.1:8080;/a\        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+#EX
+P: Włącz w aplikacji odczyt nagłówków przekazywanych przez proxy i zrestartuj ją.
+H: SERVER_FORWARD_HEADERS_STRATEGY=native.
+S:
+echo 'SERVER_FORWARD_HEADERS_STRATEGY=native' | sudo tee -a /etc/sklep/sklep.env > /dev/null
+sudo systemctl restart sklep
+#EX
+P: Z srv-test wykonaj kilka nieudanych logowań do sklepu i sprawdź adres w logu.
+H: curl POST do formularza logowania.
+S:
+for i in $(seq 1 3); do curl -s -o /dev/null -d 'email=test@test.pl&haslo=zle' http://192.168.56.10/login; done
+ssh lubuntu-nauka 'tail -1 /var/log/sklep/aplikacja.log | grep -o "ip=.*"'
+#EX
+P: Sprawdź, czy fail2ban zablokował adres testowy w jail aplikacji, i odblokuj go.
+H: status sklep-logowanie, unbanip.
+S:
+sudo fail2ban-client status sklep-logowanie | grep 'Banned IP'
+sudo fail2ban-client set sklep-logowanie unbanip 192.168.56.20
+#EX
+P: Włącz gotowy jail nginx-botsearch dla logu dostępu Nginx.
+H: jail.d/nginx.local z enabled = true.
+S:
+printf '[nginx-botsearch]\nenabled = true\nlogpath = /var/log/nginx/access.log\n' | sudo tee /etc/fail2ban/jail.d/nginx.local
+sudo fail2ban-client reload
+sudo fail2ban-client status nginx-botsearch
+#EX
+P: Włącz jail recidive dla adresów blokowanych wielokrotnie.
+H: [recidive] enabled = true.
+S:
+printf '[recidive]\nenabled = true\nbantime = 1w\nfindtime = 1d\n' | sudo tee /etc/fail2ban/jail.d/recidive.local
+sudo fail2ban-client reload
+sudo fail2ban-client status recidive
+#EX
+P: Sprawdź w Rocky, jaką akcję blokady ustawić dla firewalld.
+H: ls action.d | grep firewallcmd.
+S:
+ls /etc/fail2ban/action.d/ | grep firewallcmd
+#EX
+P: Sprawdź, czy przypadkiem nie edytowano jail.conf (porównanie z wersją z pakietu).
+H: dpkg --verify fail2ban.
+S:
+dpkg --verify fail2ban || echo 'pliki pakietu zmienione'
+#EX
+P: Policz zablokowane adresy we wszystkich jail.
+H: Pętla po fail2ban-client status.
+S:
+for j in $(sudo fail2ban-client status | grep -oP 'Jail list:\s*\K.*' | tr ',' ' '); do printf '%s: ' "$j"; sudo fail2ban-client status "$j" | grep -oP 'Currently banned:\s*\K\d+'; done
+#EX
+P: Napisz skrypt ~/bin/f2b-raport.sh wypisujący dla każdego jail liczbę blokad i listę adresów.
+H: fail2ban-client status JAIL.
+S:
+cat > ~/bin/f2b-raport.sh <<'EOF'
+#!/bin/bash
+jails=$(sudo fail2ban-client status | grep -oP 'Jail list:\s*\K.*' | tr -d ' ' | tr ',' ' ')
+for j in $jails; do
+    st=$(sudo fail2ban-client status "$j")
+    n=$(echo "$st" | grep -oP 'Currently banned:\s*\K\d+')
+    ip=$(echo "$st" | grep -oP 'Banned IP list:\s*\K.*')
+    printf '%-20s %3s  %s\n' "$j" "$n" "$ip"
+done
+EOF
+chmod +x ~/bin/f2b-raport.sh
+~/bin/f2b-raport.sh
+#Q
+Q: Co robi fail2ban?
++ Czyta logi, liczy nieudane próby dla adresów i blokuje je w zaporze
+- Szyfruje logi
+- Zastępuje zaporę
+- Zmienia port SSH
+E: Dynamiczne blokady.
+#Q
+Q: Czym fail2ban różni się od stałych reguł zapory?
++ Reaguje na zachowanie zapisane w logach i tworzy blokady czasowe
+- Niczym
+- Otwiera porty
+- Działa bez zapory
+E: Port pozostaje otwarty dla innych.
+#Q
+Q: Czym jest jail w fail2ban?
++ Połączeniem filtra, akcji i parametrów dla jednej usługi
+- Katalogiem z logami
+- Kontenerem Dockera
+- Grupą użytkowników
+E: Np. [sshd].
+#Q
+Q: Czym jest filtr w fail2ban?
++ Plikiem z wyrażeniami failregex wykrywającymi nieudane próby
+- Regułą zapory
+- Listą adresów
+- Usługą systemd
+E: filter.d/NAZWA.conf.
+#Q
+Q: Co oznacza <HOST> w failregex?
++ Miejsce, w którym w linii logu jest adres klienta
+- Nazwę serwera
+- Nazwę jail
+- Port
+E: fail2ban wyciąga z niego adres.
+#Q
+Q: Co oznacza maxretry?
++ Liczbę nieudanych prób przed blokadą
+- Liczbę blokad
+- Czas blokady
+- Liczbę jail
+E: Np. 3 dla SSH.
+#Q
+Q: Co oznacza findtime?
++ Okno czasowe, w którym liczone są próby
+- Czas blokady
+- Czas odczytu logu
+- Czas startu
+E: Np. 10m.
+#Q
+Q: Co oznacza bantime?
++ Czas trwania blokady adresu
+- Czas wyszukiwania
+- Czas logowania
+- Liczbę prób
+E: Np. 1h; -1 na zawsze.
+#Q
+Q: Co robi bantime.increment = true?
++ Każda kolejna blokada tego samego adresu jest dłuższa
+- Zwiększa liczbę prób
+- Zwiększa findtime
+- Wyłącza blokady
+E: Dla recydywistów.
+#Q
+Q: Do czego służy ignoreip?
++ Do adresów, których fail2ban nigdy nie blokuje
+- Do adresów zawsze blokowanych
+- Do portów
+- Do logów
+E: Adresy administracyjne.
+#Q
+Q: Jakie adresy umieszcza się w ignoreip?
++ Localhost, adresy administracyjne, VPN, bastion, monitoring
+- Adresy atakujących
+- Wszystkie adresy
+- Żadne
+E: Ochrona przed zablokowaniem siebie.
+#Q
+Q: Co oznacza backend = systemd?
++ fail2ban czyta wpisy z dziennika systemd zamiast pliku
+- Uruchamia się jako usługa
+- Blokuje w systemd
+- Wyłącza logi
+E: Ubuntu z journald.
+#Q
+Q: Co oznacza banaction = nftables-multiport?
++ Blokady są dodawane jako reguły nftables dla wskazanych portów
+- Blokada w ufw
+- Blokada w hosts.deny
+- Brak blokady
+E: Zestaw adresów f2b.
+#Q
+Q: Jaką akcję blokady stosuje się w Rocky z firewalld?
++ firewallcmd-rich-rules
+- ufw
+- iptables-legacy
+- hostsdeny
+E: Integracja z firewalld.
+#Q
+Q: Dlaczego nie edytuje się jail.conf?
++ Jest nadpisywany przy aktualizacjach pakietu
+- Bo jest tylko do odczytu zawsze
+- Bo nie działa
+- Można bezpiecznie
+E: Własne w jail.local.
+#Q
+Q: Gdzie zapisuje się własne ustawienia fail2ban?
++ W jail.local lub jail.d/*.local
+- W jail.conf
+- W /etc/ufw
+- W ~/.fail2ban
+E: Pliki lokalne.
+#Q
+Q: Co zawiera jail.d/defaults-debian.conf w Ubuntu?
++ Włączony jail sshd
+- Wszystkie jail włączone
+- Konfigurację nginx
+- Nic
+E: Domyślne ustawienie dystrybucji.
+#Q
+Q: Jak wyświetlić listę aktywnych jail?
++ sudo fail2ban-client status
+- sudo fail2ban status
+- systemctl status fail2ban
+- ls /etc/fail2ban
+E: Jail list.
+#Q
+Q: Jak wyświetlić zablokowane adresy w jail sshd?
++ sudo fail2ban-client status sshd
+- sudo fail2ban-client list sshd
+- sudo nft list sshd
+- cat jail.local
+E: Banned IP list.
+#Q
+Q: Jak odblokować adres w jail sshd?
++ sudo fail2ban-client set sshd unbanip ADRES
+- sudo fail2ban-client unban ADRES sshd
+- sudo ufw allow ADRES
+- sudo nft delete ADRES
+E: Ręczne odblokowanie.
+#Q
+Q: Jak ręcznie zablokować adres?
++ sudo fail2ban-client set sshd banip ADRES
+- sudo fail2ban-client ban ADRES
+- sudo ufw deny ADRES
+- sudo nft add ADRES
+E: Np. znany atakujący.
+#Q
+Q: Jak przetestować filtr na prawdziwym logu?
++ fail2ban-regex LOG FILTR
+- fail2ban-client test
+- grep -E
+- fail2ban -t
+E: Liczba matched.
+#Q
+Q: Co oznacza wynik Lines: 18342 lines, 37 matched?
++ Filtr dopasował 37 linii z 18342 w logu
+- 37 blokad
+- 37 błędów
+- 37 jail
+E: Powinno odpowiadać nieudanym próbom.
+#Q
+Q: Co jest niepokojącym wynikiem fail2ban-regex?
++ Dopasowanie wszystkich lub prawie wszystkich linii logu
+- Dopasowanie kilku linii z nieudanymi próbami
+- 0 ignorowanych
+- Szybki test
+E: Filtr jest zbyt szeroki.
+#Q
+Q: Jak przeładować konfigurację fail2ban?
++ sudo fail2ban-client reload
+- sudo systemctl stop fail2ban
+- sudo fail2ban restart
+- sudo ufw reload
+E: Po zmianach jail i filtrów.
+#Q
+Q: Jak pokazać konfigurację wynikową fail2ban?
++ fail2ban-client -d
+- fail2ban-client config
+- cat jail.conf
+- fail2ban --show
+E: Dump konfiguracji.
+#Q
+Q: Gdzie fail2ban zapisuje blokady w nftables?
++ W tabeli inet f2b-table w zestawach addr-set-JAIL
+- W tabeli ufw
+- W /etc/hosts.deny
+- W iptables legacy
+E: Przy nftables-multiport.
+#Q
+Q: Gdzie fail2ban zapisuje swój dziennik?
++ /var/log/fail2ban.log
+- /var/log/syslog wyłącznie
+- /etc/fail2ban/log
+- ~/.fail2ban
+E: Wpisy Ban/Unban.
+#Q
+Q: Przed czym fail2ban nie chroni?
++ Przed atakami rozproszonymi, gdzie każdy adres próbuje kilka razy
+- Przed zgadywaniem z jednego adresu
+- Przed botami
+- Przed skanowaniem ścieżek
+E: Ograniczenia.
+#Q
+Q: Czy fail2ban zastępuje klucze SSH i silne hasła?
++ Nie - to dodatkowa warstwa
+- Tak
+- Tylko dla SSH
+- Tylko w Rocky
+E: Rozdział 33.
+#Q
+Q: Dlaczego fail2ban jest mniej skuteczny przy IPv6?
++ Atakujący łatwo zmienia adres w dużej puli IPv6
+- Bo nie obsługuje IPv6
+- Bo IPv6 jest szyfrowany
+- Jest tak samo skuteczny
+E: Ograniczenia.
+#Q
+Q: Jaki problem powstaje, gdy aplikacja za Nginx loguje 127.0.0.1?
++ fail2ban nie wie, kogo zablokować (lub zablokowałby proxy, czyli wszystkich)
+- Brak problemu
+- Nginx się wyłącza
+- Aplikacja nie działa
+E: NOTE.
+#Q
+Q: Jak Nginx przekazuje adres klienta do aplikacji?
++ Nagłówkami X-Real-IP i X-Forwarded-For
+- Parametrem URL
+- Ciasteczkiem
+- Nie przekazuje
+E: proxy_set_header.
+#Q
+Q: Jak Spring Boot odczytuje adres klienta z nagłówków proxy?
++ server.forward-headers-strategy=native (lub framework)
+- server.address=0.0.0.0
+- spring.proxy=true
+- management.server.address
+E: Tomcat ufa wewnętrznym proxy.
+#Q
+Q: Dlaczego aplikacja ufa nagłówkom tylko od wewnętrznych adresów proxy?
++ Klient mógłby podrobić X-Forwarded-For i podszyć się pod inny adres
+- Bo nagłówki są szyfrowane
+- Bez powodu
+- Bo Nginx tego wymaga
+E: Bezpieczeństwo.
+#Q
+Q: Jaka jest alternatywa dla odczytu adresu w aplikacji?
++ fail2ban czyta log Nginx, w którym adres klienta jest prawdziwy
+- Wyłączyć Nginx
+- Wyłączyć fail2ban
+- Logować tylko 127.0.0.1
+E: NOTE.
+#Q
+Q: Dlaczego blokada w łańcuchu input nie działa dla aplikacji w kontenerze Docker?
++ Ruch do kontenera idzie przez łańcuch forward
+- Bo Docker blokuje fail2ban
+- Bo kontener ma własne jądro
+- Działa
+E: chain = DOCKER-USER.
+#Q
+Q: Jak ustawić fail2ban dla aplikacji w kontenerze?
++ W akcji ustawić chain = DOCKER-USER
+- chain = INPUT
+- Wyłączyć Docker
+- Nie da się
+E: Łańcuch sprawdzany przed regułami Dockera.
+#Q
+Q: Jaki jest najczęstszy problem z fail2ban według PITFALL?
++ Zablokowanie samego siebie
+- Brak blokad
+- Za dużo logów
+- Zły port
+E: Pomyłki w hasłach i kluczach.
+#Q
+Q: Dlaczego zablokowanie administratora za NAT-em firmy jest szczególnie dotkliwe?
++ Wszyscy pracujący zza tego samego adresu zostają zablokowani razem
+- Bo NAT wyłącza fail2ban
+- Bo NAT zmienia port
+- Nie jest dotkliwe
+E: Wspólny adres publiczny.
+#Q
+Q: Jak zapobiec zablokowaniu siebie przez wiele kluczy z agenta?
++ IdentitiesOnly yes w ~/.ssh/config i ignoreip dla adresów admin
+- Więcej kluczy w agencie
+- Wyłączenie fail2ban
+- Hasło zamiast klucza
+E: Rozdział 33.
+#Q
+Q: Co zrobić, gdy zostałeś zablokowany przez fail2ban?
++ Połączyć się z innego adresu lub konsoli i wykonać unbanip
+- Czekać zawsze na bantime bez innej opcji
+- Restart klienta
+- Zmienić klucz
+E: PITFALL.
+#Q
+Q: W analogii z lekcji, czym jest fail2ban?
++ Ochroniarzem czytającym księgę wejść
+- Portierem
+- Zamkiem
+- Kluczem
+E: Logi = księga.
+#Q
+Q: W analogii z lekcji, czym jest ignoreip?
++ Listą VIP-ów, których ochroniarz nigdy nie zatrzymuje
+- Listą zakazanych
+- Księgą wejść
+- Bramką
+E: Adresy administracyjne.
+#Q
+Q: W analogii z lekcji, czym jest bramka obrotowa zapisująca się jako „bramka”?
++ Reverse proxy, przez które aplikacja widzi 127.0.0.1
+- Zapora
+- fail2ban
+- Klient
+E: Ochroniarz nie wie, kogo zatrzymać.
+#Q
+Q: Jakie są kroki wdrożenia fail2ban dla nowej usługi?
++ Sprawdzić log z adresem, filtr, test fail2ban-regex, jail z ignoreip, reload i test, obserwacja
+- enable i zapomnieć
+- Edytować jail.conf
+- Wyłączyć zaporę
+E: STEP_BY_STEP.
+#Q
+Q: Co musi zawierać wpis w logu, aby fail2ban mógł działać?
++ Adres klienta
+- Nazwę serwera
+- Hasło
+- Numer procesu
+E: Krok 1.
+#Q
+Q: Do czego służy jail nginx-botsearch?
++ Do blokowania skanowania znanych ścieżek, np. /wp-login.php
+- Do blokowania Nginx
+- Do blokowania SSH
+- Do kopii logów
+E: USAGE.
+#Q
+Q: Do czego służy jail nginx-http-auth?
++ Do blokowania zgadywania haseł Basic Auth w Nginx
+- Do HTTPS
+- Do limitów
+- Do botów
+E: USAGE.
+#Q
+Q: Do czego służy jail recidive?
++ Do długiej blokady adresów blokowanych wielokrotnie przez inne jail
+- Do SSH
+- Do poczty
+- Do odblokowywania
+E: Np. na tydzień.
+#Q
+Q: Jakie zdarzenie Spring Security można logować dla fail2ban?
++ AuthenticationFailureBadCredentialsEvent
+- ApplicationReadyEvent
+- ContextRefreshedEvent
+- ServletRequestHandledEvent
+E: Listener nieudanych logowań.
+#Q
+Q: Do czego służy datepattern w filtrze?
++ Do wskazania formatu daty w linii logu
+- Do ustawienia strefy czasowej serwera
+- Do rotacji logów
+- Do blokady według daty
+E: fail2ban liczy próby w czasie.
+#Q
+Q: Dlaczego w datepattern w pliku .conf pisze się %%?
++ Pojedynczy % ma specjalne znaczenie w plikach konfiguracji fail2ban (interpolacja)
+- Błąd składni
+- Bo tak wymaga bash
+- Bez powodu
+E: Ucieczka znaku.
+#Q
+Q: Jakie porty blokuje jail sklep-logowanie?
++ http i https
+- 22
+- 8080
+- Wszystkie
+E: Aplikacja za Nginx.
+#Q
+Q: Dlaczego jail sklep-logowanie ma wyższe maxretry (10) niż sshd (3)?
++ Klienci sklepu częściej mylą hasła - zbyt niski próg blokowałby prawdziwych użytkowników
+- Bo HTTP jest bezpieczniejsze
+- Bez powodu
+- Bo fail2ban tego wymaga
+E: Dostosowanie do usługi.
+#Q
+Q: Co oznacza Total banned 0 przy 412 trafieniach filtra w CODE_WRONG?
++ Wszystkie trafienia miały adres z ignoreip (127.0.0.1)
+- fail2ban nie działa
+- Filtr jest zły
+- Zapora jest wyłączona
+E: Problem proxy.
+#Q
+Q: Jaki adres pojawia się w logu po poprawce w CODE_RIGHT?
++ Prawdziwy adres klienta, np. 198.51.100.23
+- 127.0.0.1
+- 192.168.56.10
+- 0.0.0.0
+E: Nagłówki działają.
+#Q
+Q: Co jest alternatywą dla fail2ban przy prostym limicie bez analizy logów?
++ ufw limit lub limit rate w nftables
+- Wyłączenie zapory
+- SELinux
+- cron
+E: WHEN_TO_USE.
+#Q
+Q: Co stosuje się przeciw atakom rozproszonym na dużą skalę?
++ Ograniczenia w aplikacji, CAPTCHA, blokady kont, WAF, ochronę CDN
+- Tylko fail2ban
+- Tylko ufw
+- Wyłączenie logowania
+E: Wyższe warstwy.
+#Q
+Q: Czy fail2ban jest potrzebny, gdy SSH jest dostępny tylko z VPN?
++ Opcjonalnie - zapora z ograniczeniem źródła zwykle wystarcza
+- Tak, zawsze
+- Nigdy
+- Tylko w Rocky
+E: WHEN_TO_USE.
+#Q
+Q: Czy fail2ban ma sens przy logowaniu SSH tylko kluczem?
++ Tak - ogranicza szum w logach i obciążenie, choć hasła nie da się zgadnąć
+- Nie
+- Tylko z hasłem
+- Tylko w IPv6
+E: USAGE.
+#Q
+Q: Jaki jest skutek blokady przez nftables-multiport?
++ Pakiety z zablokowanego adresu na wskazane porty są odrzucane
+- Adres jest usuwany z DNS
+- Usługa jest zatrzymywana
+- Logi są czyszczone
+E: Reguła w f2b-table.
+#Q
+Q: Co pokazuje Currently failed w status jail?
++ Liczbę adresów z nieudanymi próbami, jeszcze nie zablokowanych
+- Liczbę blokad
+- Liczbę błędów fail2ban
+- Liczbę logów
+E: Licznik w oknie findtime.
+#Q
+Q: Co pokazuje Total failed?
++ Łączną liczbę nieudanych prób od startu jail
+- Liczbę zablokowanych adresów
+- Liczbę jail
+- Liczbę linii logu
+E: Statystyka.
+#Q
+Q: Co pokazuje Journal matches w jail sshd?
++ Filtr wpisów journald, z których fail2ban czyta (jednostka i polecenie)
+- Liczbę dopasowań
+- Adresy
+- Porty
+E: _SYSTEMD_UNIT=sshd.service.
+#Q
+Q: Czy fail2ban działa po restarcie serwera?
++ Tak, jeśli usługa jest włączona (enable); blokady mogą zostać odtworzone z bazy
+- Nie
+- Tylko po ręcznym starcie
+- Tylko w Rocky
+E: systemctl enable --now.
+#Q
+Q: Gdzie fail2ban przechowuje informacje o blokadach między restartami?
++ W bazie SQLite (domyślnie /var/lib/fail2ban/fail2ban.sqlite3)
+- W jail.local
+- W nftables na stałe
+- Nigdzie
+E: Pozwala na bantime.increment.
+#Q
+Q: Jak sprawdzić, czy pliki pakietu fail2ban zostały zmienione?
++ dpkg --verify fail2ban
+- fail2ban-client -t
+- apt check
+- md5sum jail.local
+E: Wykrywa edycję jail.conf.
+#Q
+Q: Jaki adres srv-docker został zablokowany w ćwiczeniu?
++ 192.168.56.30
+- 192.168.56.10
+- 192.168.56.1
+- 127.0.0.1
+E: Test z nieudanymi logowaniami.
+#Q
+Q: Dlaczego 192.168.56.10 jest w ignoreip na srv-test?
++ To lubuntu-nauka - maszyna administracyjna
+- To atakujący
+- To bastion zewnętrzny
+- Bez powodu
+E: Ochrona przed zablokowaniem siebie.
+#Q
+Q: Jaki adres ma gospodarz (laptop) w ignoreip?
++ 192.168.56.1
+- 10.0.2.2
+- 127.0.0.1
+- 192.168.56.20
+E: Sieć host-only.
+#Q
+Q: Co należy zrobić po teście blokady adresu testowego?
++ Odblokować go (unbanip)
+- Zostawić
+- Dodać do ignoreip zawsze
+- Restart fail2ban
+E: Sprzątanie.
+#Q
+Q: Jak sprowokować nieudane logowania SSH bez pytań o hasło?
++ ssh z nieistniejącym użytkownikiem i BatchMode=yes
+- ssh z poprawnym kluczem
+- ping
+- scp pliku
+E: Ćwiczenie.
+#Q
+Q: Jakie polecenie pokazuje liczbę dopasowań per adres w logu aplikacji?
++ fail2ban-regex --print-all-matched ... | grep -oP 'ip=\K...' | sort | uniq -c
+- fail2ban-client status
+- grep -c
+- tail
+E: Analiza filtra.
+#Q
+Q: Co robi skrypt f2b-raport.sh z ćwiczeń?
++ Wypisuje dla każdego jail liczbę blokad i zablokowane adresy
+- Odblokowuje wszystkich
+- Instaluje fail2ban
+- Usuwa jail
+E: Przegląd.
+#Q
+Q: Jaki rozdział zawiera wynik 1847 nieudanych prób na srv-test?
++ 33 (zabezpieczanie SSH)
+- 35
+- 26
+- 39
+E: Wprowadzenie.
+#Q
+Q: Jaka jest wersja fail2ban w Ubuntu 24.04?
++ 1.0.2
+- 0.9
+- 2.5
+- 0.11 zawsze
+E: fail2ban-client --version.
+#Q
+Q: Czy bantime = -1 jest dobrym pomysłem?
++ Rzadko - trwałe blokady narastają, a adresy bywają współdzielone lub zmieniane
+- Zawsze
+- Wymagane
+- Nie istnieje
+E: Lepiej increment i recidive.
+#Q
+Q: Gdzie umieszczono jail aplikacji sklep?
++ /etc/fail2ban/jail.d/sklep.local
+- /etc/fail2ban/jail.conf
+- /etc/sklep/jail
+- /var/lib/fail2ban
+E: Osobny plik.
+#Q
+Q: Czy backend = auto dla pliku logu jest poprawny?
++ Tak - fail2ban monitoruje zmiany pliku (inotify/polling)
+- Nie, zawsze systemd
+- Tylko dla journald
+- Wyłącza jail
+E: Dla logpath.
+#Q
+Q: Co należy sprawdzić po kilku dniach działania nowego jail?
++ Czy nie blokuje prawdziwych użytkowników (fałszywe blokady)
+- Nic
+- Wersję
+- Port SSH
+E: Krok 6.
+#Q
+Q: Jak sprawdzić, czy aplikacja jest za Nginx i jakie nagłówki dostaje?
++ grep proxy_set_header w konfiguracji Nginx
+- ss -tln
+- fail2ban-client status
+- ufw status
+E: CODE_RIGHT.
+#Q
+Q: Jakie polecenie sprawdza konfigurację Nginx przed przeładowaniem?
++ nginx -t
+- nginx -c
+- systemctl test nginx
+- nginx --check
+E: Rozdział 36.
+#Q
+Q: Co oznacza nagłówek X-Forwarded-For?
++ Listę adresów klienta i kolejnych proxy, przez które przeszło żądanie
+- Adres serwera
+- Port
+- Nazwę hosta
+E: Pierwszy to klient.
+#Q
+Q: Czym różni się X-Real-IP od X-Forwarded-For?
++ X-Real-IP zawiera jeden adres klienta, X-Forwarded-For - łańcuch adresów
+- Niczym
+- X-Real-IP to adres proxy
+- X-Forwarded-For to port
+E: Konwencje nagłówków.
+#Q
+Q: Czy fail2ban może blokować także w ufw?
++ Tak - banaction = ufw
+- Nie
+- Tylko w Rocky
+- Tylko IPv6
+E: Akcje.
+#Q
+Q: Gdzie są definicje akcji blokady?
++ /etc/fail2ban/action.d/
+- /etc/fail2ban/filter.d/
+- /etc/ufw
+- /etc/nftables.conf
+E: Np. nftables-multiport.conf.
+#Q
+Q: Czy fail2ban chroni pocztę?
++ Tak - są filtry dla Postfix i Dovecot
+- Nie
+- Tylko SMTP bez TLS
+- Tylko w Rocky
+E: USAGE.
+#Q
+Q: Jakie konto uruchamia fail2ban?
++ root (musi czytać logi i zmieniać zaporę)
+- anna
+- nobody
+- www-data
+E: Uprawnienia.
+#Q
+Q: Co zrobić, gdy filtr nie dopasowuje żadnej linii mimo nieudanych prób?
++ Porównać format linii logu z failregex i datepattern przez fail2ban-regex
+- Wyłączyć jail
+- Zwiększyć maxretry
+- Restart serwera
+E: Diagnoza filtra.
+#Q
+Q: Czy fail2ban reaguje natychmiast po przekroczeniu progu?
++ Prawie natychmiast - po odczytaniu wpisu z logu
+- Po godzinie
+- Raz dziennie
+- Po restarcie
+E: Monitorowanie na bieżąco.
+#Q
+Q: Co jest kluczowym warunkiem skuteczności fail2ban przy aplikacji webowej?
++ Logowanie prawdziwego adresu klienta
+- Wysoki maxretry
+- bantime -1
+- Wyłączony Nginx
+E: Podsumowanie.
+#Q
+Q: Jak sprawdzić, czy fail2ban jest uruchamiany przy starcie?
++ systemctl is-enabled fail2ban
+- fail2ban-client status
+- ps aux
+- ufw status
+E: enabled.
+#Q
+Q: Czy fail2ban można testować bez ryzyka dla produkcji?
++ Tak - fail2ban-regex na kopii logu i testy z maszyny w laboratorium
+- Nie
+- Tylko na produkcji
+- Tylko w chmurze
+E: Bezpieczny test.
+#Q
+Q: Jaki jest skutek bantime.increment dla adresu zablokowanego trzeci raz?
++ Blokada jest dłuższa niż przy poprzednich (np. 1h, 2h, 4h)
+- Krótsza
+- Taka sama
+- Adres jest odblokowany
+E: Recydywiści.
+#Q
+Q: Czy zablokowany adres może nadal łączyć się na porty spoza jail?
++ Tak przy multiport - blokada dotyczy portów jail (chyba że akcja allports)
+- Nie
+- Tylko UDP
+- Tylko IPv6
+E: Akcja allports blokuje wszystkie.
+#Q
+Q: Co należy dodać do ignoreip przy monitoringu zewnętrznym logującym się do usługi?
++ Adres serwera monitoringu
+- Adresy atakujących
+- 0.0.0.0/0
+- Nic
+E: Inaczej fałszywe blokady.
+#Q
+Q: Jak nazywa się usługa systemd fail2ban?
++ fail2ban.service
+- f2b.service
+- jail.service
+- banner.service
+E: systemctl enable --now fail2ban.
+#Q
+Q: Co zawiera ignoreregex w filtrze?
++ Wyrażenia linii, które mają być pominięte mimo dopasowania failregex
+- Adresy do pominięcia
+- Porty do pominięcia
+- Daty do pominięcia
+E: Wyjątki w filtrze.
+#Q
+Q: Jak włączyć gotowy jail dla Nginx?
++ Plik jail.d/nginx.local z [nginx-botsearch] i enabled = true
+- Edycja jail.conf
+- ufw allow nginx
+- systemctl enable nginx-jail
+E: Ćwiczenie.
