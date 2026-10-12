@@ -1,0 +1,911 @@
+#EX
+P: Zbierz na srv-docker informacje o obecnej konfiguracji z DHCP: adres z maską, bramę i serwery DNS.
+H: ip -br addr, ip route, resolvectl.
+S:
+ip -br -4 addr show enp0s8
+ip route
+resolvectl dns enp0s8; resolvectl domain enp0s8
+#EX
+P: Sprawdź na srv-docker, kiedy wygasa dzierżawa DHCP interfejsu enp0s8.
+H: networkctl status pokazuje szczegóły DHCP przy rendererze networkd.
+S:
+networkctl status enp0s8 | grep -iE 'address|lease|dhcp'
+#EX
+P: Na srv-test odczytaj zakres puli DHCP i rezerwacje w konfiguracji dnsmasq.
+H: Plik /etc/dnsmasq.d/lab.conf.
+S:
+grep -E 'dhcp-range|dhcp-host|domain|dhcp-option' /etc/dnsmasq.d/lab.conf
+#EX
+P: Na srv-test wyświetl aktualne dzierżawy DHCP.
+H: Plik dnsmasq.leases.
+S:
+cat /var/lib/misc/dnsmasq.leases
+#EX
+P: Sprawdź, czy adres 192.168.56.40 jest wolny, zanim przydzielisz go nowej maszynie.
+H: arping -D zwraca kod 0 dla wolnego adresu.
+S:
+sudo arping -D -c 2 -I enp0s8 192.168.56.40; echo "kod: $?"
+#EX
+P: Sprawdź, czy adres 192.168.56.20 jest zajęty, i porównaj kod wyjścia arping -D.
+H: Dla zajętego adresu kod będzie różny od zera.
+S:
+sudo arping -D -c 2 -I enp0s8 192.168.56.20; echo "kod: $?"
+#EX
+P: Sprawdź za pomocą Pythona, czy adres 192.168.56.142 leży w puli DHCP 192.168.56.100-200.
+H: Porównaj adresy jako obiekty ip_address.
+S:
+python3 -c 'import ipaddress as i; a=i.ip_address("192.168.56.142"); print(i.ip_address("192.168.56.100") <= a <= i.ip_address("192.168.56.200"))'
+#EX
+P: Wykonaj kopię konfiguracji Netplanu na srv-docker przed zmianą.
+H: cp -a z datą.
+S:
+sudo cp -a /etc/netplan /root/netplan.kopia-$(date +%F)
+#EX
+P: Utwórz na srv-docker plik Netplanu z adresem statycznym 192.168.56.30/24, DNS 192.168.56.20 i domeną lab.local, bez bramy.
+H: Plik 60-hostonly.yaml z prawami 600.
+S:
+sudo tee /etc/netplan/60-hostonly.yaml > /dev/null <<'EOF'
+network:
+  version: 2
+  ethernets:
+    enp0s8:
+      dhcp4: false
+      addresses:
+        - 192.168.56.30/24
+      nameservers:
+        addresses: [192.168.56.20]
+        search: [lab.local]
+      optional: true
+EOF
+sudo chmod 600 /etc/netplan/60-hostonly.yaml
+sudo netplan generate && echo OK
+#EX
+P: Zastosuj konfigurację z okresem próbnym i w drugiej sesji SSH połącz się na nowy adres przed zatwierdzeniem.
+H: netplan try w pierwszej sesji, ssh na 192.168.56.30 w drugiej.
+S:
+sudo netplan try --timeout 90
+ssh anna@192.168.56.30 hostname
+#EX
+P: Sprawdź po zmianie adres, trasy, DNS i rozwiązywanie nazw laboratorium.
+H: Powinna być jedna trasa domyślna przez enp0s3.
+S:
+ip -br addr show enp0s8
+ip route show default
+resolvectl dns enp0s8
+getent hosts srv-test.lab.local
+#EX
+P: Sprawdź, czy wszystkie elementy działają: ping do gospodarza, do srv-test i rozwiązanie nazwy archive.ubuntu.com.
+H: Trzy testy w jednym skrypcie z && i ||.
+S:
+for c in 192.168.56.1 192.168.56.20; do ping -c1 -W2 -q $c >/dev/null && echo "$c OK" || echo "$c BLAD"; done
+getent hosts archive.ubuntu.com >/dev/null && echo "DNS OK" || echo "DNS BLAD"
+#EX
+P: Zasymuluj błąd z lekcji: wpisz adres z puli DHCP (192.168.56.142) bez nameservers i sprawdź rozwiązywanie nazwy lab.local.
+H: Pracuj na kopii, potem przywróć poprawny plik.
+S:
+sudo cp /etc/netplan/60-hostonly.yaml /root/60-hostonly.ok
+printf 'network:\n  version: 2\n  ethernets:\n    enp0s8:\n      dhcp4: false\n      addresses: [192.168.56.142/24]\n' | sudo tee /etc/netplan/60-hostonly.yaml > /dev/null
+sudo netplan apply
+getent hosts srv-test.lab.local; echo "kod: $?"
+#EX
+P: Wykryj z srv-test konflikt adresu 192.168.56.142 za pomocą arping.
+H: Dwie odpowiedzi z różnymi MAC oznaczają konflikt.
+S:
+sudo arping -c 3 -I enp0s8 192.168.56.142
+#EX
+P: Przywróć poprawny plik 60-hostonly.yaml i zastosuj konfigurację.
+H: Kopia w /root/60-hostonly.ok.
+S:
+sudo cp /root/60-hostonly.ok /etc/netplan/60-hostonly.yaml
+sudo netplan apply
+ip -br -4 addr show enp0s8
+#EX
+P: Na srv-test dodaj rezerwację DHCP dla srv-docker (MAC 08:00:27:c4:18:a2, adres 192.168.56.30) i zrestartuj dnsmasq.
+H: Linia dhcp-host w lab.conf.
+S:
+echo 'dhcp-host=08:00:27:c4:18:a2,srv-docker,192.168.56.30' | sudo tee -a /etc/dnsmasq.d/lab.conf
+sudo dnsmasq --test
+sudo systemctl restart dnsmasq
+#EX
+P: Przełącz srv-docker na DHCP na enp0s8 z ignorowaniem tras z DHCP i usuń adres statyczny.
+H: netplan set z dhcp4=true, addresses=null i dhcp4-overrides.
+S:
+sudo netplan set ethernets.enp0s8.dhcp4=true
+sudo netplan set ethernets.enp0s8.addresses=null
+sudo netplan set 'ethernets.enp0s8.dhcp4-overrides={"use-routes": false}'
+sudo netplan apply
+ip -br -4 addr show enp0s8
+#EX
+P: Sprawdź na srv-docker, że DNS i domena przyszły z DHCP.
+H: resolvectl dns i domain.
+S:
+resolvectl dns enp0s8
+resolvectl domain enp0s8
+#EX
+P: Zrestartuj srv-docker i sprawdź, czy dostał ten sam adres z rezerwacji.
+H: Porównaj adres przed i po restarcie.
+S:
+sudo reboot
+ip -br -4 addr show enp0s8
+#EX
+P: Na srv-test sprawdź dzierżawę srv-docker i rozwiązywanie jego nazwy przez dnsmasq.
+H: dnsmasq sam rejestruje nazwy klientów DHCP.
+S:
+grep srv-docker /var/lib/misc/dnsmasq.leases
+getent hosts srv-docker.lab.local
+#EX
+P: Na lubuntu-nauka sprawdź konfigurację statyczną karty host-only w nmcli.
+H: Profil hostonly.
+S:
+nmcli -g ipv4.method,ipv4.addresses,ipv4.never-default,ipv4.dns,ipv4.dns-search c show hostonly
+#EX
+P: Na maszynie z NetworkManagerem zmień testowe połączenie na adres statyczny z bramą i DNS, a potem przywróć DHCP.
+H: Pracuj na połączeniu dummy, żeby nie odciąć sieci.
+S:
+sudo nmcli c add type dummy ifname dummy-st con-name test-st ipv4.method auto
+sudo nmcli c modify test-st ipv4.method manual ipv4.addresses 10.125.0.10/24 ipv4.gateway 10.125.0.1 ipv4.dns 10.125.0.1
+sudo nmcli c up test-st
+nmcli -f IP4 d show dummy-st
+sudo nmcli c delete test-st
+#EX
+P: Sprawdź w Rocky Linux, jak wygląda statyczna konfiguracja zapisana w pliku .nmconnection.
+H: Sekcja [ipv4] z method=manual i address1.
+S:
+sudo grep -A6 '^\[ipv4\]' /etc/NetworkManager/system-connections/*.nmconnection
+#EX
+P: Po ustawieniu adresu statycznego zaktualizuj wpis srv-docker w /etc/hosts na lubuntu-nauka.
+H: sed z adresem i nazwą.
+S:
+sudo sed -i 's/^.*\ssrv-docker$/192.168.56.30\tsrv-docker/' /etc/hosts
+getent hosts srv-docker
+#EX
+P: Sprawdź, czy reguły pg_hba.conf i eksport NFS obejmują nowy adres srv-docker.
+H: Szukaj wpisów z siecią 192.168.56.0/24 lub konkretnym adresem.
+S:
+sudo grep -E '^host' /etc/postgresql/16/main/pg_hba.conf
+grep -E '192\.168\.56' /etc/exports
+#EX
+P: Zapisz w dokumentacji laboratorium (plik ~/adresy-lab.md) tabelę adresów: host, adres, metoda.
+H: Prosta tabela Markdown.
+S:
+cat > ~/adresy-lab.md <<'EOF'
+| host | adres | metoda |
+|---|---|---|
+| gospodarz | 192.168.56.1 | karta host-only VirtualBox |
+| lubuntu-nauka | 192.168.56.10 | nmcli, manual |
+| srv-test | 192.168.56.20 | Netplan, statyczny (dnsmasq, DNS) |
+| srv-docker | 192.168.56.30 | rezerwacja DHCP w dnsmasq |
+| pula DHCP | 192.168.56.100-200 | dnsmasq |
+EOF
+cat ~/adresy-lab.md
+#EX
+P: Sprawdź, ile trwa start srv-docker i czy usługa oczekiwania na sieć nie opóźnia go z powodu karty bez łącza.
+H: systemd-analyze blame.
+S:
+systemd-analyze blame | grep -i wait-online
+#EX
+P: Sprawdź na gospodarzu w VirtualBoksie, czy serwer DHCP sieci host-only jest wyłączony (bo DHCP zapewnia dnsmasq).
+H: VBoxManage list dhcpservers.
+S:
+VBoxManage list dhcpservers | grep -E 'NetworkName|Enabled'
+#EX
+P: Napisz skrypt ~/bin/po-zmianie-ip.sh wykonujący kontrolę po zmianie adresu: adres, liczba tras domyślnych, ping do bramy, DNS.
+H: Policz trasy domyślne i zatrzymaj się na błędzie.
+S:
+cat > ~/bin/po-zmianie-ip.sh <<'EOF'
+#!/bin/bash
+ip -br addr
+n=$(ip route show default | wc -l); echo "tras domyslnych: $n"
+gw=$(ip route show default | awk 'NR==1{print $3}')
+ping -c1 -W2 -q "$gw" >/dev/null && echo "brama $gw OK" || echo "brama $gw BLAD"
+resolvectl dns
+getent hosts archive.ubuntu.com >/dev/null && echo "DNS OK" || echo "DNS BLAD"
+EOF
+chmod +x ~/bin/po-zmianie-ip.sh
+~/bin/po-zmianie-ip.sh
+#EX
+P: Usuń kopię roboczą /root/60-hostonly.ok po zakończeniu ćwiczeń i porównaj konfigurację z kopią katalogu.
+H: diff -r między kopią a /etc/netplan.
+S:
+sudo rm /root/60-hostonly.ok
+sudo diff -r /root/netplan.kopia-$(date +%F) /etc/netplan
+#Q
+Q: Dlaczego serwer potrzebuje stałego adresu?
++ Inne systemy, reguły i konfiguracje wskazują go po adresie
+- Bo DHCP nie działa na serwerach
+- Bo stały adres jest szybszy
+- Bo tak wymaga jądro
+E: SSH, zapora, pg_hba.conf, NFS i DNS zależą od adresu.
+#Q
+Q: Co dostarcza serwer DHCP oprócz adresu?
++ Maskę, bramę, serwery DNS i domenę
+- Tylko adres
+- Hasła użytkowników
+- Certyfikaty TLS
+E: Dlatego po przejściu na statyczny trzeba je ustawić samodzielnie.
+#Q
+Q: Czym jest dzierżawa (lease) DHCP?
++ Czasem, na jaki klient dostaje adres - potem musi go odnowić
+- Opłatą za adres
+- Typem adresu IPv6
+- Plikiem konfiguracyjnym
+E: Adres może się zmienić przy odnowieniu lub po restarcie.
+#Q
+Q: Jakie są dwa sposoby zapewnienia serwerowi stałego adresu?
++ Adres statyczny w konfiguracji hosta albo rezerwacja DHCP dla jego MAC
+- Zmiana nazwy hosta albo DNS
+- Restart co godzinę
+- NAT albo VPN
+E: Obie metody mają zalety i wady.
+#Q
+Q: Czym jest rezerwacja DHCP?
++ Serwer DHCP zawsze przydziela temu samemu MAC ten sam adres
+- Adres wpisany ręcznie w hoście
+- Blokada adresu
+- Adres tymczasowy
+E: Host pozostaje skonfigurowany na DHCP.
+#Q
+Q: Jaka jest zaleta rezerwacji DHCP?
++ Centralne zarządzanie adresami, DNS i domeną w jednym miejscu
+- Niezależność od serwera DHCP
+- Brak potrzeby sieci
+- Szybszy start serwera
+E: Zmiana DNS w sieci wymaga edycji tylko serwera DHCP.
+#Q
+Q: Jaka jest zaleta adresu statycznego w konfiguracji hosta?
++ Serwer wstaje z tym samym adresem nawet przy awarii DHCP
+- Centralne zarządzanie
+- Automatyczna rejestracja w DNS
+- Brak potrzeby konfiguracji
+E: Ważne dla serwerów infrastruktury.
+#Q
+Q: Dla jakich serwerów zaleca się adres statyczny w konfiguracji?
++ Infrastruktury: DNS, DHCP, routery, bazy
+- Laptopów
+- Telefonów
+- Drukarek gości
+E: Nie mogą zależeć od usług, które same świadczą.
+#Q
+Q: Jakie są wady adresów statycznych na wielu serwerach?
++ Rozproszona konfiguracja - zmiana DNS lub bramy wymaga edycji wszystkich serwerów
+- Wolniejsza sieć
+- Brak IPv6
+- Konieczność restartu co dzień
+E: Automatyzacja (Ansible) łagodzi ten problem.
+#Q
+Q: Gdzie należy wybierać adres statyczny?
++ W tej samej podsieci, poza pulą DHCP
+- Wewnątrz puli DHCP
+- W dowolnej sieci
+- Adres rozgłoszeniowy
+E: Inaczej grozi konflikt z dzierżawą DHCP.
+#Q
+Q: Jak sprawdzić, czy adres jest wolny przed przydzieleniem?
++ sudo arping -D -c 2 -I IFACE ADRES
+- ping -c 1 ADRES wyłącznie
+- getent hosts ADRES
+- ip route get ADRES
+E: Kod 0 oznacza, że nikt nie odpowiedział.
+#Q
+Q: Co się stanie, gdy adres statyczny leży w puli DHCP?
++ Serwer DHCP może przydzielić go innej maszynie - konflikt adresów
+- Nic
+- Serwer DHCP się wyłączy
+- Adres stanie się publiczny
+E: Problem ujawnia się z opóźnieniem.
+#Q
+Q: Jak rozpoznać konflikt adresów narzędziem arping?
++ Odpowiedzi z dwoma różnymi adresami MAC dla jednego adresu IP
+- Brak odpowiedzi
+- Odpowiedź z bramy
+- Komunikat Network is unreachable
+E: Każde urządzenie odpowiada swoim MAC.
+#Q
+Q: Co trzeba ustawić ręcznie po przejściu z DHCP na adres statyczny?
++ Serwery DNS i domenę wyszukiwania
+- Adres MAC
+- Nazwę jądra
+- Port SSH
+E: Wcześniej dostarczał je DHCP.
+#Q
+Q: Jaki objaw daje brak nameservers po przejściu na adres statyczny na karcie host-only?
++ Nazwy lokalne (lab.local) przestają się rozwiązywać
+- Brak adresu IP
+- Brak trasy domyślnej
+- Wyłączenie interfejsu
+E: apt update może dalej działać przez drugą kartę, co myli.
+#Q
+Q: Na którym interfejsie ustawia się bramę?
++ Tylko na tym, przez który serwer wychodzi do innych sieci lub Internetu
+- Na wszystkich interfejsach
+- Na żadnym
+- Na pętli zwrotnej
+E: Inaczej powstaje druga trasa domyślna.
+#Q
+Q: Jak w Netplanie wyłączyć DHCP i ustawić adres statyczny?
++ dhcp4: false i addresses: [ADRES/PREFIKS]
+- dhcp: static i ip: ADRES
+- method: manual
+- dhcp4: static
+E: Plus nameservers i ewentualnie routes.
+#Q
+Q: Jak w nmcli ustawić adres statyczny?
++ ipv4.method manual ipv4.addresses ADRES/PREFIKS
+- ipv4.method static ipv4.ip ADRES
+- ipv4.dhcp no
+- ipv4.address ADRES
+E: Plus ipv4.dns i ipv4.gateway lub never-default.
+#Q
+Q: Jaka właściwość nmcli odpowiada brakowi bramy na karcie pomocniczej?
++ ipv4.never-default yes
+- ipv4.gateway none
+- ipv4.route off
+- ipv4.default no
+E: Karta nie utworzy trasy domyślnej.
+#Q
+Q: Jakie polecenie bezpiecznie stosuje zmianę adresu przez SSH?
++ sudo netplan try - i połączenie na nowy adres w drugiej sesji przed zatwierdzeniem
+- sudo netplan apply bez sprawdzenia
+- sudo reboot
+- sudo ip addr flush
+E: Po zerwaniu sesji zmiana się wycofa.
+#Q
+Q: Dlaczego przy zmianie adresu przez SSH warto otworzyć drugą sesję na nowy adres?
++ Potwierdza, że serwer jest osiągalny pod nowym adresem przed zatwierdzeniem netplan try
+- Bo jedna sesja nie wystarczy dla Netplanu
+- Bo SSH tego wymaga
+- Bez powodu
+E: Bez tego można zatwierdzić konfigurację, która odcina dostęp.
+#Q
+Q: Co sprawdzić po zmianie adresu?
++ ip -br addr, ip route, ping do bramy, resolvectl status, getent hosts
+- Tylko hostname
+- Tylko /etc/fstab
+- Tylko logi aplikacji
+E: Krok 5 procedury z lekcji.
+#Q
+Q: Co jeszcze zaktualizować po zmianie adresu serwera?
++ Rekord DNS, /etc/hosts innych maszyn, dokumentację, reguły zapory
+- Tylko hasło roota
+- Nic
+- Tylko nazwę hosta
+E: Adres jest używany w wielu miejscach.
+#Q
+Q: Dlaczego warto wykonać restart kontrolny po zmianie adresu?
++ Aby potwierdzić, że konfiguracja działa od zera przy starcie
+- Bo zmiana wymaga restartu zawsze
+- Bo restart odświeża DNS w Internecie
+- Nie warto
+E: Ujawnia błędy niewidoczne po apply.
+#Q
+Q: Jaka linia dnsmasq tworzy rezerwację DHCP?
++ dhcp-host=08:00:27:c4:18:a2,srv-docker,192.168.56.30
+- dhcp-range=192.168.56.30
+- address=/srv-docker/192.168.56.30
+- host-record=192.168.56.30
+E: Zawiera MAC, nazwę i adres.
+#Q
+Q: Jaka linia dnsmasq określa pulę DHCP?
++ dhcp-range=192.168.56.100,192.168.56.200,12h
+- dhcp-host=192.168.56.100
+- interface=192.168.56.100
+- domain=192.168.56.0
+E: Ostatni parametr to czas dzierżawy.
+#Q
+Q: Co oznacza dhcp-option=option:router bez wartości w lab.conf?
++ Serwer DHCP nie podaje klientom bramy - właściwe dla sieci host-only
+- Brama to 192.168.56.1
+- Router jest wyłączony
+- Błąd składni
+E: Klienci nie dostaną drugiej trasy domyślnej.
+#Q
+Q: Gdzie dnsmasq zapisuje dzierżawy?
++ /var/lib/misc/dnsmasq.leases
+- /etc/dnsmasq.leases
+- /var/log/dnsmasq.log
+- /run/dnsmasq/leases
+E: Każda linia zawiera czas, MAC, adres i nazwę.
+#Q
+Q: Jak sprawdzić poprawność konfiguracji dnsmasq przed restartem?
++ sudo dnsmasq --test
+- sudo dnsmasq --check-all
+- sudo netplan generate
+- sudo dnsmasq -v
+E: Wypisze syntax check OK lub błąd.
+#Q
+Q: Co robi dnsmasq z nazwami klientów DHCP?
++ Rejestruje je w swoim DNS, np. srv-docker.lab.local
+- Usuwa je
+- Wysyła do Internetu
+- Ignoruje
+E: Dzięki temu nazwy działają bez ręcznych wpisów.
+#Q
+Q: Jaki adres dostanie srv-docker po restarcie przy rezerwacji DHCP?
++ Zawsze 192.168.56.30
+- Losowy z puli
+- 192.168.56.142
+- 127.0.0.1
+E: Rezerwacja wiąże MAC z adresem.
+#Q
+Q: Dlaczego adres zarezerwowany .30 leży poza pulą .100-.200?
++ Żeby nie został przydzielony dynamicznie innej maszynie
+- Bo dnsmasq tego wymaga
+- Bo .30 jest szybszy
+- Bez powodu
+E: Rezerwacje najlepiej trzymać poza pulą dynamiczną.
+#Q
+Q: Co robi dhcp4-overrides: {use-routes: false} na srv-docker?
++ Ignoruje trasy z DHCP na karcie host-only
+- Wyłącza DHCP
+- Wyłącza DNS
+- Ustawia adres statyczny
+E: Zabezpiecza przed drugą trasą domyślną.
+#Q
+Q: Jak przełączyć interfejs z adresu statycznego na DHCP poleceniami netplan set?
++ dhcp4=true i addresses=null, potem netplan apply
+- dhcp4=false
+- addresses=dhcp
+- renderer=dhcp
+E: Przykład z kodu poprawnego w lekcji.
+#Q
+Q: Jak w chmurze zapewnia się stały adres prywatny instancji?
++ Dostawca przypisuje go do interfejsu sieciowego, a system pobiera go przez DHCP
+- Wpisując go ręcznie w Netplanie
+- Przez /etc/hosts
+- Przez NAT
+E: Ręczne wpisanie adresu zwykle psuje łączność.
+#Q
+Q: Dlaczego w chmurze nie należy wpisywać adresów statycznych ręcznie w systemie?
++ Sieć dostawcy oczekuje konfiguracji z DHCP i przypisań w panelu - ręczne zmiany mogą odciąć instancję
+- Bo chmura nie obsługuje IPv4
+- Bo adresy są szyfrowane
+- Bo cloud-init je zablokuje zawsze
+E: Stałość zapewnia przypisanie po stronie dostawcy.
+#Q
+Q: Jak najprościej zapewnić stały adres NAS-owi w sieci domowej?
++ Rezerwacja DHCP w routerze
+- Wpisanie adresu w Netplanie NAS-a
+- NAT
+- Zmiana nazwy
+E: Router zawsze przydzieli mu ten sam adres.
+#Q
+Q: W analogii z lekcji, czym jest DHCP?
++ Parkingiem ogólnodostępnym - każdego dnia inne miejsce
+- Stałym miejscem z numerem
+- Abonamentem u parkingowego
+- Informacją
+E: Abonament to rezerwacja DHCP.
+#Q
+Q: W analogii z lekcji, czym jest rezerwacja DHCP?
++ Abonamentem u parkingowego, który zawsze kieruje na to samo miejsce
+- Namalowaniem numeru na miejscu
+- Parkingiem ogólnym
+- Zmianą samochodu
+E: Adres statyczny to namalowany numer.
+#Q
+Q: Jaki adres ma lubuntu-nauka w planie adresów laboratorium?
++ 192.168.56.10
+- 192.168.56.20
+- 192.168.56.30
+- 192.168.56.1
+E: srv-test ma .20, srv-docker .30.
+#Q
+Q: Jaki zakres adresów laboratorium jest przeznaczony na adresy statyczne?
++ 192.168.56.2 - 192.168.56.99
+- 192.168.56.100 - 192.168.56.254
+- 192.168.56.1
+- 10.0.2.0/24
+E: Pula DHCP zaczyna się od .100.
+#Q
+Q: Jaką metodą lubuntu-nauka ma ustawiony adres host-only?
++ nmcli, ipv4.method manual
+- Rezerwacja DHCP
+- Netplan z networkd
+- ip addr add przy każdym starcie
+E: Lubuntu korzysta z NetworkManagera.
+#Q
+Q: Jaką metodą srv-test ma ustawiony adres host-only?
++ Netplan z networkd, adres statyczny
+- Rezerwacja DHCP
+- nmcli
+- /etc/network/interfaces
+E: srv-test to serwer DNS i DHCP laboratorium.
+#Q
+Q: Dlaczego srv-test ma adres statyczny, a nie rezerwację?
++ Sam jest serwerem DHCP i DNS - nie może zależeć od siebie
+- Bo rezerwacje nie działają
+- Bo jest maszyną wirtualną
+- Bo ma IPv6
+E: Serwery infrastruktury mają adresy statyczne.
+#Q
+Q: Jaki serwer DNS ustawia srv-test dla siebie?
++ 127.0.0.1 - lokalny dnsmasq
+- 192.168.56.20 przez sieć
+- 10.0.2.3
+- 1.1.1.1
+E: Plik 60-hostonly.yaml z lekcji.
+#Q
+Q: Czy serwer DHCP VirtualBoksa w sieci host-only powinien działać razem z dnsmasq?
++ Nie - dwa serwery DHCP w jednej sieci wprowadzają chaos
+- Tak, zawsze
+- Tylko dla IPv6
+- Tylko w nocy
+E: Klient przyjmie ofertę tego, który odpowie pierwszy.
+#Q
+Q: Co jest skutkiem dwóch serwerów DHCP w jednej sieci?
++ Klienci dostają adresy i ustawienia od tego, który odpowie szybciej - niespójna konfiguracja
+- Lepsza wydajność
+- Większa liczba adresów
+- Nic
+E: Rezerwacje mogą wtedy nie działać.
+#Q
+Q: Jaki skrypt z ćwiczeń sprawdza konfigurację po zmianie adresu?
++ ~/bin/po-zmianie-ip.sh
+- ~/bin/brama.sh
+- ~/bin/dns-stan.sh
+- ~/bin/nm-stan.sh
+E: Liczy trasy domyślne i testuje bramę oraz DNS.
+#Q
+Q: Co oznacza kod 2 z getent hosts srv-test.lab.local po zmianie konfiguracji?
++ Nazwa nie została rozwiązana - np. brak DNS lub domeny
+- Sukces
+- Brak uprawnień
+- Błąd składni
+E: Kod 0 oznacza sukces.
+#Q
+Q: Gdzie zapisać tabelę adresów laboratorium?
++ W dokumentacji, np. ~/adresy-lab.md lub systemie IPAM
+- W /etc/fstab
+- Nigdzie
+- W /proc
+E: Dokumentacja zapobiega konfliktom.
+#Q
+Q: Czym jest IPAM?
++ Systemem do zarządzania adresami IP i ich przydziałem
+- Typem adresu IPv6
+- Usługą DNS
+- Zaporą
+E: IP Address Management.
+#Q
+Q: Jaki skutek ma zmiana adresu serwera bez aktualizacji pg_hba.conf na serwerze bazy?
++ Aplikacja z nowego adresu może dostać odmowę połączenia z bazą
+- Nic
+- Baza przestanie działać dla wszystkich
+- Zmieni się port
+E: Wpisy w pg_hba.conf wskazują adresy lub sieci klientów.
+#Q
+Q: Jaka sekcja pliku .nmconnection zawiera konfigurację adresu IPv4?
++ [ipv4] z method=manual i address1=
+- [network]
+- [ethernet]
+- [connection]
+E: Na przykład address1=192.168.56.40/24,192.168.56.1.
+#Q
+Q: Jak w nmcli ustawić bramę dla połączenia z adresem statycznym?
++ ipv4.gateway ADRES
+- ipv4.router ADRES
+- ipv4.default ADRES
+- ipv4.via ADRES
+E: Brama musi należeć do sieci adresu.
+#Q
+Q: Które polecenie w networkd pokazuje szczegóły dzierżawy DHCP?
++ networkctl status IFACE
+- netplan get
+- nmcli d show
+- dhclient -v
+E: Przy rendererze networkd.
+#Q
+Q: Kiedy klient DHCP odnawia dzierżawę?
++ Zwykle po upływie połowy czasu dzierżawy
+- Co sekundę
+- Tylko przy restarcie
+- Nigdy
+E: Jeśli serwer nie odpowiada, klient próbuje dalej.
+#Q
+Q: Co dzieje się, gdy serwer DHCP nie odpowiada przy starcie klienta bez adresu statycznego?
++ Klient nie dostaje adresu lub nadaje sobie link-local 169.254.x.x
+- Klient dostaje adres 127.0.0.1
+- Klient używa adresu z wczoraj zawsze
+- Sieć działa normalnie
+E: Dlatego serwery infrastruktury mają adresy statyczne.
+#Q
+Q: Jaka jest typowa długość dzierżawy w konfiguracji dnsmasq z lekcji?
++ 12 godzin
+- 1 minuta
+- 30 dni
+- Nieskończona
+E: Parametr 12h w dhcp-range.
+#Q
+Q: Do czego służy optional: true na karcie host-only srv-test?
++ Start systemu nie czeka na tę kartę, jeśli nie ma łącza
+- Wyłącza kartę
+- Włącza DHCP
+- Ustawia bramę
+E: Zapobiega opóźnieniu startu.
+#Q
+Q: Jaka konfiguracja Netplanu z lekcji jest poprawna dla karty pomocniczej?
++ dhcp4: false, addresses, nameservers, bez routes
+- dhcp4: true i routes: default
+- tylko gateway4
+- tylko nameservers
+E: Brama zostaje na karcie głównej.
+#Q
+Q: Który adres w laboratorium dostał laptop gościa w przykładzie konfliktu?
++ 192.168.56.142 z puli DHCP
+- 192.168.56.30
+- 192.168.56.10
+- 10.0.2.15
+E: Ten sam adres został wpisany ręcznie na srv-docker.
+#Q
+Q: Kiedy konflikt adresu z pulą DHCP ujawnia się w przykładzie z lekcji?
++ Po kilku dniach, gdy DHCP przydziela ten adres innej maszynie
+- Natychmiast
+- Nigdy
+- Tylko po restarcie gospodarza
+E: Problemy z opóźnieniem są trudne do powiązania ze zmianą.
+#Q
+Q: Kiedy brak DNS po przejściu na adres statyczny ujawnia się w przykładzie z lekcji?
++ Przy pierwszym odwołaniu do nazwy lab.local, np. srv-test
+- Natychmiast przy apt update
+- Nigdy
+- Po tygodniu
+E: apt korzysta z DNS przez drugą kartę.
+#Q
+Q: Co jest pierwszym krokiem ustawienia adresu statycznego według lekcji?
++ Ustalenie maski, bramy, DNS i puli DHCP w sieci
+- netplan apply
+- Restart serwera
+- arping na losowy adres
+E: Dane można odczytać z obecnej konfiguracji DHCP.
+#Q
+Q: Który zapis w Netplanie ustawia domenę wyszukiwania lab.local?
++ nameservers: search: [lab.local]
+- domain: lab.local
+- search: lab.local na najwyższym poziomie
+- dns-search: lab.local
+E: Domena trafia do resolved jako domena interfejsu.
+#Q
+Q: Jak sprawdzić, że na serwerze jest jedna trasa domyślna?
++ ip route show default | wc -l
+- ip addr | wc -l
+- hostname -I | wc -w
+- resolvectl dns | wc -l
+E: Wynik powinien wynosić 1.
+#Q
+Q: Jaki adres warto przydzielić nowej maszynie w sieci laboratorium?
++ Kolejny wolny spoza puli, np. 192.168.56.40, po sprawdzeniu arping -D
+- 192.168.56.150
+- 192.168.56.255
+- 192.168.56.0
+E: .150 leży w puli DHCP.
+#Q
+Q: Jak w Pythonie sprawdzić, czy adres leży w puli DHCP .100-.200?
++ Porównać obiekty ip_address: początek <= adres <= koniec
+- Sprawdzić długość łańcucha
+- Użyć ping
+- Użyć arping
+E: Obiekty ip_address obsługują porównania.
+#Q
+Q: Po co ustawiać DNS na karcie host-only, skoro karta NAT też ma DNS?
++ Aby nazwy lokalne lab.local były rozwiązywane przez dnsmasq w laboratorium
+- Bo karta NAT nie ma DNS
+- Bo jest to wymagane przez IPv4
+- Bez powodu
+E: Routing domen w resolved kieruje lab.local do właściwego serwera.
+#Q
+Q: Co oznacza linia 1791401212 08:00:27:c4:18:a2 192.168.56.30 srv-docker w pliku dzierżaw?
++ Czas wygaśnięcia dzierżawy, MAC, adres i nazwę klienta
+- Datę utworzenia pliku i port
+- Błąd
+- Konfigurację rezerwacji
+E: Pierwsza liczba to znacznik czasu Unix.
+#Q
+Q: Jaka metoda jest właściwa dla laptopa w domu i w biurze?
++ DHCP
+- Adres statyczny wpisany na stałe
+- Rezerwacja we wszystkich sieciach świata
+- Brak adresu
+E: Laptop zmienia sieci.
+#Q
+Q: Kiedy ma sens adres statyczny na laptopie?
++ W wybranej sieci, np. laboratorium, przez osobny profil nmcli
+- Zawsze we wszystkich sieciach
+- Nigdy
+- Tylko w hotelu
+E: NetworkManager pozwala mieć kilka profili.
+#Q
+Q: Co należy zrobić z wpisem srv-docker w /etc/hosts lubuntu-nauka po ustaleniu adresu .30?
++ Upewnić się, że wskazuje 192.168.56.30
+- Usunąć go
+- Ustawić 127.0.1.1
+- Zostawić stary adres
+E: Albo polegać na DNS dnsmasq.
+#Q
+Q: Jakie polecenie sprawdzi składnię Netplanu przed zastosowaniem?
++ sudo netplan generate
+- sudo netplan status
+- sudo netplan list
+- sudo netplan check-only
+E: Błędy wypisze z numerem linii.
+#Q
+Q: Który plik Netplanu z ćwiczeń zawiera adres statyczny srv-docker?
++ /etc/netplan/60-hostonly.yaml
+- /etc/netplan/50-cloud-init.yaml
+- /etc/netplan/01-network-manager-all.yaml
+- /etc/netplan/90-NM.yaml
+E: Własny plik o wyższym numerze.
+#Q
+Q: Co zrobić z plikiem /root/60-hostonly.ok po ćwiczeniach?
++ Usunąć go jako kopię roboczą
+- Przenieść do /etc/netplan
+- Zostawić na zawsze
+- Wysłać do DNS
+E: Kopia katalogu netplan pozostaje do porównania.
+#Q
+Q: Jakie polecenie pokaże, czy usługa oczekiwania na sieć opóźnia start?
++ systemd-analyze blame | grep -i wait-online
+- netplan status
+- resolvectl
+- ip route
+E: Dotyczy systemd-networkd-wait-online i NetworkManager-wait-online.
+#Q
+Q: Co jest istotą rezerwacji w kontekście konfiguracji hosta?
++ Host ma ustawione DHCP, a o stałości adresu decyduje serwer DHCP
+- Host ma adres statyczny
+- Host nie ma adresu
+- Host ma adres link-local
+E: Konfiguracja hosta pozostaje prosta.
+#Q
+Q: Jak sprawdzić, czy na srv-docker DNS przyszedł z DHCP?
++ resolvectl dns enp0s8 pokazuje serwer z dnsmasq, a w Netplanie brak nameservers
+- cat /etc/hosts
+- hostname -f
+- ip neigh
+E: Serwer DHCP podał opcję dns-server.
+#Q
+Q: Jaka opcja dnsmasq podaje klientom serwer DNS?
++ dhcp-option=option:dns-server,192.168.56.20
+- dns=192.168.56.20
+- server=192.168.56.20
+- nameserver 192.168.56.20
+E: server= w dnsmasq wskazuje serwery nadrzędne, nie klientom.
+#Q
+Q: Co zawiera linia domain=lab.local w dnsmasq?
++ Domenę przekazywaną klientom i używaną dla nazw z DHCP
+- Adres serwera
+- Pulę adresów
+- Rezerwację
+E: Klienci dostaną lab.local jako domenę wyszukiwania.
+#Q
+Q: Jaka linia dnsmasq wiąże usługę z interfejsem host-only?
++ interface=enp0s8
+- listen=enp0s8 tylko w Netplanie
+- bind=192.168.56.0/24
+- device=enp0s8
+E: dnsmasq nie będzie obsługiwał innych sieci.
+#Q
+Q: Co należy zrobić po zmianie konfiguracji dnsmasq?
++ Sprawdzić dnsmasq --test i zrestartować usługę
+- Nic
+- Zrestartować wszystkich klientów
+- Wyczyścić /etc/hosts
+E: Nowe rezerwacje obowiązują od kolejnej dzierżawy.
+#Q
+Q: Kiedy klient z nową rezerwacją dostanie zarezerwowany adres?
++ Przy kolejnym uzyskaniu lub odnowieniu dzierżawy, np. po restarcie lub netplan apply
+- Natychmiast bez działań
+- Nigdy
+- Po tygodniu
+E: Dlatego w ćwiczeniu wykonano netplan apply i restart.
+#Q
+Q: Która odpowiedź poprawnie łączy hosta z metodą adresu w laboratorium?
++ srv-docker - rezerwacja DHCP w dnsmasq
+- srv-test - rezerwacja DHCP
+- lubuntu-nauka - Netplan z networkd
+- gospodarz - dnsmasq
+E: Tabela adresów z ćwiczeń.
+#Q
+Q: Dlaczego w ćwiczeniu ze statycznym adresem na dummy użyto osobnego połączenia?
++ Aby nie odciąć prawdziwej sieci podczas testów
+- Bo nmcli nie obsługuje Ethernetu
+- Bo dummy jest szybszy
+- Bez powodu
+E: Po teście połączenie się usuwa.
+#Q
+Q: Co oznacza wynik True dla 192.168.56.142 w teście puli z ćwiczeń?
++ Adres leży w puli DHCP - nie nadaje się na adres statyczny
+- Adres jest wolny
+- Adres jest zarezerwowany
+- Adres jest publiczny
+E: Taki wybór grozi konfliktem.
+#Q
+Q: Jaka czynność zapobiega konfliktom adresów w sieci z wieloma administratorami?
++ Wspólna dokumentacja lub IPAM i sprawdzanie arping -D przed przydziałem
+- Restartowanie routera
+- Wyłączanie DHCP
+- Losowe wybieranie adresów
+E: Każdy przydział jest odnotowany.
+#Q
+Q: Która właściwość kart VirtualBoksa jest kluczowa dla rezerwacji DHCP?
++ Stały adres MAC karty
+- Typ dysku
+- Liczba procesorów
+- Rozmiar RAM
+E: Klonowanie maszyny bez zmiany MAC powoduje konflikty.
+#Q
+Q: Dlaczego klonowanie maszyny bez nowych adresów MAC psuje rezerwacje DHCP?
++ Dwie maszyny o tym samym MAC dostaną ten sam adres
+- Bo klon nie ma sieci
+- Bo zmienia się nazwa hosta
+- Nie psuje
+E: VirtualBox przy klonowaniu pozwala wygenerować nowe MAC.
+#Q
+Q: Jaki protokół i porty wykorzystuje DHCP dla IPv4?
++ UDP, port 67 serwera i 68 klienta
+- TCP 53
+- UDP 123
+- TCP 80
+E: Klient bez adresu wysyła zapytanie na adres rozgłoszeniowy.
+#Q
+Q: W jakiej kolejności przebiega uzyskanie adresu z DHCP?
++ DISCOVER, OFFER, REQUEST, ACK
+- REQUEST, ACK, OFFER
+- SYN, SYN-ACK, ACK
+- QUERY, ANSWER
+E: Skrót DORA od pierwszych liter.
+#Q
+Q: Gdzie w Ubuntu z NetworkManagerem sprawdzisz dzierżawę DHCP interfejsu?
++ nmcli -f DHCP4 device show IFACE
+- networkctl status zawsze
+- cat /etc/hosts
+- ip neigh
+E: Pokazuje m.in. adres, czas dzierżawy i opcje.
+#Q
+Q: Co należy zrobić, jeśli zarezerwowany adres jest zajęty przez inną maszynę z ręcznym adresem?
++ Usunąć konflikt - zmienić adres tej maszyny i dopiero wtedy stosować rezerwację
+- Zignorować
+- Dodać drugą rezerwację na ten sam adres
+- Wyłączyć DHCP
+E: Rezerwacja nie usuwa ręcznie przypisanych adresów.
+#Q
+Q: Jakie dane trzeba znać, aby utworzyć rezerwację DHCP dla maszyny?
++ Adres MAC jej karty sieciowej
+- Hasło roota
+- Numer seryjny dysku
+- Wersję jądra
+E: MAC odczytasz z ip link lub panelu VirtualBoksa.
+#Q
+Q: Jak odczytać adres MAC karty enp0s8, aby utworzyć rezerwację?
++ ip -br link show enp0s8
+- ip route show enp0s8
+- resolvectl dns enp0s8
+- hostname -I
+E: Trzecia kolumna zawiera adres MAC.
+#Q
+Q: Jaki jest skutek ustawienia w Netplanie zarówno dhcp4: true, jak i adresu statycznego?
++ Interfejs będzie miał dwa adresy - z DHCP i statyczny
+- Błąd składni
+- Tylko adres statyczny
+- Tylko adres z DHCP
+E: Zwykle to pomyłka przy przełączaniu metod.
+#Q
+Q: Co trzeba zrobić z adresem statycznym w Netplanie przy przejściu na rezerwację DHCP?
++ Usunąć klucz addresses i włączyć dhcp4
+- Zostawić oba
+- Zmienić renderer
+- Dodać routes
+E: Inaczej interfejs będzie miał dwa adresy.
+#Q
+Q: Która sytuacja wymaga zmian w wielu miejscach przy adresach statycznych, a w jednym przy rezerwacjach?
++ Zmiana serwera DNS dla całej sieci
+- Zmiana nazwy jednego hosta
+- Zmiana hasła
+- Zmiana dysku
+E: Przy rezerwacjach DNS ustawia się w serwerze DHCP.
+#Q
+Q: Dlaczego adres 192.168.56.1 nie może zostać przydzielony maszynie wirtualnej?
++ Należy do karty host-only gospodarza
+- Jest adresem rozgłoszeniowym
+- Jest adresem sieci
+- Należy do puli DHCP
+E: Konflikt z gospodarzem odciąłby całe laboratorium.
