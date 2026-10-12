@@ -1,0 +1,558 @@
+#EX
+P: Uruchom podgląd zdarzeń udev dla podsystemu block, a następnie podłącz pendrive i obserwuj zdarzenia add.
+H: Monitor przerywasz Ctrl+C; --udev pokazuje zdarzenia po przetworzeniu reguł.
+S:
+udevadm monitor --udev --subsystem-match=block
+#EX
+P: Porównaj zdarzenia jądra i udev podczas podłączenia pendrive'a, wyświetlając również właściwości zdarzeń.
+H: --kernel to surowe uevent, --property dodaje zmienne ENV.
+S:
+udevadm monitor --kernel --udev --property --subsystem-match=block
+#EX
+P: Po podłączeniu pendrive'a ustal nazwę jego urządzenia blokowego na podstawie lsblk i ostatnich komunikatów jądra.
+H: Szukaj dysku z TRAN usb oraz linii z nazwą sd w dmesg.
+S:
+lsblk -o NAME,SIZE,TRAN,MODEL,LABEL
+sudo dmesg | tail -5
+#EX
+P: Wyświetl dowiązania (S:) i właściwości systemu plików partycji /dev/sdl1 z bazy udev.
+H: Linie S: to dowiązania w /dev, linie E: to zmienne środowiskowe zdarzenia.
+S:
+udevadm info /dev/sdl1 | grep -E '^S:|ID_FS_(TYPE|LABEL|UUID)=|ID_SERIAL='
+#EX
+P: Sprawdź, które stabilne dowiązania w /dev/disk prowadzą do sdl1.
+H: Dowiązania tworzy reguła 60-persistent-storage.rules.
+S:
+ls -l /dev/disk/by-id/ /dev/disk/by-uuid/ /dev/disk/by-label/ | grep sdl1
+#EX
+P: Wyświetl atrybuty urządzenia i jego rodziców przydatne do reguły: KERNEL, SUBSYSTEM, idVendor, idProduct, serial i product.
+H: udevadm info -a przechodzi od urządzenia w górę hierarchii.
+S:
+udevadm info -a /dev/sdl1 | grep -E 'looking at|KERNEL==|SUBSYSTEM==|ATTRS\{(idVendor|idProduct|serial|product)\}'
+#EX
+P: Przejrzyj nazwy plików reguł dostarczonych przez pakiety i ewentualne reguły administratora.
+H: Pliki są przetwarzane według nazwy, łącznie z obu katalogów.
+S:
+ls /usr/lib/udev/rules.d/ | head -20
+ls -l /etc/udev/rules.d/
+#EX
+P: Utwórz grupę kopie i dodaj do niej siebie, aby przygotować uprawnienia dla reguły.
+H: Nowa przynależność do grupy zadziała w nowej sesji.
+S:
+sudo groupadd kopie
+sudo usermod -aG kopie anna
+getent group kopie
+#EX
+P: Napisz regułę /etc/udev/rules.d/99-kopia-usb.rules, która dla partycji pendrive'a o numerze seryjnym 4C530001240915112472 tworzy /dev/kopia-usb oraz nadaje grupie kopie prawo odczytu i zapisu.
+H: Dopasowania mają ==, przypisania = lub +=; cała reguła musi być w jednej linii.
+S:
+echo 'SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ATTRS{idVendor}=="0781", ATTRS{serial}=="4C530001240915112472", SYMLINK+="kopia-usb", GROUP="kopie", MODE="0660"' | sudo tee /etc/udev/rules.d/99-kopia-usb.rules
+#EX
+P: Przeładuj reguły i zasymuluj ich przetwarzanie dla sdl1, filtrując tylko efekty Twojej reguły.
+H: udevadm test niczego nie zmienia w /dev; wypisuje dużo na stderr.
+S:
+sudo udevadm control --reload
+sudo udevadm test /sys/class/block/sdl1 2>&1 | grep -E '99-kopia|LINK|GROUP|MODE'
+#EX
+P: Zastosuj regułę bez odłączania pendrive'a, poczekaj na koniec przetwarzania i sprawdź dowiązanie oraz uprawnienia.
+H: trigger wysyła zdarzenie ponownie, settle czeka na opróżnienie kolejki.
+S:
+sudo udevadm trigger --action=add /sys/class/block/sdl1
+sudo udevadm settle
+ls -l /dev/kopia-usb /dev/sdl1
+#EX
+P: Przygotuj skrypt /usr/local/bin/kopia-na-usb.sh, który montuje /dev/kopia-usb w /mnt/usb, kopiuje /srv/kopie/sklep rsynciem i odmontowuje dysk.
+H: Skrypt zakończ błędem, jeśli któryś krok się nie powiedzie; komunikat końcowy trafi do dziennika usługi.
+S:
+sudo mkdir -p /mnt/usb
+sudo tee /usr/local/bin/kopia-na-usb.sh > /dev/null <<'EOF'
+#!/bin/bash
+set -euo pipefail
+mount /dev/kopia-usb /mnt/usb
+trap 'umount /mnt/usb' EXIT
+rsync -a /srv/kopie/sklep/ /mnt/usb/sklep/
+echo "Kopia na USB zakonczona: $(find /mnt/usb/sklep -type f | wc -l) plikow, $(du -sh /mnt/usb/sklep | cut -f1)"
+EOF
+sudo chmod 755 /usr/local/bin/kopia-na-usb.sh
+#EX
+P: Utwórz usługę kopia-na-usb.service typu oneshot, powiązaną z urządzeniem /dev/kopia-usb.
+H: Nazwę jednostki .device dla ścieżki wygeneruje systemd-escape --path.
+S:
+systemd-escape --path /dev/kopia-usb
+sudo tee /etc/systemd/system/kopia-na-usb.service > /dev/null <<'EOF'
+[Unit]
+Description=Kopia sklepu na dysk USB
+BindsTo=dev-kopia\x2dusb.device
+After=dev-kopia\x2dusb.device
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kopia-na-usb.sh
+EOF
+sudo systemctl daemon-reload
+#EX
+P: Rozszerz regułę 99-kopia-usb.rules tak, by po podłączeniu uruchamiała usługę kopia-na-usb.service, i zastosuj zmianę.
+H: Potrzebne są TAG+="systemd" i ENV{SYSTEMD_WANTS}+=.
+S:
+sudo sed -i 's/MODE="0660"$/MODE="0660", TAG+="systemd", ENV{SYSTEMD_WANTS}+="kopia-na-usb.service"/' /etc/udev/rules.d/99-kopia-usb.rules
+cat /etc/udev/rules.d/99-kopia-usb.rules
+sudo udevadm control --reload
+sudo udevadm trigger --action=add /sys/class/block/sdl1
+#EX
+P: Sprawdź stan usługi kopii, jednostkę urządzenia oraz ostatnie wpisy jej dziennika.
+H: Jednostka .device staje się aktywna dzięki TAG+="systemd".
+S:
+systemctl status 'dev-kopia\x2dusb.device' --no-pager
+systemctl status kopia-na-usb --no-pager
+journalctl -u kopia-na-usb -n 5 --no-pager -o cat
+#EX
+P: Wyszukaj w dzienniku systemd-udevd błędy składni reguł lub przekroczone limity czasu z ostatniej godziny.
+H: Błędne reguły udevd zgłasza przy wczytywaniu, a długie programy RUN jako taking longer lub timed out.
+S:
+journalctl -u systemd-udevd --since '-1h' --no-pager | grep -i -E 'invalid|error|timed out|taking'
+#EX
+P: Napisz regułę 60-ioscheduler.rules, która dla wszystkich dysków SSD (nieobrotowych) sd* ustawia harmonogram mq-deadline, i zastosuj ją dla podsystemu block.
+H: ATTR{queue/rotational}=="0" wybiera nośniki nieobrotowe.
+S:
+echo 'ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"' | sudo tee /etc/udev/rules.d/60-ioscheduler.rules
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=block --action=change
+cat /sys/block/sda/queue/scheduler
+#EX
+P: Sprawdź, skąd pochodzi nazwa interfejsu enp0s3 i jakie właściwości nadał mu udev.
+H: Szukaj zmiennych ID_NET_NAME_* oraz ID_NET_DRIVER.
+S:
+udevadm info /sys/class/net/enp0s3 | grep -E 'ID_NET_NAME|ID_NET_DRIVER|ID_PATH='
+#EX
+P: Dodaj regułę nadającą grupie dialout uprawnienia 0660 do przejściówki USB-RS232 (idVendor 067b, idProduct 2303) i tworzącą dowiązanie /dev/ttyDrukarka.
+H: Porty szeregowe USB należą do podsystemu tty, a nazwy jądra mają postać ttyUSB0.
+S:
+echo 'SUBSYSTEM=="tty", KERNEL=="ttyUSB*", ATTRS{idVendor}=="067b", ATTRS{idProduct}=="2303", SYMLINK+="ttyDrukarka", GROUP="dialout", MODE="0660"' | sudo tee /etc/udev/rules.d/99-drukarka.rules
+sudo udevadm control --reload
+#EX
+P: Wyłącz regułę z pakietu 60-persistent-storage.rules testowo, nadpisując ją, a następnie wycofaj tę zmianę i przeładuj reguły.
+H: Plik o tej samej nazwie w /etc/udev/rules.d zastępuje plik pakietowy; dowiązanie do /dev/null wyłącza regułę.
+S:
+sudo ln -s /dev/null /etc/udev/rules.d/60-persistent-storage.rules
+ls -l /etc/udev/rules.d/60-persistent-storage.rules
+sudo rm /etc/udev/rules.d/60-persistent-storage.rules
+sudo udevadm control --reload
+#Q
+Q: Czym jest uevent?
++ Powiadomieniem jądra o zdarzeniu urządzenia, np. dodaniu lub usunięciu
+- Plikiem reguły udev
+- Usługą systemd
+- Wpisem w /etc/fstab
+E: Zdarzenie zawiera akcję, podsystem, nazwę jądra i atrybuty.
+#Q
+Q: Który demon przetwarza zdarzenia urządzeń według reguł?
++ systemd-udevd
+- systemd-logind
+- journald
+- cron
+E: Tworzy dowiązania, ustawia uprawnienia, ładuje moduły i powiadamia systemd.
+#Q
+Q: Kto tworzy same pliki urządzeń, np. /dev/sdl1, we współczesnym systemie?
++ Jądro w systemie plików devtmpfs; udev dodaje dowiązania i uprawnienia
+- Administrator poleceniem mknod przy każdym podłączeniu
+- systemd-logind
+- Pakiet usbutils
+E: udev uzupełnia to, co utworzyło jądro, zgodnie z regułami.
+#Q
+Q: W którym katalogu administrator powinien zapisywać własne reguły udev?
++ /etc/udev/rules.d/
+- /usr/lib/udev/rules.d/
+- /dev/rules/
+- /sys/udev/
+E: /usr/lib/udev/rules.d należy do pakietów i może zostać nadpisany przy aktualizacji.
+#Q
+Q: Co się stanie, gdy w /etc/udev/rules.d powstanie plik o tej samej nazwie co plik w /usr/lib/udev/rules.d?
++ Plik administratora zastąpi plik pakietowy
+- Oba pliki zostaną wykonane
+- udev zgłosi błąd i nie wystartuje
+- Plik pakietowy ma pierwszeństwo
+E: Dowiązanie o tej nazwie do /dev/null całkowicie wyłącza regułę pakietową.
+#Q
+Q: W jakiej kolejności przetwarzane są pliki reguł?
++ Według nazw plików, łącznie ze wszystkich katalogów reguł
+- Według daty modyfikacji
+- Najpierw /etc, potem /usr/lib niezależnie od nazw
+- Losowo
+E: Dlatego reguły administratora często mają numer 99 - wykonują się po systemowych.
+#Q
+Q: Ile linii zajmuje jedna reguła udev?
++ Jedną linię (można ją łamać ukośnikiem wstecznym)
+- Dowolnie wiele bez znaków kontynuacji
+- Zawsze dwie: dopasowanie i akcja
+- Cały plik to jedna reguła
+E: Każda linia z dopasowaniami i przypisaniami to osobna reguła.
+#Q
+Q: Czym różni się == od = w regule udev?
++ == to dopasowanie (warunek), = to przypisanie wartości
+- Nie ma różnicy
+- == przypisuje, = porównuje
+- == działa tylko dla sieci
+E: Pomylenie operatorów to częsty błąd - reguła nie pasuje albo nic nie ustawia.
+#Q
+Q: Co oznacza += w SYMLINK+="kopia-usb"?
++ Dodanie wartości do listy, bez kasowania wcześniejszych dowiązań
+- Zastąpienie wszystkich dowiązań
+- Porównanie wartości
+- Usunięcie dowiązania
+E: Dzięki temu dowiązania z by-id i by-uuid pozostają.
+#Q
+Q: Czym różni się ATTRS{idVendor} od ATTR{idVendor}?
++ ATTRS przeszukuje urządzenie i jego rodziców, ATTR tylko samo urządzenie
+- ATTRS dotyczy tylko sieci
+- Nie ma różnicy
+- ATTR działa tylko w RUN
+E: idVendor ma rodzic USB, a nie partycja, dlatego potrzebne jest ATTRS.
+#Q
+Q: Przy pisaniu reguły z kilkoma ATTRS atrybuty powinny pochodzić z:
++ Jednego poziomu rodzica w wyniku udevadm info -a
+- Dowolnych różnych rodziców
+- Tylko z /etc/fstab
+- Z wyniku lsusb -t
+E: Mieszanie ATTRS z różnych rodziców sprawia, że reguła nie pasuje.
+#Q
+Q: Które polecenie pokazuje atrybuty urządzenia i wszystkich jego rodziców?
++ udevadm info -a /dev/sdl1
+- udevadm monitor
+- udevadm settle
+- udevadm control --reload
+E: To podstawowe źródło dopasowań przy pisaniu reguł.
+#Q
+Q: Co oznaczają linie zaczynające się od S: w wyniku udevadm info /dev/sdl1?
++ Dowiązania symboliczne utworzone dla urządzenia w /dev
+- Rozmiar urządzenia
+- Sektory
+- Usługi systemd
+E: Linie E: to właściwości (zmienne środowiskowe) urządzenia.
+#Q
+Q: Która właściwość udev zawiera etykietę systemu plików partycji?
++ ID_FS_LABEL
+- ID_SERIAL
+- DEVTYPE
+- ID_NET_NAME
+E: Z niej powstaje dowiązanie /dev/disk/by-label/KOPIA.
+#Q
+Q: Która reguła systemowa tworzy dowiązania w /dev/disk/by-id i by-uuid?
++ 60-persistent-storage.rules
+- 99-kopia-usb.rules
+- 80-net-setup-link.rules
+- 50-udev-default.rules
+E: To dzięki niej w fstab można odwoływać się do UUID.
+#Q
+Q: Do czego służy udevadm monitor?
++ Do podglądu zdarzeń urządzeń na żywo
+- Do edycji reguł
+- Do montowania urządzeń
+- Do formatowania pendrive'a
+E: Opcje --kernel i --udev pokazują odpowiednio surowe zdarzenia i zdarzenia po przetworzeniu reguł.
+#Q
+Q: Jak ograniczyć udevadm monitor do zdarzeń urządzeń blokowych?
++ udevadm monitor --subsystem-match=block
+- udevadm monitor -b
+- udevadm monitor block
+- udevadm monitor --disk
+E: Zmniejsza to szum zdarzeń z innych podsystemów.
+#Q
+Q: Co robi udevadm test /sys/class/block/sdl1?
++ Symuluje przetwarzanie reguł dla urządzenia i pokazuje, które pasują
+- Formatuje partycję
+- Sprawdza dysk pod kątem błędów
+- Usuwa urządzenie
+E: To bezpieczny sposób sprawdzenia reguły przed jej zastosowaniem.
+#Q
+Q: Co robi sudo udevadm control --reload?
++ Każe udevd ponownie wczytać pliki reguł
+- Restartuje system
+- Odłącza wszystkie urządzenia
+- Zastosowuje reguły do istniejących urządzeń
+E: Samo przeładowanie nie zmienia urządzeń już podłączonych - do tego służy trigger.
+#Q
+Q: Jak zastosować nową regułę do już podłączonego pendrive'a bez wyjmowania go?
++ sudo udevadm trigger --action=add /sys/class/block/sdl1
+- sudo udevadm info -a /dev/sdl1
+- sudo systemctl restart udev.rules
+- sudo mount -a
+E: trigger wysyła zdarzenie ponownie, więc reguły są przetwarzane od nowa.
+#Q
+Q: Do czego służy udevadm settle?
++ Czeka, aż kolejka zdarzeń udev zostanie przetworzona
+- Usuwa stare reguły
+- Ustawia uprawnienia
+- Zatrzymuje udev
+E: Przydaje się w skryptach między trigger a sprawdzeniem efektu.
+#Q
+Q: Które przypisanie nadaje urządzeniu dodatkową, stałą nazwę w /dev?
++ SYMLINK+="kopia-usb"
+- NAME="kopia-usb" dla dysku
+- KERNEL=="kopia-usb"
+- RUN+="kopia-usb"
+E: NAME= zmienia nazwę tylko dla interfejsów sieciowych.
+#Q
+Q: Które przypisania ustawią prawo zapisu i odczytu dla grupy kopie?
++ GROUP="kopie", MODE="0660"
+- OWNER=="kopie", MODE=="0660"
+- GROUP+="kopie", MODE="0777"
+- ATTR{group}="kopie"
+E: Uprawnienia 0660 dają odczyt i zapis właścicielowi i grupie, nic pozostałym.
+#Q
+Q: Dlaczego reguła dopasowuje pendrive po ATTRS{serial}, a nie po KERNEL=="sdl1"?
++ Nazwa jądra zależy od kolejności podłączania, a numer seryjny jest stały
+- KERNEL nie działa dla USB
+- Numer seryjny jest krótszy
+- KERNEL działa tylko w RUN
+E: Ten sam pendrive raz może być sdd, a innym razem sdl.
+#Q
+Q: Do czego służy ENV{DEVTYPE}=="partition" w regule kopii?
++ Ogranicza regułę do partycji, a nie całego dysku sdl
+- Formatuje partycję
+- Tworzy partycję
+- Ustawia typ systemu plików
+E: Bez tego warunku reguła dopasowałaby też urządzenie dysku.
+#Q
+Q: Jak reguła udev powinna uruchamiać długie zadanie, np. kopię na dysk USB?
++ TAG+="systemd", ENV{SYSTEMD_WANTS}+="kopia-na-usb.service"
+- RUN+="/usr/local/bin/kopia-na-usb.sh"
+- RUN+="nohup kopia.sh &"
+- NAME="kopia-na-usb"
+E: Usługa ma własny dziennik, limity i nie blokuje udev.
+#Q
+Q: Co dzieje się ze skryptem z RUN+=, który działa dłużej niż limit czasu udev?
++ Zostaje zabity przez systemd-udevd
+- Przechodzi w tło
+- Jest automatycznie restartowany
+- Zamienia się w usługę systemd
+E: Domyślny limit event_timeout wynosi 180 s.
+#Q
+Q: Dlaczego mount wykonany w skrypcie z RUN+= nie jest widoczny w systemie?
++ systemd-udevd działa w odizolowanej przestrzeni montowań (PrivateMounts)
+- mount nie działa z udev
+- Montowanie wymaga restartu
+- Skrypt nie ma uprawnień roota
+E: Montowanie istnieje tylko w przestrzeni nazw udevd.
+#Q
+Q: Do jakich czynności nadaje się RUN+=?
++ Do krótkich czynności trwających chwilę
+- Do kopii zapasowych
+- Do pobierania danych z sieci
+- Do uruchamiania aplikacji Java
+E: Dłuższe zadania przekazuje się systemd przez SYSTEMD_WANTS.
+#Q
+Q: Co blokuje długi skrypt z RUN+= w trakcie swojego działania?
++ Dokończenie obsługi zdarzenia urządzenia, m.in. powiadomienie systemd i dowiązania
+- Cały system
+- Tylko sieć
+- Logowanie użytkowników
+E: RUN jest uruchamiany synchronicznie w ramach przetwarzania zdarzenia.
+#Q
+Q: Do czego służy TAG+="systemd" w regule?
++ Tworzy dla urządzenia jednostkę .device widoczną w systemd
+- Nadaje uprawnienia root
+- Wyłącza systemd dla urządzenia
+- Restartuje systemd
+E: Dopiero oznaczone urządzenie może uruchamiać usługi i być zależnością.
+#Q
+Q: Jaką nazwę ma jednostka systemd dla urządzenia /dev/kopia-usb?
++ dev-kopia\x2dusb.device
+- kopia-usb.device
+- dev/kopia-usb.service
+- dev-kopia-usb.mount
+E: Myślnik w ścieżce jest kodowany jako \x2d; pomaga w tym systemd-escape --path.
+#Q
+Q: Do czego służy BindsTo=dev-kopia\x2dusb.device w usłudze kopii?
++ Zatrzymuje usługę, gdy urządzenie zostanie odłączone
+- Uruchamia usługę co godzinę
+- Montuje urządzenie
+- Tworzy regułę udev
+E: Razem z After= zapewnia, że usługa działa tylko przy obecnym urządzeniu.
+#Q
+Q: Dlaczego usługa kopii ma Type=oneshot?
++ Wykonuje zadanie i kończy działanie - systemd czeka na koniec ExecStart
+- Działa bez końca w tle
+- Uruchamia się tylko raz w życiu systemu
+- Nie może korzystać z dziennika
+E: oneshot pasuje do skryptów, które coś robią i się kończą.
+#Q
+Q: Gdzie zobaczysz komunikaty skryptu kopii uruchomionego jako usługa?
++ journalctl -u kopia-na-usb
+- /var/log/udev.log
+- dmesg
+- ~/.bash_history
+E: Wyjście usługi trafia do journald.
+#Q
+Q: Gdzie szukać błędów składni reguł udev?
++ journalctl -u systemd-udevd
+- /etc/udev/errors
+- dmesg -u
+- lsusb -v
+E: udevd zgłasza tam niepoprawne linie przy wczytywaniu reguł.
+#Q
+Q: Co oznacza nazwa interfejsu enp0s3?
++ Ethernet, magistrala PCI 0, slot 3
+- Trzeci interfejs Ethernet
+- Interfejs bezprzewodowy
+- Port szeregowy
+E: Przewidywalne nazwy opierają się na położeniu urządzenia.
+#Q
+Q: Który parametr jądra przywraca stare nazwy interfejsów eth0?
++ net.ifnames=0
+- net.ipv4.ip_forward=0
+- udev.names=old
+- eth=on
+E: Wyłącza przewidywalne nazwy nadawane przez udev.
+#Q
+Q: Czym są przewidywalne nazwy interfejsów sieciowych?
++ Nazwami opartymi na położeniu urządzenia lub firmware, niezmiennymi po restarcie
+- Nazwami losowymi
+- Nazwami nadawanymi przez administratora w /etc/hosts
+- Nazwami zależnymi od kolejności wykrycia
+E: Stare eth0/eth1 mogły się zamieniać, gdy sterowniki ładowały się w innej kolejności.
+#Q
+Q: Które przypisanie może zmienić nazwę urządzenia w regule udev?
++ NAME=, ale tylko dla interfejsów sieciowych
+- NAME= dla dowolnego urządzenia
+- SYMLINK== dla dysków
+- KERNEL= dla dysków
+E: Dla dysków i innych urządzeń stosuje się SYMLINK+=.
+#Q
+Q: Która reguła ustawi harmonogram I/O dla wszystkich nośników nieobrotowych sd*?
++ ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"
+- SUBSYSTEM="block", ATTR{queue/scheduler}=="mq-deadline"
+- KERNEL=="sd*", RUN+="mq-deadline"
+- SUBSYSTEM=="net", ATTR{scheduler}="mq-deadline"
+E: Dopasowanie rotational=="0" i przypisanie scheduler= ustawia atrybut przy każdym pojawieniu się dysku.
+#Q
+Q: Dlaczego reguła harmonogramu I/O jest lepsza niż echo do /sys/block/sda/queue/scheduler?
++ Zadziała po każdym restarcie i dla nowo podłączonych dysków
+- Działa szybciej
+- Nie wymaga uprawnień roota
+- Zmienia sprzęt
+E: Zapis do /sys jest ulotny (lekcja 4).
+#Q
+Q: Jak odróżnić w wyniku udevadm monitor zdarzenia przed i po przetworzeniu reguł?
++ Linie KERNEL to zdarzenia jądra, linie UDEV to zdarzenia po przetworzeniu reguł
+- Linie po regułach są pogrubione
+- Nie da się
+- Zdarzenia po regułach mają numer 0
+E: Opcje --kernel i --udev pozwalają wybrać jedną z grup.
+#Q
+Q: Która akcja uevent pojawia się przy włożeniu pendrive'a?
++ add
+- remove
+- move
+- offline
+E: Przy wyjęciu pojawia się remove, a przy zmianie nośnika lub atrybutów - change.
+#Q
+Q: Jak udev ładuje sterownik dla nowo podłączonego urządzenia?
++ Na podstawie modalias zdarzenia uruchamia ładowanie pasującego modułu
+- Z pliku /etc/drivers.conf
+- Pyta użytkownika
+- Instaluje pakiet z internetu
+E: Moduły deklarują w aliasach, które identyfikatory sprzętu obsługują (lekcja 2).
+#Q
+Q: Grupa dialout w Ubuntu jest związana z:
++ Dostępem do portów szeregowych, np. /dev/ttyUSB0
+- Dostępem do internetu
+- Dostępem do dysków USB
+- Wybieraniem numerów telefonicznych przez skrypty
+E: Reguły udev nadają tej grupie uprawnienia do urządzeń tty.
+#Q
+Q: W regule KERNEL=="ttyUSB*" gwiazdka oznacza:
++ Dowolny ciąg znaków, np. ttyUSB0 lub ttyUSB12
+- Dokładnie jeden znak
+- Komentarz
+- Wszystkie urządzenia w systemie
+E: Wzorce udev działają jak wzorce powłoki: *, ? i [...].
+#Q
+Q: Co dopasowuje wzorzec KERNEL=="sd?1"?
++ Pierwszą partycję dysków sda1, sdb1, ..., sdz1
+- Wszystkie partycje dysku sd
+- Tylko sda
+- Tylko dyski NVMe
+E: ? zastępuje dokładnie jeden znak.
+#Q
+Q: Jak wyłączyć regułę pakietową 60-persistent-storage.rules?
++ Utworzyć w /etc/udev/rules.d dowiązanie o tej nazwie do /dev/null
+- Usunąć plik z /usr/lib/udev/rules.d
+- Zmienić jej numer
+- Dodać do niej komentarz w /usr/lib
+E: Zmiany w /usr/lib zostałyby nadpisane przy aktualizacji pakietu.
+#Q
+Q: Reguła w 99-kopia-usb.rules nie działa. Od czego zacząć diagnozę?
++ sudo udevadm test /sys/class/block/sdl1 i sprawdzić, czy reguła pasuje
+- Przeinstalować system
+- Zmienić nazwę pliku na .conf
+- Restartować komputer kilka razy
+E: test pokazuje, które reguły zostały dopasowane i co ustawiły.
+#Q
+Q: Reguła ma rozszerzenie .conf zamiast .rules. Co się stanie?
++ udev ją zignoruje - przetwarzane są tylko pliki .rules
+- udev wczyta ją normalnie
+- udev zgłosi błąd i się zatrzyma
+- Reguła wykona się dwa razy
+E: Nazwa pliku musi kończyć się na .rules.
+#Q
+Q: Gdzie są przechowywane tymczasowe reguły tworzone w trakcie działania systemu?
++ /run/udev/rules.d/
+- /tmp/udev/
+- /var/lib/udev/rules.d/
+- /proc/udev/
+E: Katalog /run znika po restarcie.
+#Q
+Q: Które przypisanie ustawia atrybut w /sys w trakcie obsługi zdarzenia?
++ ATTR{queue/scheduler}="bfq"
+- ATTRS{queue/scheduler}=="bfq"
+- ENV{scheduler}=="bfq"
+- SYMLINK+="bfq"
+E: ATTR z pojedynczym = jest przypisaniem do atrybutu urządzenia.
+#Q
+Q: Dlaczego w regule kopii warto dopasować oba atrybuty idVendor i serial?
++ Aby reguła dotyczyła tylko jednego, konkretnego pendrive'a
+- Bo udev wymaga dwóch dopasowań
+- Aby przyspieszyć kopiowanie
+- Bo serial nie jest unikalny bez producenta
+E: Sam producent pasowałby do wszystkich pendrive'ów SanDisk.
+#Q
+Q: Pendrive został wyjęty w trakcie kopii uruchomionej przez SYSTEMD_WANTS z BindsTo=. Co zrobi systemd?
++ Zatrzyma usługę kopii
+- Poczeka na ponowne podłączenie
+- Zrestartuje system
+- Nic, kopia będzie kontynuowana
+E: BindsTo= wiąże cykl życia usługi z urządzeniem.
+#Q
+Q: Która właściwość udev pozwala przewidzieć nazwę interfejsu nadaną według slotu PCI?
++ ID_NET_NAME_PATH
+- ID_FS_LABEL
+- ID_SERIAL
+- DEVTYPE
+E: udev zapisuje warianty ID_NET_NAME_ONBOARD, _SLOT, _PATH i _MAC.
+#Q
+Q: Jaką rolę pełni reguła udev w analogii z recepcją?
++ Instrukcji w segregatorze recepcji, jak obsłużyć konkretnego gościa
+- Ochrony przy bramie zgłaszającej gościa
+- Samego gościa
+- Opiekuna oprowadzającego gościa godzinami
+E: Ochrona to jądro, recepcja to udevd, a opiekun to usługa systemd.
+#Q
+Q: Po dodaniu reguły z GROUP="kopie" anna nadal nie może pisać na /dev/sdl1. Co sprawdzić?
++ Czy reguła została zastosowana (trigger) i czy anna ma grupę kopie w bieżącej sesji
+- Czy pendrive ma etykietę
+- Czy jądro jest najnowsze
+- Czy usługa cron działa
+E: Nowa grupa jest widoczna dopiero po ponownym zalogowaniu (id pokaże aktualne grupy).
+#Q
+Q: Który zapis reguły jest poprawny składniowo?
++ SUBSYSTEM=="block", SYMLINK+="kopia-usb"
+- SUBSYSTEM="block" SYMLINK=="kopia-usb"
+- SUBSYSTEM:block; SYMLINK:kopia-usb
+- SUBSYSTEM=="block" && SYMLINK+="kopia-usb"
+E: Pary klucz-operator-wartość oddziela się przecinkami.
+#Q
+Q: Który poziom wyniku udevadm info -a zawiera ATTRS{idVendor} pendrive'a?
++ Rodzic odpowiadający urządzeniu USB, np. .../usb1/1-1
+- Sama partycja sdl1
+- Urządzenie dysku sdl
+- Kontroler SATA
+E: Partycja i dysk należą do podsystemu block i nie mają identyfikatorów USB.
