@@ -1,0 +1,901 @@
+#EX
+P: Sprawdź, na jakim adresie i porcie nasłuchuje aplikacja sklep.
+H: ss -tlnp | grep 8080.
+S:
+sudo ss -tlnp | grep ':8080 '
+#EX
+P: Sprawdź ustawienia adresu i strategii nagłówków aplikacji.
+H: grep w /etc/sklep/sklep.env.
+S:
+grep -E 'SERVER_(ADDRESS|PORT|FORWARD)' /etc/sklep/sklep.env
+#EX
+P: Wyświetl pełną konfigurację sklepu w Nginx.
+H: cat sites-available/sklep.
+S:
+sudo cat /etc/nginx/sites-available/sklep
+#EX
+P: Wyświetl gotowy zestaw nagłówków proxy z Ubuntu.
+H: cat /etc/nginx/proxy_params.
+S:
+cat /etc/nginx/proxy_params
+#EX
+P: Sprawdź, co widzi aplikacja jako adres klienta, schemat i nazwę serwera.
+H: Endpoint diagnostyczny aplikacji.
+S:
+curl -s -H 'Host: sklep.lab.local' http://192.168.56.10/api/diagnostyka/zadanie
+#EX
+P: Z srv-test sprawdź, że health Actuatora jest dostępny, a inne endpointy nie.
+H: curl na /actuator/health i /actuator/env.
+S:
+curl -s http://sklep.lab.local/actuator/health; echo
+curl -s -o /dev/null -w '%{http_code}\n' http://sklep.lab.local/actuator/env
+#EX
+P: Sprawdź limit rozmiaru żądania, wysyłając plik 30 MB.
+H: curl -F z dużym plikiem.
+S:
+head -c 30M /dev/urandom > /tmp/duze.jpg
+curl -s -o /dev/null -w '%{http_code}\n' -F plik=@/tmp/duze.jpg http://sklep.lab.local/api/produkty/12/zdjecie
+rm /tmp/duze.jpg
+#EX
+P: Sprawdź limit przesyłania plików po stronie aplikacji.
+H: grep multipart w konfiguracji.
+S:
+grep -iE 'MULTIPART|multipart' /etc/sklep/sklep.env /opt/sklep/application*.properties 2>/dev/null
+#EX
+P: Przygotuj stronę przerwy technicznej dla błędów 502-504.
+H: Katalog /var/www/sklep-bledy i przerwa.html.
+S:
+sudo install -d -o root -g www-data -m 755 /var/www/sklep-bledy
+echo '<h1>Przerwa techniczna - wracamy za chwile</h1>' | sudo tee /var/www/sklep-bledy/przerwa.html > /dev/null
+#EX
+P: Zatrzymaj aplikację i sprawdź odpowiedź Nginx oraz wpis w error.log.
+H: systemctl stop sklep, curl, tail error.log.
+S:
+sudo systemctl stop sklep
+curl -s -w '\n%{http_code}\n' http://localhost/api/produkty | tail -2
+sudo tail -1 /var/log/nginx/error.log | cut -c1-140
+sudo systemctl start sklep
+#EX
+P: Sprawdź, że strona przerwy nie jest dostępna bezpośrednio.
+H: curl /przerwa.html - location internal.
+S:
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost/przerwa.html
+#EX
+P: Odtwórz błąd samego proxy_pass bez nagłówków i sprawdź przekierowanie po zalogowaniu.
+H: Kopia konfiguracji, uproszczony location, curl -sI POST.
+S:
+sudo cp /etc/nginx/sites-available/sklep /tmp/sklep.proxy.bak
+sudo sed -i '/location \/ {/,/^    }/c\    location / {\n        proxy_pass http://127.0.0.1:8080;\n    }' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+ssh srv-test "curl -sI -X POST -d 'email=anna@sklep.example&haslo=xxx' http://sklep.lab.local/logowanie | grep -E 'HTTP|Location'"
+#EX
+P: Przywróć pełną konfigurację i sprawdź przekierowanie ponownie.
+H: cp z kopii, reload.
+S:
+sudo cp /tmp/sklep.proxy.bak /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+ssh srv-test "curl -sI -X POST -d 'email=anna@sklep.example&haslo=xxx' http://sklep.lab.local/logowanie | grep -E 'HTTP|Location'"
+#EX
+P: Sprawdź, czy klient może sfałszować X-Forwarded-For i co widzi aplikacja.
+H: curl -H 'X-Forwarded-For: 1.2.3.4'.
+S:
+ssh srv-test "curl -s -H 'X-Forwarded-For: 1.2.3.4' http://sklep.lab.local/api/diagnostyka/zadanie"
+#EX
+P: Sprawdź połączenia keepalive między Nginx a aplikacją.
+H: ss -tn state established dport 8080.
+S:
+for i in $(seq 1 20); do curl -s -o /dev/null http://localhost/api/produkty; done
+ss -tn state established '( dport = :8080 )' | tail -n +2 | wc -l
+#EX
+P: Uruchom drugą instancję aplikacji na porcie 8082.
+H: Usługa szablonowa sklep@8082.
+S:
+sudo systemctl start sklep@8082
+sudo ss -tlnp | grep ':8082 '
+#EX
+P: Dodaj drugą instancję do upstream jako zapasową.
+H: sed na linii server w upstream.
+S:
+sudo sed -i 's#^    server 127.0.0.1:8080;#    server 127.0.0.1:8080 max_fails=2 fail_timeout=10s;\n    server 127.0.0.1:8082 backup;#' /etc/nginx/sites-available/sklep
+sudo sed -n '/upstream sklep_app/,/}/p' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+#EX
+P: Zatrzymaj główną instancję i sprawdź, że ruch przejmuje zapasowa.
+H: systemctl stop sklep, curl.
+S:
+sudo systemctl stop sklep
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost/api/produkty
+sudo systemctl start sklep
+#EX
+P: Zmień równoważenie na least_conn z dwiema aktywnymi instancjami (test).
+H: least_conn w upstream, usunięcie backup.
+S:
+sudo sed -i '/upstream sklep_app {/a\    least_conn;' /etc/nginx/sites-available/sklep
+sudo sed -i 's/ backup;/;/' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+sudo sed -n '/upstream sklep_app/,/}/p' /etc/nginx/sites-available/sklep
+#EX
+P: Sprawdź, które instancje obsługują żądania, porównując logi aplikacji.
+H: journalctl dla obu usług.
+S:
+for i in $(seq 1 10); do curl -s -o /dev/null http://localhost/api/produkty; done
+sudo journalctl -u sklep --since '1 min ago' --no-pager | grep -c 'GET /api/produkty'
+sudo journalctl -u sklep@8082 --since '1 min ago' --no-pager | grep -c 'GET /api/produkty'
+#EX
+P: Przetestuj połączenie WebSocket przez proxy.
+H: curl z nagłówkami Upgrade.
+S:
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGVzdHRlc3R0ZXN0dGVzdA==' http://localhost/ws/zamowienia
+#EX
+P: Zasymuluj długą operację i sprawdź błąd 504 przy krótkim proxy_read_timeout (test).
+H: Endpoint z opóźnieniem, timeout 5s w location testowym.
+S:
+sudo sed -i '/location \/ {/i\    location /api/raporty/ {\n        proxy_pass http://sklep_app;\n        proxy_read_timeout 5s;\n    }\n' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+curl -s -o /dev/null -w '%{http_code}\n' 'http://localhost/api/raporty/roczny?opoznienie=10'
+sudo grep 'upstream timed out' /var/log/nginx/error.log | tail -1 | cut -c1-120
+#EX
+P: Przywróć konfigurację z kopii po testach upstream i timeoutów.
+H: cp z /tmp/sklep.proxy.bak, reload.
+S:
+sudo cp /tmp/sklep.proxy.bak /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl stop sklep@8082
+#EX
+P: Dodaj ograniczenie liczby żądań do endpointu logowania (10 na sekundę na adres).
+H: limit_req_zone w conf.d, limit_req w location.
+S:
+echo 'limit_req_zone $binary_remote_addr zone=logowanie:10m rate=10r/s;' | sudo tee /etc/nginx/conf.d/limity.conf
+sudo sed -i '/location \/ {/i\    location = /logowanie {\n        limit_req zone=logowanie burst=5 nodelay;\n        include proxy_params;\n        proxy_pass http://sklep_app;\n    }\n' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+#EX
+P: Przetestuj limit żądań serią szybkich zapytań i policz kody 503.
+H: Pętla curl i sort | uniq -c.
+S:
+for i in $(seq 1 40); do curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost/logowanie; done | sort | uniq -c
+#EX
+P: Ukryj nagłówek X-Powered-By, jeśli aplikacja go wysyła.
+H: proxy_hide_header w location /.
+S:
+sudo sed -i '/proxy_set_header X-Forwarded-Proto \$scheme;/a\        proxy_hide_header X-Powered-By;' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+curl -sI http://localhost/api/produkty | grep -ci powered
+#EX
+P: Włącz kompresję gzip dla odpowiedzi JSON.
+H: gzip on i gzip_types w conf.d.
+S:
+printf 'gzip on;\ngzip_types application/json text/css application/javascript;\ngzip_min_length 1024;\n' | sudo tee /etc/nginx/conf.d/gzip.conf
+sudo nginx -t && sudo systemctl reload nginx
+curl -s -H 'Accept-Encoding: gzip' -o /dev/null -D - http://localhost/api/produkty | grep -i content-encoding
+#EX
+P: Zapisz konfigurację sklepu do repozytorium.
+H: cp, git commit.
+S:
+sudo cp /etc/nginx/sites-available/sklep /etc/nginx/conf.d/{limity,gzip}.conf ~/infra/nginx/
+sudo chown -R anna: ~/infra/nginx
+cd ~/infra && git add nginx && git commit -qm 'Reverse proxy sklepu: limity, gzip, zapasowa instancja' && git log --oneline -1
+#EX
+P: Napisz skrypt ~/bin/proxy-test.sh sprawdzający przekierowanie, nagłówki widziane przez aplikację, Actuator i limit rozmiaru.
+H: curl dla kilku przypadków.
+S:
+cat > ~/bin/proxy-test.sh <<'EOF'
+#!/bin/bash
+h=${1:-http://sklep.lab.local}
+echo "przekierowanie: $(curl -sI -X POST -d 'email=x&haslo=y' $h/logowanie | grep -i '^location' | tr -d '\r')"
+echo "aplikacja widzi: $(curl -s $h/api/diagnostyka/zadanie)"
+echo "health: $(curl -s -o /dev/null -w '%{http_code}' $h/actuator/health)  env: $(curl -s -o /dev/null -w '%{http_code}' $h/actuator/env)"
+head -c 25M /dev/zero > /tmp/p.bin
+echo "plik 25MB: $(curl -s -o /dev/null -w '%{http_code}' -F plik=@/tmp/p.bin $h/api/produkty/12/zdjecie)"
+rm /tmp/p.bin
+EOF
+chmod +x ~/bin/proxy-test.sh
+~/bin/proxy-test.sh
+#EX
+P: Sprawdź w logu dostępu Nginx, jak długo aplikacja odpowiadała na ostatnie żądania (format z $upstream_response_time).
+H: Własny log_format w conf.d i access_log w server.
+S:
+echo 'log_format czasy "$remote_addr $request $status up=$upstream_response_time";' | sudo tee /etc/nginx/conf.d/czasy.conf
+sudo sed -i '/server_name sklep/a\    access_log /var/log/nginx/sklep-czasy.log czasy;' /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx
+curl -s -o /dev/null http://localhost/api/produkty
+tail -1 /var/log/nginx/sklep-czasy.log
+#Q
+Q: Czym jest reverse proxy?
++ Serwerem przyjmującym żądania w imieniu aplikacji i przekazującym je do niej
+- Proxy dla przeglądarki klienta
+- Zaporą sieciową
+- Serwerem DNS
+E: Klient rozmawia tylko z proxy.
+#Q
+Q: Na jakim adresie powinna nasłuchiwać aplikacja Spring Boot za proxy?
++ 127.0.0.1
+- 0.0.0.0
+- Adres publiczny
+- Adres host-only
+E: server.address=127.0.0.1.
+#Q
+Q: Jakie zadania przejmuje reverse proxy od aplikacji?
++ HTTPS, pliki statyczne, limity, strony błędów, równoważenie obciążenia
+- Logikę biznesową
+- Dostęp do bazy
+- Kompilację
+E: Wprowadzenie.
+#Q
+Q: Do czego służy proxy_pass?
++ Do przekazania żądania do aplikacji
+- Do hasła proxy
+- Do pliku statycznego
+- Do logowania
+E: proxy_pass http://sklep_app.
+#Q
+Q: Do czego służy blok upstream?
++ Do zdefiniowania grupy serwerów aplikacji, do których przekazywany jest ruch
+- Do konfiguracji DNS
+- Do logów
+- Do HTTPS
+E: Nazwa używana w proxy_pass.
+#Q
+Q: Co przekazuje nagłówek Host $host?
++ Oryginalną nazwę strony żądaną przez klienta
+- Adres aplikacji
+- Nazwę procesu
+- Port
+E: Bez niego aplikacja widzi 127.0.0.1:8080.
+#Q
+Q: Co zawiera X-Real-IP?
++ Adres klienta połączonego z Nginx
+- Adres Nginx
+- Adres aplikacji
+- Port klienta
+E: $remote_addr.
+#Q
+Q: Co zawiera X-Forwarded-For?
++ Łańcuch adresów: przysłany przez klienta plus adres dopisany przez Nginx
+- Tylko adres serwera
+- Nazwę hosta
+- Schemat
+E: $proxy_add_x_forwarded_for.
+#Q
+Q: Co zawiera X-Forwarded-Proto?
++ Schemat, którym klient połączył się z proxy: http lub https
+- Protokół TCP
+- Wersję HTTP
+- Port
+E: Ważny po włączeniu HTTPS.
+#Q
+Q: Gdzie w Ubuntu jest gotowy zestaw nagłówków proxy?
++ /etc/nginx/proxy_params
+- /etc/nginx/fastcgi_params
+- /etc/nginx/mime.types
+- /etc/nginx/headers
+E: include proxy_params.
+#Q
+Q: Jakie ustawienie Spring Boot odczytuje nagłówki X-Forwarded-*?
++ server.forward-headers-strategy=native (lub framework)
+- server.address=0.0.0.0
+- spring.proxy.enabled=true
+- management.server.port
+E: Tomcat RemoteIpValve.
+#Q
+Q: Co widzi aplikacja bez forward-headers-strategy?
++ Adres 127.0.0.1 i schemat http niezależnie od klienta
+- Prawdziwy adres klienta
+- Schemat https zawsze
+- Nic
+E: PITFALL.
+#Q
+Q: Jaki komponent Tomcata realizuje strategię native?
++ RemoteIpValve
+- AccessLogValve
+- ErrorReportValve
+- SingleSignOn
+E: Definicje.
+#Q
+Q: Jaki filtr Springa realizuje strategię framework?
++ ForwardedHeaderFilter
+- CorsFilter
+- CharacterEncodingFilter
+- SecurityFilterChain
+E: Definicje.
+#Q
+Q: Jakim adresom Tomcat domyślnie ufa w nagłówkach X-Forwarded-*?
++ Adresom wewnętrznym - localhost i sieciom prywatnym
+- Wszystkim
+- Żadnym
+- Tylko publicznym
+E: server.tomcat.remoteip.internal-proxies.
+#Q
+Q: Czy klient może sfałszować X-Forwarded-For?
++ Tak - może wysłać dowolny nagłówek; liczy się, kto go dopisał na końcu
+- Nie
+- Tylko przez HTTPS
+- Tylko w IPv6
+E: NOTE.
+#Q
+Q: Dlaczego sfałszowany wpis na początku X-Forwarded-For nie zmienia wyniku w Tomcat?
++ Tomcat bierze ostatni niezaufany adres z łańcucha - dopisany przez Nginx
+- Bo Nginx usuwa nagłówek
+- Bo Tomcat ignoruje nagłówek
+- Zmienia wynik
+E: $proxy_add_x_forwarded_for dopisuje.
+#Q
+Q: Jakie ryzyko powstaje, gdy aplikacja słucha na 0.0.0.0 i ufa sieci prywatnej?
++ Klient z tej sieci może ominąć proxy i podszyć się pod dowolny adres
+- Brak ryzyka
+- Wolniejsza aplikacja
+- Brak logów
+E: Powód nasłuchu na 127.0.0.1.
+#Q
+Q: Jaki błąd daje brak nagłówków Host i X-Forwarded-Proto przy logowaniu?
++ Przekierowanie Location na http://127.0.0.1:8080/...
+- 404
+- 413
+- 504
+E: CODE_WRONG.
+#Q
+Q: Jakie inne skutki ma brak nagłówków proxy?
++ Złe linki w e-mailach i OpenAPI, pętla przekierowań przy HTTPS, brak ciasteczek Secure, wszyscy klienci jako 127.0.0.1
+- Brak skutków
+- Tylko wolniejsze strony
+- Tylko brak logów
+E: PITFALL.
+#Q
+Q: Jak szybko zdiagnozować problem z nagłówkami proxy?
++ curl -sI na ścieżkę przekierowującą i sprawdzenie Location
+- nginx -t
+- ss
+- dig
+E: PITFALL.
+#Q
+Q: Do czego służy keepalive w upstream?
++ Do utrzymywania otwartych połączeń z aplikacją zamiast otwierania nowych przy każdym żądaniu
+- Do pingowania klienta
+- Do utrzymywania sesji użytkownika
+- Do logów
+E: Wydajność.
+#Q
+Q: Co jest potrzebne obok keepalive w upstream?
++ proxy_http_version 1.1 i proxy_set_header Connection ""
+- proxy_http_version 1.0
+- Connection close
+- Nic
+E: HTTP/1.1 z trwałymi połączeniami.
+#Q
+Q: Jaki jest domyślny client_max_body_size w Nginx?
++ 1m
+- 20m
+- Bez limitu
+- 100m
+E: Większe pliki → 413.
+#Q
+Q: Jaki kod zwraca Nginx przy przekroczeniu client_max_body_size?
++ 413
+- 502
+- 504
+- 404
+E: Request Entity Too Large.
+#Q
+Q: Jaki kod oznacza, że aplikacja nie odpowiada lub nie działa?
++ 502 Bad Gateway
+- 504
+- 413
+- 404
+E: connect() failed.
+#Q
+Q: Jaki kod oznacza przekroczenie proxy_read_timeout?
++ 504 Gateway Timeout
+- 502
+- 413
+- 500
+E: upstream timed out.
+#Q
+Q: Jaki komunikat w error.log oznacza, że aplikacja nie działa?
++ connect() failed (111: Connection refused) while connecting to upstream
+- upstream timed out
+- client intended to send too large body
+- no live upstreams
+E: CODE_PRACTICAL.
+#Q
+Q: Jaki komunikat w error.log oznacza przekroczenie czasu odpowiedzi?
++ upstream timed out (110: Connection timed out) while reading response header
+- connect() failed (111)
+- too large body
+- permission denied
+E: 504.
+#Q
+Q: Do czego służy error_page 502 503 504 /przerwa.html?
++ Do wyświetlenia własnej strony przy błędach proxy
+- Do przekierowania na inną aplikację
+- Do logowania błędów
+- Do restartu aplikacji
+E: Np. przy restarcie.
+#Q
+Q: Co oznacza internal w location = /przerwa.html?
++ Lokacja dostępna tylko wewnętrznie (np. dla error_page), nie bezpośrednio z URL
+- Dostępna tylko z sieci wewnętrznej
+- Wyłączona
+- Tylko dla localhost
+E: Bezpośrednie żądanie → 404.
+#Q
+Q: Jak przekazać połączenia WebSocket przez Nginx?
++ proxy_http_version 1.1, Upgrade $http_upgrade i Connection "upgrade" w osobnym location
+- proxy_pass wystarczy
+- websocket on
+- proxy_ws on
+E: Nagłówki Upgrade.
+#Q
+Q: Dlaczego location /ws/ ma długi proxy_read_timeout?
++ Połączenia WebSocket są długotrwałe i bez ruchu byłyby zrywane po 60 s
+- Bo WebSocket jest wolny
+- Bez powodu
+- Bo wymaga tego Spring
+E: 1h w przykładzie.
+#Q
+Q: Jak ograniczyć dostęp do Actuatora z zewnątrz, zostawiając health?
++ location = /actuator/health z proxy_pass i location ^~ /actuator/ { return 404; }
+- Wyłączyć Actuator
+- ufw deny 8080
+- proxy_hide_header
+E: Kolejność dopasowania.
+#Q
+Q: Dlaczego location = /actuator/health ma pierwszeństwo przed ^~ /actuator/?
++ Dokładne dopasowanie = jest sprawdzane najpierw
+- Bo jest wyżej w pliku
+- Bo jest krótsze
+- Nie ma
+E: Lekcja 6.
+#Q
+Q: Jak dodać drugą instancję jako zapasową?
++ server 127.0.0.1:8082 backup; w upstream
+- proxy_pass na dwa adresy
+- location /backup
+- Druga konfiguracja Nginx
+E: Używana, gdy główne niedostępne.
+#Q
+Q: Co robią max_fails=2 fail_timeout=10s?
++ Po 2 nieudanych próbach serwer jest uznawany za niedostępny na 10 s
+- Ograniczają liczbę klientów
+- Ograniczają czas żądania
+- Restartują aplikację
+E: Pasywne sprawdzanie.
+#Q
+Q: Co robi least_conn w upstream?
++ Kieruje żądanie do serwera z najmniejszą liczbą aktywnych połączeń
+- Do pierwszego serwera
+- Losowo
+- Do serwera zapasowego
+E: Równoważenie.
+#Q
+Q: Jaka jest domyślna metoda równoważenia w upstream?
++ Round-robin - po kolei
+- least_conn
+- ip_hash
+- Losowo
+E: Definicje.
+#Q
+Q: Jak uruchomić drugą instancję aplikacji w laboratorium?
++ Usługą szablonową sklep@8082
+- java -jar bez usługi zawsze
+- Drugi serwer Nginx
+- Docker obowiązkowo
+E: Rozdział 38.
+#Q
+Q: Do czego służą dwie instancje aplikacji przy wdrożeniach?
++ Do wdrożeń bez przestojów - przełączanie ruchu między instancjami
+- Do podwójnego logowania
+- Do HTTPS
+- Do kopii zapasowej bazy
+E: USAGE.
+#Q
+Q: Jak ograniczyć liczbę żądań do logowania?
++ limit_req_zone w kontekście http i limit_req w location
+- client_max_body_size
+- proxy_read_timeout
+- keepalive
+E: Ochrona przed zgadywaniem.
+#Q
+Q: Jaki kod zwraca Nginx po przekroczeniu limit_req domyślnie?
++ 503
+- 429 zawsze
+- 413
+- 404
+E: Można zmienić limit_req_status.
+#Q
+Q: Co oznacza burst=5 nodelay w limit_req?
++ Pozwala na chwilowe przekroczenie o 5 żądań bez opóźniania
+- Opóźnia każde żądanie o 5 s
+- Ogranicza do 5 żądań na zawsze
+- Wyłącza limit
+E: Elastyczność limitu.
+#Q
+Q: Co oznacza zone=logowanie:10m?
++ Strefę pamięci współdzielonej 10 MB na stany limitów adresów
+- Limit 10 MB żądania
+- 10 minut blokady
+- 10 żądań
+E: Pamięć dla liczników.
+#Q
+Q: Do czego służy proxy_hide_header X-Powered-By?
++ Do usunięcia nagłówka aplikacji z odpowiedzi do klienta
+- Do ukrycia adresu klienta
+- Do ukrycia Nginx
+- Do szyfrowania
+E: Mniej informacji.
+#Q
+Q: Do czego służy gzip on z gzip_types application/json?
++ Do kompresji odpowiedzi JSON przez Nginx
+- Do kompresji plików na dysku
+- Do szyfrowania
+- Do logów
+E: Mniej danych przez sieć.
+#Q
+Q: Jak sprawdzić, czy odpowiedź jest kompresowana?
++ curl z Accept-Encoding: gzip i nagłówek Content-Encoding w odpowiedzi
+- nginx -t
+- ls -l
+- ss
+E: Ćwiczenie.
+#Q
+Q: Co należy ustawić w aplikacji obok client_max_body_size?
++ spring.servlet.multipart.max-file-size i max-request-size
+- server.address
+- server.port
+- logging.level
+E: Oba limity muszą pasować.
+#Q
+Q: Jak lepiej obsłużyć bardzo długie raporty zamiast zwiększać proxy_read_timeout?
++ Przetwarzaniem asynchronicznym - zlecenie i późniejsze pobranie wyniku
+- Wyłączeniem timeoutów
+- Restartem Nginx
+- Zmniejszeniem bazy
+E: WHEN_TO_USE.
+#Q
+Q: Gdzie ustawić dłuższy proxy_read_timeout dla jednego endpointu?
++ W osobnym location tylko dla tego endpointu
+- Globalnie w http
+- W upstream
+- W events
+E: Ćwiczenie z raportami.
+#Q
+Q: Jak w Apache skonfigurować reverse proxy dla Spring Boot?
++ ProxyPass / http://127.0.0.1:8080/ z ProxyPreserveHost On i RequestHeader X-Forwarded-Proto
+- proxy_pass
+- SetHandler proxy
+- DirectoryIndex 8080
+E: mod_proxy, mod_proxy_http.
+#Q
+Q: Co robi ProxyPreserveHost On w Apache?
++ Przekazuje oryginalny nagłówek Host do aplikacji
+- Zachowuje adres klienta
+- Zachowuje połączenia
+- Ukrywa serwer
+E: Odpowiednik Host $host.
+#Q
+Q: W analogii z lekcji, czym jest reverse proxy?
++ Recepcją kancelarii, przez którą przechodzą wszystkie sprawy
+- Gabinetem prawnika
+- Klientem
+- Kurierem
+E: Prawnik = aplikacja.
+#Q
+Q: W analogii z lekcji, czym są nagłówki X-Forwarded-*?
++ Dopiskami recepcji na teczce, kto ją przyniósł i jak przyszedł
+- Pieczątką prawnika
+- Grubością teczki
+- Kartką „wracamy za chwilę”
+E: Adres i schemat klienta.
+#Q
+Q: W analogii z lekcji, czym jest strona 502?
++ Kartką „wracamy za chwilę” wręczaną, gdy prawnika nie ma
+- Odmową przyjęcia grubej teczki
+- Dopiskiem na teczce
+- Wyrokiem
+E: error_page.
+#Q
+Q: W analogii z lekcji, co robi prawnik ignorujący dopiski?
++ Odpisuje na adres recepcji zamiast klienta - złe przekierowania
+- Odrzuca sprawy
+- Pracuje szybciej
+- Nic
+E: Brak forward-headers-strategy.
+#Q
+Q: Jakie są kroki wystawienia aplikacji za Nginx?
++ Nasłuch lokalny i strategia nagłówków, upstream i location z nagłówkami, limity, blokady i strona błędu, test, monitoring
+- proxy_pass i koniec
+- Otwarcie 8080 w zaporze
+- Wyłączenie Nginx
+E: STEP_BY_STEP.
+#Q
+Q: Jakie testy zaleca lekcja po konfiguracji proxy?
++ Nagłówki widziane przez aplikację, przekierowania, duży plik, zatrzymanie aplikacji
+- Tylko nginx -t
+- Tylko ping
+- Tylko curl /
+E: Krok 5.
+#Q
+Q: Co należy monitorować w error.log Nginx przy proxy?
++ upstream timed out i connect() failed
+- Tylko 200
+- Tylko DNS
+- Nic
+E: Krok 6.
+#Q
+Q: Jak sprawdzić liczbę połączeń Nginx do aplikacji?
++ ss -tn state established '( dport = :8080 )'
+- nginx -T
+- ps
+- free
+E: Efekt keepalive.
+#Q
+Q: Jaki jest efekt keepalive dla liczby połączeń po 20 żądaniach?
++ Kilka utrzymywanych połączeń zamiast 20 nowych
+- 20 połączeń
+- Zero połączeń
+- 40 połączeń
+E: Ćwiczenie.
+#Q
+Q: Dlaczego po testach przywraca się konfigurację z kopii?
++ Aby usunąć testowe zmiany (upstream, timeouty) i wrócić do sprawdzonej wersji
+- Bo Nginx tego wymaga
+- Bez powodu
+- Aby przyspieszyć
+E: Ćwiczenia.
+#Q
+Q: Jaki kod zwraca test WebSocket przy poprawnej konfiguracji?
++ 101 Switching Protocols
+- 200
+- 404
+- 502
+E: Zmiana protokołu.
+#Q
+Q: Co należy sprawdzić, jeśli WebSocket zwraca 400 lub połączenie od razu się zamyka?
++ Czy w location przekazywane są nagłówki Upgrade i Connection oraz HTTP/1.1
+- Port SSH
+- DNS
+- Certyfikat
+E: Typowy błąd.
+#Q
+Q: Czy można mieć kilka aplikacji pod jedną nazwą w Nginx?
++ Tak - location /sklep/ i /panel/ z różnymi proxy_pass
+- Nie
+- Tylko w Apache
+- Tylko z HTTPS
+E: USAGE.
+#Q
+Q: Co ustawia się w aplikacji przy publikacji pod /panel/?
++ server.servlet.context-path=/panel
+- server.port=/panel
+- server.address=/panel
+- spring.panel=true
+E: Ścieżka kontekstu.
+#Q
+Q: Co robi skrypt proxy-test.sh z ćwiczeń?
++ Sprawdza przekierowanie, nagłówki widziane przez aplikację, Actuator i limit rozmiaru
+- Restartuje Nginx
+- Zmienia konfigurację
+- Tworzy certyfikat
+E: Kompleksowy test.
+#Q
+Q: Dlaczego w Nginx dopisuje się sklep.firma.example w server_name obok sklep.lab.local?
++ Aby obsłużyć nazwę produkcyjną i laboratoryjną tym samym blokiem
+- Bo jest wymagana
+- Bez powodu
+- Aby wyłączyć DNS
+E: Kilka nazw.
+#Q
+Q: Jaki adres klienta widzi aplikacja w CODE_PRACTICAL przy żądaniu z lubuntu-nauka?
++ 192.168.56.10
+- 127.0.0.1
+- 1.2.3.4
+- 0.0.0.0
+E: Odczytany z nagłówków.
+#Q
+Q: Jaki jest wynik curl na /actuator/env z srv-test?
++ 404
+- 200
+- 403
+- 502
+E: Blokada.
+#Q
+Q: Co należy zrobić, gdy aplikacja ma restartować się przy wdrożeniu bez błędu 502 dla klientów?
++ Użyć dwóch instancji i przełączenia w upstream
+- Zwiększyć timeout
+- Wyłączyć Nginx
+- Zmienić port
+E: Rozdział 38.
+#Q
+Q: Czy Nginx może sprawdzać aktywnie stan aplikacji (health check) w wersji open source?
++ Tylko pasywnie (max_fails, fail_timeout); aktywne sprawdzanie jest w wersji komercyjnej lub modułach
+- Tak, wbudowane
+- Nie w ogóle
+- Tylko w Apache
+E: Ograniczenie.
+#Q
+Q: Jaki błąd wystąpi bez proxy_set_header Connection "" przy keepalive?
++ Nginx wyśle Connection: close i połączenia nie będą utrzymywane
+- Błąd składni
+- 502
+- 413
+E: Wymóg keepalive.
+#Q
+Q: Czy aplikacja za proxy powinna sama obsługiwać HTTPS?
++ Zwykle nie - HTTPS kończy się na Nginx, a lokalnie jest HTTP
+- Tak, zawsze
+- Tylko dla API
+- Tylko w Rocky
+E: Lekcja 8.
+#Q
+Q: Dlaczego X-Forwarded-Proto jest kluczowy po włączeniu HTTPS?
++ Aplikacja musi wiedzieć, że klient użył https, aby generować poprawne linki i nie robić pętli przekierowań
+- Bo szyfruje
+- Bo przyspiesza
+- Nie jest kluczowy
+E: PITFALL.
+#Q
+Q: Jaki kod odpowiedzi daje przekierowanie po zalogowaniu w Spring Security?
++ 302
+- 301
+- 200
+- 404
+E: Found.
+#Q
+Q: Jaki jest odpowiednik limit_req w ochronie przed zgadywaniem haseł?
++ Ograniczenie liczby prób na adres, uzupełniające fail2ban
+- Szyfrowanie
+- Logowanie
+- Cache
+E: Warstwowa ochrona.
+#Q
+Q: Gdzie umieszcza się limit_req_zone?
++ W kontekście http (np. conf.d)
+- W location
+- W upstream
+- W events
+E: Definicja strefy.
+#Q
+Q: Gdzie umieszcza się limit_req?
++ W server lub location
+- Tylko w http
+- W upstream
+- W events
+E: Użycie strefy.
+#Q
+Q: Co zawiera wpis z nagłówkiem diagnostycznym requestUrl w przykładzie?
++ Adres, który aplikacja uważa za żądany przez klienta
+- Adres bazy
+- Adres Nginx
+- Adres DNS
+E: http://sklep.lab.local/api/...
+#Q
+Q: Czy sklep@8082 musi słuchać lokalnie?
++ Tak - tak samo jak główna instancja, za proxy
+- Nie
+- Tylko w nocy
+- Tylko z HTTPS
+E: Spójna polityka.
+#Q
+Q: Co zrobić z drugą instancją po testach?
++ Zatrzymać ją, jeśli nie jest potrzebna
+- Zostawić bez upstream
+- Otworzyć 8082 w zaporze
+- Usunąć aplikację
+E: Ćwiczenie.
+#Q
+Q: Czy zmiana upstream wymaga restartu aplikacji?
++ Nie - wystarczy reload Nginx
+- Tak
+- Tak, obu instancji
+- Tak, systemu
+E: Konfiguracja proxy.
+#Q
+Q: Jaki rozdział omawia wdrożenia aplikacji Javy?
++ 38
+- 36
+- 30
+- 34
+E: Dwie instancje i przełączanie.
+#Q
+Q: Co jest głównym przesłaniem pułapki z lekcji?
++ Samo proxy_pass nie wystarcza - potrzebne nagłówki i strategia nagłówków w aplikacji
+- proxy_pass jest zbędny
+- Aplikacja musi słuchać na 0.0.0.0
+- Nginx nie obsługuje Javy
+E: PITFALL.
+#Q
+Q: Czy aplikacja Spring Boot mogłaby odpowiadać klientom bez proxy?
++ Tak, technicznie - ma wbudowany Tomcat, ale w praktyce stoi za proxy
+- Nie
+- Tylko na porcie 8080
+- Tylko z Apache
+E: Wprowadzenie.
+#Q
+Q: Jaki nagłówek dokłada Nginx, aby aplikacja znała port klienta?
++ X-Forwarded-Port
+- X-Port
+- Port
+- Host-Port
+E: Opcjonalny.
+#Q
+Q: Czym jest backend w kontekście proxy?
++ Aplikacją, do której proxy przekazuje żądania
+- Bazą danych zawsze
+- Przeglądarką
+- Zaporą
+E: Upstream.
+#Q
+Q: Jaki adres ma upstream sklep_app w laboratorium?
++ 127.0.0.1:8080
+- 192.168.56.10:80
+- 0.0.0.0:8080
+- 127.0.0.1:80
+E: Aplikacja lokalnie.
+#Q
+Q: Jakie trzy kody błędów proxy omawia lekcja?
++ 502, 504, 413
+- 200, 301, 404
+- 401, 403, 405
+- 500, 501, 505
+E: Definicje.
+#Q
+Q: Co należy zrobić po zmianie konfiguracji proxy?
++ nginx -t i systemctl reload nginx
+- Restart aplikacji
+- Restart systemu
+- Nic
+E: Jak zawsze.
+#Q
+Q: Do czego służy proxy_connect_timeout 5s?
++ Do ograniczenia czasu nawiązywania połączenia z aplikacją
+- Do czasu odpowiedzi
+- Do czasu sesji
+- Do czasu klienta
+E: Szybkie wykrycie niedziałającej aplikacji.
+#Q
+Q: Czy nagłówki proxy_set_header z location dziedziczą się do innych location?
++ Nie, jeśli location definiuje własne proxy_set_header - wtedy trzeba podać wszystkie
+- Tak, zawsze
+- Tylko Host
+- Tylko w http
+E: Pułapka dziedziczenia.
+#Q
+Q: Jak uprościć powtarzanie nagłówków w wielu location?
++ include proxy_params lub własny snippet
+- Kopiować ręcznie zawsze
+- Nie da się
+- Używać Apache
+E: Ćwiczenie z /logowanie.
+#Q
+Q: Czy limit_req chroni przed atakiem rozproszonym z wielu adresów?
++ Słabo - limit dotyczy pojedynczego adresu
+- Całkowicie
+- Tylko w IPv6
+- Tylko z gzip
+E: Ograniczenia.
+#Q
+Q: Co należy zrobić z plikiem /tmp/sklep.proxy.bak po ćwiczeniach?
++ Usunąć - konfiguracja jest w repozytorium
+- Zostawić w /tmp
+- Wgrać do sites-enabled
+- Opublikować
+E: Porządek.
+#Q
+Q: Czy kompresja gzip ma sens dla plików jpg?
++ Nie - są już skompresowane
+- Tak
+- Tylko w Apache
+- Tylko z HTTPS
+E: gzip_types tylko dla tekstu.
+#Q
+Q: Jaki parametr gzip pomija bardzo małe odpowiedzi?
++ gzip_min_length
+- gzip_level
+- gzip_types
+- gzip_vary
+E: Np. 1024 bajty.
+#Q
+Q: Czy reverse proxy ukrywa szczegóły aplikacji przed klientem?
++ Tak - klient widzi tylko Nginx, a nagłówki aplikacji można ukryć
+- Nie
+- Tylko port
+- Tylko w Apache
+E: USAGE.
