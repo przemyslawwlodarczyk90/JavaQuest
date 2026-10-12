@@ -3,7 +3,7 @@
 const fs=require('fs'),path=require('path');
 const root=path.resolve(__dirname,'../..');
 const short=new Set([1,2,8,9,19,20,23,29,43,44,46]);
-const chapters=[],missing=[],errors=[];
+const chapters=[],missing=[],partial=[],errors=[];
 let total=0,ready=0;
 for(const directory of fs.readdirSync(path.join(root,'src/main/resources/content')).filter(x=>x.startsWith('_lx_')).sort()){
   const chapter=Number(directory.slice(4,6));
@@ -12,10 +12,13 @@ for(const directory of fs.readdirSync(path.join(root,'src/main/resources/content
     const id=directory+'/'+name,j=JSON.parse(fs.readFileSync(path.join(root,'src/main/resources/content',id),'utf8'));
     lessons++;total++;
     if(!j.exercises.length&&!j.quiz.length){missing.push(id);continue;}
-    ready++;completed++;
     const ex=short.has(chapter)&&!(chapter===1&&name.startsWith('01_'))?20:30;
     const questions=ex===20?60:100;
-    if(j.exercises.length!==ex||j.quiz.length!==questions)errors.push(`${id}: ${j.exercises.length}/${j.quiz.length}, expected ${ex}/${questions}`);
+    if(j.exercises.length!==ex||j.quiz.length!==questions){
+      missing.push(id);
+      partial.push({lesson:id,exercises:j.exercises.length,questions:j.quiz.length});
+      errors.push(`${id}: ${j.exercises.length}/${j.quiz.length}, expected ${ex}/${questions}`);
+    }else{ready++;completed++;}
     const seen=new Set(),answers={A:0,B:0,C:0,D:0};
     for(const [index,q] of j.quiz.entries()){
       const tag=`${id} question ${index+1}`;
@@ -42,5 +45,5 @@ for(const directory of fs.readdirSync(path.join(root,'src/main/resources/content
   chapters.push({chapter,completed,lessons});
 }
 if(total!==437)errors.push(`Expected 437 lessons, got ${total}`);
-console.log(JSON.stringify({total,ready,remaining:missing.length,next:missing[0]||null,chapters,errors},null,2));
+console.log(JSON.stringify({total,ready,remaining:missing.length,next:missing[0]||null,partial,chapters,errors},null,2));
 if(errors.length||(process.argv.includes('--require-complete')&&missing.length))process.exitCode=1;
