@@ -1,0 +1,1066 @@
+#EX
+P: Na `lubuntu-nauka` jako anna przygotuj laboratorium (zmienna ja_lab) z katalogami src i app. Sprawdź, czy są java, javac i curl.
+H: Brak JDK: sudo apt install openjdk-21-jdk-headless curl.
+S:
+ja_lab=$(mktemp -d /tmp/javaquest-javaskr.XXXXXX)
+cd "$ja_lab"
+mkdir src app
+java -version 2>&1 | head -1
+command -v javac curl
+#EX
+P: Zapisz w src/Sklep.java prostą aplikację HTTP (endpointy /actuator/health/readiness i /wersja, opóźnienie startu SKLEP_START_MS, awaria startu przy SKLEP_AWARIA lub w wersji „zepsutej”, hak zamknięcia z komunikatem „Commencing graceful shutdown” i opóźnieniem SKLEP_STOP_MS). Zbuduj funkcją zbuduj trzy pliki JAR: 1.4.0 i 1.4.1 (poprawne) oraz 1.4.2 (zepsuta), każdy z plikiem sumy SHA-256.
+H: sed podstawia wersję i flagę awarii w kopii źródła; jar --create --main-class Sklep.
+S:
+cat > src/Sklep.java <<'KONIEC'
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+
+public class Sklep {
+    static final String WERSJA = "@WERSJA@";
+    static final boolean ZEPSUTA = @ZEPSUTA@;
+
+    public static void main(String[] args) throws Exception {
+        int port = 18080;
+        for (String a : args) if (a.startsWith("--server.port=")) port = Integer.parseInt(a.substring(14));
+        if (ZEPSUTA || System.getenv("SKLEP_AWARIA") != null) {
+            System.err.println("APPLICATION FAILED TO START: brak polaczenia z baza");
+            System.exit(1);
+        }
+        Thread.sleep(Long.parseLong(System.getenv().getOrDefault("SKLEP_START_MS", "1500")));
+        HttpServer serwer = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        serwer.createContext("/actuator/health/readiness", e -> odpowiedz(e, "{\"status\":\"UP\"}"));
+        serwer.createContext("/wersja", e -> odpowiedz(e, WERSJA));
+        long stopMs = Long.parseLong(System.getenv().getOrDefault("SKLEP_STOP_MS", "0"));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Commencing graceful shutdown");
+            try { Thread.sleep(stopMs); } catch (InterruptedException ignored) { }
+            serwer.stop(0);
+            System.out.println("Shutdown completed");
+        }));
+        serwer.start();
+        System.out.println("Started Sklep " + WERSJA + " on port " + port
+            + " (PID " + ProcessHandle.current().pid() + "), JVM: "
+            + ManagementFactory.getRuntimeMXBean().getInputArguments()
+            + ", app.nazwa=" + System.getProperty("app.nazwa"));
+    }
+
+    static void odpowiedz(HttpExchange e, String tekst) throws IOException {
+        byte[] b = tekst.getBytes(StandardCharsets.UTF_8);
+        e.sendResponseHeaders(200, b.length);
+        e.getResponseBody().write(b);
+        e.close();
+    }
+}
+KONIEC
+zbuduj() {
+    local w=$1 z=$2 k
+    k=$(mktemp -d)
+    sed -e "s/@WERSJA@/$w/" -e "s/@ZEPSUTA@/$z/" src/Sklep.java > "$k/Sklep.java"
+    javac -d "$k/klasy" "$k/Sklep.java" && jar --create --file "app/sklep-$w.jar" --main-class Sklep -C "$k/klasy" .
+    rm -rf -- "$k"
+    ( cd app && sha256sum "sklep-$w.jar" > "sklep-$w.jar.sha256" )
+}
+zbuduj 1.4.0 false; zbuduj 1.4.1 false; zbuduj 1.4.2 true
+ls app
+#EX
+P: Uruchom wersję 1.4.1 bezpośrednio poleceniem java -jar w tle na porcie 18080, poczekaj na gotowość, odpytaj endpoint gotowości, a następnie wyślij SIGTERM. Wypisz kod JVM i log.
+H: until curl -fs ...; do sleep 0.5; done
+S:
+java -jar app/sklep-1.4.1.jar --server.port=18080 > bezposrednio.log 2>&1 &
+pid=$!
+until curl -fs localhost:18080/actuator/health/readiness > /dev/null; do sleep 0.5; done
+curl -s localhost:18080/actuator/health/readiness; echo
+kill -TERM "$pid"; wait "$pid"; echo "kod: $?"
+sed 's/(PID [0-9]*)/(PID ...)/' bezposrednio.log
+#EX
+P: Zapisz entrypoint.sh z teorii (JAVA z JAVA_HOME, JAR ze zmiennej, opcje w tablicy, JAVA_OPTS przez read -r -a, kontrola pliku, komunikat startowy, exec). Uruchom go w tle z JAVA_OPTS="-Xss512k" i sprawdź, jakim procesem jest PID zwrócony przez $!.
+H: Po exec PID skryptu należy do JVM.
+S:
+cat > entrypoint.sh <<'KONIEC'
+#!/bin/bash
+set -euo pipefail
+JAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java
+JAR=${JAR:-/app/sklep.jar}
+
+opcje=(-XX:MaxRAMPercentage=60 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError)
+read -r -a dodatkowe <<< "${JAVA_OPTS:-}"
+opcje+=("${dodatkowe[@]}")
+
+[[ -r $JAR ]] || { echo "brak pliku $JAR" >&2; exit 1; }
+echo "start: $("$JAVA" -version 2>&1 | head -1), opcje: ${opcje[*]}" >&2
+exec "$JAVA" "${opcje[@]}" -jar "$JAR" "$@"
+KONIEC
+chmod +x entrypoint.sh
+JAR=app/sklep-1.4.1.jar JAVA_OPTS="-Xss512k" ./entrypoint.sh --server.port=18080 > entry.log 2>&1 &
+pid=$!
+until curl -fs localhost:18080/actuator/health/readiness > /dev/null; do sleep 0.5; done
+ps -o pid,comm -p "$pid"
+head -1 entry.log | cut -c1-60
+#EX
+P: Zatrzymaj aplikację uruchomioną przez entrypoint.sh sygnałem SIGTERM wysłanym na PID z $!. Zmierz czas, wypisz kod i sprawdź w logu łagodne zamknięcie.
+H: time { kill ...; wait ...; } — w nawiasach okrągłych (podpowłoce) wait nie zadziała.
+S:
+time { kill -TERM "$pid"; wait "$pid"; echo "kod: $?"; }
+grep -E 'graceful|Shutdown completed' entry.log
+#EX
+P: Zapisz entrypoint-stary.sh bez exec (java $JAVA_OPTS -jar "$JAR" "$@") i uruchom go w tle na porcie 18081. Pokaż drzewo procesów: PID skryptu i jego proces potomny.
+H: ps -o pid,ppid,comm --ppid PID pokazuje dzieci procesu.
+S:
+printf '#!/bin/bash\necho "start sklepu" >&2\njava $JAVA_OPTS -jar "$JAR" "$@"\n' > entrypoint-stary.sh
+chmod +x entrypoint-stary.sh
+JAR=app/sklep-1.4.1.jar JAVA_OPTS="-Xss512k" ./entrypoint-stary.sh --server.port=18081 > stary.log 2>&1 &
+spid=$!
+until curl -fs localhost:18081/actuator/health/readiness > /dev/null; do sleep 0.5; done
+ps -o pid,ppid,comm -p "$spid"
+ps -o pid,ppid,comm --ppid "$spid"
+#EX
+P: Wyślij SIGTERM na PID skryptu entrypoint-stary.sh. Sprawdź kod skryptu, czy JVM nadal działa i czy w logu jest łagodne zamknięcie. Na koniec zatrzymaj osieroconą JVM.
+H: pgrep -f 'server.port=18081' znajdzie JVM.
+S:
+kill -TERM "$spid"; wait "$spid"; echo "kod skryptu: $?"
+sleep 1
+jpid=$(pgrep -f 'server.port=18081')
+echo "JVM nadal dziala: PID $jpid, PPID $(ps -o ppid= -p "$jpid" | tr -d ' ')"
+curl -s localhost:18081/wersja; echo
+echo "graceful w logu: $(grep -c graceful stary.log)"
+kill -TERM "$jpid"; sleep 1; grep -c graceful stary.log
+#EX
+P: Porównaj przekazanie opcji ze spacją w wartości (-Dapp.nazwa=Sklep testowy) przez zmienną bez cudzysłowów i przez tablicę.
+H: Bez tablicy słowo „testowy” staje się nazwą klasy głównej.
+S:
+nazwa="-Dapp.nazwa=Sklep testowy"
+java $nazwa -jar app/sklep-1.4.1.jar 2>&1 | head -1; echo "kod: ${PIPESTATUS[0]}"
+opcje=(-Xss512k "-Dapp.nazwa=Sklep testowy")
+SKLEP_START_MS=0 java "${opcje[@]}" -jar app/sklep-1.4.1.jar --server.port=18083 > tablica.log 2>&1 &
+tpid=$!
+until curl -fs localhost:18083/wersja > /dev/null; do sleep 0.5; done
+grep -o 'JVM: .*' tablica.log
+kill -TERM "$tpid"; wait "$tpid"
+#EX
+P: Pokaż, jak read -r -a dzieli JAVA_OPTS na elementy tablicy, i wypisz każdy element w nawiasach.
+H: printf '[%s]\n' "${tablica[@]}"
+S:
+JAVA_OPTS="-Xss512k  -XX:+UseG1GC -Dprofil=test"
+read -r -a dodatkowe <<< "$JAVA_OPTS"
+echo "elementow: ${#dodatkowe[@]}"; printf '[%s]\n' "${dodatkowe[@]}"
+#EX
+P: Pokaż wybór programu java przez JAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java bez JAVA_HOME i z JAVA_HOME ustawionym na katalog bieżącej Javy.
+H: Katalog Javy: dwa poziomy nad readlink -f $(command -v java).
+S:
+( unset JAVA_HOME; JAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java; echo "bez JAVA_HOME: $JAVA" )
+( JAVA_HOME=$(dirname "$(dirname "$(readlink -f "$(command -v java)")")"); JAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java; echo "z JAVA_HOME: $JAVA"; "$JAVA" -version 2>&1 | head -1 )
+#EX
+P: Pokaż, że JVM sama czyta zmienną JAVA_TOOL_OPTIONS (bez udziału skryptu).
+H: JVM wypisuje „Picked up JAVA_TOOL_OPTIONS”.
+S:
+JAVA_TOOL_OPTIONS="-Xss512k" java -version 2>&1 | head -2
+#EX
+P: Utwórz plik sklep-test.env (SKLEP_START_MS=800, SPRING_PROFILES_ACTIVE=test) i wczytaj go przez set -a; source; set +a. Sprawdź, że proces potomny widzi zmienne.
+H: set -a eksportuje każdą zmienną przypisaną w czasie działania opcji.
+S:
+printf 'SKLEP_START_MS=800\nSPRING_PROFILES_ACTIVE=test\n' > sklep-test.env
+( set -a; source ./sklep-test.env; set +a; bash -c 'echo "potomek: SKLEP_START_MS=$SKLEP_START_MS SPRING_PROFILES_ACTIVE=$SPRING_PROFILES_ACTIVE"' )
+#EX
+P: Porównaj wczytanie tego samego pliku bez set -a: czy proces potomny widzi zmienne?
+H: Zwykłe przypisanie nie eksportuje zmiennej.
+S:
+( source ./sklep-test.env; echo "powloka: $SKLEP_START_MS"; bash -c 'echo "potomek: [${SKLEP_START_MS:-brak}]"' )
+#EX
+P: Zapisz skrypt sklep-testowy.sh na wzór teorii (start w tle z plikiem .env, pętla gotowości z kill -0, zatrzymanie z limitem LIMIT_STOP i SIGKILL w pułapce EXIT) z krokiem „testu” odczytującym /wersja. Uruchom go.
+H: Aplikacja na porcie 18090; wersja 1.4.1.
+S:
+cat > sklep-testowy.sh <<'KONIEC'
+#!/bin/bash
+set -uo pipefail
+lab=$(dirname "$(readlink -f "$0")")
+LIMIT_STOP=${LIMIT_STOP:-30}
+start() {
+    set -a; source "$lab/sklep-test.env"; set +a
+    java -jar "$lab/app/sklep-1.4.1.jar" --server.port=18090 > "$lab/sklep-test.log" 2>&1 &
+    PID=$!
+    for (( i = 1; i <= 60; i++ )); do
+        kill -0 "$PID" 2>/dev/null || { echo "JVM zakonczyla sie przy starcie" >&2; tail -1 "$lab/sklep-test.log" >&2; return 1; }
+        curl -fs -m 2 localhost:18090/actuator/health/readiness > /dev/null && { echo "gotowa po ${i} s"; return 0; }
+        sleep 1
+    done
+    echo "brak gotowosci po 60 s" >&2; return 1
+}
+zatrzymaj() {
+    kill -TERM "$PID" 2>/dev/null || return 0
+    for (( i = 0; i < LIMIT_STOP; i++ )); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
+    kill -0 "$PID" 2>/dev/null && { echo "brak reakcji na TERM, SIGKILL" >&2; kill -KILL "$PID"; }
+    wait "$PID" 2>/dev/null; echo "zatrzymana, kod $?"
+}
+trap zatrzymaj EXIT
+start || exit 1
+echo "test: wersja $(curl -fs localhost:18090/wersja)"
+KONIEC
+chmod +x sklep-testowy.sh
+./sklep-testowy.sh; echo "kod skryptu: $?"
+#EX
+P: Uruchom sklep-testowy.sh z SKLEP_AWARIA=1 (JVM kończy się przy starcie). Wypisz kod skryptu.
+H: kill -0 wykrywa, że proces już nie istnieje.
+S:
+SKLEP_AWARIA=1 ./sklep-testowy.sh; echo "kod skryptu: $?"
+#EX
+P: Zasymuluj aplikację, która nie kończy się po SIGTERM w limicie: SKLEP_STOP_MS=60000 i LIMIT_STOP=3. Zmierz czas i wypisz kod JVM.
+H: Po limicie skrypt wysyła SIGKILL — kod 137.
+S:
+time (SKLEP_STOP_MS=60000 LIMIT_STOP=3 ./sklep-testowy.sh)
+#EX
+P: Sprawdź w logu sklep-test.log ostatniego uruchomienia, czy zamknięcie się rozpoczęło i czy zostało dokończone.
+H: Przy SIGKILL brak linii Shutdown completed.
+S:
+grep -cE 'Commencing graceful shutdown' sklep-test.log
+grep -c 'Shutdown completed' sklep-test.log
+#EX
+P: Zapisz skrypt instancja.sh start|stop PORT: start uruchamia JVM z dowiązania sklep.jar w laboratorium w tle (PID w run/sklep-PORT.pid, log w run/) i czeka na gotowość do 20 s, stop wysyła SIGTERM z limitem 10 s i SIGKILL.
+H: Skrypt instancji jest prostym zastępstwem jednostki sklep@.service.
+S:
+cat > instancja.sh <<'KONIEC'
+#!/bin/bash
+# instancja.sh start|stop PORT - instancja sklepu z biezacego wydania
+set -euo pipefail
+lab=$(dirname "$(readlink -f "$0")")
+akcja=${1:?start|stop}; port=${2:?PORT}
+pidplik="$lab/run/sklep-$port.pid"
+mkdir -p "$lab/run"
+case $akcja in
+    start)
+        java -jar "$lab/sklep.jar" --server.port="$port" >> "$lab/run/sklep-$port.log" 2>&1 &
+        echo $! > "$pidplik"
+        for (( i = 1; i <= 20; i++ )); do
+            kill -0 "$(cat "$pidplik")" 2>/dev/null || { echo "instancja $port: JVM zakonczyla sie przy starcie" >&2; rm -f "$pidplik"; exit 1; }
+            curl -fs -m 2 "localhost:$port/actuator/health/readiness" > /dev/null && { echo "instancja $port: gotowa po $i s"; exit 0; }
+            sleep 1
+        done
+        echo "instancja $port: brak gotowosci" >&2; exit 1 ;;
+    stop)
+        [[ -f $pidplik ]] || exit 0
+        pid=$(cat "$pidplik")
+        if kill -TERM "$pid" 2>/dev/null; then
+            for (( i = 0; i < 10; i++ )); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+            kill -0 "$pid" 2>/dev/null && kill -KILL "$pid"
+        fi
+        rm -f "$pidplik"; echo "instancja $port: zatrzymana" ;;
+    *) echo "Uzycie: ${0##*/} start|stop PORT" >&2; exit 2 ;;
+esac
+KONIEC
+chmod +x instancja.sh
+bash -n instancja.sh && echo "skladnia OK"
+#EX
+P: Zapisz skrypt wdroz-sklep.sh WERSJA PLIK.jar: walidacja wersji (kod 2), blokada flock, kontrola sumy SHA-256, kopia do releases/WERSJA, zapamiętanie poprzedniego wydania, atomowa podmiana dowiązania (ln -sfn + mv -T), restart instancji 18082, potem 18080, wycofanie przy braku gotowości (kod 1), retencja 3 wydań i wpis do wdrozenia.log z nazwą wdrażającego.
+H: Poprzednie wydanie: readlink -f sklep.jar. Instancje uruchamiaj z 9>&- — inaczej JVM odziedziczą deskryptor blokady i każde kolejne wdrożenie zobaczy „inne wdrozenie trwa”.
+S:
+cat > wdroz-sklep.sh <<'KONIEC'
+#!/bin/bash
+# wdroz-sklep.sh WERSJA PLIK.jar - wdrozenie z wydaniami i wycofaniem
+set -euo pipefail
+lab=$(dirname "$(readlink -f "$0")")
+wersja=${1:?Uzycie: wdroz-sklep.sh WERSJA PLIK.jar}; jar=${2:?Uzycie: wdroz-sklep.sh WERSJA PLIK.jar}
+loguj() { echo "$(date '+%F %T') [wdroz] $*" | tee -a "$lab/wdrozenia.log"; }
+przelacz() { ln -sfn "$1" "$lab/.sklep.jar.nowy" && mv -T "$lab/.sklep.jar.nowy" "$lab/sklep.jar"; }
+[[ $wersja =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "BLAD: zly format wersji: $wersja" >&2; exit 2; }
+exec 9> "$lab/wdroz.lock"
+flock -n 9 || { echo "BLAD: inne wdrozenie trwa" >&2; exit 1; }
+( cd "$(dirname "$jar")" && sha256sum -c --quiet "${jar##*/}.sha256" ) || { echo "BLAD: suma kontrolna $jar" >&2; exit 1; }
+mkdir -p "$lab/releases/$wersja"
+cp -- "$jar" "$lab/releases/$wersja/sklep.jar"
+poprzednie=$(readlink -f "$lab/sklep.jar" || true)
+przelacz "releases/$wersja/sklep.jar"
+for port in 18082 18080; do
+    "$lab/instancja.sh" stop "$port" > /dev/null 9>&-
+    if ! "$lab/instancja.sh" start "$port" 9>&-; then
+        loguj "wersja $wersja: brak gotowosci na $port - wycofanie"
+        if [[ -n $poprzednie && -f $poprzednie ]]; then
+            przelacz "${poprzednie#"$lab"/}"
+            for p in 18082 18080; do "$lab/instancja.sh" stop "$p" > /dev/null 9>&-; "$lab/instancja.sh" start "$p" 9>&-; done
+        fi
+        rm -rf -- "${lab:?}/releases/$wersja"
+        exit 1
+    fi
+done
+find "$lab/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -n -r | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf --
+loguj "wdrozono $wersja (wdrozyl: ${SUDO_USER:-$USER})"
+KONIEC
+chmod +x wdroz-sklep.sh
+bash -n wdroz-sklep.sh && echo "skladnia OK"
+#EX
+P: Wdróż wersję 1.4.0 (pierwsze wdrożenie, brak poprzedniego wydania) i wypisz kod oraz cel dowiązania sklep.jar.
+H: readlink bez -f pokazuje względny cel dowiązania.
+S:
+./wdroz-sklep.sh 1.4.0 app/sklep-1.4.0.jar | sed 's/^[0-9-]* [0-9:]* //'; echo "kod: ${PIPESTATUS[0]}"
+readlink sklep.jar
+#EX
+P: Odpytaj obie instancje o wersję.
+H: Porty 18080 i 18082.
+S:
+for p in 18080 18082; do echo "$p: $(curl -fs "localhost:$p/wersja")"; done
+#EX
+P: Wdróż wersję 1.4.1 i sprawdź kolejność restartów, cel dowiązania i wersje instancji.
+H: Najpierw 18082, potem 18080.
+S:
+./wdroz-sklep.sh 1.4.1 app/sklep-1.4.1.jar | sed 's/^[0-9-]* [0-9:]* //'; echo "kod: ${PIPESTATUS[0]}"
+readlink sklep.jar
+for p in 18080 18082; do echo "$p: $(curl -fs "localhost:$p/wersja")"; done
+#EX
+P: Wdróż zepsutą wersję 1.4.2. Sprawdź kod, cel dowiązania, wersje instancji i listę wydań.
+H: Instancja 18082 nie osiągnie gotowości — skrypt wycofa wdrożenie.
+S:
+./wdroz-sklep.sh 1.4.2 app/sklep-1.4.2.jar 2>&1 | sed 's/^[0-9-]* [0-9:]* //'; echo "kod: ${PIPESTATUS[0]}"
+readlink sklep.jar
+for p in 18080 18082; do echo "$p: $(curl -fs "localhost:$p/wersja")"; done
+ls releases
+#EX
+P: Sprawdź w logu instancji 18082 przyczynę nieudanego startu.
+H: grep w run/sklep-18082.log.
+S:
+grep -m1 'FAILED' run/sklep-18082.log
+#EX
+P: Sprawdź walidacje skryptu: zły format wersji 1.5 oraz uszkodzony plik JAR (kopia z dopisanym bajtem i oryginalną sumą). Wypisz kody.
+H: sha256sum -c zgłosi FAILED.
+S:
+./wdroz-sklep.sh 1.5 app/sklep-1.4.1.jar; echo "kod: $?"
+mkdir -p uszkodzony && cp app/sklep-1.4.1.jar app/sklep-1.4.1.jar.sha256 uszkodzony/ && echo x >> uszkodzony/sklep-1.4.1.jar
+./wdroz-sklep.sh 1.4.1 uszkodzony/sklep-1.4.1.jar 2>&1 | sed "s|$ja_lab/||"; echo "kod: ${PIPESTATUS[0]}"
+#EX
+P: Sprawdź blokadę: przytrzymaj plik wdroz.lock poleceniem flock przez 3 sekundy w tle i spróbuj wdrożyć 1.4.1.
+H: flock PLIK -c 'sleep 3' &
+S:
+flock wdroz.lock -c 'sleep 3' &
+sleep 0.5
+./wdroz-sklep.sh 1.4.1 app/sklep-1.4.1.jar; echo "kod: $?"
+wait
+#EX
+P: Sprawdź, że po wszystkich podmianach dowiązania nie został plik tymczasowy .sklep.jar.nowy, i wypisz dowiązanie sklep.jar.
+H: mv -T traktuje cel jako plik, a nie katalog — podmiana to jedna operacja rename.
+S:
+ls -la | grep -c 'sklep.jar.nowy' || true
+ls -l sklep.jar | awk '{print $(NF-2), $(NF-1), $NF}'
+#EX
+P: Wypisz dziennik wdrożeń (bez daty) i listę wydań w releases.
+H: wdrozenia.log zawiera też nazwę wdrażającego.
+S:
+cut -d' ' -f3- wdrozenia.log
+ls releases
+#EX
+P: Zatrzymaj obie instancje skryptem instancja.sh i sprawdź, czy w logach jest łagodne zamknięcie.
+H: Licz linie „Shutdown completed” w logach instancji.
+S:
+for p in 18082 18080; do ./instancja.sh stop "$p"; done
+grep -c 'Shutdown completed' run/sklep-18080.log run/sklep-18082.log
+pgrep -f "$ja_lab" || echo "brak procesow JVM z laboratorium"
+#EX
+P: Posprzątaj: wróć do katalogu domowego, upewnij się, że nie działa żadna JVM z laboratorium, i usuń laboratorium po sprawdzeniu prefiksu.
+H: pkill -f z pełną ścieżką laboratorium.
+S:
+cd ~
+pkill -f "$ja_lab" || true
+case "$ja_lab" in /tmp/javaquest-javaskr.*) ;; *) exit 1;; esac
+rm -rf -- "$ja_lab"
+unset ja_lab pid spid jpid tpid opcje dodatkowe nazwa JAVA_OPTS
+echo "posprzatane"
+#Q
+Q: Co robi exec java ... na końcu skryptu startowego?
++ Zastępuje proces powłoki procesem JVM o tym samym PID
+- Uruchamia JVM w tle
+- Uruchamia JVM jako root
+- Kończy skrypt przed startem JVM
+E: Sygnały trafiają wtedy prosto do JVM.
+#Q
+Q: Jakim procesem był PID zwrócony przez $! po uruchomieniu entrypoint.sh w tle?
++ java — po exec skrypt stał się JVM
+- bash
+- entrypoint.sh
+- curl
+E: ps -o pid,comm -p PID pokazał java.
+#Q
+Q: Jaki kod zwróciła JVM po SIGTERM z działającym hakiem zamknięcia?
++ 143
+- 137
+- 0
+- 1
+E: 128 + 15.
+#Q
+Q: Jaki kod zwraca JVM zabita sygnałem SIGKILL?
++ 137
+- 143
+- 130
+- 1
+E: 128 + 9 — bez haków zamknięcia.
+#Q
+Q: Co wypisała aplikacja w logu po SIGTERM?
++ Commencing graceful shutdown i Shutdown completed
+- Killed
+- Nic
+- Exception
+E: Komunikaty z haka zamknięcia.
+#Q
+Q: Jak wyglądało drzewo procesów entrypoint-stary.sh (bez exec)?
++ Proces entrypoint-star z procesem potomnym java
+- Tylko java
+- Tylko bash
+- Dwie JVM
+E: ps --ppid pokazał dziecko skryptu.
+#Q
+Q: Co się stało po SIGTERM wysłanym do PID skryptu bez exec w ćwiczeniu?
++ Skrypt zakończył się kodem 143, a JVM działała dalej jako sierota
+- Obie zakończyły się łagodnie
+- JVM zakończyła się, skrypt działał dalej
+- Nic
+E: SIGTERM nie dotarł do JVM.
+#Q
+Q: Ile linii graceful było w logu JVM uruchomionej przez skrypt bez exec po zabiciu skryptu?
++ 0 — JVM nie otrzymała sygnału
+- 1
+- 2
+- Cały log
+E: Dopiero bezpośredni SIGTERM do JVM wywołał zamknięcie.
+#Q
+Q: Kto stał się rodzicem osieroconej JVM w ćwiczeniu?
++ Proces o PID 1 (init)
+- Skrypt
+- curl
+- Nikt
+E: Sieroty są przejmowane przez init lub subreaper.
+#Q
+Q: Dlaczego w kontenerze bash jako PID 1 ignoruje SIGTERM?
++ Jądro nie dostarcza procesowi PID 1 sygnałów, dla których nie ustawił obsługi
+- Bo bash nie zna SIGTERM
+- Bo Docker blokuje sygnały
+- Bo JVM przechwytuje sygnał
+E: Po limicie Docker wysyła SIGKILL.
+#Q
+Q: Jaki jest objaw braku exec przy docker stop?
++ Zatrzymanie trwa pełny limit (10 s), kod 137, brak „graceful” w logu
+- Zatrzymanie w sekundę z kodem 143
+- Kontener się nie uruchamia
+- Błąd składni
+E: CODE_WRONG w teorii.
+#Q
+Q: Jaki jest domyślny limit łagodnego zatrzymania w docker stop?
++ 10 sekund
+- 90 sekund
+- 1 sekunda
+- 60 sekund
+E: W systemd domyślnie 90 s (TimeoutStopSec).
+#Q
+Q: Dlaczego exec nie pomoże w zapisie java -jar app.jar | tee log?
++ Potok tworzy osobne procesy — powłoka musi czekać na oba
+- Bo tee blokuje sygnały
+- Bo exec nie działa z -jar
+- Pomoże zawsze
+E: Zamiast potoku — przekierowanie do pliku.
+#Q
+Q: Dlaczego opcje JVM trzyma się w tablicy?
++ Wartości ze spacjami nie zostaną rozbite przy "${opcje[@]}"
+- Bo JVM tego wymaga
+- By przyspieszyć start
+- By ukryć opcje
+E: Opcje można też dopisywać warunkowo.
+#Q
+Q: Co wypisała java $nazwa -jar ... dla nazwa="-Dapp.nazwa=Sklep testowy"?
++ Error: Could not find or load main class testowy
+- Uruchomiła aplikację
+- Unrecognized option
+- Nic
+E: Słowo testowy stało się nazwą klasy głównej.
+#Q
+Q: Co pokazała aplikacja dla opcji przekazanych tablicą?
++ JVM: [-Xss512k, -Dapp.nazwa=Sklep testowy], app.nazwa=Sklep testowy
+- Błąd klasy głównej
+- app.nazwa=Sklep
+- app.nazwa=null
+E: Wartość ze spacją pozostała jednym argumentem.
+#Q
+Q: Jak podzielić JAVA_OPTS ze zmiennej środowiskowej na elementy tablicy?
++ read -r -a dodatkowe <<< "${JAVA_OPTS:-}"
+- dodatkowe=$JAVA_OPTS
+- IFS= read dodatkowe
+- eval dodatkowe=$JAVA_OPTS
+E: Bez wartości ze spacjami w opcjach.
+#Q
+Q: Ile elementów dał read -r -a dla "-Xss512k  -XX:+UseG1GC -Dprofil=test" (z podwójną spacją)?
++ 3
+- 4
+- 1
+- 2
+E: Wielokrotne spacje są jednym separatorem.
+#Q
+Q: Co oznacza ${JAVA_HOME:+$JAVA_HOME/bin/}java?
++ Ścieżkę JAVA_HOME/bin/java, gdy JAVA_HOME jest ustawione, inaczej samo java z PATH
+- Zawsze /usr/bin/java
+- Błąd, gdy brak JAVA_HOME
+- Ustawienie JAVA_HOME
+E: :+ daje wartość tylko dla niepustej zmiennej.
+#Q
+Q: Jak ustalono katalog JAVA_HOME bieżącej Javy w ćwiczeniu?
++ Dwa poziomy dirname nad readlink -f $(command -v java)
+- echo $JAVA_HOME
+- java -home
+- which -a java
+E: /usr/bin/java to łańcuch dowiązań do katalogu JDK.
+#Q
+Q: Co wypisuje JVM, gdy ustawiona jest zmienna JAVA_TOOL_OPTIONS?
++ Picked up JAVA_TOOL_OPTIONS: ...
+- Nic
+- Using JAVA_OPTS
+- Warning: deprecated
+E: JVM czyta tę zmienną sama, bez udziału skryptu.
+#Q
+Q: Czym różni się JAVA_OPTS od JAVA_TOOL_OPTIONS?
++ JAVA_OPTS to konwencja skryptów, JAVA_TOOL_OPTIONS czyta bezpośrednio JVM
+- Nie ma różnicy
+- JAVA_OPTS czyta JVM, drugą skrypty
+- Obie ignoruje JVM
+E: Skrypt musi sam przekazać JAVA_OPTS do polecenia java.
+#Q
+Q: Co robi set -a; source plik.env; set +a?
++ Wczytuje plik i eksportuje wszystkie przypisane w nim zmienne
+- Wczytuje plik bez eksportu
+- Wykonuje plik w podpowłoce
+- Usuwa zmienne
+E: Odpowiednik EnvironmentFile= w systemd.
+#Q
+Q: Co zobaczył proces potomny po source pliku .env bez set -a?
++ Brak zmiennych — nie zostały wyeksportowane
+- Wszystkie zmienne
+- Tylko pierwszą
+- Błąd
+E: Powłoka widziała SKLEP_START_MS=800, potomek — brak.
+#Q
+Q: Jaki jest odpowiednik set -a; source plik w jednostce systemd?
++ EnvironmentFile=
+- ExecStartPre=
+- Environment=PATH
+- LoadCredential=
+E: Systemd sam wczytuje plik ze zmiennymi.
+#Q
+Q: Jak skrypt sklep-testowy.sh wykrywa, że JVM zakończyła się przy starcie?
++ kill -0 "$PID" zwraca błąd, gdy procesu już nie ma
+- curl zwraca 200
+- wait zwraca 0
+- ps -ef
+E: Bez tego pętla czekałaby pełne 60 s.
+#Q
+Q: Co robi kill -0 PID?
++ Sprawdza, czy proces istnieje i można mu wysłać sygnał, bez wysyłania sygnału
+- Zabija proces
+- Wysyła SIGINT
+- Zatrzymuje proces
+E: Kod 0 — proces istnieje.
+#Q
+Q: Co wypisał sklep-testowy.sh przy udanym przebiegu?
++ gotowa po N s, test: wersja 1.4.1, zatrzymana, kod 143
+- JVM zakonczyla sie przy starcie
+- brak gotowosci po 60 s
+- SIGKILL
+E: Zatrzymanie w pułapce EXIT.
+#Q
+Q: Co wypisał sklep-testowy.sh z SKLEP_AWARIA=1?
++ JVM zakonczyla sie przy starcie, ostatnią linię logu i kod skryptu 1
+- gotowa po 1 s
+- zatrzymana, kod 143
+- Nic
+E: Linia logu: APPLICATION FAILED TO START.
+#Q
+Q: Co się stało przy SKLEP_STOP_MS=60000 i LIMIT_STOP=3?
++ Po 3 s skrypt wysłał SIGKILL, JVM zakończyła się kodem 137
+- JVM zamknęła się łagodnie
+- Skrypt czekał 60 s
+- Kod 143
+E: Całość trwała około 4 s.
+#Q
+Q: Co było w logu JVM zabitej SIGKILL w trakcie haka zamknięcia?
++ Commencing graceful shutdown bez Shutdown completed
+- Oba komunikaty
+- Żaden komunikat
+- Killed
+E: Zamknięcie zaczęło się, ale nie zostało dokończone.
+#Q
+Q: Dlaczego w sklep-testowy.sh użyto set -uo pipefail bez -e?
++ wait zwracający 143 w pułapce przerwałby funkcję zatrzymaj przed wypisaniem kodu
+- Bo -e nie działa z java
+- Bo -e wyłącza trap
+- Bez powodu
+E: Kod 143 to oczekiwany wynik, nie błąd.
+#Q
+Q: Jaka kolejność zatrzymania jest prawidłowa?
++ SIGTERM, czekanie do limitu, dopiero potem SIGKILL
+- Od razu SIGKILL
+- SIGKILL, potem SIGTERM
+- SIGINT bez limitu
+E: Daje aplikacji czas na łagodne zamknięcie.
+#Q
+Q: Dlaczego wait "$pid" nie zadziałał w (kill ...; wait ...)?
++ Podpowłoka nie jest rodzicem procesu uruchomionego w powłoce nadrzędnej
+- Bo kill zakończył powłokę
+- Bo wait wymaga roota
+- Bo PID był pusty
+E: Komunikat: pid ... is not a child of this shell — dlatego { ...; }.
+#Q
+Q: Jaka struktura katalogów służy do wdrożeń z wydaniami?
++ releases/WERSJA/sklep.jar i dowiązanie sklep.jar do bieżącego wydania
+- Jeden plik sklep.jar nadpisywany
+- Katalog backup z kopiami
+- Katalog tmp
+E: Nigdy nie nadpisuje się działającego pliku.
+#Q
+Q: Jak atomowo podmienić dowiązanie?
++ ln -sfn CEL .sklep.jar.nowy && mv -T .sklep.jar.nowy sklep.jar
+- rm sklep.jar && ln -s CEL sklep.jar
+- cp CEL sklep.jar
+- ln -s CEL sklep.jar (bez -f)
+E: rename jest operacją atomową — nie ma chwili bez dowiązania.
+#Q
+Q: Co robi opcja -T w mv -T?
++ Traktuje cel jako plik, a nie katalog docelowy
+- Zachowuje czasy
+- Tworzy katalog
+- Wypisuje szczegóły
+E: Bez niej mv mógłby wejść do katalogu, na który wskazuje dowiązanie.
+#Q
+Q: Dlaczego rm + ln -s nie jest atomowe?
++ Między usunięciem a utworzeniem dowiązania przez chwilę ono nie istnieje
+- Bo ln jest wolne
+- Bo rm nie działa na dowiązania
+- Jest atomowe
+E: Restart w tej chwili nie znalazłby pliku.
+#Q
+Q: Jaki był cel dowiązania sklep.jar po wdrożeniu 1.4.1?
++ releases/1.4.1/sklep.jar
+- releases/1.4.0/sklep.jar
+- app/sklep-1.4.1.jar
+- /opt/sklep/sklep.jar
+E: readlink bez -f pokazał ścieżkę względną.
+#Q
+Q: W jakiej kolejności wdroz-sklep.sh restartował instancje?
++ Najpierw 18082, potem 18080
+- Obie naraz
+- Najpierw 18080
+- Tylko 18080
+E: Restart po kolei utrzymuje dostępność sklepu.
+#Q
+Q: Co się stało przy wdrożeniu zepsutej wersji 1.4.2?
++ Instancja 18082 nie wystartowała, skrypt przywrócił 1.4.1, zrestartował instancje i zwrócił kod 1
+- Obie instancje działały na 1.4.2
+- Sklep przestał działać
+- Skrypt zwrócił 0
+E: Instancja 18080 nawet nie została zatrzymana na nową wersję.
+#Q
+Q: Jakie wydania zostały w releases po nieudanym wdrożeniu 1.4.2?
++ 1.4.0 i 1.4.1 — katalog 1.4.2 usunięto przy wycofaniu
+- 1.4.0, 1.4.1 i 1.4.2
+- Tylko 1.4.1
+- Żadne
+E: rm -rf -- "${lab:?}/releases/$wersja".
+#Q
+Q: Co znaleziono w logu instancji 18082 po nieudanym starcie 1.4.2?
++ APPLICATION FAILED TO START: brak polaczenia z baza
+- Started Sklep 1.4.2
+- Shutdown completed
+- Nic
+E: Log instancji jest dopisywany przy każdym starcie.
+#Q
+Q: Jaki kod zwrócił wdroz-sklep.sh dla wersji 1.5?
++ 2 — zły format wersji
+- 1
+- 0
+- 3
+E: Wymagany format X.Y.Z.
+#Q
+Q: Co się stało przy wdrożeniu uszkodzonego JAR z oryginalną sumą?
++ sha256sum zgłosił FAILED, skrypt wypisał błąd sumy i zakończył się kodem 1
+- Wdrożono uszkodzony plik
+- Kod 0
+- Kod 2
+E: Kontrola sumy przed kopiowaniem.
+#Q
+Q: Dlaczego JVM uruchamiane przez wdroz-sklep.sh trzeba startować z 9>&-?
++ Inaczej odziedziczą otwarty deskryptor blokady i trzymają ją po zakończeniu wdrożenia
+- By wyłączyć logi
+- By przyspieszyć start
+- By zmienić port
+E: Kolejne wdrożenia widziałyby „inne wdrozenie trwa”.
+#Q
+Q: Co oznacza zapis 9>&-?
++ Zamknięcie deskryptora 9 dla uruchamianego polecenia
+- Przekierowanie do pliku 9
+- Duplikację stdout
+- Ustawienie limitu
+E: Procesy potomne nie dostaną tego deskryptora.
+#Q
+Q: Co wypisał wdroz-sklep.sh, gdy blokadę trzymał inny proces?
++ BLAD: inne wdrozenie trwa i kod 1
+- Czekał do zwolnienia
+- Wdrożył mimo to
+- Kod 0
+E: flock -n nie czeka.
+#Q
+Q: Jak w ćwiczeniu zasymulowano trwające wdrożenie?
++ flock wdroz.lock -c 'sleep 3' &
+- touch wdroz.lock
+- chmod 000 wdroz.lock
+- rm wdroz.lock
+E: Istnienie pliku nie wystarcza — potrzebna jest blokada.
+#Q
+Q: Jaką informację o wdrażającym zapisuje skrypt?
++ ${SUDO_USER:-$USER} — użytkownika, który wywołał sudo, lub bieżącego
+- Tylko root
+- Adres IP
+- Nic
+E: W ćwiczeniu: wdrozyl: anna.
+#Q
+Q: Co zawiera wdrozenia.log po ćwiczeniach?
++ Dwa udane wdrożenia (1.4.0, 1.4.1) i wpis o wycofaniu 1.4.2
+- Tylko udane wdrożenia
+- Tylko błędy
+- Nic
+E: Dziennik wdrożeń ułatwia audyt.
+#Q
+Q: Jak skrypt realizuje retencję wydań?
++ Sortuje katalogi releases według czasu i usuwa wszystkie poza 3 najnowszymi
+- Usuwa wszystkie stare
+- Nie usuwa nic
+- Usuwa wydania starsze niż 3 dni
+E: find -printf '%T@ %p' | sort -n -r | tail -n +4.
+#Q
+Q: Gdzie zapisuje PID instancja.sh?
++ W pliku run/sklep-PORT.pid
+- W /etc
+- W zmiennej środowiskowej
+- Nigdzie
+E: stop odczytuje go, by wysłać SIGTERM.
+#Q
+Q: Ile linii Shutdown completed miały logi instancji po ćwiczeniach?
++ Po 3 — każde zatrzymanie było łagodne
+- 0
+- 1
+- 6
+E: Logi są dopisywane przy każdym starcie.
+#Q
+Q: Co robi Spring Boot przy server.shutdown=graceful po SIGTERM?
++ Kończy przyjmowanie nowych żądań i czeka na zakończenie trwających
+- Natychmiast zamyka połączenia
+- Restartuje aplikację
+- Ignoruje sygnał
+E: Komunikat Commencing graceful shutdown.
+#Q
+Q: Co jest zaletą systemd nad skryptem startowym na serwerze?
++ Sam przekazuje sygnały, wczytuje zmienne, pilnuje limitu i restartuje
+- Jest szybszy w kompilacji
+- Nie wymaga JVM
+- Działa bez jądra
+E: Skrypt startowy dodaje tylko ryzyko.
+#Q
+Q: Kiedy skrypt dla aplikacji Java ma sens mimo systemd?
++ Przy wdrożeniach wieloetapowych, przygotowaniu konfiguracji w kontenerze i testach w CI
+- Zawsze zamiast jednostki
+- Nigdy
+- Tylko do zmiany portu
+E: Logika, której jednostka nie wyrazi.
+#Q
+Q: Jaką ostatnią linię powinien mieć skrypt uruchamiany przez ExecStart= jednostki?
++ exec java ...
+- java ... &
+- java ...; exit 0
+- nohup java ...
+E: Type= i KillMode= powinny pozostać domyślne.
+#Q
+Q: Co robi opcja JVM -XX:+ExitOnOutOfMemoryError?
++ Kończy JVM przy braku pamięci, zamiast działać w niestabilnym stanie
+- Zwiększa pamięć
+- Wyłącza GC
+- Zapisuje zrzut sterty
+E: Orkiestrator lub systemd może wtedy zrestartować aplikację.
+#Q
+Q: Co robi opcja -XX:MaxRAMPercentage=60?
++ Ustala maksymalny rozmiar sterty na 60% dostępnej pamięci (także limitu kontenera)
+- Ogranicza CPU
+- Ustala 60 MB sterty
+- Wyłącza limit
+E: Wygodniejsza niż sztywne -Xmx w kontenerach.
+#Q
+Q: Jaki był domyślny JAR w entrypoint.sh z teorii?
++ /app/sklep.jar — ścieżka w obrazie, nadpisywana zmienną JAR
+- ~/sklep.jar
+- /opt/sklep.jar
+- Brak domyślnego
+E: W ćwiczeniu podano JAR=app/sklep-1.4.1.jar.
+#Q
+Q: Co sprawdza [[ -r $JAR ]] w entrypoint.sh?
++ Czy plik JAR istnieje i jest czytelny
+- Czy JAR jest wykonywalny
+- Czy JAR jest najnowszy
+- Czy JAR ma sumę
+E: Inaczej skrypt kończy się czytelnym komunikatem.
+#Q
+Q: Dlaczego entrypoint.sh wypisuje komunikat startowy na stderr?
++ By nie mieszać się z wyjściem aplikacji i trafić do logów kontenera
+- Bo stdout jest zamknięty
+- Bo echo nie działa na stdout
+- Bez powodu
+E: docker logs pokazuje oba strumienie.
+#Q
+Q: Jak w Dockerfile połączyć ENTRYPOINT ze skryptem i domyślne argumenty?
++ ENTRYPOINT ["/app/entrypoint.sh"] i CMD ["--server.port=8080"]
+- CMD ze skryptem i ENTRYPOINT z portem
+- RUN entrypoint.sh
+- ENV ENTRYPOINT
+E: Argumenty z CMD trafiają do "$@" skryptu.
+#Q
+Q: Dlaczego ENTRYPOINT zapisuje się w formie tablicy JSON?
++ Forma powłokowa uruchamia sh -c, który staje się PID 1 i przechwytuje sygnały
+- Bo Docker nie zna innej formy
+- Dla czytelności
+- Bez powodu
+E: Forma exec uruchamia program bezpośrednio.
+#Q
+Q: Co jest wynikiem docker exec sklep ps -o pid,comm dla obrazu z exec?
++ PID 1 to java
+- PID 1 to bash
+- PID 1 to entrypoint.sh
+- PID 1 to tini
+E: JVM bezpośrednio dostaje sygnały.
+#Q
+Q: Do czego służy tini lub docker run --init?
++ Do uruchomienia małego procesu init jako PID 1, który przekazuje sygnały i zbiera zombie
+- Do przyspieszenia startu
+- Do instalacji Javy
+- Do logowania
+E: Pomaga, gdy aplikacja nie jest dobrym PID 1.
+#Q
+Q: Co jest pierwszym krokiem skryptu wdrożeniowego według lekcji?
++ Sprawdzenie formatu wersji i sumy kontrolnej pliku
+- Restart instancji
+- Usunięcie starych wydań
+- Podmiana dowiązania
+E: Dopiero potem kopiowanie do releases.
+#Q
+Q: Po co zapamiętuje się poprzednie wydanie przed podmianą dowiązania?
++ By móc automatycznie wycofać wdrożenie
+- By je usunąć
+- By je skopiować
+- Dla statystyk
+E: readlink -f sklep.jar.
+#Q
+Q: Jak zbudowano trzy wersje aplikacji z jednego źródła?
++ sed podstawił wersję i flagę awarii w kopii Sklep.java przed kompilacją
+- Trzy osobne pliki źródłowe
+- Maven z profilami
+- Zmienna środowiskowa przy uruchomieniu
+E: Funkcja zbuduj w ćwiczeniu.
+#Q
+Q: Jakim poleceniem zbudowano wykonywalny JAR bez Mavena?
++ jar --create --file PLIK --main-class Sklep -C KLASY .
+- javac -jar
+- zip -r
+- java -build
+E: --main-class wpisuje Main-Class do manifestu.
+#Q
+Q: Do czego w aplikacji testowej służył endpoint /wersja?
++ Do sprawdzenia, które wydanie obsługuje dana instancja
+- Do zatrzymania aplikacji
+- Do gotowości
+- Do logów
+E: Po wycofaniu obie instancje zwracały 1.4.1.
+#Q
+Q: Co zwracał endpoint gotowości aplikacji testowej?
++ {"status":"UP"}
+- OK
+- 1.4.1
+- Pusty napis
+E: Tak jak Spring Boot Actuator.
+#Q
+Q: Dlaczego gotowość sprawdza się endpointem readiness, a nie samym istnieniem procesu?
++ Proces może działać, ale aplikacja jeszcze nie przyjmuje ruchu
+- Bo proces nie ma PID
+- Bo curl jest szybszy
+- Bez powodu
+E: Start Spring Boot trwa sekundy.
+#Q
+Q: Co jest wynikiem curl -fs dla odpowiedzi HTTP 503?
++ Kod wyjścia 22 bez wypisania treści
+- Kod 0
+- Treść błędu
+- Kod 503
+E: -f traktuje błędy HTTP jako niepowodzenie.
+#Q
+Q: Jak w ćwiczeniu czekano na gotowość w terminalu?
++ until curl -fs .../readiness > /dev/null; do sleep 0.5; done
+- sleep 60
+- wait
+- read
+E: Pętla bez limitu — w skryptach dodaje się limit prób.
+#Q
+Q: Co jest ryzykiem pętli gotowości bez limitu prób?
++ Skrypt zawiesi się na zawsze, gdy aplikacja nie wystartuje
+- Brak ryzyka
+- Za szybki start
+- Za dużo logów
+E: Dlatego w skryptach jest limit i kill -0.
+#Q
+Q: Co jest wynikiem pgrep -f 'server.port=18081'?
++ PID procesu, którego wiersz poleceń zawiera ten napis
+- Nazwa procesu
+- Port
+- Kod 0 bez wyniku
+E: -f przeszukuje pełne wiersze poleceń.
+#Q
+Q: Jak w sprzątaniu upewniono się, że nie została żadna JVM z laboratorium?
++ pkill -f ze ścieżką laboratorium
+- killall java
+- reboot
+- kill -9 -1
+E: Zawęża zabijanie do własnych procesów.
+#Q
+Q: Co jest wynikiem javac bez JDK (tylko JRE)?
++ Brak polecenia javac
+- Kompilacja
+- Ostrzeżenie
+- Uruchomienie programu
+E: Kompilator jest w pakiecie openjdk-21-jdk-headless.
+#Q
+Q: Jaka sieć nasłuchiwania była użyta w aplikacji testowej?
++ 127.0.0.1 — tylko lokalnie
+- 0.0.0.0
+- Adres publiczny
+- Unix socket
+E: Laboratorium nie wystawia portów na zewnątrz.
+#Q
+Q: Czym są haki zamknięcia (shutdown hooks) w JVM?
++ Wątkami uruchamianymi przy normalnym zakończeniu i po SIGTERM/SIGINT
+- Wątkami uruchamianymi po SIGKILL
+- Plikami konfiguracyjnymi
+- Opcjami JVM
+E: Runtime.getRuntime().addShutdownHook(...).
+#Q
+Q: Czy haki zamknięcia JVM działają po SIGKILL?
++ Nie — proces znika natychmiast
+- Tak, zawsze
+- Tylko z -Xrs
+- Tylko w kontenerze
+E: Dlatego SIGKILL to ostateczność.
+#Q
+Q: Co jest wynikiem wait PID dla procesu zakończonego sygnałem?
++ 128 + numer sygnału
+- 0
+- Numer sygnału
+- 1
+E: Dla TERM 143, dla KILL 137.
+#Q
+Q: Jakie kroki są wspólne dla skryptu wdrożeniowego i lekcji 5 (trap)?
++ flock (jedno wdrożenie naraz) i trap do sprzątania plików tymczasowych
+- getopts
+- mapfile
+- bc
+E: Krok 8 listy z teorii.
+#Q
+Q: Dlaczego plik tymczasowy dowiązania (.sklep.jar.nowy) jest w tym samym katalogu co sklep.jar?
++ rename jest atomowe tylko w obrębie jednego systemu plików
+- By był ukryty
+- Bo ln tego wymaga
+- Bez powodu
+E: Kropka na początku ukrywa go w ls.
+#Q
+Q: Co pokazało ls -la | grep -c sklep.jar.nowy po wdrożeniach?
++ 0 — plik tymczasowy nie został
+- 1
+- 2
+- Błąd
+E: mv -T przeniósł go na miejsce sklep.jar.
+#Q
+Q: Co jest wynikiem uruchomienia JVM przez instancja.sh, gdy dowiązanie sklep.jar wskazuje nowe wydanie?
++ JVM otwiera plik z bieżącego celu dowiązania
+- JVM używa starego pliku zawsze
+- Błąd
+- JVM kopiuje plik
+E: Działająca JVM ma otwarty stary plik, nowa — nowy.
+#Q
+Q: Dlaczego nie nadpisuje się pliku JAR działającej aplikacji?
++ Działająca JVM ładuje klasy z otwartego pliku — nadpisanie może spowodować błędy
+- Bo plik jest tylko do odczytu
+- Bo JVM blokuje zapis
+- Można bez ryzyka
+E: Nowe wydanie zawsze trafia do nowego katalogu.
+#Q
+Q: Jakie skrypty generuje Gradle installDist?
++ bin/aplikacja ze zmiennymi DEFAULT_JVM_OPTS, JAVA_OPTS i APLIKACJA_OPTS
+- Tylko JAR
+- Jednostkę systemd
+- Dockerfile
+E: Skrypt kończy się exec java.
+#Q
+Q: Co jest wynikiem polecenia ps -o pid,ppid,comm --ppid PID?
++ Lista procesów potomnych procesu PID
+- Proces PID
+- Wszystkie procesy
+- Rodzic procesu
+E: Pokazało java jako dziecko skryptu bez exec.
+#Q
+Q: Jakie dwa ograniczenia ma podział JAVA_OPTS przez read -r -a?
++ Wartości ze spacjami zostaną rozbite, a cudzysłowy w zmiennej nie są interpretowane
+- Nie działa z -X
+- Działa tylko dla jednej opcji
+- Brak ograniczeń
+E: Dla takich wartości lepsza jest tablica w skrypcie lub JAVA_TOOL_OPTIONS.
+#Q
+Q: Co oznacza kod 0 skryptu sklep-testowy.sh przy kodzie JVM 143?
++ Testy przeszły — kod skryptu pochodzi z kroku testu, a 143 to oczekiwany kod zatrzymania
+- Błąd testów
+- JVM nie wystartowała
+- Skrypt zignorował błąd
+E: Pułapka bez exit nie zmienia kodu skryptu.
+#Q
+Q: Jaki problem rozwiązało uruchomienie entrypoint.sh z exec w porównaniu z wersją bez exec?
++ SIGTERM trafiał do JVM, która kończyła się łagodnie z kodem 143
+- Szybszy start JVM
+- Mniej pamięci
+- Brak logów
+E: Bez exec JVM zostawała sierotą.
+#Q
+Q: Co jest wynikiem echo "${opcje[*]}" dla tablicy opcji?
++ Wszystkie elementy połączone spacją w jeden napis (do wyświetlenia)
+- Osobne argumenty
+- Liczba elementów
+- Pierwszy element
+E: Do wywołania programu używa się "${opcje[@]}".
+#Q
+Q: Jaki był czas działania sklep-testowy.sh przy wymuszonym SIGKILL?
++ Około 4 s — start, test i limit 3 s
+- Około 60 s
+- Ponad 2 minuty
+- Poniżej 1 s
+E: Limit zatrzymania ograniczył czekanie.
+#Q
+Q: Jakie są typowe zastosowania skryptu start/stop z plikiem PID?
++ Serwery bez systemd lub z ograniczonym dostępem, testy w CI
+- Każdy serwer z systemd
+- Obrazy Dockera
+- Aplikacje desktopowe
+E: Na serwerze z systemd zastępuje go jednostka.
+#Q
+Q: Co jest wynikiem wycofania wdrożenia dla instancji 18080 w ćwiczeniu?
++ Została zrestartowana i nadal obsługiwała 1.4.1
+- Działała na 1.4.2
+- Została wyłączona
+- Zwracała błąd
+E: Restart przy wycofaniu dotyczył obu instancji.
+#Q
+Q: Jaki kod zwróci skrypt wdrożeniowy, gdy wycofanie się powiodło?
++ 1 — wdrożenie nowej wersji się nie udało
+- 0
+- 2
+- 3
+E: Monitoring i CI muszą wiedzieć o niepowodzeniu.
+#Q
+Q: Jaki komunikat wypisze bash przy wait w podpowłoce ( ... ) dla procesu uruchomionego w powłoce nadrzędnej?
++ wait: pid ... is not a child of this shell
+- no such process
+- wait: permission denied
+- Brak komunikatu
+E: wait zwraca wtedy 127 — dlatego w ćwiczeniu pomiar czasu ujęto w grupę { ...; }.
