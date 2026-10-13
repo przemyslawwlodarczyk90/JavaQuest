@@ -7,7 +7,8 @@ case "$profile" in
     nginx) verifier=verify_lx_36_nginx_local.py; set -- nginx python3 ;;
     postgresql) verifier=verify_lx_37_postgresql_local.py; set -- postgresql-16 python3 ;;
     listening) verifier=verify_lx_39_listening_local.py; set -- iproute2 python3 sudo curl procps ;;
-    *) echo 'Supported profiles: rsync, nginx, postgresql, listening' >&2; exit 1 ;;
+    integrity) verifier=verify_lx_39_integrity_local.py; set -- aide apparmor python3 ;;
+    *) echo 'Supported profiles: rsync, nginx, postgresql, listening, integrity' >&2; exit 1 ;;
 esac
 test "$(stat -f -c %T /run)" = tmpfs
 lab=$(mktemp -d /run/javaquest-rsync.XXXXXX)
@@ -37,6 +38,10 @@ mkdir -m 1777 "$lab/dev/shm"
 if [ "$profile" = listening ]; then
     mount -t proc -o ro proc "$lab/proc"
     proc_mounted=1
+fi
+if [ "$profile" = integrity ]; then
+    cp /mnt/host/d/projekty/javaQuest/src/main/resources/content/_lx_39_bezpieczenstwo/08_FileIntegrityAndChecksums.json "$lab/tmp/lesson08.json"
+    cp /mnt/host/d/projekty/javaQuest/src/main/resources/content/_lx_39_bezpieczenstwo/06_AppArmorBasics.json "$lab/tmp/lesson06.json"
 fi
 printf '#!/bin/sh\nexit 101\n' > "$lab/usr/sbin/policy-rc.d"
 chmod 755 "$lab/usr/sbin/policy-rc.d"
