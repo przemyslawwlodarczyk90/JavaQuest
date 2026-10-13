@@ -1,0 +1,989 @@
+#EX
+P: Na `lubuntu-nauka` jako anna przygotuj laboratorium (zmienna ad_lab): katalog kopie z dziesięcioma plikami mysql-2026-09-21.sql.gz … mysql-2026-09-30.sql.gz (czas modyfikacji zgodny z datą w nazwie) i plikiem inny.txt, a także katalog blokad — wyeksportuj go jako KATALOG_BLOKAD.
+H: touch -d "2026-09-$d 03:00" ustawia czas modyfikacji.
+S:
+ad_lab=$(mktemp -d /tmp/javaquest-admin.XXXXXX)
+cd "$ad_lab"
+mkdir kopie blokady
+for d in $(seq 21 30); do echo "kopia $d" | gzip > "kopie/mysql-2026-09-$d.sql.gz"; touch -d "2026-09-$d 03:00" "kopie/mysql-2026-09-$d.sql.gz"; done
+echo "nie usuwac" > kopie/inny.txt
+export KATALOG_BLOKAD="$ad_lab/blokady"
+ls kopie | wc -l
+#EX
+P: Zapisz szablon skrypt-admin.sh z teorii (tryb ścisły, uzycie, loguj z logger i kopią na terminal, zakoncz, uruchom, getopts -n/-h, blokada flock w katalogu ${KATALOG_BLOKAD:-/run/lock}, main). Sprawdź go bash -n i ShellCheckiem.
+H: W main dodaj sleep "${CZEKAJ:-0}" — przyda się do testu blokady.
+S:
+cat > skrypt-admin.sh <<'KONIEC'
+#!/bin/bash
+# skrypt-admin.sh - szablon. Uzycie: skrypt-admin.sh [-n] [-h]
+set -euo pipefail
+readonly NAZWA=${0##*/}
+SYMULACJA=0
+
+uzycie() { echo "Uzycie: $NAZWA [-n] [-h]   -n symulacja, -h pomoc"; }
+loguj()  {
+    local poziom=$1; shift
+    logger -t "$NAZWA" -p "user.$poziom" -- "$*" 2>/dev/null || true
+    [[ -t 2 ]] && echo "$NAZWA: [$poziom] $*" >&2
+    return 0
+}
+zakoncz() { loguj err "$2"; exit "$1"; }
+uruchom() { if (( SYMULACJA )); then echo "[symulacja] $*"; else "$@"; fi; }
+
+while getopts ":nh" opcja; do
+    case $opcja in
+        n) SYMULACJA=1 ;;
+        h) uzycie; exit 0 ;;
+        *) uzycie >&2; exit 2 ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+exec 9> "${KATALOG_BLOKAD:-/run/lock}/$NAZWA.lock"
+flock -n 9 || { loguj notice "inny egzemplarz juz dziala"; exit 0; }
+
+main() {
+    loguj info "start"
+    sleep "${CZEKAJ:-0}"
+    loguj info "koniec"
+}
+main "$@"
+KONIEC
+chmod +x skrypt-admin.sh
+bash -n skrypt-admin.sh && echo "skladnia OK"
+shellcheck skrypt-admin.sh && echo "brak uwag"
+#EX
+P: Uruchom szablon w terminalu, z opcją -h oraz z nieznaną opcją -x. Wypisz kody.
+H: Błąd użycia to kod 2.
+S:
+./skrypt-admin.sh; echo "kod: $?"
+./skrypt-admin.sh -h; echo "kod: $?"
+./skrypt-admin.sh -x; echo "kod: $?"
+#EX
+P: Sprawdź warunek [[ -t 2 ]] w funkcji loguj: uruchom szablon z stderr przekierowanym do pliku i policz bajty w pliku.
+H: Gdy stderr nie jest terminalem, kopia komunikatów się nie pojawia (zostaje dziennik).
+S:
+./skrypt-admin.sh 2> stderr.txt; echo "bajtow w stderr.txt: $(wc -c < stderr.txt)"
+#EX
+P: Sprawdź blokadę: uruchom szablon w tle z CZEKAJ=2, a po pół sekundzie drugą kopię. Wypisz kod drugiej kopii.
+H: Druga kopia kończy się kodem 0 z komunikatem notice.
+S:
+CZEKAJ=2 ./skrypt-admin.sh 2> /dev/null &
+sleep 0.5
+./skrypt-admin.sh; echo "kod drugiej kopii: $?"
+wait
+ls blokady
+#EX
+P: Pokaż działanie funkcji uruchom w trybie symulacji i bez niego na przykładzie touch.
+H: W trybie symulacji polecenie jest tylko wypisywane.
+S:
+bash -c 'SYMULACJA=1; uruchom() { if (( SYMULACJA )); then echo "[symulacja] $*"; else "$@"; fi; }; uruchom touch proba.txt'
+ls proba.txt 2>&1
+bash -c 'SYMULACJA=0; uruchom() { if (( SYMULACJA )); then echo "[symulacja] $*"; else "$@"; fi; }; uruchom touch proba.txt'
+ls proba.txt
+#EX
+P: Wypisz zajętość systemów plików w formacie używanym przez kontrolę dysków (procent i punkt montowania, bez tmpfs, devtmpfs i squashfs).
+H: df --output=pcent,target -x TYP
+S:
+df --output=pcent,target -x tmpfs -x devtmpfs -x squashfs | tail -n +2
+#EX
+P: Zbuduj sprawdz-dyski.sh z szablonu: część przed main skopiuj poleceniem sed, a main z teorii dopisz. Sprawdź ShellCheckiem.
+H: sed '/^main()/,$d' usuwa main i wszystko po nim.
+S:
+sed '/^main()/,$d' skrypt-admin.sh | sed 's/^# skrypt-admin.sh - szablon/# sprawdz-dyski.sh - kontrola zajetosci/' > sprawdz-dyski.sh
+cat >> sprawdz-dyski.sh <<'KONIEC'
+main() {
+    local prog=${PROG:-85} problem=0 zajete punkt
+    while read -r zajete punkt; do
+        zajete=${zajete%\%}
+        if (( zajete >= prog )); then
+            loguj warning "$punkt zajety w ${zajete}% (prog ${prog}%)"
+            problem=1
+        fi
+    done < <(df --output=pcent,target -x tmpfs -x devtmpfs -x squashfs | tail -n +2)
+    return "$problem"
+}
+main "$@"
+KONIEC
+chmod +x sprawdz-dyski.sh
+shellcheck sprawdz-dyski.sh && echo "brak uwag"
+#EX
+P: Uruchom sprawdz-dyski.sh z progiem 100% i z progiem 0%. Wypisz kody.
+H: Próg 0% przekracza każdy system plików.
+S:
+PROG=100 ./sprawdz-dyski.sh; echo "kod przy 100%: $?"
+PROG=0 ./sprawdz-dyski.sh 2>&1 | head -2; echo "kod przy 0%: ${PIPESTATUS[0]}"
+#EX
+P: Zbuduj z szablonu rotuj-kopie.sh z main z teorii (kontrola katalogu, find -printf z NUL, sort, tail -n +N, uruchom rm, loguj). Sprawdź ShellCheckiem.
+H: Wzorzec plików: mysql-*.sql.gz.
+S:
+sed '/^main()/,$d' skrypt-admin.sh | sed 's/^# skrypt-admin.sh - szablon/# rotuj-kopie.sh - zostawia N najnowszych kopii/' > rotuj-kopie.sh
+cat >> rotuj-kopie.sh <<'KONIEC'
+main() {
+    local katalog=${1:?podaj katalog kopii} zostaw=${ZOSTAW:-7} plik
+    [[ -d $katalog && $katalog != / ]] || zakoncz 3 "zly katalog: $katalog"
+    while IFS= read -r -d '' plik; do
+        uruchom rm -f -- "$plik"
+        loguj info "usuwam ${plik##*/}"
+    done < <(find "$katalog" -maxdepth 1 -type f -name 'mysql-*.sql.gz' -printf '%T@ %p\0' \
+             | sort -z -n -r | tail -z -n +"$((zostaw + 1))" | cut -z -d' ' -f2-)
+}
+main "$@"
+KONIEC
+chmod +x rotuj-kopie.sh
+shellcheck rotuj-kopie.sh && echo "brak uwag"
+#EX
+P: Uruchom rotuj-kopie.sh w trybie symulacji dla katalogu kopie i sprawdź, że nic nie zostało usunięte.
+H: Domyślnie zostaje 7 najnowszych kopii.
+S:
+./rotuj-kopie.sh -n "$ad_lab/kopie" 2>&1 | sed "s|$ad_lab|LAB|"
+ls kopie | wc -l
+#EX
+P: Uruchom symulację z ZOSTAW=3 i policz, ile plików zostałoby usuniętych.
+H: Licz linie [symulacja].
+S:
+ZOSTAW=3 ./rotuj-kopie.sh -n "$ad_lab/kopie" 2>/dev/null | grep -c '^\[symulacja\]'
+#EX
+P: Wykonaj rotację naprawdę (domyślnie 7 kopii). Sprawdź kod, liczbę kopii i obecność pliku inny.txt.
+H: inny.txt nie pasuje do wzorca.
+S:
+./rotuj-kopie.sh "$ad_lab/kopie"; echo "kod: $?"
+ls kopie
+#EX
+P: Uruchom rotuj-kopie.sh dla nieistniejącego katalogu, dla katalogu / oraz bez argumentu. Wypisz kody.
+H: Zły katalog to błąd działania (kod 3).
+S:
+./rotuj-kopie.sh -n "$ad_lab/kopie-literowka"; echo "kod: $?"
+./rotuj-kopie.sh -n / ; echo "kod: $?"
+./rotuj-kopie.sh -n 2>&1 | sed 's/.*line [0-9]*: //'; echo "kod: ${PIPESTATUS[0]}"
+#EX
+P: Dodaj do katalogu kopie dwa stare pliki z nietypowymi nazwami (ze spacją i ze znakiem nowej linii) i wykonaj symulację z ZOSTAW=7.
+H: Rozdzielanie znakiem NUL obsługuje każdą nazwę pliku.
+S:
+touch -d '2026-09-01' "kopie/mysql-stara kopia.sql.gz" "kopie/mysql-dziwna"$'\n'"nazwa.sql.gz"
+./rotuj-kopie.sh -n "$ad_lab/kopie" 2>/dev/null | sed "s|$ad_lab|LAB|" | cat -A
+#EX
+P: Wykonaj rotację z nietypowymi nazwami naprawdę i sprawdź, że zostało 7 kopii i inny.txt.
+H: ls -b pokazuje znaki specjalne w nazwach.
+S:
+./rotuj-kopie.sh "$ad_lab/kopie" 2>/dev/null
+ls -b kopie
+#EX
+P: Odtwórz CODE_WRONG w laboratorium: katalog dom z 12 plikami, skrypt rotuj-stare.sh z literówką w ścieżce (cd bez sprawdzenia, ls -t | tail -n +8 | xargs rm -f). Uruchom go z katalogu dom.
+H: cd się nie uda, a usuwanie wykona się w bieżącym katalogu.
+S:
+mkdir dom
+for i in $(seq -w 1 12); do touch "dom/plik$i.txt"; done
+printf '#!/bin/bash\ncd "%s/kopie-literowka"\nls -t | tail -n +8 | xargs rm -f\n' "$ad_lab" > rotuj-stare.sh
+chmod +x rotuj-stare.sh
+( cd dom && ../rotuj-stare.sh 2>&1 | sed "s|$ad_lab|LAB|"; echo "kod: ${PIPESTATUS[0]}" )
+ls dom | wc -l
+#EX
+P: Przepuść rotuj-stare.sh przez ShellCheck oraz pokaż regułę SC2115 dla rm -rf "$KATALOG/"*.
+H: SC2115 ostrzega przed pustą zmienną w ścieżce usuwania.
+S:
+shellcheck rotuj-stare.sh | grep -oE 'SC[0-9]+ \([a-z]+\)'
+printf '#!/bin/bash\nKATALOG=$1\nrm -rf "$KATALOG/"*\n' > sc2115.sh
+shellcheck sc2115.sh | grep -oE 'SC[0-9]+ \([a-z]+\): .*'
+#EX
+P: Pokaż zabezpieczenie ${KATALOG:?}: polecenie echo rm -rf z pustą zmienną zostaje przerwane przed wykonaniem.
+H: W prawdziwym skrypcie zamiast echo byłoby rm.
+S:
+bash -c 'KATALOG=""; echo rm -rf "${KATALOG:?pusty KATALOG}/"*; echo "to sie nie wypisze"' 2>&1; echo "kod: $?"
+#EX
+P: Zbuduj z szablonu raport-kont.sh: konta z powłoką logowania (bez nologin i false), UID 0 lub od 1000, z informacją o członkostwie w grupie sudo. Uruchom go.
+H: IFS=: read -r login _ uid _ _ _ powloka < <(getent passwd)
+S:
+sed '/^main()/,$d' skrypt-admin.sh | sed 's/^# skrypt-admin.sh - szablon/# raport-kont.sh - konta z powloka logowania/' > raport-kont.sh
+cat >> raport-kont.sh <<'KONIEC'
+main() {
+    local login uid powloka w_sudo
+    printf '%-12s %6s %-14s %s\n' LOGIN UID POWLOKA SUDO
+    while IFS=: read -r login _ uid _ _ _ powloka; do
+        [[ $powloka == */nologin || $powloka == */false ]] && continue
+        (( uid == 0 || uid >= 1000 )) || continue
+        w_sudo=nie; id -nG "$login" | grep -qw sudo && w_sudo=tak
+        printf '%-12s %6s %-14s %s\n' "$login" "$uid" "$powloka" "$w_sudo"
+    done < <(getent passwd)
+}
+main "$@"
+KONIEC
+chmod +x raport-kont.sh
+shellcheck raport-kont.sh && echo "brak uwag"
+./raport-kont.sh
+#EX
+P: Sprawdź konta bez hasła oraz liczbę kont zablokowanych (hasło zaczynające się od ! lub *) w /etc/shadow.
+H: Odczyt /etc/shadow wymaga sudo.
+S:
+sudo awk -F: '$2 == "" { print "BEZ HASLA: " $1 }' /etc/shadow
+sudo awk -F: '$2 ~ /^[!*]/ { n++ } END { print "zablokowanych lub bez hasla logowania: " n }' /etc/shadow
+#EX
+P: Wygeneruj certyfikat testowy ważny 20 dni i oblicz, za ile pełnych dni wygasa. Wypisz ostrzeżenie przy progu 30 dni.
+H: openssl x509 -enddate -noout i różnica czasów uniksowych.
+S:
+openssl req -x509 -newkey rsa:2048 -nodes -keyout klucz.pem -out cert.pem -days 20 -subj /CN=sklep.test 2>/dev/null
+koniec=$(openssl x509 -enddate -noout -in cert.pem | cut -d= -f2)
+dni=$(( ($(date -d "$koniec" +%s) - $(date +%s)) / 86400 ))
+echo "wygasa: $koniec"
+(( dni < 30 )) && echo "UWAGA: certyfikat wygasa za $dni dni"
+#EX
+P: Wczytaj próg z pliku konfiguracyjnego tylko wtedy, gdy należy do Ciebie i nie jest zapisywalny dla grupy ani innych. Sprawdź oba przypadki.
+H: [[ -O plik ]] i find plik -perm /022.
+S:
+echo 'PROG=70' > sprawdz-dyski.conf; chmod 644 sprawdz-dyski.conf
+wczytaj() { local k=$1; if [[ -O $k && -z $(find "$k" -perm /022) ]]; then source "$k"; echo "wczytano $k"; else echo "odrzucono $k (wlasciciel lub prawa)"; fi; }
+( wczytaj sprawdz-dyski.conf; echo "prog: ${PROG:=85}" )
+chmod 666 sprawdz-dyski.conf
+( wczytaj sprawdz-dyski.conf; echo "prog: ${PROG:=85}" )
+#EX
+P: Pokaż różnicę między ${PROG:-85} a ${PROG:=85} dla nieustawionej zmiennej.
+H: := także przypisuje wartość zmiennej.
+S:
+bash -c 'echo "${PROG:-85}"; echo "po :- PROG=[${PROG-nieustawiona}]"; : "${PROG:=85}"; echo "po := PROG=[$PROG]"'
+#EX
+P: Zbuduj prosty „monitoring”: uruchom sprawdz-dyski.sh dla progów 0 i 100 i zamień kod wyjścia na stan OK/PROBLEM/BLAD.
+H: case $? in 0) ... 1) ... *) ...
+S:
+for p in 0 100; do
+    PROG=$p ./sprawdz-dyski.sh 2>/dev/null
+    case $? in 0) stan=OK ;; 1) stan=PROBLEM ;; *) stan=BLAD ;; esac
+    echo "prog $p%: $stan"
+done
+#EX
+P: Pokaż alternatywę dla rotacji według liczby: znajdź kopie starsze niż 15 dni (bez usuwania).
+H: find -mtime +15 -print
+S:
+find kopie -maxdepth 1 -name 'mysql-*.sql.gz' -mtime +15 -printf '%TY-%Tm-%Td %f\n' | sort
+#EX
+P: Zapisz w laboratorium pliki jednostek systemd dla sprawdz-dyski: usługę oneshot i timer codziennie o 04:30 z Persistent=true i RandomizedDelaySec=10min. Wypisz kluczowe linie.
+H: Pliki trafiłyby do /etc/systemd/system; tu tylko je przygotowujesz.
+S:
+printf '[Unit]\nDescription=Kontrola zajetosci dyskow\n\n[Service]\nType=oneshot\nEnvironment=PROG=85\nExecStart=/usr/local/bin/sprawdz-dyski.sh\n' > sprawdz-dyski.service
+printf '[Unit]\nDescription=Codzienna kontrola dyskow\n\n[Timer]\nOnCalendar=*-*-* 04:30\nPersistent=true\nRandomizedDelaySec=10min\n\n[Install]\nWantedBy=timers.target\n' > sprawdz-dyski.timer
+grep -hE 'Type|ExecStart|OnCalendar|Persistent|Randomized' sprawdz-dyski.service sprawdz-dyski.timer
+#EX
+P: Sprawdź, kiedy wypadnie najbliższe uruchomienie dla OnCalendar=*-*-* 04:30, oraz odczytaj wpisy skryptu sprawdz-dyski.sh z dziennika systemowego z dzisiaj.
+H: systemd-analyze calendar i journalctl -t NAZWA.
+S:
+systemd-analyze calendar '*-*-* 04:30' | grep -E 'Normalized|Next'
+PROG=0 ./sprawdz-dyski.sh 2>/dev/null
+journalctl -t sprawdz-dyski.sh --since today -o cat | tail -3
+#EX
+P: Umieść skrypty laboratorium w repozytorium Git (lokalna konfiguracja autora) i wypisz listę zatwierdzonych plików.
+H: git -C KATALOG pozwala nie zmieniać katalogu.
+S:
+mkdir repo && cp skrypt-admin.sh sprawdz-dyski.sh rotuj-kopie.sh raport-kont.sh sprawdz-dyski.service sprawdz-dyski.timer repo/
+git -C repo init -q
+git -C repo add .
+git -C repo -c user.name=anna -c user.email=anna@lubuntu-nauka commit -q -m "Skrypty administracyjne i jednostki"
+git -C repo ls-files
+#EX
+P: Posprzątaj: wróć do katalogu domowego, usuń zmienną KATALOG_BLOKAD i laboratorium po sprawdzeniu prefiksu.
+H: Repozytorium, certyfikat i kopie usuniesz razem z laboratorium.
+S:
+cd ~
+unset KATALOG_BLOKAD
+case "$ad_lab" in /tmp/javaquest-admin.*) ;; *) exit 1;; esac
+rm -rf -- "$ad_lab"
+unset ad_lab
+echo "posprzatane"
+#Q
+Q: Jakie elementy ma szkielet skryptu administracyjnego z lekcji?
++ Tryb ścisły, uzycie, loguj, zakoncz, uruchom, getopts, blokada flock, main
+- Tylko shebang i main
+- set -x i echo
+- Tylko funkcje bez opcji
+E: Każdy nowy skrypt zaczyna się od tego szablonu.
+#Q
+Q: Co oznacza kod wyjścia 1 w konwencji skryptów z lekcji?
++ Wykryto problem (np. przekroczony próg)
+- Wszystko w porządku
+- Błąd użycia
+- Błąd działania
+E: 0 — OK, 2 — złe użycie, 3 — błąd działania.
+#Q
+Q: Co oznacza kod wyjścia 2 w konwencji skryptów z lekcji?
++ Błąd użycia, np. nieznana opcja
+- Wykryto problem
+- Wszystko w porządku
+- Brak uprawnień
+E: Szablon zwrócił 2 dla -x.
+#Q
+Q: Jaki kod zwrócił rotuj-kopie.sh dla nieistniejącego katalogu?
++ 3 — błąd działania
+- 1
+- 2
+- 0
+E: zakoncz 3 "zly katalog".
+#Q
+Q: Co robi logger -t NAZWA -p user.warning "tekst"?
++ Zapisuje wpis w dzienniku systemowym z identyfikatorem NAZWA i priorytetem warning
+- Wypisuje tekst na ekran
+- Wysyła e-mail
+- Zapisuje do pliku NAZWA
+E: journalctl -t NAZWA odnajduje te wpisy.
+#Q
+Q: Jak odczytać wpisy skryptu z dziennika według identyfikatora?
++ journalctl -t NAZWA
+- journalctl -u NAZWA
+- grep NAZWA /var/log/auth.log
+- dmesg -t
+E: -u filtruje po jednostce systemd, -t po identyfikatorze sysloga.
+#Q
+Q: Do czego w funkcji loguj służy warunek [[ -t 2 ]]?
++ Wypisuje kopię komunikatu na stderr tylko wtedy, gdy stderr jest terminalem
+- Sprawdza, czy plik istnieje
+- Sprawdza, czy skrypt działa 2 sekundy
+- Sprawdza drugi argument
+E: Przy uruchomieniu z timera komunikaty trafiają tylko do dziennika.
+#Q
+Q: Ile bajtów zawierał stderr.txt po uruchomieniu szablonu z 2> stderr.txt?
++ 0
+- 30
+- 60
+- 120
+E: stderr nie był terminalem.
+#Q
+Q: Dlaczego loguj kończy się return 0?
++ By funkcja nie zwracała kodu 1 z warunku [[ -t 2 ]] i nie przerwała skryptu z set -e
+- By zakończyć skrypt
+- By wyczyścić dziennik
+- Bez powodu
+E: Ostatni && przy fałszywym warunku dałby kod 1.
+#Q
+Q: Po co w laboratoryjnej wersji szablonu dopisano logger ... 2>/dev/null || true?
++ By brak usługi dziennika (np. w kontenerze) nie przerwał skryptu
+- By wyłączyć logowanie
+- By przyspieszyć
+- By logować podwójnie
+E: Na zwykłym Ubuntu logger działa bez błędu.
+#Q
+Q: Co robi funkcja uruchom w trybie symulacji?
++ Wypisuje [symulacja] i polecenie zamiast je wykonać
+- Wykonuje polecenie dwa razy
+- Pomija polecenie bez śladu
+- Kończy skrypt
+E: Poza symulacją wykonuje "$@".
+#Q
+Q: Dlaczego w uruchom polecenie wykonuje się jako "$@"?
++ Zachowuje każdy argument osobno, także ze spacjami
+- By uruchomić w tle
+- By połączyć argumenty
+- By użyć eval
+E: Nazwy plików ze spacjami pozostają całe.
+#Q
+Q: Co wypisała druga kopia szablonu uruchomiona w czasie działania pierwszej?
++ [notice] inny egzemplarz juz dziala i kod 0
+- Błąd i kod 1
+- start i koniec
+- Nic i kod 2
+E: Druga kopia nie jest błędem — praca już trwa.
+#Q
+Q: Gdzie w prawdziwym systemie szablon trzyma plik blokady?
++ /run/lock/NAZWA.lock
+- /etc/NAZWA.lock
+- /home/NAZWA.lock
+- /var/log/NAZWA.lock
+E: W laboratorium użyto katalogu z KATALOG_BLOKAD.
+#Q
+Q: Co wypisał szablon uruchomiony w terminalu bez opcji?
++ skrypt-admin.sh: [info] start i [info] koniec, kod 0
+- Uzycie
+- Nic
+- Błąd
+E: Kopie komunikatów z dziennika.
+#Q
+Q: Jaki kod zwrócił szablon z opcją -h?
++ 0
+- 2
+- 1
+- 3
+E: Pomoc na życzenie to nie błąd.
+#Q
+Q: Jakie kolumny daje df --output=pcent,target?
++ Procent zajętości i punkt montowania
+- Rozmiar i nazwę urządzenia
+- I-węzły
+- Typ systemu plików
+E: tail -n +2 usuwa nagłówek.
+#Q
+Q: Po co w kontroli dysków -x tmpfs -x devtmpfs -x squashfs?
++ By pominąć systemy plików w pamięci i obrazy snapów, które nie są dyskami danych
+- By uwzględnić tylko tmpfs
+- By przyspieszyć df
+- By pokazać ukryte dyski
+E: squashfs snapów jest zawsze zajęty w 100%.
+#Q
+Q: Jak usunąć znak % z wartości 71% w bash?
++ ${zajete%\%}
+- ${zajete#%}
+- $(( zajete ))
+- ${zajete//[0-9]/}
+E: % jako wzorzec trzeba poprzedzić ukośnikiem.
+#Q
+Q: Jaki kod zwrócił sprawdz-dyski.sh z PROG=0?
++ 1 — każdy system plików przekroczył próg
+- 0
+- 2
+- 3
+E: Z PROG=100 zwrócił 0.
+#Q
+Q: Jak zbudowano sprawdz-dyski.sh z szablonu?
++ sed '/^main()/,$d' skopiował część przed main, a nowy main dopisano heredokiem
+- cp i ręczna edycja
+- source szablonu
+- git clone
+E: Wspólna część pozostała identyczna.
+#Q
+Q: Co robi find ... -printf '%T@ %p\0'?
++ Wypisuje czas modyfikacji (sekundy) i ścieżkę, zakończone znakiem NUL
+- Wypisuje nazwy plików z nową linią
+- Usuwa pliki
+- Wypisuje rozmiary
+E: Wynik sortuje sort -z -n -r.
+#Q
+Q: Co robi tail -z -n +8 w rotacji z ZOSTAW=7?
++ Pomija 7 najnowszych wpisów i zwraca resztę do usunięcia
+- Zwraca 8 ostatnich wpisów
+- Usuwa 8 plików
+- Zwraca 7 najnowszych
+E: -z działa na rekordach rozdzielonych NUL.
+#Q
+Q: Co robi cut -z -d' ' -f2-?
++ Usuwa czas z początku rekordu, zostawiając pełną ścieżkę (także ze spacjami)
+- Zostawia tylko czas
+- Usuwa ścieżkę
+- Dzieli plik
+E: -f2- bierze drugie pole i wszystkie dalsze.
+#Q
+Q: Które kopie usunęła rotacja z ZOSTAW=7 w laboratorium?
++ mysql-2026-09-21, 22 i 23 — trzy najstarsze
+- 28, 29 i 30
+- Wszystkie
+- Żadne
+E: Zostało siedem najnowszych i inny.txt.
+#Q
+Q: Ile plików zostałoby usuniętych przy ZOSTAW=3?
++ 7
+- 3
+- 10
+- 0
+E: Z dziesięciu kopii zostałyby trzy.
+#Q
+Q: Dlaczego plik inny.txt nie został usunięty?
++ Nie pasował do wzorca mysql-*.sql.gz
+- Był najnowszy
+- Był chroniony prawami
+- Był pusty
+E: Konkretny wzorzec chroni inne pliki.
+#Q
+Q: Co wypisał rotuj-kopie.sh -n dla katalogu /?
++ [err] zly katalog: / i kod 3
+- Listę plików do usunięcia
+- Nic
+- Kod 0
+E: Jawna kontrola $katalog != /.
+#Q
+Q: Co się stało po uruchomieniu rotuj-kopie.sh bez argumentu?
++ ${1:?podaj katalog kopii} przerwało skrypt z kodem 1
+- Użyto bieżącego katalogu
+- Usunięto pliki
+- Kod 3
+E: Kod 1 pochodzi z rozwinięcia :?, a nie z konwencji skryptu.
+#Q
+Q: Jak rotacja poradziła sobie z plikiem z nową linią w nazwie?
++ Poprawnie — rozdzielanie znakiem NUL zachowało nazwę w całości
+- Podzieliła ją na dwa pliki
+- Zgłosiła błąd
+- Pominęła plik
+E: cat -A pokazał nazwę rozbitą tylko w wyświetleniu.
+#Q
+Q: Jak ls pokazuje znaki specjalne w nazwach plików w postaci ucieczek?
++ ls -b
+- ls -a
+- ls -1
+- ls -R
+E: Np. \n zamiast znaku nowej linii.
+#Q
+Q: Co zrobił rotuj-stare.sh uruchomiony z katalogu dom przy literówce w ścieżce?
++ Usunął 5 z 12 plików w katalogu dom i zwrócił kod 0
+- Nic nie usunął
+- Zwrócił kod 1
+- Usunął katalog kopie
+E: cd się nie udało, a ls/rm działały w bieżącym katalogu.
+#Q
+Q: Jakie reguły zgłosił ShellCheck dla rotuj-stare.sh?
++ SC2164 i SC2012
+- SC2086
+- SC2115
+- Brak uwag
+E: SC2012 dotyczy parsowania wyniku ls.
+#Q
+Q: Czego dotyczy reguła SC2115?
++ rm -rf "$var/"* — przy pustej zmiennej rozwija się do /*
+- cd bez sprawdzenia
+- read bez -r
+- Nieużywanej zmiennej
+E: Zalecenie: "${var:?}".
+#Q
+Q: Czego dotyczy reguła SC2012?
++ Używania ls do pobierania nazw plików zamiast find lub globów
+- Braku cudzysłowów
+- Brak shebangu
+- Nieznanej opcji
+E: Wynik ls nie jest bezpieczny dla nietypowych nazw.
+#Q
+Q: Jaki kod zwrócił bash -c z ${KATALOG:?pusty KATALOG} dla pustej zmiennej?
++ 127
+- 1
+- 0
+- 3
+E: Nieinteraktywne bash -c kończy się 127 przy błędzie rozwinięcia, a skrypt — kodem 1.
+#Q
+Q: Co jest najgroźniejszym błędem skryptów porządkowych?
++ Usuwanie ze ścieżką ze zmiennej, która okazała się pusta lub błędna
+- Zbyt długie komunikaty
+- Brak kolorów
+- Zbyt częste logowanie
+E: rm -rf "$KATALOG/"* przy pustym KATALOG to rm -rf /*.
+#Q
+Q: Jakie zabezpieczenia stosuje się przy usuwaniu w skryptach?
++ set -u, ${X:?}, [[ -d $X && $X != / ]], konkretny wzorzec find i tryb -n
+- Tylko sudo
+- Tylko set -x
+- Tylko rm -i
+E: Kilka warstw zabezpieczeń.
+#Q
+Q: Które konta pokazał raport-kont.sh w kontenerze testowym?
++ root, ubuntu i anna z powłoką /bin/bash
+- Wszystkie konta systemowe
+- Tylko anna
+- Żadne
+E: Konta z nologin i UID poniżej 1000 (poza root) pominięto.
+#Q
+Q: Jak raport-kont.sh sprawdza członkostwo w grupie sudo?
++ id -nG "$login" | grep -qw sudo
+- grep sudo /etc/passwd
+- sudo -l
+- getent shadow
+E: -w dopasowuje całe słowo.
+#Q
+Q: Dlaczego w raport-kont.sh szóste pole getent passwd wczytano do zmiennej _?
++ Katalog domowy nie był używany, a ShellCheck zgłaszał SC2034 dla zmiennej dom
+- Bo pole jest puste
+- Bo _ jest wymagane przez read
+- Bez powodu
+E: _ to umowna nazwa ignorowanej wartości.
+#Q
+Q: Co oznacza ! lub * na początku pola hasła w /etc/shadow?
++ Konto bez możliwości logowania hasłem (zablokowane lub bez hasła)
+- Puste hasło
+- Hasło administratora
+- Hasło wygasłe
+E: Konta systemowe zwykle mają * lub !.
+#Q
+Q: Jak znaleźć konta z pustym hasłem?
++ sudo awk -F: '$2 == "" { print $1 }' /etc/shadow
+- grep '' /etc/passwd
+- passwd -S -a
+- cat /etc/shadow | wc -l
+E: Puste hasło to poważny problem bezpieczeństwa.
+#Q
+Q: Jak odczytać datę wygaśnięcia certyfikatu?
++ openssl x509 -enddate -noout -in cert.pem
+- openssl req -days
+- cat cert.pem
+- file cert.pem
+E: Wynik ma postać notAfter=...
+#Q
+Q: Jak obliczono liczbę dni do wygaśnięcia certyfikatu?
++ Różnica date -d "$koniec" +%s i date +%s podzielona przez 86400
+- openssl -days
+- date -d +30
+- awk na pliku cert.pem
+E: Wynik dla certyfikatu na 20 dni to 19 lub 20, zależnie od sekund.
+#Q
+Q: Co wypisało sprawdzenie certyfikatu ważnego 20 dni przy progu 30?
++ UWAGA: certyfikat wygasa za około 20 dni
+- Brak ostrzeżenia
+- Błąd openssl
+- Certyfikat wygasł
+E: 20 < 30, więc ostrzeżenie się pojawiło.
+#Q
+Q: Kiedy wczytano sprawdz-dyski.conf przez source w ćwiczeniu?
++ Gdy należał do anny i nie był zapisywalny dla grupy ani innych (644)
+- Zawsze
+- Gdy miał prawa 666
+- Nigdy
+E: Przy 666 plik odrzucono i użyto progu domyślnego 85.
+#Q
+Q: Co sprawdza [[ -O plik ]]?
++ Czy plik należy do bieżącego użytkownika
+- Czy plik jest otwarty
+- Czy plik jest pusty
+- Czy plik jest wykonywalny
+E: Dla skryptów roota sprawdza się właściciela root.
+#Q
+Q: Co znajduje find plik -perm /022?
++ Plik zapisywalny dla grupy lub innych
+- Plik tylko do odczytu
+- Plik wykonywalny
+- Plik bez właściciela
+E: / oznacza „dowolny z bitów”.
+#Q
+Q: Czym różni się ${PROG:-85} od ${PROG:=85}?
++ := dodatkowo przypisuje 85 do PROG, :- tylko zwraca wartość
+- Nie ma różnicy
+- :- przypisuje, := nie
+- := działa tylko dla liczb
+E: W ćwiczeniu po :- PROG pozostała nieustawiona.
+#Q
+Q: Do czego służy : "${PROG:=85}"?
++ Do ustawienia wartości domyślnej bez wykonywania innego polecenia
+- Do komentarza
+- Do wypisania PROG
+- Do usunięcia PROG
+E: : to polecenie puste, które przyjmuje argumenty.
+#Q
+Q: Jak monitoring może wykorzystać kody wyjścia skryptów?
++ Zamieniając 0 na OK, 1 na PROBLEM, inne na BLAD bez czytania tekstu
+- Czytając cały wynik
+- Tylko przez e-mail
+- Nie może
+E: Tak działa też OnFailure= w systemd.
+#Q
+Q: Co robi OnFailure= w jednostce systemd?
++ Uruchamia wskazaną jednostkę (np. powiadomienie), gdy usługa zakończy się niepowodzeniem
+- Restartuje system
+- Wyłącza usługę
+- Ignoruje błędy
+E: Niezerowy kod skryptu oznacza niepowodzenie.
+#Q
+Q: Jakiego typu usługi używa się do skryptów uruchamianych z timera?
++ Type=oneshot
+- Type=simple
+- Type=forking
+- Type=notify
+E: Usługa kończy się wraz ze skryptem.
+#Q
+Q: Co robi Persistent=true w timerze?
++ Uruchamia zaległe zadanie po starcie systemu, jeśli maszyna była wyłączona w zaplanowanym czasie
+- Uruchamia zadanie bez końca
+- Zapisuje wynik na dysk
+- Blokuje usługę
+E: Odpowiednik anacron.
+#Q
+Q: Co robi RandomizedDelaySec=10min?
++ Losowo opóźnia uruchomienie o maksymalnie 10 minut
+- Uruchamia co 10 minut
+- Ogranicza czas działania do 10 minut
+- Opóźnia start systemu
+E: Rozkłada obciążenie, gdy wiele serwerów ma ten sam harmonogram.
+#Q
+Q: Jak sprawdzić najbliższe uruchomienie dla wyrażenia OnCalendar?
++ systemd-analyze calendar 'WYRAŻENIE'
+- systemctl calendar
+- crontab -l
+- date -d
+E: Wypisuje postać znormalizowaną i następny termin.
+#Q
+Q: Jak sprawdzić listę zaplanowanych timerów?
++ systemctl list-timers
+- crontab -l
+- journalctl -t timer
+- at -l
+E: Pokazuje następne i ostatnie uruchomienie.
+#Q
+Q: Gdzie umieszcza się własne jednostki systemd?
++ W /etc/systemd/system
+- W /usr/lib/systemd/system
+- W /etc/init.d
+- W ~/bin
+E: /usr/lib jest dla jednostek z pakietów.
+#Q
+Q: Jakie gotowe narzędzie zastępuje własny skrypt rotacji logów?
++ logrotate
+- rsync
+- cron
+- tar
+E: Przetestowane na milionach maszyn.
+#Q
+Q: Jakie narzędzie czyści stare pliki tymczasowe według reguł w /etc/tmpfiles.d?
++ systemd-tmpfiles
+- logrotate
+- find
+- tmpwatch zawsze
+E: Reguły określają wiek plików.
+#Q
+Q: Jakie polecenie restic realizuje rotację kopii?
++ restic forget --keep-daily 7
+- restic rotate 7
+- restic prune -7
+- restic delete --old
+E: Wiele narzędzi kopii ma rotację wbudowaną.
+#Q
+Q: Kiedy własny skrypt ma sens zamiast gotowego narzędzia?
++ Gdy łączy kilka kroków specyficznych dla środowiska
+- Zawsze
+- Nigdy
+- Gdy gotowe narzędzie jest darmowe
+E: Wtedy szablon ułatwia zrozumienie skryptu następcy.
+#Q
+Q: Gdzie trzymać skrypty administracyjne i jednostki systemd?
++ W repozytorium Git, a nie tylko na serwerze
+- Tylko w /usr/local/bin
+- Na pendrive
+- W katalogu domowym roota
+E: Historia zmian i przegląd kodu.
+#Q
+Q: Jak w ćwiczeniu zatwierdzono pliki bez globalnej konfiguracji Gita?
++ git -c user.name=... -c user.email=... commit
+- git config --global
+- export GIT_USER
+- Nie dało się
+E: -c ustawia opcję tylko dla jednego wywołania.
+#Q
+Q: Co robi git -C repo polecenie?
++ Wykonuje polecenie Gita tak, jakby uruchomiono je w katalogu repo
+- Kopiuje repozytorium
+- Tworzy katalog
+- Czyści repozytorium
+E: Bez zmiany katalogu bieżącego powłoki.
+#Q
+Q: Jaki jest zalecany pierwszy krok uruchomienia nowego skryptu porządkowego na prawdziwych danych?
++ Uruchomienie z -n i porównanie wyniku z oczekiwaniami
+- Uruchomienie z timera
+- Uruchomienie jako root bez opcji
+- Usunięcie kopii zapasowej
+E: Potem ręczne uruchomienie bez -n i sprawdzenie dziennika.
+#Q
+Q: Jaka jest kolejność kontroli nowego skryptu według lekcji?
++ bash -n, shellcheck, uruchomienie z -n, uruchomienie bez -n, dziennik i kod, timer
+- Timer, potem test
+- shellcheck po wdrożeniu
+- Tylko bash -n
+E: Siedem kroków listy.
+#Q
+Q: Czym różni się find -mtime +15 od rotacji według liczby kopii?
++ Usuwa według wieku, niezależnie od liczby kopii
+- Niczym
+- Zawsze zostawia 15 kopii
+- Usuwa najnowsze
+E: Przy przerwie w kopiach rotacja według wieku może usunąć wszystko.
+#Q
+Q: Jakie ryzyko ma rotacja tylko według wieku (find -mtime +N -delete)?
++ Gdy nowe kopie przestaną powstawać, z czasem usunie wszystkie stare
+- Nie usunie nic
+- Usunie najnowsze
+- Działa tylko w cronie
+E: Rotacja według liczby zawsze zostawia N kopii.
+#Q
+Q: Co oznacza %T@ w find -printf?
++ Czas modyfikacji w sekundach od epoki (z częścią ułamkową)
+- Rozmiar pliku
+- Właściciela
+- Ścieżkę
+E: Dobry klucz do sortowania numerycznego.
+#Q
+Q: Co robi sort -z -n -r?
++ Sortuje rekordy rozdzielone NUL numerycznie malejąco
+- Sortuje alfabetycznie
+- Usuwa duplikaty
+- Odwraca plik
+E: Najnowsze pliki na początku.
+#Q
+Q: Dlaczego rotuj-kopie.sh używa find zamiast ls -t?
++ find z -print0/-printf ...\0 bezpiecznie obsługuje każdą nazwę pliku
+- Bo ls nie sortuje
+- Bo find jest wbudowany w bash
+- Bez powodu
+E: ShellCheck ostrzega przed parsowaniem ls (SC2012).
+#Q
+Q: Co jest wynikiem uruchomienia rotuj-kopie.sh -n dla poprawnego katalogu?
++ Lista [symulacja] rm -f -- ... i brak zmian w katalogu
+- Usunięcie plików
+- Błąd
+- Kod 3
+E: Liczba plików pozostała 11.
+#Q
+Q: Jakie komunikaty dziennika zapisał rotuj-kopie.sh dla każdego pliku?
++ usuwam NAZWA_PLIKU z poziomem info
+- deleted
+- warning
+- Nic
+E: ${plik##*/} — sama nazwa bez ścieżki.
+#Q
+Q: Co jest główną funkcją readonly NAZWA=${0##*/} w szablonie?
++ Stała z nazwą skryptu używana w logach, blokadzie i komunikacie użycia
+- Zmienna z argumentem
+- Ścieżka do katalogu
+- Nazwa użytkownika
+E: readonly chroni przed przypadkową zmianą.
+#Q
+Q: Co jest zaletą wspólnego szablonu dla zespołu administratorów?
++ Każdy skrypt ma te same opcje, logowanie i kody — następca szybko go rozumie
+- Skrypty są krótsze
+- Nie trzeba testów
+- Działają szybciej
+E: Jak lista kontrolna pilota.
+#Q
+Q: Czym jest main "$@" na końcu szablonu?
++ Wywołaniem głównej funkcji z argumentami pozostałymi po getopts
+- Komentarzem
+- Definicją funkcji
+- Zakończeniem skryptu kodem 0
+E: Logika skryptu jest w jednym miejscu.
+#Q
+Q: Co jest przyczyną kodu 0 skryptu rotuj-stare.sh mimo błędu cd?
++ Brak trybu ścisłego — kod skryptu to kod ostatniego polecenia potoku
+- cd zwróciło 0
+- xargs zgłosił błąd
+- ls nie działał
+E: Monitoring uznałby przebieg za udany.
+#Q
+Q: Co jest najbezpieczniejszą reakcją rotuj-kopie.sh na literówkę w ścieżce?
++ Zakończenie z kodem 3 i wpisem w dzienniku bez usuwania czegokolwiek
+- Usunięcie plików w bieżącym katalogu
+- Utworzenie katalogu
+- Kod 0
+E: CODE_RIGHT w teorii.
+#Q
+Q: Jaki próg zajętości domyślnie stosuje sprawdz-dyski.sh?
++ 85%
+- 60%
+- 90%
+- 100%
+E: ${PROG:-85}.
+#Q
+Q: Jak w jednostce usługi przekazać próg do skryptu?
++ Environment=PROG=85 w sekcji [Service]
+- ExecStart z opcją -p
+- W sekcji [Timer]
+- Przez plik .bashrc
+E: Zmienna trafia do środowiska skryptu.
+#Q
+Q: Jaka sekcja timera zawiera OnCalendar?
++ [Timer]
+- [Service]
+- [Unit]
+- [Install]
+E: [Install] zawiera WantedBy=timers.target.
+#Q
+Q: Co trzeba włączyć, by timer działał po restarcie?
++ systemctl enable --now NAZWA.timer
+- systemctl enable NAZWA.service
+- systemctl start NAZWA.service
+- crontab -e
+E: Włącza się timer, a nie usługę.
+#Q
+Q: Jakie konta raport kont powinien szczególnie wyróżnić?
++ Konta z powłoką logowania, z sudo, bez hasła i dawno nieużywane
+- Tylko root
+- Konta systemowe z nologin
+- Konta z UID poniżej 100
+E: To typowe punkty audytu.
+#Q
+Q: Jak sprawdzić ostatnie logowania użytkowników?
++ lastlog lub last
+- whoami
+- id
+- groups
+E: last czyta /var/log/wtmp.
+#Q
+Q: Co wypisała pętla „monitoringu” dla progów 0 i 100?
++ prog 0%: PROBLEM i prog 100%: OK
+- OK i PROBLEM
+- BLAD i OK
+- PROBLEM i PROBLEM
+E: Kod 1 oznaczał przekroczony próg.
+#Q
+Q: Które pliki znalazły się w repozytorium Git w ćwiczeniu?
++ Cztery skrypty i dwa pliki jednostek (service i timer)
+- Tylko szablon
+- Cały katalog laboratorium z kopiami
+- Pliki .lock
+E: git ls-files wypisał sześć plików.
+#Q
+Q: Dlaczego zakoncz przyjmuje kod jako pierwszy argument?
++ By jednym wywołaniem zalogować błąd i zakończyć skrypt właściwym kodem
+- By wypisać kod
+- By zignorować błąd
+- Bez powodu
+E: zakoncz 3 "zly katalog: ...".
+#Q
+Q: Co jest wynikiem shellcheck dla szablonu skrypt-admin.sh?
++ Brak uwag
+- SC2086
+- SC2164
+- SC2034
+E: Szablon powinien być wzorcowo czysty.
+#Q
+Q: Jak w szablonie obsłużono nieznaną opcję getopts?
++ Gałąź *) wypisuje użycie na stderr i kończy kodem 2
+- Ignoruje ją
+- Kończy kodem 0
+- Pyta użytkownika
+E: Gałąź * łapie też ? z trybu cichego.
+#Q
+Q: Kiedy skrypt powinien zakończyć się kodem 0 mimo braku wykonania pracy?
++ Gdy inny egzemplarz już działa (blokada) — to nie jest awaria
+- Gdy katalog nie istnieje
+- Gdy opcja jest nieznana
+- Nigdy
+E: Monitoring nie powinien alarmować przy zwykłym nakładaniu się uruchomień.
+#Q
+Q: Co jest wynikiem uruchomienia skryptu w kontenerze bez dziennika systemowego, gdy logger nie ma gniazda /dev/log?
++ logger zgłasza błąd, dlatego wersja laboratoryjna ma 2>/dev/null || true
+- Wpis trafia do pliku
+- Skrypt działa szybciej
+- logger czeka bez końca
+E: Na zwykłym Ubuntu z systemd problem nie występuje.
+#Q
+Q: Jakiej funkcji systemu użyć, aby powiadomić administratora o nieudanym skrypcie z timera?
++ OnFailure= z jednostką wysyłającą powiadomienie
+- set -x
+- logger -p debug
+- RandomizedDelaySec
+E: Kod wyjścia różny od 0 uruchamia OnFailure.
+#Q
+Q: Co jest wynikiem polecenia journalctl -u NAZWA.service dla usługi oneshot?
++ Wyjście i komunikaty usługi z jej uruchomień
+- Lista timerów
+- Konfiguracja usługi
+- Nic, bo oneshot nie loguje
+E: -t filtruje po identyfikatorze z logger.
+#Q
+Q: Ile plików zawierał katalog kopie na początku laboratorium?
++ 11 — dziesięć kopii i inny.txt
+- 10
+- 7
+- 12
+E: Po rotacji zostało 8 (7 kopii i inny.txt).
+#Q
+Q: Jak w ćwiczeniu ustawiono czas modyfikacji kopii zgodny z datą w nazwie?
++ touch -d "2026-09-DD 03:00" plik
+- date -s
+- chmod
+- gzip -t
+E: Rotacja sortuje według czasu modyfikacji, nie nazwy.
+#Q
+Q: Co wypisał rotuj-kopie.sh dla pliku mysql-stara kopia.sql.gz w symulacji?
++ [symulacja] rm -f -- .../mysql-stara kopia.sql.gz jako jeden argument
+- Dwa polecenia rm
+- Błąd
+- Nic
+E: Nazwa ze spacją pozostała cała.
+#Q
+Q: Jaki był wynik raport-kont.sh w ShellChecku po zmianie zmiennej dom na _?
++ Brak uwag
+- SC2034
+- SC2086
+- SC2155
+E: Nieużywana zmienna zniknęła.
+#Q
+Q: Do czego w ćwiczeniu z blokadą służyła zmienna CZEKAJ?
++ Wydłużała działanie pierwszej kopii, by druga trafiła na zajętą blokadę
+- Ustawiała limit czasu flock
+- Opóźniała start timera
+- Wyłączała logowanie
+E: sleep "${CZEKAJ:-0}" w main szablonu.
