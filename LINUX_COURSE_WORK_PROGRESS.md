@@ -422,7 +422,7 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 ## Następny krok
 
-**Krok 3: od _lx_39_bezpieczenstwo/06_AppArmorBasics.json do końca rozdziału 46.** Poziomy 30/100 i 20/60 są już uzgodnione. Pracować bez pytań o zgodę, bez raportów między rozdziałami, lokalne commity po polsku, bez push i stopki współautorstwa. Lekcje 32/07–09 obejmują audyt własnych systemów zgodnie z istniejącą decyzją użytkownika.
+**Krok 3: od _lx_39_bezpieczenstwo/07_AuthLogsAndLoginAudit.json do końca rozdziału 46.** Poziomy 30/100 i 20/60 są już uzgodnione. Pracować bez pytań o zgodę, bez raportów między rozdziałami, lokalne commity po polsku, bez push i stopki współautorstwa. Lekcje 32/07–09 obejmują audyt własnych systemów zgodnie z istniejącą decyzją użytkownika.
 
 ## Kontynuacja praktyki — 2026-10-11
 
@@ -493,3 +493,4 @@ krok. Oddzielny od `WORK_PROGRESS.md` (Java) i `JS_COURSE_WORK_PROGRESS.md` (Jav
 
 - 2026-10-13: poprawka 39/05 ćwiczenia 24 i raportu 30: tymczasowe włączenie httpd_can_network_connect przywraca poprzedni stan przez trap EXIT w subshell, zamiast bezwarunkowo wyłączać zastany przełącznik. Test modelu Bash z interfejsami getsebool/setsebool/curl potwierdził cztery przypadki: początkowe on/off i sukces/błąd curl; zawsze przywrócono stan. Nie uruchamiano SELinux ani nie zmieniano przełączników hosta. Teoria i wszystkie 100 pytań zachowane, nadal 30/100. Audyt bez błędów, 372/437, kolejny brak _lx_39_bezpieczenstwo/06_AppArmorBasics.json.
 - LessonContentFilesTest po poprawce 39/05: 2 testy, 0 błędów. API zmienionych 39/04–05 nadal do sprawdzenia po uruchomieniu izolowanego backendu; bieżący brak Docker API nie blokuje pracy nad treścią i modelami.
+- 2026-10-13: 39/06 AppArmorBasics: 30/100, teoria zachowana, ABCD po 25. Ćwiczenia na srv-test: odczyty aa-status/JSON/etykiet, profil mysqld tylko do odczytu; własny skrypt /usr/local/bin/jq-raport.sh z profilem jq-raport (complain -> ALLOWED, aa-enforce -> DENIED dla /etc/shadow i /tmp), rozszerzenie local/jq-raport, apparmor_parser -QK, jednostka jq-raport.service z AppArmorProfile= i drop-in w /run, pełne sprzątanie (apparmor_parser -R, pliki, /srv/jq-aa). NIE wykonano na Ubuntu w tej sesji (brak Dockera/VM) — do sprawdzenia, szczególnie przejście profilu dla skryptu uruchamianego przez AppArmorProfile=. Audyt bez błędów, 373/437. LessonContentFilesTest OK.

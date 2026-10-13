@@ -1,0 +1,929 @@
+#EX
+P: Na `srv-test` (Ubuntu 24.04) sprawdź, czy moduł AppArmor jest włączony w jądrze, i wyświetl podsumowanie załadowanych profili.
+H: Parametr modułu w /sys mówi, czy AppArmor jest aktywny; aa-status wymaga sudo.
+S:
+cat /sys/module/apparmor/parameters/enabled
+sudo aa-status | head -4
+#EX
+P: Policz załadowane profile według trybu (enforce, complain i inne) na podstawie wyniku JSON z aa-status.
+H: aa-status --json zwraca słownik profiles: nazwa -> tryb.
+S:
+sudo aa-status --json | python3 -c 'import json,sys,collections; d=json.load(sys.stdin); print(collections.Counter(d["profiles"].values()))'
+#EX
+P: Wypisz procesy, które działają w jakimś profilu AppArmor (etykieta inna niż unconfined).
+H: ps -eo label pokazuje profil i tryb w nawiasie.
+S:
+ps -eo label,pid,comm | awk 'NR==1 || $1!="unconfined"'
+#EX
+P: Odczytaj etykietę AppArmor własnej powłoki z /proc.
+H: Plik attr/current procesu powłoki ($$).
+S:
+cat /proc/$$/attr/current; echo
+#EX
+P: Odczytaj w profilu mysqld z pakietu reguły katalogu danych i miejsce dołączania rozszerzeń lokalnych (tylko odczyt).
+H: grep -n z wyrażeniem dla /var/lib/mysql i include if exists.
+S:
+grep -nE '/var/lib/mysql|include if exists' /etc/apparmor.d/usr.sbin.mysqld
+#EX
+P: Sprawdź, z którego pakietu pochodzi plik profilu mysqld i czy istnieje plik rozszerzeń lokalnych.
+H: dpkg -S dla pliku z pakietu; plik local/ jest konfiguracją administratora.
+S:
+dpkg -S /etc/apparmor.d/usr.sbin.mysqld
+ls -l /etc/apparmor.d/local/usr.sbin.mysqld
+#EX
+P: Sprawdź ustawienie ograniczenia nieuprzywilejowanych przestrzeni nazw użytkownika przez AppArmor.
+H: Parametr sysctl kernel.apparmor_restrict_unprivileged_userns.
+S:
+sysctl kernel.apparmor_restrict_unprivileged_userns
+#EX
+P: Przygotuj własne laboratorium: katalogi /srv/jq-aa/dane, /srv/jq-aa/wyniki i /srv/jq-aa/archiwum oraz dwa pliki danych. Najpierw upewnij się, że /srv/jq-aa i /usr/local/bin/jq-raport.sh nie istnieją.
+H: Katalog i skrypt są tylko na potrzeby ćwiczeń; posprzątasz je na końcu.
+S:
+test ! -e /srv/jq-aa
+test ! -e /usr/local/bin/jq-raport.sh
+sudo mkdir -p /srv/jq-aa/dane /srv/jq-aa/wyniki /srv/jq-aa/archiwum
+printf 'zamowienie 1\nzamowienie 2\nzamowienie 3\n' | sudo tee /srv/jq-aa/dane/zamowienia.txt > /dev/null
+printf 'klient 1\nklient 2\n' | sudo tee /srv/jq-aa/dane/klienci.txt > /dev/null
+ls -lR /srv/jq-aa
+#EX
+P: Zapisz skrypt /usr/local/bin/jq-raport.sh: liczy linie plików z /srv/jq-aa/dane, opcjonalnie dodatkowego pliku (drugi argument), i zapisuje raport do pliku z pierwszego argumentu (domyślnie /srv/jq-aa/wyniki/raport.txt). Uruchom go bez profilu.
+H: Skrypt czyta, liczy i zapisuje; nie wypisuje treści danych.
+S:
+sudo tee /usr/local/bin/jq-raport.sh > /dev/null <<'EOF'
+#!/usr/bin/bash
+# Liczy linie plikow z /srv/jq-aa/dane i zapisuje raport
+set -eu
+wynik=${1:-/srv/jq-aa/wyniki/raport.txt}
+{
+  date '+%F %T'
+  wc -l /srv/jq-aa/dane/*.txt
+  if [ -n "${2:-}" ]; then wc -l "$2"; fi
+} > "$wynik"
+cat "$wynik"
+EOF
+sudo chmod 755 /usr/local/bin/jq-raport.sh
+sudo /usr/local/bin/jq-raport.sh
+#EX
+P: Pokaż, że bez profilu skrypt uruchomiony jako root może czytać dowolny plik: policz linie /etc/shadow jako dodatkowe wejście (bez wypisywania zawartości).
+H: Klasyczne prawa nie ograniczają roota; to punkt odniesienia przed profilem.
+S:
+sudo /usr/local/bin/jq-raport.sh /srv/jq-aa/wyniki/raport.txt /etc/shadow | tail -1
+#EX
+P: Zapisz profil /etc/apparmor.d/jq-raport w trybie complain: odczyt danych, zapis tylko w /srv/jq-aa/wyniki, uruchamianie bash, date, wc i cat w tym samym profilu oraz dołączanie rozszerzeń z local/jq-raport. Utwórz pusty plik rozszerzeń.
+H: Profil zaczyna się od abi i tunables; ix oznacza dziedziczenie profilu przez uruchamiany program.
+S:
+test ! -e /etc/apparmor.d/jq-raport
+sudo tee /etc/apparmor.d/jq-raport > /dev/null <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile jq-raport /usr/local/bin/jq-raport.sh flags=(complain) {
+  include <abstractions/base>
+  include <abstractions/bash>
+
+  /usr/local/bin/jq-raport.sh rix,
+  /usr/bin/{bash,date,wc,cat} ix,
+
+  /srv/jq-aa/dane/ r,
+  /srv/jq-aa/dane/** r,
+  /srv/jq-aa/wyniki/ r,
+  /srv/jq-aa/wyniki/** rw,
+
+  include if exists <local/jq-raport>
+}
+EOF
+sudo touch /etc/apparmor.d/local/jq-raport
+#EX
+P: Wczytaj nowy profil do jądra i sprawdź, w jakim trybie jest załadowany.
+H: apparmor_parser -r wczytuje lub zastępuje profil; aa-status pokaże go w sekcji complain.
+S:
+sudo apparmor_parser -r /etc/apparmor.d/jq-raport
+sudo aa-status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["profiles"].get("jq-raport"))'
+#EX
+P: W trybie complain uruchom skrypt z /etc/shadow jako dodatkowym wejściem. Następnie odczytaj z dziennika jądra ścieżki, które zostały zalogowane jako ALLOWED dla profilu jq-raport.
+H: complain nie blokuje, tylko loguje apparmor="ALLOWED" z polem name.
+S:
+sudo /usr/local/bin/jq-raport.sh /srv/jq-aa/wyniki/raport.txt /etc/shadow | tail -1
+sudo journalctl -k -g 'apparmor="ALLOWED".*profile="jq-raport"' --since '-5min' -o cat | grep -oE 'name="[^"]*"' | sort -u
+#EX
+P: Przełącz profil jq-raport w tryb enforce i potwierdź zmianę w pliku profilu oraz w aa-status.
+H: aa-enforce zmienia flagi w pliku i przeładowuje profil.
+S:
+sudo aa-enforce /etc/apparmor.d/jq-raport
+grep -n '^profile' /etc/apparmor.d/jq-raport
+sudo aa-status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["profiles"].get("jq-raport"))'
+#EX
+P: Uruchom skrypt w trybie enforce z domyślnymi argumentami i sprawdź, że raport powstał.
+H: Profil pozwala czytać dane i zapisywać w wyniki/.
+S:
+sudo /usr/local/bin/jq-raport.sh
+echo "kod=$?"
+#EX
+P: W trybie enforce spróbuj ponownie policzyć linie /etc/shadow przez skrypt i wypisz kod wyjścia.
+H: Profil nie wymienia /etc/shadow, więc odczyt jest blokowany mimo uprawnień roota.
+S:
+sudo /usr/local/bin/jq-raport.sh /srv/jq-aa/wyniki/raport.txt /etc/shadow
+echo "kod=$?"
+#EX
+P: Odczytaj z dziennika jądra ostatnią odmowę dla profilu jq-raport: operację, ścieżkę i maski.
+H: Wpis DENIED zawiera pola operation, name, requested_mask i denied_mask.
+S:
+sudo journalctl -k -g 'apparmor="DENIED".*profile="jq-raport"' -n 1 -o cat | grep -oE '(operation|profile|name|requested_mask|denied_mask)="[^"]*"'
+#EX
+P: Spróbuj zapisać raport do /tmp/jq-raport.txt (poza dozwolonym katalogiem) i sprawdź, że plik nie powstał.
+H: Utworzenie pliku poza regułami jest blokowane; w dzienniku pojawi się maska utworzenia.
+S:
+sudo /usr/local/bin/jq-raport.sh /tmp/jq-raport.txt
+echo "kod=$?"
+test ! -e /tmp/jq-raport.txt && echo "brak pliku w /tmp"
+#EX
+P: Spróbuj zapisać raport do /srv/jq-aa/archiwum/raport.txt, a następnie dodaj regułę dla katalogu archiwum w pliku rozszerzeń lokalnych (nie w profilu głównym), przeładuj profil i powtórz zapis.
+H: Plik local/jq-raport jest dołączany przez include if exists; po zmianie przeładuj profil główny.
+S:
+sudo /usr/local/bin/jq-raport.sh /srv/jq-aa/archiwum/raport.txt; echo "kod=$?"
+printf '/srv/jq-aa/archiwum/ r,\n/srv/jq-aa/archiwum/** rw,\n' | sudo tee -a /etc/apparmor.d/local/jq-raport
+sudo apparmor_parser -r /etc/apparmor.d/jq-raport
+sudo /usr/local/bin/jq-raport.sh /srv/jq-aa/archiwum/raport.txt > /dev/null && ls -l /srv/jq-aa/archiwum/raport.txt
+#EX
+P: Sprawdź składnię profilu bez ładowania go do jądra.
+H: apparmor_parser z opcją -Q (bez ładowania) i -K (bez pamięci podręcznej) tylko kompiluje profil.
+S:
+sudo apparmor_parser -QK /etc/apparmor.d/jq-raport && echo "skladnia OK"
+#EX
+P: Odczytaj (bez zmian) definicje aliasów ścieżek AppArmor i sprawdź, czy są w nich aktywne wpisy.
+H: Aktywne linie w tunables/alias zaczynają się od alias.
+S:
+grep -n '^ *alias' /etc/apparmor.d/tunables/alias || echo "brak aktywnych aliasow"
+#EX
+P: Utwórz jednostkę systemd jq-raport.service typu oneshot, która uruchamia skrypt z zapisem do /srv/jq-aa/wyniki/raport-usluga.txt w profilu jq-raport (AppArmorProfile=). Najpierw sprawdź, że jednostka nie istnieje.
+H: Po zapisaniu jednostki wykonaj daemon-reload.
+S:
+test ! -e /etc/systemd/system/jq-raport.service
+sudo tee /etc/systemd/system/jq-raport.service > /dev/null <<'EOF'
+[Unit]
+Description=Raport cwiczebny w profilu AppArmor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jq-raport.sh /srv/jq-aa/wyniki/raport-usluga.txt
+AppArmorProfile=jq-raport
+EOF
+sudo systemctl daemon-reload
+systemctl show -p AppArmorProfile jq-raport.service
+#EX
+P: Uruchom jednostkę jq-raport.service, sprawdź jej wynik i zawartość raportu.
+H: Result=success oznacza poprawne zakończenie usługi oneshot.
+S:
+sudo systemctl start jq-raport.service
+systemctl show -p Result -p ExecMainStatus jq-raport.service
+cat /srv/jq-aa/wyniki/raport-usluga.txt
+#EX
+P: Wyświetl dziennik jednostki jq-raport.service z ostatniego uruchomienia.
+H: journalctl -u z -n i bez stronicowania.
+S:
+journalctl -u jq-raport.service -n 10 --no-pager
+#EX
+P: Zmień tymczasowo ExecStart jednostki tak, by zapisywała do /tmp (drop-in w /run, zniknie po restarcie), uruchom ją i sprawdź, że profil zablokował zapis. Usuń drop-in.
+H: Drop-in w /run/systemd/system/JEDNOSTKA.d; przy oneshot ExecStart trzeba najpierw wyczyścić pustym wpisem.
+S:
+sudo mkdir -p /run/systemd/system/jq-raport.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/local/bin/jq-raport.sh /tmp/jq-raport-usluga.txt\n' | sudo tee /run/systemd/system/jq-raport.service.d/tmp.conf > /dev/null
+sudo systemctl daemon-reload
+sudo systemctl start jq-raport.service; echo "kod=$?"
+systemctl show -p Result jq-raport.service
+sudo rm -r -- /run/systemd/system/jq-raport.service.d
+sudo systemctl daemon-reload
+sudo systemctl reset-failed jq-raport.service
+#EX
+P: Sprawdź, czy w systemie nie został żaden profil w trybie complain (poza świadomie ustawionymi) — wypisz ich listę.
+H: Zostawiony complain to częsty błąd po diagnozie.
+S:
+sudo aa-status --json | python3 -c 'import json,sys; print([p for p,m in json.load(sys.stdin)["profiles"].items() if m=="complain"])'
+#EX
+P: Usuń jednostkę jq-raport.service i przeładuj konfigurację systemd.
+H: Jednostka oneshot nie działa w tle; wystarczy usunąć plik.
+S:
+sudo rm -- /etc/systemd/system/jq-raport.service
+sudo systemctl daemon-reload
+systemctl status jq-raport.service --no-pager 2>&1 | head -1
+#EX
+P: Usuń profil jq-raport z jądra, a potem pliki profilu i rozszerzeń lokalnych. Potwierdź, że aa-status go nie zna.
+H: apparmor_parser -R usuwa profil z jądra; samo skasowanie pliku tego nie robi.
+S:
+sudo apparmor_parser -R /etc/apparmor.d/jq-raport
+sudo rm -- /etc/apparmor.d/jq-raport /etc/apparmor.d/local/jq-raport
+sudo aa-status | grep -c jq-raport || true
+#EX
+P: Usuń skrypt i katalog ćwiczebny po sprawdzeniu dokładnej ścieżki; potwierdź sprzątnięcie.
+H: Sprawdź ścieżkę kanoniczną przed rm -rf.
+S:
+test "$(readlink -f /srv/jq-aa)" = /srv/jq-aa
+sudo rm -rf -- /srv/jq-aa
+sudo rm -- /usr/local/bin/jq-raport.sh
+test ! -e /srv/jq-aa && test ! -e /usr/local/bin/jq-raport.sh && echo "posprzatane"
+#EX
+P: Zapisz w katalogu domowym krótki raport zakresu ćwiczeń: co sprawdzono, a czego nie (profile MySQL i innych usług nie były zmieniane).
+H: Zwykły plik tekstowy; bez danych wrażliwych.
+S:
+printf "verified=own profile complain/enforce, local/ include, DENIED and ALLOWED log entries, AppArmorProfile in systemd unit, cleanup\nnot_changed=usr.sbin.mysqld and other package profiles, tunables/alias, userns restriction\n" > ~/apparmor-zakres.txt
+cat ~/apparmor-zakres.txt
+#Q
+Q: Jaki rodzaj kontroli dostępu realizuje AppArmor?
++ Obowiązkową kontrolę dostępu (MAC) opartą na profilach programów
+- Uznaniową kontrolę dostępu (DAC) opartą na właścicielu pliku
+- Szyfrowanie katalogów domowych
+- Filtrowanie pakietów sieciowych
+E: Profil określa, co program może zrobić, niezależnie od praw rwx i także dla roota.
+#Q
+Q: Czym podstawowo różni się AppArmor od SELinux?
++ AppArmor opisuje dostęp ścieżkami w profilach programów, SELinux etykietuje każdy obiekt
+- AppArmor działa tylko w trybie permissive
+- SELinux działa tylko w Ubuntu
+- AppArmor wymaga etykiet w atrybutach rozszerzonych
+E: To różnica modelu: ścieżki kontra typy i etykiety.
+#Q
+Q: W których dystrybucjach AppArmor jest domyślnym mechanizmem MAC?
++ Ubuntu, Debian i SUSE
+- RHEL, Rocky i Fedora
+- Tylko Arch Linux
+- Tylko Alpine
+E: Rodzina RHEL domyślnie używa SELinux.
+#Q
+Q: Czy na jednym systemie działają jednocześnie AppArmor i SELinux jako główny moduł MAC?
++ Nie, w praktyce działa jeden z nich
+- Tak, zawsze oba
+- Tak, ale tylko w Ubuntu
+- Tak, AppArmor dla plików, SELinux dla portów
+E: Dystrybucja wybiera jeden główny mechanizm; narzędzia administracji się różnią.
+#Q
+Q: Gdzie znajdują się profile AppArmor?
++ W /etc/apparmor.d/
+- W /etc/selinux/targeted/
+- W /var/lib/apparmor/rules.conf
+- W /proc/apparmor/profiles.d
+E: Pliki profili nazywa się zwykle od ścieżki programu, np. usr.sbin.mysqld.
+#Q
+Q: Jakie polecenie pokazuje załadowane profile i ograniczone procesy?
++ sudo aa-status
+- sudo getenforce
+- sudo sestatus
+- sudo apparmor_parser -l
+E: aa-status (apparmor_status) wypisuje liczby profili w trybach i listy procesów.
+#Q
+Q: Co oznacza tryb enforce profilu?
++ Reguły są egzekwowane, a naruszenia blokowane i logowane
+- Naruszenia są tylko logowane
+- Profil jest wyłączony
+- Program działa jako root
+E: W enforce program może zrobić tylko to, co profil wymienia.
+#Q
+Q: Co oznacza tryb complain profilu?
++ Naruszenia są tylko logowane jako ALLOWED, nie blokowane
+- Naruszenia są blokowane bez logowania
+- Program nie może się uruchomić
+- Profil wymaga hasła
+E: Complain służy do diagnozy i budowy profilu.
+#Q
+Q: Które polecenie przełącza profil w tryb complain?
++ sudo aa-complain PROFIL
+- sudo setenforce 0
+- sudo apparmor_parser -C PROFIL
+- sudo systemctl stop apparmor
+E: aa-complain z pakietu apparmor-utils zmienia flagi profilu i go przeładowuje.
+#Q
+Q: Które polecenie przywraca profil do trybu enforce?
++ sudo aa-enforce PROFIL
+- sudo setenforce 1
+- sudo aa-status --enforce
+- sudo apparmor_parser -E PROFIL
+E: Po diagnozie profil powinien wrócić do enforce.
+#Q
+Q: Z jakiego pakietu pochodzą narzędzia aa-complain, aa-enforce i aa-logprof?
++ apparmor-utils
+- apparmor-profiles-extra
+- policycoreutils
+- setools
+E: Pakiet apparmor dostarcza parser i usługę; narzędzia pomocnicze są w apparmor-utils.
+#Q
+Q: Jakie polecenie przeładowuje jeden profil po zmianie?
++ sudo apparmor_parser -r /etc/apparmor.d/PROFIL
+- sudo restorecon -r /etc/apparmor.d/PROFIL
+- sudo aa-status -r PROFIL
+- sudo systemctl restart PROFIL
+E: -r zastępuje profil w jądrze; systemctl reload apparmor przeładowuje wszystkie.
+#Q
+Q: Jak usunąć profil z jądra?
++ sudo apparmor_parser -R /etc/apparmor.d/PROFIL
+- sudo rm /etc/apparmor.d/PROFIL
+- sudo aa-complain PROFIL
+- sudo systemctl mask PROFIL
+E: Samo usunięcie pliku nie wyładowuje profilu z działającego jądra.
+#Q
+Q: Gdzie dopisywać własne reguły do profilu z pakietu, np. usr.sbin.mysqld?
++ W /etc/apparmor.d/local/usr.sbin.mysqld
+- Bezpośrednio w /etc/apparmor.d/usr.sbin.mysqld
+- W /usr/share/apparmor/extra-profiles
+- W /etc/mysql/my.cnf
+E: Plik local/ jest dołączany przez profil i nie jest nadpisywany przy aktualizacji pakietu.
+#Q
+Q: Co dzieje się z regułą dopisaną bezpośrednio do pliku profilu z pakietu przy aktualizacji?
++ Może zniknąć albo wywołać pytanie o konflikt pliku konfiguracyjnego
+- Zostaje zawsze bez zmian
+- Jest automatycznie przenoszona do local/
+- Jest konwertowana na alias
+E: To typowa przyczyna nagłej awarii usługi po nienadzorowanej aktualizacji.
+#Q
+Q: Jaka dyrektywa w profilu dołącza rozszerzenia lokalne?
++ include if exists <local/NAZWA_PROFILU>
+- import local NAZWA_PROFILU
+- #local NAZWA_PROFILU
+- source /etc/apparmor.d/local
+E: if exists sprawia, że brak pliku nie jest błędem.
+#Q
+Q: Do czego służy plik /etc/apparmor.d/tunables/alias?
++ Do aliasów ścieżek, gdy cały katalog przeniesiono w inne miejsce
+- Do nazw użytkowników
+- Do listy portów
+- Do haseł usług
+E: Alias przekierowuje reguły ze starej ścieżki na nową, np. /var/lib/mysql na /srv/mysql.
+#Q
+Q: Co oznacza reguła `/srv/mysql/** rwk,`?
++ Odczyt, zapis i blokady plików w całym drzewie /srv/mysql
+- Odczyt, zapis i wykonanie
+- Tylko odczyt katalogu /srv/mysql
+- Usunięcie katalogu
+E: k oznacza blokowanie plików, ** obejmuje wszystkie poziomy.
+#Q
+Q: Czym różni się `/srv/dane/*` od `/srv/dane/**` w regule AppArmor?
++ * obejmuje jeden poziom bez ukośnika, ** także podkatalogi
+- Nie ma różnicy
+- ** dotyczy tylko katalogów
+- * obejmuje podkatalogi, ** tylko pliki ukryte
+E: Do całego drzewa potrzebne jest **.
+#Q
+Q: Dlaczego obok `/srv/jq-aa/dane/** r,` dodaje się `/srv/jq-aa/dane/ r,`?
++ ** nie obejmuje samego katalogu, a listowanie katalogu wymaga reguły dla niego
+- Bo ** działa tylko dla zapisu
+- Bo profil wymaga dwóch reguł dla każdego pliku
+- Bo inaczej skrypt nie wystartuje
+E: Rozwinięcie wzorca * przez bash wymaga odczytu zawartości katalogu.
+#Q
+Q: Co oznacza uprawnienie `ix` przy programie w profilu?
++ Uruchomiony program dziedziczy bieżący profil
+- Program działa bez ograniczeń
+- Program dostaje własny profil
+- Program może tylko czytać pliki
+E: ix (inherit execute) utrzymuje ograniczenia w procesie potomnym; ux uruchamia bez profilu.
+#Q
+Q: Dlaczego `ux` w profilu jest ryzykowny?
++ Uruchamia program bez ograniczeń, co pozwala obejść profil
+- Blokuje uruchamianie
+- Wymusza tryb complain
+- Działa tylko dla roota
+E: Proces potomny bez profilu może zrobić to, czego profil rodzica zabrania.
+#Q
+Q: Co dają reguły `include <abstractions/base>` i `include <abstractions/bash>`?
++ Wspólne, typowe reguły (biblioteki, urządzenia, pliki powłoki) bez wypisywania ich ręcznie
+- Pełny dostęp do systemu
+- Wyłączenie profilu dla bash
+- Dostęp do sieci
+E: Abstrakcje to gotowe fragmenty utrzymywane przez dystrybucję.
+#Q
+Q: Jak w profilu zezwolić programowi na połączenia TCP po IPv4?
++ network inet stream,
+- port tcp any,
+- allow inet,
+- capability net_admin,
+E: Reguły network ograniczają rodzinę i typ gniazd; net_admin to szerokie uprawnienie administracyjne.
+#Q
+Q: Co oznacza reguła `capability dac_override,`?
++ Pozwala procesowi omijać sprawdzanie praw rwx (dla roota)
+- Wyłącza AppArmor dla procesu
+- Daje dostęp do sieci
+- Pozwala zmieniać profil
+E: Capability w profilu ograniczają, które uprawnienia roota proces może użyć.
+#Q
+Q: Gdzie w Ubuntu 24.04 szukać odmów AppArmor?
++ W dzienniku jądra, np. sudo journalctl -k -g 'apparmor="DENIED"'
+- W /var/log/apparmor/denied.log
+- W /etc/apparmor.d/log
+- Tylko w /var/log/nginx/error.log
+E: Wpisy trafiają do dziennika jądra, a przy auditd także do audit.log; kern.log przy rsyslog.
+#Q
+Q: Które pole wpisu odmowy AppArmor wskazuje ścieżkę pliku?
++ name
+- profile
+- operation
+- pid
+E: profile to nazwa profilu, operation to rodzaj operacji, name to obiekt.
+#Q
+Q: Co oznacza `denied_mask="c"` we wpisie odmowy?
++ Odmowę utworzenia pliku
+- Odmowę zamknięcia pliku
+- Odmowę kopiowania
+- Odmowę zmiany właściciela
+E: c to tworzenie; w regule pozwala na nie uprawnienie w.
+#Q
+Q: Jaką operację zwykle pokazuje wpis odmowy przy próbie utworzenia nowego pliku?
++ mknod
+- exec
+- open_read
+- connect
+E: Utworzenie pliku jest logowane jako operation="mknod" z maską c.
+#Q
+Q: Jakie słowo w dzienniku oznacza zdarzenie zalogowane w trybie complain?
++ apparmor="ALLOWED"
+- apparmor="DENIED"
+- apparmor="AUDIT"
+- apparmor="PERMISSIVE"
+E: W complain operacja przechodzi, ale jest zapisywana do analizy.
+#Q
+Q: Jaki błąd zobaczy program, któremu AppArmor odmówił dostępu do pliku?
++ Permission denied (EACCES, errno 13)
+- No such file or directory
+- Segmentation fault
+- Connection refused
+E: Program nie wie, że to AppArmor; widzi zwykły błąd uprawnień.
+#Q
+Q: Proces działa jako root, plik ma prawa 600 root:root, a mimo to odczyt kończy się Permission denied. Co sprawdzić w Ubuntu?
++ Odmowy AppArmor w dzienniku jądra dla profilu procesu
+- Przełączniki SELinux
+- Konfigurację DNS
+- Limit otwartych plików
+E: W Ubuntu MAC to AppArmor; w Rocky analogicznie SELinux.
+#Q
+Q: Jak sprawdzić profil i tryb działającego procesu?
++ ps -eo label,comm lub cat /proc/PID/attr/current
+- ls -Z /proc/PID
+- getsebool PID
+- id -Z PID
+E: Etykieta ma postać ścieżki profilu z trybem w nawiasie, np. /usr/sbin/mysqld (enforce).
+#Q
+Q: Jaką etykietę ma proces bez profilu AppArmor?
++ unconfined
+- none
+- default_t
+- complain
+E: Procesy bez profilu nie są ograniczane przez AppArmor.
+#Q
+Q: Jak AppArmor przypisuje profil do programu?
++ Po ścieżce pliku wykonywalnego podanej w nagłówku profilu
+- Po etykiecie pliku w atrybutach rozszerzonych
+- Po nazwie użytkownika
+- Po numerze portu
+E: Np. profile jq-raport /usr/local/bin/jq-raport.sh dotyczy tej ścieżki.
+#Q
+Q: Jaka jest słabość ochrony opartej na ścieżkach?
++ Ten sam plik dostępny inną ścieżką (dowiązanie twarde, montowanie) może ominąć regułę
+- Nie działa dla roota
+- Nie obsługuje katalogów
+- Wymaga restartu przy każdej zmianie
+E: SELinux, etykietując obiekty, jest na takie triki odporniejszy.
+#Q
+Q: Jaka jest zaleta AppArmor w porównaniu z SELinux?
++ Czytelne profile oparte na ścieżkach, łatwiejsze do napisania
+- Etykietowanie wszystkich obiektów
+- Obejmuje każdy proces bez profilu
+- Nie wymaga jądra
+E: Prostota jest główną zaletą; ochrona obejmuje jednak tylko programy z profilami.
+#Q
+Q: Co trzeba zrobić po dopisaniu reguły do pliku local/PROFIL?
++ Przeładować profil główny poleceniem apparmor_parser -r
+- Zrestartować komputer
+- Uruchomić restorecon
+- Nic, zmiana działa od razu
+E: Plik local jest częścią profilu głównego, więc przeładowuje się profil, który go dołącza.
+#Q
+Q: Przy wielu odmowach naraz, jak sprawnie zbudować brakujące reguły?
++ Chwilowo aa-complain, wykonać działania, aa-logprof do przejrzenia wpisów, potem aa-enforce
+- Wyłączyć usługę apparmor na stałe
+- Użyć aa-disable
+- Usunąć profil
+E: aa-logprof interaktywnie proponuje reguły na podstawie dziennika; każdą trzeba ocenić.
+#Q
+Q: Co jest typowym błędem po diagnozie w trybie complain?
++ Pozostawienie profilu w complain na długo, przez co ochrona nie działa
+- Przełączenie z powrotem w enforce
+- Przeładowanie profilu
+- Odczyt dziennika
+E: aa-status pokazuje profil jako załadowany, co daje złudne poczucie ochrony.
+#Q
+Q: Jak szybko sprawdzić, czy jakieś profile zostały w trybie complain?
++ sudo aa-status i sekcja profiles are in complain mode (lub JSON)
+- getenforce
+- ls /etc/apparmor.d/disable
+- systemctl is-enabled apparmor
+E: Warto to robić po każdej diagnozie.
+#Q
+Q: Do czego służy katalog /etc/apparmor.d/disable/?
++ Dowiązania w nim wyłączają ładowanie wskazanych profili przy starcie
+- Zawiera profile w trybie complain
+- Zawiera kopie zapasowe profili
+- Zawiera reguły lokalne
+E: aa-disable tworzy tam dowiązanie i wyładowuje profil; to usuwa ochronę programu.
+#Q
+Q: Dlaczego `systemctl disable apparmor` nie jest właściwą odpowiedzią na odmowę?
++ Usuwa ochronę wszystkich programów z profilami, a nie naprawia jednej reguły
+- Bo apparmor nie jest usługą
+- Bo wymaga restartu sieci
+- Bo zmienia profile na complain
+E: Właściwa poprawka to brakująca reguła w local/ lub alias.
+#Q
+Q: Jaką dyrektywą w jednostce systemd uruchamia się usługę w określonym profilu?
++ AppArmorProfile=NAZWA
+- SELinuxContext=NAZWA
+- Profile=NAZWA
+- ConfinedBy=NAZWA
+E: Usługa startuje od razu w podanym profilu; SELinuxContext= to odpowiednik dla SELinux.
+#Q
+Q: Co się stanie, gdy jednostka ma AppArmorProfile=, a profil nie jest załadowany?
++ Usługa nie wystartuje, bo zmiana profilu się nie powiedzie
+- Usługa wystartuje bez profilu
+- systemd załaduje profil sam
+- Profil przejdzie w complain
+E: Można dodać prefiks - (AppArmorProfile=-NAZWA), by brak profilu był ignorowany, ale to osłabia ochronę.
+#Q
+Q: Jak sprawdzić ustawienie AppArmorProfile jednostki?
++ systemctl show -p AppArmorProfile JEDNOSTKA
+- aa-status JEDNOSTKA
+- systemctl is-active JEDNOSTKA
+- journalctl -p AppArmorProfile
+E: show wypisuje właściwości jednostki po wczytaniu konfiguracji.
+#Q
+Q: Jak AppArmor współpracuje z sandboxem systemd (ProtectSystem=, PrivateTmp= itp.)?
++ Uzupełniają się jako niezależne warstwy ochrony
+- Wykluczają się wzajemnie
+- Sandbox wyłącza AppArmor
+- AppArmor zastępuje sandbox
+E: Obrona w głąb: przestrzenie nazw systemd i profil MAC chronią różne aspekty.
+#Q
+Q: Co ogranicza parametr kernel.apparmor_restrict_unprivileged_userns=1 w Ubuntu 24.04?
++ Tworzenie nieuprzywilejowanych przestrzeni nazw użytkownika przez programy bez odpowiedniego profilu
+- Logowanie użytkowników bez hasła
+- Dostęp do sieci dla roota
+- Montowanie dysków USB
+E: Programy potrzebujące takich przestrzeni (przeglądarki, AppImage) dostają profile z regułą userns.
+#Q
+Q: Jaka reguła profilu pozwala programowi tworzyć przestrzenie nazw użytkownika w Ubuntu 24.04?
++ userns,
+- namespace all,
+- capability userns,
+- network userns,
+E: Profile z pakietów dla przeglądarek zawierają taką regułę.
+#Q
+Q: W jakim profilu działa każdy snap?
++ We własnym profilu AppArmor generowanym przez snapd
+- Bez profilu
+- W profilu docker-default
+- W profilu usr.bin.snap wspólnym dla wszystkich
+E: Izolacja snapów opiera się m.in. na AppArmor i seccomp.
+#Q
+Q: Jaki domyślny profil stosuje Docker dla kontenerów w Ubuntu?
++ docker-default
+- container_t
+- snap.docker
+- unconfined_container
+E: container_t to typ SELinux; w Ubuntu Docker ładuje profil docker-default.
+#Q
+Q: Jak w lekcji udostępniono MySQL zapis eksportu do /srv/kopie/raporty?
++ Regułami w /etc/apparmor.d/local/usr.sbin.mysqld i przeładowaniem profilu
+- Wyłączeniem profilu mysqld
+- Zmianą profilu na complain na stałe
+- Uruchomieniem MySQL jako root
+E: Dodatkowo secure-file-priv w konfiguracji MySQL wskazywał ten katalog.
+#Q
+Q: Błąd MySQL `OS errno 13 - Permission denied` przy INTO OUTFILE, mimo poprawnych praw katalogu. Co jest prawdopodobną przyczyną w Ubuntu?
++ Profil AppArmor mysqld nie pozwala na zapis w tym katalogu
+- Brak indeksu w tabeli
+- Zbyt mała pamięć bufora
+- Brak połączenia sieciowego
+E: Wpis DENIED z profile="/usr/sbin/mysqld" i name z tą ścieżką to potwierdza.
+#Q
+Q: Co ogranicza `secure-file-priv` w MySQL i czym różni się od AppArmor?
++ To ustawienie MySQL wskazujące katalog dla operacji plikowych; AppArmor jest niezależną warstwą w jądrze
+- To reguła AppArmor dla MySQL
+- To przełącznik SELinux
+- To parametr jądra
+E: Obie warstwy muszą pozwolić na operację: konfiguracja aplikacji i profil.
+#Q
+Q: Po przeniesieniu całego katalogu danych MySQL do /srv/mysql jakie rozwiązanie wskazuje lekcja z rozdziału 37?
++ Alias w tunables/alias, np. alias /var/lib/mysql/ -> /srv/mysql/,
+- Wyłączenie AppArmor
+- Zmianę właściciela na root
+- Profil w complain na stałe
+E: Alias pozwala zachować reguły profilu z pakietu dla nowej lokalizacji.
+#Q
+Q: Co jest pierwszym krokiem procedury „usługa nie działa przez AppArmor”?
++ Sprawdzić, czy usługa ma profil (aa-status, ps -eo label)
+- Przełączyć wszystkie profile w complain
+- Przeinstalować usługę
+- Wyłączyć zaporę
+E: Bez profilu AppArmor nie jest przyczyną.
+#Q
+Q: Dlaczego w ćwiczeniu profil jq-raport najpierw ładuje się w trybie complain?
++ By zobaczyć, czego program używa, zanim reguły zaczną blokować
+- Bo enforce nie działa dla skryptów
+- Bo complain jest bezpieczniejszy na produkcji
+- Bo aa-status wymaga complain
+E: To typowy sposób budowy nowego profilu.
+#Q
+Q: W ćwiczeniu skrypt jako root bez profilu policzył linie /etc/shadow, a w enforce już nie. Co to pokazuje?
++ Profil ogranicza program niezależnie od uprawnień roota
+- Że /etc/shadow zmienił prawa
+- Że root stracił uprawnienia w całym systemie
+- Że sudo przestało działać
+E: Ograniczenie dotyczy tylko procesu w profilu; inne procesy roota działają jak wcześniej.
+#Q
+Q: Dlaczego ćwiczenie liczy linie /etc/shadow zamiast je wyświetlać?
++ By pokazać dostęp bez ujawniania skrótów haseł
+- Bo cat nie działa na /etc/shadow
+- Bo wc jest szybszy
+- Bo AppArmor blokuje cat
+E: Nawet w laboratorium nie wypisuje się wrażliwych danych bez potrzeby.
+#Q
+Q: Dlaczego zapis raportu do /tmp w ćwiczeniu został zablokowany?
++ Profil zezwala na zapis tylko w /srv/jq-aa/wyniki (i archiwum po rozszerzeniu)
+- Bo /tmp jest tylko do odczytu
+- Bo /tmp ma etykietę tmp_t
+- Bo skrypt nie działa jako root
+E: Reguły AppArmor wymieniają dozwolone ścieżki; wszystko poza nimi jest zabronione.
+#Q
+Q: Co sprawdza `apparmor_parser -QK PROFIL`?
++ Kompiluje profil i sprawdza składnię bez ładowania do jądra i bez pamięci podręcznej
+- Ładuje profil w trybie complain
+- Usuwa profil
+- Wypisuje procesy w profilu
+E: -Q pomija ładowanie, -K pomija cache; błąd składni da niezerowy kod.
+#Q
+Q: Dlaczego drop-in z ćwiczenia umieszczono w /run/systemd/system zamiast /etc/systemd/system?
++ /run jest ulotny, więc tymczasowa zmiana nie przetrwa restartu
+- Bo /etc jest tylko do odczytu
+- Bo AppArmor blokuje /etc
+- Bo systemd ignoruje /etc
+E: Do testów tymczasowych /run jest wygodny; i tak usuwamy plik po ćwiczeniu.
+#Q
+Q: Dlaczego w drop-inie jednostki oneshot najpierw pojawia się pusta linia `ExecStart=`?
++ Czyści listę poleceń z jednostki głównej, by nie wykonać obu
+- Wyłącza usługę
+- Uruchamia usługę bez polecenia
+- Ustawia domyślny profil
+E: Bez wyczyszczenia oneshot wykonałby kolejno oba polecenia ExecStart.
+#Q
+Q: Jaki wynik pokaże `systemctl show -p Result` dla oneshot, którego skrypt zakończył się błędem przez odmowę AppArmor?
++ Result=exit-code
+- Result=success
+- Result=masked
+- Result=apparmor
+E: Skrypt z set -e kończy się niezerowym kodem, więc usługa ma wynik exit-code.
+#Q
+Q: Dlaczego po teście nieudanej usługi wykonuje się `systemctl reset-failed`?
++ Czyści stan failed jednostki, by nie zostawiać fałszywego alarmu
+- Usuwa jednostkę
+- Przywraca profil AppArmor
+- Restartuje systemd
+E: Stan failed jest widoczny w systemctl --failed i monitoringu.
+#Q
+Q: Jakie polecenie pokaże fragment profilu mysqld z miejscem dołączania local/?
++ grep -n 'include if exists' /etc/apparmor.d/usr.sbin.mysqld
+- aa-status --local mysqld
+- apparmor_parser -l mysqld
+- cat /proc/mysqld/attr/current
+E: Odczyt pliku profilu niczego nie zmienia.
+#Q
+Q: Dlaczego w ćwiczeniach nie zmieniano profilu mysqld?
++ By nie zmieniać stanu usług laboratorium; mechanizmy przećwiczono na własnym profilu
+- Bo profilu mysqld nie da się zmienić
+- Bo mysqld nie ma profilu w Ubuntu
+- Bo aa-complain nie działa dla mysqld
+E: Własny skrypt i profil można bezpiecznie utworzyć i usunąć.
+#Q
+Q: Co jest właściwą kolejnością sprzątania własnego profilu?
++ Wyładować profil z jądra (apparmor_parser -R), potem usunąć pliki profilu i local/
+- Usunąć pliki, a profil sam zniknie z jądra
+- Przełączyć w complain i zostawić
+- Wyłączyć usługę apparmor
+E: Po usunięciu samego pliku profil zostałby w jądrze do restartu.
+#Q
+Q: Gdzie zapisuje się profil po jego kompilacji, by przyspieszyć start?
++ W pamięci podręcznej, np. /var/cache/apparmor
+- W /etc/apparmor.d/cache.conf
+- W /boot
+- W /proc/apparmor
+E: Parser zapisuje skompilowane profile w cache; -K go pomija.
+#Q
+Q: Co oznacza `abi <abi/4.0>,` na początku profilu?
++ Wersję cech polityki, do której pisany jest profil
+- Wersję jądra
+- Wersję bash
+- Numer profilu
+E: Deklaracja ABI zapewnia przewidywalne działanie profilu na nowszych wersjach AppArmor.
+#Q
+Q: Do czego służy `include <tunables/global>`?
++ Dołącza zmienne globalne, np. @{HOME} i @{PROC}, używane w regułach
+- Dołącza wszystkie profile
+- Włącza tryb enforce
+- Dołącza reguły sieciowe
+E: Zmienne upraszczają reguły dla typowych ścieżek.
+#Q
+Q: Jaka zmienna AppArmor oznacza katalogi domowe użytkowników?
++ @{HOME}
+- $HOME
+- %h
+- ~
+E: Zmienne AppArmor mają postać @{NAZWA} i są definiowane w tunables.
+#Q
+Q: Jak oznaczyć, że profil nie ma przypisanej ścieżki programu, tylko nazwę (np. dla AppArmorProfile=)?
++ Profil nazwany bez ścieżki, np. profile kopia-uslugi { ... }
+- Profil z flagą unconfined
+- Profil w katalogu disable/
+- Profil z abi 0
+E: Taki profil nie przypina się automatycznie do pliku, ale można go wskazać jawnie.
+#Q
+Q: Co robi polecenie `aa-exec -p PROFIL -- POLECENIE`?
++ Uruchamia polecenie w podanym profilu
+- Wyłącza profil dla polecenia
+- Wypisuje reguły profilu
+- Przełącza profil w complain
+E: Przydaje się do testów profili nazwanych bez ścieżki.
+#Q
+Q: Jakie narzędzie interaktywnie tworzy nowy profil, obserwując działanie programu?
++ aa-genprof
+- aa-status
+- audit2allow
+- semanage
+E: aa-genprof ustawia complain, zbiera zdarzenia i proponuje reguły; audit2allow to narzędzie SELinux.
+#Q
+Q: Po co porównywać AppArmor z SELinux przy administracji wieloma dystrybucjami?
++ Narzędzia diagnozy i napraw są inne, choć cel jest wspólny
+- Bo oba trzeba włączyć jednocześnie
+- Bo AppArmor zastępuje zaporę w RHEL
+- Bo SELinux działa tylko w kontenerach
+E: Na Rocky: ausearch, audit2why, semanage; na Ubuntu: journalctl -k, local/, aa-complain.
+#Q
+Q: Jakie polecenie przeładowuje wszystkie profile AppArmor?
++ sudo systemctl reload apparmor
+- sudo apparmor_parser -R -a
+- sudo aa-enforce --all-unload
+- sudo restorecon -R /etc/apparmor.d
+E: Usługa apparmor wczytuje wszystkie profile z /etc/apparmor.d.
+#Q
+Q: Plik w /etc/apparmor.d/local/ jest pusty. Czy to błąd?
++ Nie, pusty plik oznacza brak lokalnych rozszerzeń
+- Tak, profil się nie załaduje
+- Tak, AppArmor przejdzie w complain
+- Tak, trzeba go usunąć
+E: Pakiety często tworzą puste pliki local/ jako miejsce na zmiany administratora.
+#Q
+Q: Co jest celem raportu zakresu po ćwiczeniach AppArmor?
++ Udokumentowanie, co sprawdzono, a czego nie zmieniano
+- Zapis haseł usług
+- Lista wszystkich profili z treścią
+- Konfiguracja jądra
+E: Jawne granice zapobiegają mylnemu przekonaniu, że sprawdzono profile usług produkcyjnych.
+#Q
+Q: Czy profil AppArmor zastępuje aktualizacje bezpieczeństwa programu?
++ Nie, ogranicza skutki przejęcia, ale nie usuwa luk
+- Tak, całkowicie
+- Tak, w trybie enforce
+- Tylko dla snapów
+E: To jedna z warstw obrony; programy nadal trzeba aktualizować.
+#Q
+Q: Dlaczego proces w trybie complain nadal może zrobić szkodę?
++ Operacje spoza profilu są tylko logowane, nie blokowane
+- Bo complain wyłącza logowanie
+- Bo complain nadaje uprawnienia roota
+- Bo complain wyłącza DAC
+E: Complain to tryb obserwacji, a nie ochrony.
+#Q
+Q: Gdzie oprócz dziennika jądra mogą trafiać zdarzenia AppArmor, gdy działa auditd?
++ Do /var/log/audit/audit.log
+- Do /var/log/apparmor.d
+- Do /etc/apparmor.d/log
+- Do /proc/kmsg na stałe
+E: Przy auditd zdarzenia audytu jądra trafiają do jego dziennika.
+#Q
+Q: Jak przefiltrować dziennik jądra tylko do odmów konkretnego profilu?
++ journalctl -k -g 'apparmor="DENIED".*profile="NAZWA"'
+- journalctl -u NAZWA
+- aa-status -g NAZWA
+- dmesg --profile NAZWA
+E: -g przyjmuje wyrażenie regularne dopasowywane do treści wpisów.
+#Q
+Q: Co oznacza `requested_mask="r"` z `denied_mask="r"` we wpisie?
++ Program chciał odczytać plik i odczyt został zablokowany
+- Program chciał zapisać plik
+- Program chciał uruchomić plik
+- Program chciał usunąć plik
+E: requested to to, o co prosił proces; denied to część, której odmówiono.
+#Q
+Q: Profil pozwala na `/srv/dane/** r,`. Czy proces może zapisać nowy plik w /srv/dane?
++ Nie, reguła daje tylko odczyt
+- Tak, r obejmuje zapis
+- Tak, jeśli jest rootem
+- Tak, jeśli katalog ma prawa 777
+E: Zapis i utworzenie wymagają w; root nie omija profilu.
+#Q
+Q: Która reguła pozwala na zapis tylko do jednego pliku logu aplikacji?
++ /var/log/sklep/aplikacja.log w,
+- /var/log/** rw,
+- /** rw,
+- /var/log/sklep/ w,
+E: Najwęższa reguła ogranicza skutki przejęcia programu.
+#Q
+Q: Dlaczego reguła `/** rw,` w profilu jest błędem?
++ Pozwala na odczyt i zapis prawie wszystkiego, więc profil traci sens
+- Bo jest błędem składni
+- Bo blokuje bash
+- Bo działa tylko w complain
+E: Profil powinien wymieniać tylko potrzebne ścieżki.
+#Q
+Q: Gdzie w Ubuntu znajdziesz dodatkowe przykładowe profile niezałączone domyślnie?
++ W pakiecie apparmor-profiles lub apparmor-profiles-extra
+- W /etc/selinux
+- W snapd
+- W systemd
+E: Pakiety te zawierają profile dla wielu programów, często do dopracowania.
+#Q
+Q: Proces działał już przed załadowaniem nowego profilu dla jego programu. Czy jest ograniczony?
++ Nie, profil przypina się przy uruchomieniu programu; trzeba go zrestartować
+- Tak, natychmiast
+- Tak, ale tylko dla zapisu
+- Tak, po minucie
+E: Dlatego po załadowaniu profilu dla usługi należy ją ponownie uruchomić.
+#Q
+Q: Co pokazuje `cat /sys/module/apparmor/parameters/enabled` z wynikiem Y?
++ Moduł AppArmor jest aktywny w jądrze
+- Wszystkie profile są w enforce
+- Usługa apparmor jest włączona w systemd
+- AppArmor działa w trybie complain
+E: To stan modułu, a nie trybów poszczególnych profili.
+#Q
+Q: Co oznacza wynik aa-status `0 processes are unconfined but have a profile defined`?
++ Każdy proces z programem mającym profil działa w tym profilu
+- Żaden proces nie ma profilu
+- AppArmor jest wyłączony
+- Wszystkie profile są w complain
+E: Niezerowa liczba oznacza procesy uruchomione przed załadowaniem profilu.
+#Q
+Q: Dlaczego profil skryptu musi pozwalać na wykonanie interpretera, np. `/usr/bin/bash ix,`?
++ Skrypt jest wykonywany przez interpreter, który też podlega regułom profilu
+- Bo bash nie ma własnych praw
+- Bo AppArmor nie obsługuje skryptów
+- Bo inaczej skrypt działa jako root
+E: Brak reguły dla interpretera lub programów uruchamianych w skrypcie kończy się odmową exec.
+#Q
+Q: Co jest celem dodania własnego profilu do skryptu kopii zapasowej uruchamianego jako root?
++ Ograniczenie szkód, gdy skrypt lub jego dane wejściowe zostaną nadużyte
+- Przyspieszenie kopii
+- Szyfrowanie kopii
+- Zastąpienie sudo
+E: Skrypty roota są atrakcyjnym celem; profil wymienia tylko potrzebne pliki i programy.
+#Q
+Q: Jak sprawdzić, które pliki profili należą do pakietów, a które są lokalne?
++ dpkg -S dla pliku; pliki bez pakietu (np. własne i w local/) są konfiguracją administratora
+- aa-status --owner
+- ls -Z /etc/apparmor.d
+- apparmor_parser --package
+E: To pomaga zdecydować, gdzie wolno wprowadzać zmiany.
+#Q
+Q: Jaki profil ma narzędzie tcpdump w Ubuntu i dlaczego?
++ Własny profil z pakietu, ograniczający pliki, które może zapisywać i czytać
+- Brak profilu, bo działa jako root
+- Profil docker-default
+- Profil unconfined z pakietu
+E: tcpdump przetwarza niezaufane dane z sieci, więc jest ograniczony profilem.
+#Q
+Q: tcpdump nie może zapisać pliku `-w /srv/zrzuty/sesja.pcap`. Co sprawdzić?
++ Odmowę AppArmor dla profilu tcpdump i ewentualnie dopisać regułę w local/
+- Przełącznik SELinux tcpdump_write
+- Uprawnienia karty sieciowej
+- Pojemność bufora jądra
+E: Profil tcpdump pozwala na zapis tylko w określonych miejscach.
+#Q
+Q: Czym różni się `aa-disable` od `aa-complain`?
++ aa-disable wyładowuje profil i blokuje jego ładowanie przy starcie, aa-complain zostawia profil w trybie logowania
+- Nie ma różnicy
+- aa-complain usuwa plik profilu
+- aa-disable przełącza profil w enforce
+E: Po aa-disable program działa bez profilu; complain przynajmniej rejestruje naruszenia.
+#Q
+Q: Jaki plik profilu odpowiada programowi /usr/sbin/rsyslogd według konwencji nazw?
++ /etc/apparmor.d/usr.sbin.rsyslogd
+- /etc/apparmor.d/rsyslogd.conf
+- /etc/apparmor.d/local/rsyslog
+- /etc/apparmor.d/sbin/rsyslogd
+E: Ukośniki ścieżki zastępuje się kropkami; profile nowszych pakietów mają też krótsze nazwy.
+#Q
+Q: Jak rozpoznać w `ps -eo label,comm`, że proces działa w trybie complain?
++ Etykieta kończy się dopiskiem (complain)
+- Etykieta to unconfined
+- Kolumna label jest pusta
+- Proces ma PID 1
+E: Tryb jest podany w nawiasie po nazwie profilu.
+#Q
+Q: Dlaczego w ćwiczeniu przed utworzeniem plików sprawdzano `test ! -e`?
++ By nie nadpisać istniejących plików i nie usunąć potem cudzych danych
+- Bo AppArmor tego wymaga
+- Bo tee nie nadpisuje plików
+- Bo systemd blokuje istniejące jednostki
+E: Ćwiczenie sprząta przez rm, więc musi dotyczyć wyłącznie własnych plików.
