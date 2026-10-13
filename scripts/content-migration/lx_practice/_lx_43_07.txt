@@ -1,0 +1,590 @@
+#EX
+P: Na `lubuntu-nauka` jako anna przygotuj laboratorium (zmienna rs_lab) do ćwiczeń z „serwerem zdalnym” localhost: wygeneruj klucz ed25519 bez hasła z komentarzem jq-lab, dopisz go do ~/.ssh/authorized_keys i utwórz plik ssh_config z aliasami jq-serwer oraz jq-serwer-t (z RequestTTY yes i RemoteCommand dołączającym do sesji tmux praca na osobnym serwerze tmux jqrem). Sprawdź logowanie.
+H: Potrzebny działający sshd: sudo apt install openssh-server. Klucz z komentarzem jq-lab usuniesz przy sprzątaniu.
+S:
+rs_lab=$(mktemp -d /tmp/javaquest-zdalny.XXXXXX)
+cd "$rs_lab"
+mkdir -p logi ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -q -t ed25519 -N '' -C jq-lab -f klucz
+cat klucz.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+cat > ssh_config <<KONIEC
+Host jq-serwer jq-serwer-t
+    HostName localhost
+    IdentityFile $rs_lab/klucz
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+    UserKnownHostsFile $rs_lab/known_hosts
+Host jq-serwer-t
+    RequestTTY yes
+    RemoteCommand tmux -L jqrem new -A -s praca
+KONIEC
+s() { ssh -F "$rs_lab/ssh_config" "$@"; }
+SSHF=(ssh -F "$rs_lab/ssh_config")
+s jq-serwer 'echo "zalogowano na $(hostname) jako $(whoami)"'
+#EX
+P: Sprawdź efektywną konfigurację aliasu jq-serwer-t (RequestTTY i RemoteCommand) poleceniem ssh -G.
+H: ssh -G wypisuje ustawienia po uwzględnieniu pliku konfiguracji.
+S:
+s -G jq-serwer-t 2>/dev/null | grep -i -E '^(hostname|requesttty|remotecommand) '
+#EX
+P: Odtwórz CODE_WRONG: uruchom przez ssh z terminalem (-tt) „import” — pętlę tworzącą 12 plików tabel co sekundę — bez tmux. Po 3 sekundach zerwij połączenie (zabij klienta ssh) i sprawdź, ile tabel powstało i czy import nadal działa.
+H: Zerwanie zamyka terminal sesji, a proces dostaje SIGHUP.
+S:
+mkdir -p baza1
+cat > import.sh <<'KONIEC'
+#!/bin/bash
+# import.sh KATALOG - symulacja importu 12 tabel
+for i in $(seq -w 1 12); do sleep 1; touch "$1/tabela$i"; done
+echo "import zakonczony"
+KONIEC
+chmod +x import.sh
+"${SSHF[@]}" -tt jq-serwer "$rs_lab/import.sh $rs_lab/baza1" > /dev/null 2>&1 < <(sleep 600) &
+sleep 3; kill $!; sleep 3
+pgrep -f "import.sh $rs_lab/baza1" > /dev/null && echo "import dziala" || echo "import nie dziala"
+echo "tabel: $(ls baza1 | wc -l) z 12"
+#EX
+P: Odtwórz CODE_RIGHT: połącz się aliasem jq-serwer-t (sesja tmux praca), uruchom w niej ten sam import do katalogu baza2, po 3 sekundach zerwij połączenie, a następnie sprawdź przez nowe połączenie stan sesji i importu.
+H: Polecenie do sesji wyślesz z drugiego połączenia: tmux send-keys. W tle (bez terminala lokalnie) wymuś terminal opcją -tt — w zwykłym terminalu wystarczy ssh jq-serwer-t.
+S:
+mkdir -p baza2
+TERM=xterm-256color "${SSHF[@]}" -tt jq-serwer-t > /dev/null 2>&1 < <(sleep 600) &
+sleep 2
+s jq-serwer "tmux -L jqrem send-keys -t praca '$rs_lab/import.sh $rs_lab/baza2' Enter"
+sleep 3; kill $!; sleep 1
+s jq-serwer "tmux -L jqrem ls -F '#{session_name}: klientow #{session_attached}'"
+sleep 11
+echo "tabel: $(ls baza2 | wc -l) z 12"
+s jq-serwer "tmux -L jqrem capture-pane -p -t praca" | grep 'import zakonczony'
+#EX
+P: Pokaż działanie tmux new -A: połącz się aliasem jq-serwer-t dwa razy naraz (w tle) i sprawdź, że obie sesje SSH trafiły do tej samej sesji tmux praca.
+H: -A: podłącz, jeśli sesja istnieje; utwórz, jeśli nie.
+S:
+for i in 1 2; do TERM=xterm-256color "${SSHF[@]}" -tt jq-serwer-t > /dev/null 2>&1 < <(sleep 600) & done
+sleep 2
+s jq-serwer 'tmux -L jqrem ls -F "#{session_name}: klientow #{session_attached}"'
+pkill -f "ssh -F $rs_lab/ssh_config -tt jq-serwer-t"; sleep 1
+#EX
+P: Włącz zapis wszystkiego, co pojawia się w panelu sesji praca, do pliku logi/tmux-#S-#W.log, wyślij do sesji dwa polecenia i sprawdź plik.
+H: pipe-pane -o przełącza zapis; #S i #W to nazwa sesji i okna.
+S:
+s jq-serwer "tmux -L jqrem pipe-pane -o -t praca 'cat >> $rs_lab/logi/tmux-#S-#W.log'"
+s jq-serwer "tmux -L jqrem send-keys -t praca 'echo krok-1; echo krok-2' Enter"
+sleep 1
+ls logi
+grep -c -E '^krok-[12]' logi/tmux-praca-*.log
+#EX
+P: Zapisz całą dotychczasową historię panelu sesji praca do pliku i policz jej linie oraz wystąpienia „import zakonczony”.
+H: capture-pane -p -S -
+S:
+s jq-serwer "tmux -L jqrem capture-pane -p -S - -t praca" > historia.txt
+echo "linii: $(wc -l < historia.txt), import zakonczony: $(grep -c 'import zakonczony' historia.txt)"
+#EX
+P: Sprawdź, jak tmux obsługuje zagnieżdżenie: jakie polecenie jest przypisane do prefiks Ctrl+b (czyli Ctrl+b Ctrl+b)?
+H: list-keys -T prefix C-b
+S:
+s jq-serwer 'tmux -L jqrem list-keys -T prefix C-b'
+#EX
+P: Wyróżnij pasek stanu serwera tmux na „serwerze” czerwonym tłem i lewym napisem [HOST:SESJA], a następnie odczytaj te opcje.
+H: status-style i status-left z formatami #H i #S.
+S:
+s jq-serwer 'tmux -L jqrem set -g status-style "bg=colour52,fg=white"; tmux -L jqrem set -g status-left "[#H:#S] "; tmux -L jqrem show -g status-style; tmux -L jqrem show -g status-left'
+#EX
+P: Sprawdź, czy sleep uruchomiony przez nohup przeżywa zerwanie połączenia ssh z terminalem.
+H: nohup ignoruje SIGHUP i przekierowuje wynik do pliku.
+S:
+"${SSHF[@]}" -tt jq-serwer "nohup sleep 302 > $rs_lab/nohup.log 2>&1 & sleep 30" > /dev/null 2>&1 < <(sleep 600) &
+sleep 2; kill $!; sleep 1
+pgrep -f 'sleep 302' > /dev/null && echo "sleep 302 przezyl rozlaczenie" || echo "sleep 302 zakonczony"
+pkill -f 'sleep 302'
+#EX
+P: Przygotuj wspólną sesję awaria na gnieździe w katalogu laboratorium (tmux -S) i utwórz tymczasowe konto jqkuba w nowej grupie jqadmini razem z anną. Nadaj gniazdu grupę i prawa 660.
+H: Katalog gniazda musi być dostępny dla grupy.
+S:
+sudo groupadd jqadmini && sudo useradd -m -s /bin/bash -G jqadmini jqkuba && sudo usermod -aG jqadmini "$USER"
+mkdir wspolne && sudo chgrp jqadmini wspolne && chmod 2770 wspolne && chmod o+x "$rs_lab"
+tmux -S "$rs_lab/wspolne/awaria" new -d -s awaria
+sudo chgrp jqadmini wspolne/awaria && chmod 660 wspolne/awaria
+stat -c '%A %G %n' wspolne wspolne/awaria | sed "s|$rs_lab/||"
+#EX
+P: Nadaj kontu jqkuba dostęp tylko do odczytu (server-access -a -r) i wypisz listę dostępu serwera.
+H: server-access działa od tmux 3.3.
+S:
+tmux -S "$rs_lab/wspolne/awaria" server-access -a -r jqkuba
+tmux -S "$rs_lab/wspolne/awaria" server-access -l
+#EX
+P: Podłącz jqkuba do sesji awaria (w tle, przez script jako terminal) i wypisz klientów sesji.
+H: sudo -u jqkuba env TERM=xterm script -qec "tmux -S GNIAZDO attach -t awaria" /dev/null
+S:
+sudo -u jqkuba env TERM=xterm script -qec "tmux -S $rs_lab/wspolne/awaria attach -t awaria" /dev/null > /dev/null 2>&1 < <(sleep 600) &
+sleep 2
+tmux -S "$rs_lab/wspolne/awaria" list-clients -F '#{client_user}: #{?client_readonly,tylko odczyt,pelny dostep}'
+#EX
+P: Odbierz kontu jqkuba dostęp i sprawdź listę dostępu. Zakończ sesję awaria.
+H: server-access -d LOGIN odłącza i usuwa dostęp.
+S:
+tmux -S "$rs_lab/wspolne/awaria" server-access -d jqkuba
+tmux -S "$rs_lab/wspolne/awaria" server-access -l
+tmux -S "$rs_lab/wspolne/awaria" kill-server; sleep 0.5
+#EX
+P: Sprawdź ustawienie KillUserProcesses w konfiguracji systemd-logind (czy wylogowanie zabija procesy, w tym tmux).
+H: Domyślnie w Ubuntu: no (linia zakomentowana).
+S:
+grep -E '^#?KillUserProcesses' /etc/systemd/logind.conf 2>/dev/null || echo "brak /etc/systemd/logind.conf (system bez systemd-logind)"
+#EX
+P: Uruchom zadanie bez interakcji jako przejściową jednostkę systemd użytkownika (systemd-run --user) i sprawdź jej stan.
+H: Log zadania trafi do dziennika: journalctl --user -u NAZWA.
+S:
+systemd-run --user --unit=jq-import sleep 20
+systemctl --user is-active jq-import
+systemctl --user stop jq-import
+#EX
+P: Sprawdź, które sesje są na serwerze tmux jqrem i ile mają okien, a następnie zakończ ten serwer.
+H: kill-server kończy wszystkie sesje serwera jqrem.
+S:
+s jq-serwer 'tmux -L jqrem ls -F "#{session_name}: #{session_windows} okno"; tmux -L jqrem kill-server'
+sleep 0.5
+s jq-serwer 'tmux -L jqrem ls 2>&1 | head -1'
+#EX
+P: Sprawdź wersję tmux na „serwerze” — od niej zależy dostępność server-access (3.3+).
+H: tmux -V
+S:
+s jq-serwer 'tmux -V'
+#EX
+P: Pokaż, że ssh bez terminala (bez -t) nie uruchomi interaktywnego tmux: spróbuj tmux attach przez zwykłe ssh.
+H: tmux attach wymaga terminala — dlatego alias ma RequestTTY yes.
+S:
+s jq-serwer 'tmux -L jqrem new -d -s test; tmux -L jqrem attach -t test' 2>&1 | head -1
+s jq-serwer 'tmux -L jqrem kill-server' 2>/dev/null; sleep 0.5
+#EX
+P: Posprzątaj: usuń klucz jq-lab z authorized_keys, konto jqkuba i grupę jqadmini (najpierw usuń z niej siebie), funkcję s i laboratorium po sprawdzeniu prefiksu.
+H: sed -i '/ jq-lab$/d' usuwa tylko linię z kluczem laboratorium.
+S:
+sed -i '/ jq-lab$/d' ~/.ssh/authorized_keys
+pkill -u jqkuba 2>/dev/null; pkill -f "sleep 600"; sleep 0.5
+sudo userdel -r jqkuba 2>/dev/null; sudo gpasswd -d "$USER" jqadmini > /dev/null; sudo groupdel jqadmini
+unset -f s; unset SSHF
+cd ~
+case "$rs_lab" in /tmp/javaquest-zdalny.*) ;; *) exit 1;; esac
+rm -rf -- "$rs_lab"
+unset rs_lab
+getent group jqadmini || echo "posprzatane"
+#Q
+Q: Co dzieje się z procesami sesji SSH po zerwaniu połączenia?
++ sshd kończy sesję, a procesy dostają SIGHUP i zwykle kończą działanie
+- Działają dalej bez zmian
+- Zostają zawieszone do ponownego połączenia
+- Przenoszą się do tmux
+E: W ćwiczeniu import bez tmux utworzył tylko 2 z 12 tabel.
+#Q
+Q: Dlaczego programy w tmux nie dostają SIGHUP po zerwaniu SSH?
++ Ich terminalem jest serwer tmux, a nie sesja SSH — ginie tylko klient tmux
+- Bo tmux blokuje wszystkie sygnały
+- Bo SSH nie wysyła sygnałów
+- Bo działają jako root
+E: Serwer tmux działa na maszynie zdalnej.
+#Q
+Q: Co robi tmux new -A -s praca?
++ Podłącza do sesji praca, a jeśli nie istnieje — tworzy ją
+- Zawsze tworzy nową sesję
+- Usuwa sesję praca
+- Odłącza wszystkich klientów
+E: W ćwiczeniu dwa połączenia trafiły do tej samej sesji (klientow 2).
+#Q
+Q: Do czego służą RemoteCommand i RequestTTY yes w ~/.ssh/config?
++ Każde logowanie aliasem od razu uruchamia na serwerze polecenie (np. tmux) w terminalu
+- Do przekierowania portów
+- Do wyboru klucza
+- Do kompresji
+E: Najlepiej w osobnym aliasie, np. srv-test-t.
+#Q
+Q: Dlaczego RemoteCommand z tmux ustawia się w osobnym aliasie hosta?
++ Bo zwykłe ssh do wykonania polecenia lub scp nie powinno uruchamiać tmux
+- Bo ssh pozwala tylko na jeden alias
+- Bo tmux wymaga osobnego klucza
+- Bez powodu
+E: Np. srv-test do poleceń, srv-test-t do pracy w tmux.
+#Q
+Q: Jak sprawdzić efektywne ustawienia aliasu SSH?
++ ssh -G ALIAS
+- ssh -v ALIAS
+- cat ~/.ssh/known_hosts
+- ssh-keygen -l
+E: Pokazało requesttty true i remotecommand.
+#Q
+Q: Jak połączyć się z serwerem i od razu wejść do tmux bez aliasu?
++ ssh -t serwer tmux new -A -s praca
+- ssh serwer tmux
+- tmux ssh serwer
+- ssh -N serwer
+E: -t wymusza przydzielenie terminala.
+#Q
+Q: Co się stało przy próbie tmux attach przez ssh bez terminala?
++ Błąd open terminal failed: not a terminal
+- Podłączenie do sesji
+- Utworzenie nowej sesji
+- Brak reakcji
+E: Dlatego alias ma RequestTTY yes.
+#Q
+Q: Dlaczego w ćwiczeniach w tle użyto ssh -tt?
++ Lokalne standardowe wejście nie było terminalem, a -tt wymusza terminal po stronie serwera
+- Dla szybszego połączenia
+- Dla kompresji
+- By wyłączyć klucze
+E: W zwykłym terminalu wystarczy ssh jq-serwer-t.
+#Q
+Q: Dlaczego w ćwiczeniu ustawiono TERM=xterm-256color przed ssh -tt?
++ tmux na serwerze odmawia działania z nieznanym lub nieodpowiednim typem terminala
+- By włączyć kolory w ssh
+- By przyspieszyć tmux
+- Bez powodu
+E: W prawdziwym terminalu TERM jest już ustawione.
+#Q
+Q: Jak w ćwiczeniu zasymulowano zerwanie połączenia?
++ Zabiciem procesu klienta ssh (kill $!)
+- Wyłączeniem sieci
+- Restartem sshd
+- prefiks d
+E: $! to PID ostatniego procesu w tle.
+#Q
+Q: Ile tabel utworzył import w tmux po zerwaniu połączenia?
++ Wszystkie 12, a panel pokazał import zakonczony
+- 2
+- 0
+- 6
+E: Serwer tmux prowadził import dalej.
+#Q
+Q: Ilu klientów miała sesja praca po zerwaniu jedynego połączenia?
++ 0 — sesja działała bez klientów
+- 1
+- 2
+- Sesja zniknęła
+E: tmux ls pokazało praca: klientow 0.
+#Q
+Q: Jak przekazać prefiks do tmux na serwerze, gdy lokalnie też działa tmux?
++ Ctrl+b Ctrl+b — drugie Ctrl+b jest wysyłane do wewnętrznego tmux
+- Ctrl+a
+- Alt+b
+- Nie da się
+E: Powiązanie prefix C-b send-prefix.
+#Q
+Q: Jak odłączyć sesję tmux na serwerze z poziomu lokalnego tmux?
++ Ctrl+b Ctrl+b d
+- Ctrl+b d
+- Ctrl+d
+- exit
+E: Samo Ctrl+b d odłączyłoby sesję lokalną.
+#Q
+Q: Po co wyróżnia się pasek stanu tmux na serwerze innym kolorem?
++ By od razu odróżnić tmux na serwerze od lokalnego przy zagnieżdżeniu
+- By przyspieszyć tmux
+- By oszczędzić baterię
+- Bo tmux tego wymaga
+E: set -g status-style "bg=colour52,fg=white".
+#Q
+Q: Co oznaczają #H i #S w status-left?
++ Nazwę hosta i nazwę sesji
+- Godzinę i sekundę
+- Historię i stan
+- Użytkownika i powłokę
+E: [#H:#S] pokazuje np. [srv-test:praca].
+#Q
+Q: Co robi tmux pipe-pane -o 'cat >> plik'?
++ Od tej chwili zapisuje wszystko, co pojawia się w panelu, do pliku
+- Kopiuje historię panelu do pliku
+- Przekierowuje wejście z pliku
+- Zapisuje konfigurację
+E: -o przełącza zapis (włącza lub wyłącza).
+#Q
+Q: Jakie nazwy pliku dało 'cat >> logi/tmux-#S-#W.log' w sesji praca?
++ tmux-praca-bash.log — #S to sesja, #W nazwa okna
+- tmux-#S-#W.log dosłownie
+- tmux.log
+- praca.log
+E: Formaty tmux rozwijają się w poleceniu pipe-pane.
+#Q
+Q: Czym różni się pipe-pane od capture-pane?
++ pipe-pane zapisuje wynik od teraz, capture-pane zrzuca dotychczasową zawartość
+- Niczym
+- capture-pane działa tylko lokalnie
+- pipe-pane zapisuje tylko błędy
+E: Oba przydają się do śladu z pracy.
+#Q
+Q: Jak zapisać całą historię panelu w sesji na serwerze do pliku lokalnego?
++ ssh serwer "tmux capture-pane -p -S - -t praca" > plik
+- scp serwer:tmux plik
+- tmux save praca
+- ssh serwer tmux log
+E: W ćwiczeniu plik zawierał linię import zakonczony.
+#Q
+Q: Do czego służy tmux -S ŚCIEŻKA?
++ Do użycia gniazda serwera tmux w podanej ścieżce (np. wspólnego dla grupy)
+- Do zapisu sesji na dysk
+- Do trybu tylko do odczytu
+- Do szyfrowania
+E: -L wybiera nazwę gniazda w katalogu domyślnym.
+#Q
+Q: Jakie prawa nadano gniazdu wspólnej sesji?
++ 660 z grupą jqadmini
+- 777
+- 600
+- 644
+E: Członkowie grupy mogą się łączyć.
+#Q
+Q: Co robi tmux server-access -a -r jqkuba?
++ Dodaje użytkownika jqkuba do listy dostępu serwera w trybie tylko do odczytu
+- Usuwa użytkownika
+- Daje pełny dostęp
+- Tworzy konto
+E: Wymaga tmux 3.3 lub nowszego.
+#Q
+Q: Co pokazało tmux server-access -l?
++ anna (W) i jqkuba (R)
+- Listę sesji
+- Listę okien
+- Nic
+E: W — zapis, R — tylko odczyt.
+#Q
+Q: Jak oznaczył się klient jqkuba w liście klientów?
++ Jako tylko do odczytu (read-only)
+- Jako pełny dostęp
+- Nie było go
+- Jako root
+E: Widzi ekran, ale nie może pisać.
+#Q
+Q: Jak odebrać użytkownikowi dostęp do wspólnego serwera tmux?
++ tmux server-access -d LOGIN
+- tmux kill-session
+- chmod 600 na sesji
+- userdel
+E: Po odebraniu lista zawierała tylko annę.
+#Q
+Q: Dlaczego katalog wspolne nie dostał bitu setgid mimo chmod 2770?
++ Anna nie była jeszcze w bieżącej sesji członkiem grupy jqadmini — jądro wyzerowało bit
+- Bo /tmp nie obsługuje setgid
+- Bo chmod nie zna 2770
+- Bo sudo chgrp go usunął zawsze
+E: Członkostwo w grupie działa po ponownym zalogowaniu (lub newgrp).
+#Q
+Q: Kiedy nowe członkostwo w grupie zaczyna działać dla użytkownika?
++ Po ponownym zalogowaniu (lub w powłoce uruchomionej przez newgrp)
+- Natychmiast we wszystkich procesach
+- Po restarcie serwera tylko
+- Nigdy dla bieżącego użytkownika
+E: Procesy dziedziczą listę grup z chwili logowania.
+#Q
+Q: Co oznacza KillUserProcesses=yes w logind.conf?
++ Po wylogowaniu systemd zabija wszystkie procesy użytkownika, także tmux
+- Zabija procesy roota
+- Wyłącza wylogowanie
+- Nic
+E: W Ubuntu domyślnie no (linia zakomentowana).
+#Q
+Q: Jakie są obejścia przy KillUserProcesses=yes?
++ loginctl enable-linger lub uruchamianie tmux przez systemd-run --scope --user
+- nohup tmux
+- tmux -S
+- chmod 777 na tmux
+E: Linger pozwala procesom użytkownika działać po wylogowaniu.
+#Q
+Q: Co zrobił sleep uruchomiony przez nohup po zerwaniu połączenia?
++ Przeżył — nohup ignoruje SIGHUP
+- Zakończył się
+- Zawiesił się
+- Przeniósł się do tmux
+E: Wynik trafia do pliku zamiast do terminala.
+#Q
+Q: Kiedy wybrać nohup zamiast tmux?
++ Dla zadania bez interakcji, którego nie trzeba obserwować na żywo
+- Dla interaktywnej pracy w edytorze
+- Dla wspólnej sesji
+- Dla wielu okien
+E: Lepszą opcją bywa systemd-run.
+#Q
+Q: Co daje systemd-run --unit=NAZWA POLECENIE?
++ Zadanie jako przejściowa jednostka systemd z logiem w dzienniku i stanem w systemctl
+- Stałą usługę uruchamianą po restarcie
+- Sesję tmux
+- Kopię zapasową
+E: Log: journalctl -u NAZWA.
+#Q
+Q: Jak sprawdzić stan przejściowej jednostki użytkownika jq-import?
++ systemctl --user is-active jq-import (lub status)
+- tmux ls
+- ps jq-import
+- jobs
+E: Zatrzymanie: systemctl --user stop jq-import.
+#Q
+Q: Przed czym tmux NIE chroni?
++ Przed restartem serwera, OOM killerem i KillUserProcesses=yes
+- Przed zerwaniem SSH
+- Przed zamknięciem laptopa
+- Przed zmianą sieci
+E: Chroni tylko przed utratą połączenia.
+#Q
+Q: Dlaczego aplikacji nie uruchamia się „na stałe” w oknie tmux?
++ Nie wystartuje po restarcie, nie ma limitów, restartu po awarii ani logów w dzienniku
+- Bo tmux jest wolny
+- Bo tmux nie obsługuje Javy
+- Bo zajmuje dużo pamięci
+E: Stałe procesy to usługi systemd.
+#Q
+Q: Do czego najlepiej nadaje się tmux na serwerze?
++ Do interaktywnych, długich operacji, które człowiek chce obserwować
+- Do stałych usług
+- Do zadań cron
+- Do kopii zapasowych bez nadzoru
+E: Aktualizacje, migracje, importy.
+#Q
+Q: Jaki skutek ma przerwany apt przez zerwanie SSH?
++ Pakiety częściowo skonfigurowane i komunikat o dpkg --configure -a
+- Brak skutków
+- Automatyczne cofnięcie zmian
+- Restart systemu
+E: Dlatego aktualizacje uruchamia się w tmux.
+#Q
+Q: Co uruchamia do-release-upgrade przy pracy przez SSH?
++ Samo uruchamia się w GNU screen dla ochrony przed rozłączeniem
+- tmux
+- nohup
+- Nic dodatkowego
+E: Dodatkowo otwiera zapasowy port SSH.
+#Q
+Q: Jak bezpiecznie wykonać długą operację na serwerze według lekcji?
++ Wejść do tmux, włączyć zapis wyniku, uruchomić operację, w razie potrzeby odłączyć się i wrócić przez new -A
+- Uruchomić bezpośrednio w SSH
+- Uruchomić z & i wylogować się
+- Uruchomić w Guake
+E: Po zakończeniu zapisać historię i zamknąć sesję.
+#Q
+Q: Do czego służy mosh?
++ Do połączeń zdalnych odpornych na zmianę sieci i uśpienie
+- Do kopiowania plików
+- Do zarządzania tmux
+- Do szyfrowania dysków
+E: Może uzupełniać tmux na niestabilnych łączach.
+#Q
+Q: Co jest serwerem przesiadkowym (bastionem) w kontekście tmux?
++ Maszyną, na której trzyma się sesje tmux z połączeniami do wielu serwerów
+- Serwerem baz danych
+- Laptopem administratora
+- Serwerem DNS
+E: Dostępne z dowolnego miejsca.
+#Q
+Q: Co jest typowym błędem „to potrwa tylko chwilę”?
++ Uruchomienie długiej operacji bezpośrednio w sesji SSH bez tmux
+- Użycie tmux
+- Zapis do pliku
+- Sprawdzenie dysku
+E: Nawyk: wszystko dłuższe niż minuta w tmux.
+#Q
+Q: Jak w ćwiczeniu sprawdzono, że import bez tmux przestał działać?
++ pgrep -f szukał procesu import.sh, a licznik tabel był niepełny
+- tmux ls
+- journalctl
+- top
+E: Wynik: import nie dziala, 2 z 12 tabel.
+#Q
+Q: Jak w ćwiczeniu wysłano polecenie do sesji tmux z innego połączenia SSH?
++ ssh serwer "tmux send-keys -t praca 'polecenie' Enter"
+- scp polecenia
+- tmux attach z poleceniem
+- echo do gniazda
+E: Przydatne do automatyzacji.
+#Q
+Q: Dlaczego w ćwiczeniach użyto osobnego serwera tmux jqrem (-L)?
++ By nie mieszać ćwiczeń z prawdziwymi sesjami użytkownika
+- Bo -L przyspiesza
+- Bo domyślny serwer nie działa przez SSH
+- Bez powodu
+E: Na końcu serwer jqrem zakończono kill-server.
+#Q
+Q: Jaki komentarz miał klucz ćwiczeniowy i po co?
++ jq-lab — by przy sprzątaniu usunąć z authorized_keys tylko tę linię
+- anna — dla porządku
+- localhost — dla ssh
+- Brak komentarza
+E: sed -i '/ jq-lab$/d' ~/.ssh/authorized_keys.
+#Q
+Q: Co robi StrictHostKeyChecking accept-new?
++ Automatycznie akceptuje klucz nowego hosta, ale odrzuca zmieniony klucz znanego
+- Wyłącza sprawdzanie kluczy
+- Wymaga potwierdzenia zawsze
+- Usuwa known_hosts
+E: Bezpieczniejsze niż no.
+#Q
+Q: Do czego w ssh_config służy IdentitiesOnly yes?
++ Do użycia wyłącznie wskazanego klucza IdentityFile
+- Do wyłączenia haseł
+- Do logowania bez klucza
+- Do agenta SSH
+E: ssh nie próbuje innych kluczy z agenta.
+#Q
+Q: Co robi stdin przekierowane z <(sleep 600) dla ssh w tle?
++ Daje otwarte, ale puste wejście — ssh nie kończy się przez koniec danych
+- Wysyła 600 znaków
+- Opóźnia połączenie o 600 s
+- Zamyka wejście
+E: /dev/zero wysyłałoby znaki NUL do sesji.
+#Q
+Q: Jaką wersję tmux miał „serwer” w ćwiczeniu?
++ 3.4
+- 3.2
+- 2.9
+- 4.1
+E: server-access wymaga 3.3+.
+#Q
+Q: Co jest pierwszym krokiem po zalogowaniu na serwer przed długą operacją?
++ Wejście do sesji tmux
+- Uruchomienie operacji
+- Wylogowanie
+- Restart sshd
+E: ssh -t serwer tmux new -A -s praca.
+#Q
+Q: Czym różni się tmux attach -r od zwykłego attach?
++ -r podłącza w trybie tylko do odczytu
+- -r restartuje sesję
+- -r usuwa sesję
+- -r odłącza innych
+E: Dla obserwatora bez ryzyka przypadkowego wpisania.
+#Q
+Q: Jakie dwa elementy są potrzebne, by inny użytkownik mógł dołączyć do sesji tmux od wersji 3.3?
++ Prawa do gniazda (np. grupa) i wpis w server-access
+- Tylko hasło
+- Tylko sudo
+- Tylko chmod 777
+E: Od 3.3 tmux sprawdza też listę dostępu.
+#Q
+Q: Co pokazuje tmux list-clients?
++ Podłączonych klientów z terminalem, rozmiarem i trybem
+- Sesje
+- Okna
+- Procesy w panelach
+E: Formaty #{client_user}, #{client_readonly}.
+#Q
+Q: Co jest zalecane dla zadań bez interakcji zamiast tmux?
++ systemd-run --unit=... (dziennik, status) lub nohup
+- Guake
+- Terminator
+- screen zawsze
+E: tmux jest dla człowieka przy terminalu.
+#Q
+Q: Jak usunąć grupę, której jest się członkiem?
++ Najpierw usunąć z niej użytkowników (gpasswd -d), potem groupdel
+- groupdel zawsze wystarczy
+- rm /etc/group
+- userdel grupy
+E: groupdel nie usunie grupy podstawowej użytkownika.
+#Q
+Q: Dlaczego w ćwiczeniach proces ssh uruchamiano w tle bezpośrednio, a nie przez funkcję powłoki?
++ By $! wskazywał PID samego ssh — zabicie podpowłoki z funkcją nie zerwałoby połączenia
+- Bo funkcji nie da się uruchomić w tle
+- Dla szybkości
+- Bez powodu
+E: kill $! zabijał klienta ssh i zrywał połączenie.
+#Q
+Q: Co się stanie z procesami w panelach tmux po restarcie serwera?
++ Zginą razem z serwerem tmux — tmux nie przetrwa restartu systemu
+- Wznowią się automatycznie
+- Zostaną zapisane na dysk
+- Przeniosą się do systemd
+E: Zapis sesji między restartami daje np. tmux-resurrect, ale procesów nie wznawia.
