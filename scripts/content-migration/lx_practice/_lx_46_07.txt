@@ -1,0 +1,677 @@
+#EX
+// 1
+P: Na `sklep01` ustaw trwały dziennik systemd z limitem rozmiaru (SystemMaxUse=1G) przez drop-in i sprawdź bieżące zużycie dziennika.
+H: `/etc/systemd/journald.conf.d/90-sklep01.conf`; `journalctl --disk-usage`.
+S:
+ssh anna@203.0.113.50 'sudo install -d /etc/systemd/journald.conf.d; printf "[Journal]\nSystemMaxUse=1G\n" | sudo tee /etc/systemd/journald.conf.d/90-sklep01.conf >/dev/null; sudo systemctl restart systemd-journald; journalctl --disk-usage'
+#EX
+// 2
+P: Sprawdź rotację logów Nginx: ustawienia w /etc/logrotate.d/nginx (codziennie, 14 kopii, kompresja) i przetestuj konfigurację logrotate na sucho.
+H: `grep`; `logrotate -d /etc/logrotate.d/nginx`.
+S:
+ssh anna@203.0.113.50 'grep -E "daily|rotate|compress" /etc/logrotate.d/nginx; echo "--- test:"; sudo logrotate -d /etc/logrotate.d/nginx 2>&1 | grep -iE "rotating|considering" | head -3'
+#EX
+// 3
+P: Przejrzyj logi aplikacji z ostatniej godziny z poziomem co najmniej ostrzeżenia i policz błędy.
+H: `journalctl -u sklep -p warning --since -1h`.
+S:
+ssh anna@203.0.113.50 'sudo journalctl -u sklep -p warning --since -1h --no-pager | tail -5; echo "bledow (err):"; sudo journalctl -u sklep -p err --since -1h --no-pager | grep -c .'
+#EX
+// 4
+P: Napisz skrypt `/usr/local/bin/sprawdz-sklep.sh` (root, 755) sprawdzający: gotowość aplikacji, dni do wygaśnięcia certyfikatu (>=14), zajętość / i /var (<85%), brak jednostek failed. Zwraca 1 przy problemie, loguje przez logger.
+H: `curl readiness`, `openssl x509 -enddate`, `df --output=pcent`, `systemctl --failed`.
+S:
+ssh anna@203.0.113.50 'sudo tee /usr/local/bin/sprawdz-sklep.sh >/dev/null <<"EOF"
+#!/bin/bash
+loguj() { logger -t sprawdz-sklep -p "user.$1" "${*:2}"; }
+main() {
+    local blad=0 dni zajete
+    curl -fs -m 5 127.0.0.1:8080/actuator/health/readiness | grep -q UP || { loguj err "aplikacja nie jest gotowa"; blad=1; }
+    dni=$(( ($(date -d "$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/sklep.firma.example/cert.pem | cut -d= -f2)" +%s) - $(date +%s)) / 86400 ))
+    (( dni >= 14 )) || { loguj err "certyfikat wygasa za $dni dni"; blad=1; }
+    while read -r zajete; do (( ${zajete%\%} < 85 )) || { loguj err "dysk zajety w $zajete"; blad=1; }; done < <(df --output=pcent / /var | tail -n +2)
+    [[ -z $(systemctl --failed --plain --no-legend) ]] || { loguj err "jednostki failed"; blad=1; }
+    (( blad == 0 )) && loguj info "OK"
+    return "$blad"
+}
+main
+EOF
+sudo chmod 755 /usr/local/bin/sprawdz-sklep.sh; sudo bash -n /usr/local/bin/sprawdz-sklep.sh && echo "skladnia OK"'
+#EX
+// 5
+P: Uruchom skrypt sprawdzający raz ręcznie i odczytaj jego wpis w dzienniku oraz kod wyjścia.
+H: `sprawdz-sklep.sh; echo $?`; `journalctl -t sprawdz-sklep -n 1`.
+S:
+ssh anna@203.0.113.50 'sudo /usr/local/bin/sprawdz-sklep.sh; echo "kod: $?"; sudo journalctl -t sprawdz-sklep -n 1 -o cat'
+#EX
+// 6
+P: Utwórz jednostkę oneshot `sprawdz-sklep.service` z OnFailure=powiadom@%n.service oraz timer uruchamiający ją co minutę. Włącz timer.
+H: service Type=oneshot ExecStart=...; timer OnCalendar=*:0/1 lub OnUnitActiveSec=1min.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/sprawdz-sklep.service >/dev/null <<EOF
+[Unit]
+Description=Sprawdzenie stanu sklep
+OnFailure=powiadom@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sprawdz-sklep.sh
+EOF
+sudo tee /etc/systemd/system/sprawdz-sklep.timer >/dev/null <<EOF
+[Unit]
+Description=Sprawdzenie stanu sklep co minute
+
+[Timer]
+OnCalendar=*:0/1
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+sudo systemctl daemon-reload; sudo systemctl enable --now sprawdz-sklep.timer; systemctl list-timers sprawdz-sklep.timer --no-pager | sed -n 2p'
+#EX
+// 7
+P: Utwórz szablon powiadomienia `powiadom@.service`, który loguje (i opcjonalnie wysyła webhookiem) informację o awarii jednostki. Sprawdź składnię.
+H: `powiadom@.service` z %i (nazwa jednostki, która zawiodła).
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/powiadom@.service >/dev/null <<EOF
+[Unit]
+Description=Powiadomienie o awarii %i
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '"'"'logger -t powiadom "powiadomienie wyslane: %i - failed"'"'"'
+EOF
+sudo systemctl daemon-reload; sudo systemd-analyze verify /etc/systemd/system/powiadom@.service && echo "OK"'
+#EX
+// 8
+P: Przetestuj powiadomienie: zatrzymaj aplikację, uruchom sprawdzenie ręcznie (powinno zwrócić błąd i wywołać powiadom@). Sprawdź dziennik. Uruchom aplikację z powrotem.
+H: `systemctl stop sklep`; `systemctl start sprawdz-sklep.service` (OnFailure zadziała); `journalctl -t powiadom`.
+S:
+ssh anna@203.0.113.50 'sudo systemctl stop sklep; sudo systemctl start sprawdz-sklep.service 2>&1 | tail -1; sleep 2; sudo journalctl -t powiadom -n 1 -o cat; sudo journalctl -t sprawdz-sklep -n 1 -o cat; sudo systemctl start sklep'
+#EX
+// 9
+P: Napisz skrypt kopii bazy `/usr/local/bin/kopia-bazy.sh` z `set -euo pipefail`: pg_dump -Fc do pliku tymczasowego, weryfikacja (pg_restore -l, rozmiar >1MB), zmiana nazwy, retencja 7 dni, rsync poza serwer, log.
+H: `runuser -u postgres -- pg_dump`; `find -mtime +6 -delete`.
+S:
+ssh anna@203.0.113.50 'sudo tee /usr/local/bin/kopia-bazy.sh >/dev/null <<"EOF"
+#!/bin/bash
+set -euo pipefail
+loguj() { logger -t kopia-bazy -p "user.$1" "${*:2}"; }
+zakoncz() { loguj err "${*:2}"; exit "$1"; }
+main() {
+    local plik=/var/backups/sklep/sklep-$(date -u +%F).dump
+    runuser -u postgres -- pg_dump -Fc sklep > "$plik.tmp"
+    runuser -u postgres -- pg_restore -l "$plik.tmp" > /dev/null || zakoncz 1 "zrzut nieczytelny"
+    (( $(stat -c %s "$plik.tmp") > 1000000 )) || zakoncz 1 "zrzut za maly"
+    mv "$plik.tmp" "$plik"
+    find /var/backups/sklep -name "sklep-*.dump" -mtime +6 -delete
+    rsync -a --delete -e "ssh -i /root/.ssh/kopie_sklep01 -o StrictHostKeyChecking=accept-new" /var/backups/sklep/ kopie@kopie.firma.example:sklep01/ || loguj warning "rsync poza serwer nieudany"
+    loguj info "kopia OK: ${plik##*/} ($(du -h "$plik" | cut -f1))"
+}
+main
+EOF
+sudo chmod 755 /usr/local/bin/kopia-bazy.sh; sudo bash -n /usr/local/bin/kopia-bazy.sh && echo "skladnia OK"'
+#EX
+// 10
+P: Utwórz jednostkę i timer kopii bazy (codziennie 02:30 UTC, Persistent). Włącz timer i sprawdź najbliższe uruchomienie.
+H: kopia-bazy.service oneshot; timer OnCalendar=*-*-* 02:30:00.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/kopia-bazy.service >/dev/null <<EOF
+[Unit]
+Description=Kopia bazy sklep
+OnFailure=powiadom@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kopia-bazy.sh
+EOF
+sudo tee /etc/systemd/system/kopia-bazy.timer >/dev/null <<EOF
+[Unit]
+Description=Codzienna kopia bazy 02:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+sudo systemctl daemon-reload; sudo systemctl enable --now kopia-bazy.timer; systemctl list-timers kopia-bazy.timer --no-pager | sed -n 2p'
+#EX
+// 11
+P: Uruchom kopię ręcznie i sprawdź wynik: wpis w dzienniku, powstały plik .dump i jego rozmiar.
+H: `systemctl start kopia-bazy.service`; `journalctl -t kopia-bazy`; `ls -lh`.
+S:
+ssh anna@203.0.113.50 'sudo systemctl start kopia-bazy.service; sleep 3; sudo journalctl -t kopia-bazy -n 1 -o cat; ls -lh /var/backups/sklep/ | tail -2'
+#EX
+// 12
+P: Sprawdź zawartość zrzutu bez odtwarzania: spis obiektów (pg_restore -l) i liczbę tabel.
+H: `pg_restore -l plik.dump | grep TABLE`.
+S:
+ssh anna@203.0.113.50 'plik=$(ls -t /var/backups/sklep/sklep-*.dump | head -1); sudo -u postgres pg_restore -l "$plik" | grep -c "TABLE DATA"; echo "plik: $plik"'
+#EX
+// 13
+P: Napisz skrypt próby odtworzenia `/usr/local/bin/proba-odtworzenia.sh`: najnowszy zrzut do bazy `sklep_proba`, porównanie liczności wybranych tabel z produkcją, wynik „zgodne/niezgodne”. Usuwa bazę testową po sprawdzeniu.
+H: `dropdb --if-exists; createdb; pg_restore -d`; porównanie SELECT count.
+S:
+ssh anna@203.0.113.50 'sudo tee /usr/local/bin/proba-odtworzenia.sh >/dev/null <<"EOF"
+#!/bin/bash
+set -euo pipefail
+loguj() { logger -t proba-odtworzenia -p "user.$1" "${*:2}"; }
+plik=$(ls -t /var/backups/sklep/sklep-*.dump | head -1)
+runuser -u postgres -- dropdb --if-exists sklep_proba
+runuser -u postgres -- createdb sklep_proba
+runuser -u postgres -- pg_restore -d sklep_proba "$plik"
+wynik=zgodne
+for t in produkty zamowienia klienci; do
+    a=$(runuser -u postgres -- psql -Atc "SELECT count(*) FROM $t" sklep 2>/dev/null || echo -)
+    b=$(runuser -u postgres -- psql -Atc "SELECT count(*) FROM $t" sklep_proba 2>/dev/null || echo -)
+    echo "$t produkcja=$a proba=$b"; [ "$a" = "$b" ] || wynik=NIEZGODNE
+done
+runuser -u postgres -- dropdb sklep_proba
+loguj info "proba odtworzenia ${plik##*/}: $wynik"
+echo "WYNIK: $wynik"
+EOF
+sudo chmod 755 /usr/local/bin/proba-odtworzenia.sh; sudo bash -n /usr/local/bin/proba-odtworzenia.sh && echo "skladnia OK"'
+#EX
+// 14
+P: Uruchom próbę odtworzenia i odczytaj wynik oraz wpis w dzienniku.
+H: `proba-odtworzenia.sh`; `journalctl -t proba-odtworzenia`.
+S:
+ssh anna@203.0.113.50 'sudo /usr/local/bin/proba-odtworzenia.sh; sudo journalctl -t proba-odtworzenia -n 1 -o cat'
+#EX
+// 15
+P: Zaplanuj cotygodniową próbę odtworzenia (niedziela 04:00 UTC) timerem i włącz go.
+H: proba-odtworzenia.service + timer OnCalendar=Sun *-*-* 04:00:00.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/proba-odtworzenia.service >/dev/null <<EOF
+[Unit]
+Description=Cotygodniowa proba odtworzenia kopii
+OnFailure=powiadom@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/proba-odtworzenia.sh
+EOF
+sudo tee /etc/systemd/system/proba-odtworzenia.timer >/dev/null <<EOF
+[Unit]
+Description=Proba odtworzenia co tydzien
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+sudo systemctl daemon-reload; sudo systemctl enable --now proba-odtworzenia.timer; systemctl list-timers proba-odtworzenia.timer --no-pager | sed -n 2p'
+#EX
+// 16
+P: Odtwórz pułapkę pustej kopii: napisz starą wersję skryptu bez pipefail (pg_dump | gzip) i pokaż, że przy błędnym haśle kończy się sukcesem, a plik jest pusty.
+H: Potok bez pipefail; wymuś błąd (złe hasło); sprawdź rozmiar.
+S:
+ssh anna@203.0.113.50 'cat >/tmp/kopia-stara.sh <<"EOF"
+#!/bin/bash
+PGPASSWORD=zle-haslo pg_dump -U sklep -h 127.0.0.1 sklep | gzip > /tmp/sklep-stara.sql.gz
+echo "kod potoku: $?"
+EOF
+bash /tmp/kopia-stara.sh; ls -l /tmp/sklep-stara.sql.gz | awk "{print \$5, \$9}"; rm -f /tmp/kopia-stara.sh /tmp/sklep-stara.sql.gz'
+#EX
+// 17
+P: Pokaż, że z `set -o pipefail` ten sam potok zwraca błąd (kod != 0).
+H: `set -o pipefail; zle-haslo pg_dump | gzip > plik; echo $?`.
+S:
+ssh anna@203.0.113.50 'set -o pipefail; PGPASSWORD=zle-haslo pg_dump -U sklep -h 127.0.0.1 sklep 2>/dev/null | gzip > /tmp/x.gz; echo "kod z pipefail: $?"; rm -f /tmp/x.gz'
+#EX
+// 18
+P: Zweryfikuj kopię poza serwerem: sprawdź połączenie kluczem kopii do kopie.firma.example i listę kopii po stronie odbiorcy (katalog ograniczony dla konta kopie).
+H: `ssh -i /root/.ssh/kopie_sklep01 kopie@... ls`.
+S:
+ssh anna@203.0.113.50 'sudo ssh -i /root/.ssh/kopie_sklep01 -o StrictHostKeyChecking=accept-new kopie@kopie.firma.example ls -1 sklep01/ 2>&1 | tail -5 || echo "sprawdz klucz/rrsync po stronie odbiorcy"'
+#EX
+// 19
+P: Zapisz w `~/infra/sklep01/pliki/odtwarzanie.md` procedurę odtworzenia bazy po awarii (krok po kroku) i zatwierdź wszystkie skrypty oraz jednostki monitoringu/kopii do repozytorium.
+H: scp skryptów i jednostek; procedura: pobierz kopię, dropdb/createdb, pg_restore, restart usługi.
+S:
+cd ~/infra/sklep01
+for f in sprawdz-sklep.sh kopia-bazy.sh proba-odtworzenia.sh; do ssh anna@203.0.113.50 "sudo cat /usr/local/bin/$f" > pliki/$f; done
+scp anna@203.0.113.50:/etc/systemd/system/sprawdz-sklep.service pliki/
+scp anna@203.0.113.50:/etc/systemd/system/kopia-bazy.service pliki/
+cat > pliki/odtwarzanie.md <<'EOF'
+# Odtworzenie bazy sklep po awarii
+1. Pobierz najnowszy zrzut: scp kopie@kopie.firma.example:sklep01/sklep-RRRR-MM-DD.dump .
+2. sudo systemctl stop sklep
+3. sudo -u postgres dropdb --if-exists sklep && sudo -u postgres createdb -O sklep sklep
+4. sudo -u postgres pg_restore -d sklep sklep-RRRR-MM-DD.dump
+5. sudo systemctl start sklep && curl -s 127.0.0.1:8080/actuator/health/readiness
+RPO: do 24 h (kopia dzienna). RTO: zaleznie od rozmiaru bazy (~minuty).
+EOF
+git add pliki/*.sh pliki/sprawdz-sklep.service pliki/kopia-bazy.service pliki/odtwarzanie.md
+git commit -qm "Etap 7: logi, monitoring, kopie z proba odtworzenia" && echo ok
+#EX
+// 20
+P: Zweryfikuj całościowo etap 7: aktywne timery (sprawdzanie, kopia, próba odtworzenia), limit dziennika, obecność dzisiejszej kopii.
+H: `systemctl list-timers`; `journalctl --disk-usage`; `ls /var/backups/sklep`.
+S:
+ssh anna@203.0.113.50 'echo "== timery:"; systemctl list-timers --no-pager | grep -E "sprawdz-sklep|kopia-bazy|proba-odtworzenia"; echo "== dziennik:"; journalctl --disk-usage; echo "== kopie:"; ls -lh /var/backups/sklep/ | tail -3'
+#Q
+Q: Jakie trzy obszary domyka etap 7 projektu?
++ Logi, monitoring i kopie zapasowe
+- Sieć, zapora, SSH
+- Java, baza, Nginx
+- Konta, katalogi, pakiety
+E: Wiedza, że serwer działa, co się działo i czy da się odtworzyć.
+#Q
+Q: Jaka jest najważniejsza zasada dotycząca kopii zapasowych?
++ Kopia, której nie odtworzono, nie jest kopią
+- Im więcej kopii, tym lepiej
+- Kopia w tym samym katalogu wystarcza
+- Kopie robi się raz w roku
+E: Trzeba cyklicznie próbować odtworzenia.
+#Q
+Q: Co ustawia SystemMaxUse=1G w konfiguracji journald?
++ Maksymalny rozmiar trwałego dziennika systemd
+- Limit pamięci RAM
+- Rozmiar logu Nginx
+- Limit połączeń
+E: Zapobiega zapełnieniu dysku przez dziennik.
+#Q
+Q: Gdzie przechowywany jest trwały dziennik systemd?
++ W /var/log/journal
+- W /var/log/syslog
+- W /tmp
+- Tylko w RAM
+E: Trwały dziennik przetrwa restart.
+#Q
+Q: Jak sprawdzić, ile miejsca zajmuje dziennik systemd?
++ journalctl --disk-usage
+- df -h /var/log
+- du -sh /journal
+- systemctl status journald
+E: Pokazuje rozmiar archiwalnych i aktywnych plików.
+#Q
+Q: Co rotuje logi Nginx?
++ logrotate (np. codziennie, 14 kopii, kompresja)
+- journald
+- Sam Nginx
+- cron bez konfiguracji
+E: /etc/logrotate.d/nginx.
+#Q
+Q: Jak przetestować konfigurację logrotate bez realnej rotacji?
++ logrotate -d PLIK (tryb debug/dry-run)
+- logrotate --test
+- logrotate -n
+- cat PLIK
+E: Pokazuje, co zostałoby zrobione.
+#Q
+Q: Co sprawdza skrypt sprawdz-sklep.sh?
++ Gotowość aplikacji, dni do wygaśnięcia certyfikatu, zajętość dysku, jednostki failed
+- Tylko czy serwer odpowiada na ping
+- Tylko rozmiar bazy
+- Tylko wersję Javy
+E: Zwraca 1 przy którymkolwiek problemie.
+#Q
+Q: Jak często uruchamiany jest skrypt sprawdzający stan?
++ Co minutę (timer)
+- Raz dziennie
+- Co godzinę
+- Przy starcie serwera
+E: OnCalendar=*:0/1.
+#Q
+Q: Co robi OnFailure=powiadom@%n.service w jednostce?
++ Uruchamia jednostkę powiadamiającą, gdy ta jednostka zawiedzie
+- Restartuje usługę
+- Wyłącza timer
+- Loguje sukces
+E: %n to nazwa jednostki, która zawiodła.
+#Q
+Q: Czym jest szablon powiadom@.service?
++ Jednostką szablonową uruchamianą przy awarii, z nazwą winowajcy w %i
+- Zwykłą usługą aplikacji
+- Timerem
+- Skryptem kopii
+E: Wysyła powiadomienie (webhook/e-mail).
+#Q
+Q: Jak przetestować powiadomienie o awarii?
++ Wywołać warunek błędu (np. zatrzymać aplikację) i uruchomić sprawdzenie
+- Zrestartować serwer
+- Usunąć timer
+- Czekać na awarię
+E: OnFailure wywoła powiadom@.
+#Q
+Q: Jakim poleceniem skrypt zapisuje komunikaty do dziennika?
++ logger -t NAZWA -p user.POZIOM
+- echo do /var/log
+- journalctl --write
+- systemd-cat tylko
+E: logger trafia do journald ze znacznikiem.
+#Q
+Q: Jakim formatem robi się kopię bazy w projekcie?
++ pg_dump -Fc (format własny, skompresowany, do pg_restore)
+- pg_dump zwykły SQL do pliku .sql
+- cp katalogu danych
+- tar bazy w czasie pracy
+E: Format custom pozwala na pg_restore z wyborem obiektów.
+#Q
+Q: O której i jak często wykonywana jest kopia bazy?
++ Codziennie o 02:30 UTC (timer Persistent)
+- Co minutę
+- Raz w tygodniu
+- Przy każdym wdrożeniu
+E: Poza godzinami ruchu.
+#Q
+Q: Co robi Persistent=true w timerze kopii?
++ Nadrabia przegapione uruchomienie, jeśli serwer był wyłączony o zaplanowanej porze
+- Uruchamia co sekundę
+- Zapisuje stan na stałe
+- Blokuje usunięcie timera
+E: Kopia wykona się po starcie, jeśli termin minął.
+#Q
+Q: Jak skrypt kopii weryfikuje zrzut przed użyciem?
++ pg_restore -l (czytelność) i sprawdzenie minimalnego rozmiaru
+- Tylko sprawdza, czy plik istnieje
+- Nie weryfikuje
+- Porównuje z wczorajszym
+E: Zapobiega przyjęciu pustego/uszkodzonego zrzutu.
+#Q
+Q: Po co zrzut najpierw trafia do pliku .tmp, a dopiero po weryfikacji jest przemianowany?
++ Żeby nieudany zrzut nie nadpisał/nie udawał poprawnej kopii
+- Żeby był szybszy
+- Bo pg_dump tego wymaga
+- Bez powodu
+E: Dobra kopia dostaje nazwę docelową dopiero po sprawdzeniu.
+#Q
+Q: Jak realizowana jest retencja kopii (7 dni)?
++ find /var/backups/sklep -name 'sklep-*.dump' -mtime +6 -delete
+- rm wszystkich kopii
+- logrotate
+- ręcznie
+E: Usuwa zrzuty starsze niż 6 dni.
+#Q
+Q: Jak kopia trafia poza serwer?
++ rsync kluczem przeznaczonym tylko do kopii na kopie.firma.example
+- scp jako root
+- e-mailem
+- FTP bez szyfrowania
+E: Po stronie odbiorcy konto ograniczone do jednego katalogu.
+#Q
+Q: Dlaczego klucz do kopii po stronie odbiorcy jest ograniczony (np. rrsync)?
++ Żeby w razie przejęcia serwera klucz dawał dostęp tylko do katalogu kopii
+- Żeby był szybszy
+- Bo rsync tego wymaga
+- Bez powodu
+E: Minimalne uprawnienia także dla kont technicznych.
+#Q
+Q: Czym jest próba odtworzenia?
++ Odtworzenie kopii do osobnej bazy i porównanie danych z produkcją
+- Usunięcie kopii
+- Kompresja kopii
+- Wysłanie kopii
+E: Potwierdza, że kopia naprawdę działa.
+#Q
+Q: Jak często wykonuje się próbę odtworzenia w projekcie?
++ Co tydzień (timer, np. niedziela 04:00 UTC)
+- Codziennie przed kopią
+- Nigdy
+- Co godzinę
+E: Wynik też jest monitorowany.
+#Q
+Q: Co porównuje skrypt próby odtworzenia?
++ Liczność wybranych tabel w bazie produkcyjnej i odtworzonej
+- Rozmiar plików
+- Sumy sha256
+- Daty modyfikacji
+E: Zgodne/niezgodne.
+#Q
+Q: Do czego służy set -o pipefail w skrypcie kopii?
++ Sprawia, że kod wyjścia potoku to kod pierwszego polecenia, które zawiodło
+- Włącza tryb debug
+- Ignoruje błędy
+- Ustawia strefę czasową
+E: Bez niego błąd pg_dump w potoku ginie.
+#Q
+Q: Jaki jest kod wyjścia potoku pg_dump | gzip bez pipefail, gdy pg_dump zawiedzie?
++ 0 (kod gzip, które się udało)
+- Kod pg_dump
+- 1 zawsze
+- 137
+E: Dlatego skrypt „kończy się sukcesem”.
+#Q
+Q: Jaki jest objaw pustej kopii bez pipefail?
++ Codziennie powstaje plik o rozmiarze kilkudziesięciu bajtów (pusty skompresowany strumień)
+- Brak pliku
+- Błąd timera
+- Plik za duży
+E: Retencja usuwa starsze, dobre kopie.
+#Q
+Q: Dlaczego pusta kopia jest szczególnie groźna?
++ Timer jest zielony, a problem wychodzi dopiero przy odtworzeniu po awarii
+- Zajmuje dużo miejsca
+- Spowalnia serwer
+- Blokuje bazę
+E: Brak weryfikacji usypia czujność.
+#Q
+Q: Co oznacza zasada 3-2-1 dla kopii?
++ Trzy kopie, na dwóch nośnikach, w tym jedna poza lokalizacją
+- Trzy serwery, dwie bazy, jeden backup
+- Kopia co 3 dni, 2 razy, 1 plik
+- Trzy kompresje
+E: Warto dodać kopię niezmienialną.
+#Q
+Q: Co to jest RPO?
++ Maksymalna akceptowalna utrata danych (jak daleko wstecz)
+- Czas odtworzenia
+- Rozmiar kopii
+- Liczba kopii
+E: Kopia dzienna daje RPO do 24 h.
+#Q
+Q: Co to jest RTO?
++ Maksymalny akceptowalny czas odtworzenia usługi
+- Rozmiar bazy
+- Utrata danych
+- Czas kopii
+E: Zależy od rozmiaru bazy i procedury.
+#Q
+Q: Kto ustala RPO i RTO?
++ Biznes (właściciel usługi), nie sam administrator
+- Zawsze administrator
+- Dostawca chmury
+- Nikt
+E: To decyzja o akceptowalnym ryzyku.
+#Q
+Q: Czym jest PITR (odtwarzanie do punktu w czasie)?
++ Odtworzenie bazy do dowolnej chwili dzięki archiwizacji WAL
+- Kopia raz w roku
+- Kompresja kopii
+- Replikacja tabel
+E: Narzędzia: pgBackRest, Barman.
+#Q
+Q: Kiedy potrzebna jest archiwizacja WAL zamiast dziennych zrzutów?
++ Gdy dopuszczalna utrata danych jest mniejsza niż jeden dzień
+- Zawsze
+- Nigdy
+- Tylko dla małych baz
+E: Dzienny zrzut oznacza RPO do 24 h.
+#Q
+Q: Jak monitoring wykrywa kończący się certyfikat?
++ Skrypt liczy dni do enddate certyfikatu i zgłasza, gdy jest ich mniej niż 14
+- Czeka na wygaśnięcie
+- Nie sprawdza
+- Sprawdza raz w roku
+E: openssl x509 -enddate.
+#Q
+Q: Jak monitoring wykrywa zapełniający się dysk?
++ df --output=pcent dla / i /var, próg np. 85%
+- du całego dysku
+- Czeka na błąd No space
+- Nie sprawdza
+E: Ostrzeżenie przed zapełnieniem.
+#Q
+Q: Jak monitoring wykrywa uszkodzone usługi?
++ systemctl --failed (pusty wynik = OK)
+- journalctl bez filtra
+- ps aux
+- top
+E: Niepusta lista oznacza problem.
+#Q
+Q: Co pokazuje pg_restore -l dla zrzutu?
++ Spis obiektów w kopii (tabele, dane, indeksy)
+- Logi
+- Rozmiar bazy
+- Hasło
+E: Służy też do wyboru obiektów przy odtwarzaniu.
+#Q
+Q: Dlaczego próba odtworzenia idzie do osobnej bazy (sklep_proba)?
++ Żeby nie nadpisać bazy produkcyjnej podczas testu
+- Bo jest szybsza
+- Bo produkcja jest tylko do odczytu
+- Bez powodu
+E: Po teście baza testowa jest usuwana.
+#Q
+Q: Co jest dobrą praktyką oprócz wykonywania kopii?
++ Zapisana procedura odtworzenia krok po kroku
+- Ukrycie kopii przed zespołem
+- Brak dokumentacji
+- Kopie tylko lokalnie
+E: Przy awarii nie ma czasu na improwizację.
+#Q
+Q: Gdzie zapisuje się procedurę odtworzenia?
++ W repozytorium infrastruktury (np. odtwarzanie.md)
+- W pamięci administratora
+- W logach
+- W bazie
+E: Dostępna także, gdy serwer nie działa.
+#Q
+Q: Co robi runuser -u postgres -- pg_dump w skrypcie?
++ Uruchamia pg_dump jako użytkownik postgres (uwierzytelnianie peer, bez hasła)
+- Loguje się przez sieć
+- Zmienia hasło
+- Tworzy użytkownika
+E: Lokalne gniazdo z metodą peer.
+#Q
+Q: Jak przetestować, że kopia poza serwerem działa?
++ Połączyć się kluczem kopii i wypisać listę plików po stronie odbiorcy
+- Zrestartować serwer
+- Usunąć lokalne kopie
+- Nie testować
+E: ssh -i /root/.ssh/kopie_sklep01 kopie@... ls.
+#Q
+Q: Co jest zaletą kopii niezmienialnej (immutable)?
++ Przetrwa włamanie, w którym ktoś usunie kopie z serwera
+- Jest mniejsza
+- Jest szybsza
+- Nie wymaga klucza
+E: Np. magazyn obiektowy z blokadą usuwania.
+#Q
+Q: Jaki jest skutek -mtime +6 w retencji?
++ Usuwa pliki starsze niż 6 dni (zostaje ok. 7 ostatnich)
+- Usuwa pliki z ostatnich 6 dni
+- Usuwa wszystko
+- Nic nie usuwa
+E: Dla dziennych kopii = tydzień wstecz.
+#Q
+Q: Co loguje skrypt kopii po sukcesie?
++ Komunikat „kopia OK” z nazwą pliku i rozmiarem
+- Hasło bazy
+- Zawartość bazy
+- Nic
+E: logger -t kopia-bazy.
+#Q
+Q: Jaki jest sens monitorowania wyniku próby odtworzenia?
++ Niezgodność lub błąd odtworzenia też musi wywołać powiadomienie
+- Żeby przyspieszyć kopię
+- Żeby zająć dysk
+- Bez znaczenia
+E: OnFailure w jednostce próby.
+#Q
+Q: Jak odczytać ostatni wpis skryptu kopii w dzienniku?
++ journalctl -t kopia-bazy -n 1 -o cat
+- cat /var/log/kopia
+- systemctl status kopia
+- tail /var/backups
+E: Znacznik ustawia logger -t.
+#Q
+Q: Co jest celem ograniczenia rozmiaru dziennika (SystemMaxUse)?
++ Dziennik nie zajmie całego dysku przy dużej liczbie wpisów
+- Przyspiesza logowanie
+- Szyfruje logi
+- Blokuje stare logi
+E: Stare wpisy są usuwane po przekroczeniu limitu.
+#Q
+Q: Jak sprawdzić aktywne timery monitoringu i kopii?
++ systemctl list-timers
+- crontab -l
+- atq
+- journalctl --timers
+E: Kolumna NEXT pokazuje następne uruchomienie.
+#Q
+Q: Co jest dowodem zakończenia etapu 7?
++ Aktywne timery (sprawdzanie, kopia, próba odtworzenia), limit dziennika, obecna kopia
+- Działający Nginx
+- Certyfikat TLS
+- Zablokowane SSH
+E: Monitoring i kopie działają i są weryfikowane.
+#Q
+Q: Co jest warunkiem przejścia do lekcji 8 (skrypt automatyzujący)?
++ Działające logi, monitoring i kopie
+- Brak zapory
+- Konto root
+- Wyłączona baza
+E: Skrypt zbierze całą konfigurację serwera.
+#Q
+Q: Dlaczego skrypt kopii używa set -euo pipefail w całości?
++ Przerywa przy błędzie, nieustawionej zmiennej i błędzie potoku — nie tworzy fałszywej kopii
+- Włącza debug
+- Ignoruje błędy
+- Ustawia locale
+E: Krytyczne dla wiarygodności kopii.
+#Q
+Q: Co jest typowym celem powiadomienia (webhook) z szablonu powiadom@?
++ Kanał komunikatora zespołu lub e-mail administratorów
+- Baza danych
+- Plik w /tmp
+- Rejestr Windows
+E: Zespół dowiaduje się o problemie od razu.
+#Q
+Q: Dlaczego kopie i monitoring to osobny etap, a nie dodatek?
++ Serwer bez nich działa „na ślepo” — awaria i utrata danych wychodzą za późno
+- Bo tak wymaga systemd
+- Bo przyspieszają aplikację
+- Bez powodu
+E: Druga połowa sukcesu po uruchomieniu usługi.
+#Q
+Q: Co jest celem całego etapu 7?
++ Zapewnić obserwowalność (logi, monitoring) i odtwarzalność danych (kopie z próbą odtworzenia)
+- Uruchomić aplikację
+- Zabezpieczyć SSH
+- Skonfigurować TLS
+E: Wiedza o stanie serwera i możliwość powrotu po awarii.
+#Q
+Q: Jak kopia pomaga przy błędzie użytkownika (np. usunięte dane)?
++ Zrzut sprzed błędu odtwarza się do bazy pomocniczej i importuje brakujące dane
+- Przywraca cały serwer
+- Nie pomaga
+- Restartuje aplikację
+E: Nie trzeba odtwarzać całej produkcji.
+#Q
+Q: Co należy monitorować oprócz samej aplikacji?
++ Certyfikat, miejsce na dysku, stan usług, wynik kopii i próby odtworzenia
+- Tylko CPU
+- Tylko RAM
+- Tylko sieć
+E: Problemy pośrednie też zatrzymują usługę.
+#Q
+Q: Jak w skali wielu serwerów zastępuje się skrypty monitoringu?
++ Centralnym systemem (Prometheus, Grafana) i centralnymi logami
+- Większą liczbą skryptów
+- Ręcznym sprawdzaniem
+- Brakiem monitoringu
+E: Dla jednego serwera skrypty wystarczą.
+#Q
+Q: Co trzeba zrobić, żeby mieć pewność, że koło zapasowe (kopia) działa?
++ Założyć je na próbę — cyklicznie odtwarzać kopię
+- Trzymać w bagażniku
+- Kupić nowe
+- Nic
+E: Analogia z lekcji: kopia bez próby odtworzenia bywa „przebita”.

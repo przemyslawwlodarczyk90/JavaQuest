@@ -76,6 +76,768 @@
       "body": "- Dziennik systemd jest trwały i ograniczony (`SystemMaxUse=`); logi Nginx rotuje `logrotate`.\n- Skrypt sprawdzający uruchamiany timerem co minutę zgłasza problemy kodem wyjścia, a `OnFailure=` wysyła powiadomienie.\n- Kopia bazy: `pg_dump -Fc` do pliku, weryfikacja, retencja i wysyłka poza serwer — wszystko w skrypcie z `set -euo pipefail`.\n- Bez `pipefail` błąd `pg_dump` w potoku ginie, a skrypt codziennie tworzy puste kopie.\n- Kopię uznaje się za działającą dopiero po udanej próbie odtworzenia."
     }
   ],
-  "exercises": [],
-  "quiz": []
+  "exercises": [
+    {
+      "prompt": "Na `sklep01` ustaw trwały dziennik systemd z limitem rozmiaru (SystemMaxUse=1G) przez drop-in i sprawdź bieżące zużycie dziennika.",
+      "hint": "`/etc/systemd/journald.conf.d/90-sklep01.conf`; `journalctl --disk-usage`.",
+      "solution": "ssh anna@203.0.113.50 'sudo install -d /etc/systemd/journald.conf.d; printf \"[Journal]\\nSystemMaxUse=1G\\n\" | sudo tee /etc/systemd/journald.conf.d/90-sklep01.conf >/dev/null; sudo systemctl restart systemd-journald; journalctl --disk-usage'"
+    },
+    {
+      "prompt": "Sprawdź rotację logów Nginx: ustawienia w /etc/logrotate.d/nginx (codziennie, 14 kopii, kompresja) i przetestuj konfigurację logrotate na sucho.",
+      "hint": "`grep`; `logrotate -d /etc/logrotate.d/nginx`.",
+      "solution": "ssh anna@203.0.113.50 'grep -E \"daily|rotate|compress\" /etc/logrotate.d/nginx; echo \"--- test:\"; sudo logrotate -d /etc/logrotate.d/nginx 2>&1 | grep -iE \"rotating|considering\" | head -3'"
+    },
+    {
+      "prompt": "Przejrzyj logi aplikacji z ostatniej godziny z poziomem co najmniej ostrzeżenia i policz błędy.",
+      "hint": "`journalctl -u sklep -p warning --since -1h`.",
+      "solution": "ssh anna@203.0.113.50 'sudo journalctl -u sklep -p warning --since -1h --no-pager | tail -5; echo \"bledow (err):\"; sudo journalctl -u sklep -p err --since -1h --no-pager | grep -c .'"
+    },
+    {
+      "prompt": "Napisz skrypt `/usr/local/bin/sprawdz-sklep.sh` (root, 755) sprawdzający: gotowość aplikacji, dni do wygaśnięcia certyfikatu (>=14), zajętość / i /var (<85%), brak jednostek failed. Zwraca 1 przy problemie, loguje przez logger.",
+      "hint": "`curl readiness`, `openssl x509 -enddate`, `df --output=pcent`, `systemctl --failed`.",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /usr/local/bin/sprawdz-sklep.sh >/dev/null <<\"EOF\"\n#!/bin/bash\nloguj() { logger -t sprawdz-sklep -p \"user.$1\" \"${*:2}\"; }\nmain() {\n    local blad=0 dni zajete\n    curl -fs -m 5 127.0.0.1:8080/actuator/health/readiness | grep -q UP || { loguj err \"aplikacja nie jest gotowa\"; blad=1; }\n    dni=$(( ($(date -d \"$(openssl x509 -enddate -noout -in /etc/letsencrypt/live/sklep.firma.example/cert.pem | cut -d= -f2)\" +%s) - $(date +%s)) / 86400 ))\n    (( dni >= 14 )) || { loguj err \"certyfikat wygasa za $dni dni\"; blad=1; }\n    while read -r zajete; do (( ${zajete%\\%} < 85 )) || { loguj err \"dysk zajety w $zajete\"; blad=1; }; done < <(df --output=pcent / /var | tail -n +2)\n    [[ -z $(systemctl --failed --plain --no-legend) ]] || { loguj err \"jednostki failed\"; blad=1; }\n    (( blad == 0 )) && loguj info \"OK\"\n    return \"$blad\"\n}\nmain\nEOF\nsudo chmod 755 /usr/local/bin/sprawdz-sklep.sh; sudo bash -n /usr/local/bin/sprawdz-sklep.sh && echo \"skladnia OK\"'"
+    },
+    {
+      "prompt": "Uruchom skrypt sprawdzający raz ręcznie i odczytaj jego wpis w dzienniku oraz kod wyjścia.",
+      "hint": "`sprawdz-sklep.sh; echo $?`; `journalctl -t sprawdz-sklep -n 1`.",
+      "solution": "ssh anna@203.0.113.50 'sudo /usr/local/bin/sprawdz-sklep.sh; echo \"kod: $?\"; sudo journalctl -t sprawdz-sklep -n 1 -o cat'"
+    },
+    {
+      "prompt": "Utwórz jednostkę oneshot `sprawdz-sklep.service` z OnFailure=powiadom@%n.service oraz timer uruchamiający ją co minutę. Włącz timer.",
+      "hint": "service Type=oneshot ExecStart=...; timer OnCalendar=*:0/1 lub OnUnitActiveSec=1min.",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/sprawdz-sklep.service >/dev/null <<EOF\n[Unit]\nDescription=Sprawdzenie stanu sklep\nOnFailure=powiadom@%n.service\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/sprawdz-sklep.sh\nEOF\nsudo tee /etc/systemd/system/sprawdz-sklep.timer >/dev/null <<EOF\n[Unit]\nDescription=Sprawdzenie stanu sklep co minute\n\n[Timer]\nOnCalendar=*:0/1\nPersistent=true\n\n[Install]\nWantedBy=timers.target\nEOF\nsudo systemctl daemon-reload; sudo systemctl enable --now sprawdz-sklep.timer; systemctl list-timers sprawdz-sklep.timer --no-pager | sed -n 2p'"
+    },
+    {
+      "prompt": "Utwórz szablon powiadomienia `powiadom@.service`, który loguje (i opcjonalnie wysyła webhookiem) informację o awarii jednostki. Sprawdź składnię.",
+      "hint": "`powiadom@.service` z %i (nazwa jednostki, która zawiodła).",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/powiadom@.service >/dev/null <<EOF\n[Unit]\nDescription=Powiadomienie o awarii %i\n\n[Service]\nType=oneshot\nExecStart=/bin/sh -c '\"'\"'logger -t powiadom \"powiadomienie wyslane: %i - failed\"'\"'\"'\nEOF\nsudo systemctl daemon-reload; sudo systemd-analyze verify /etc/systemd/system/powiadom@.service && echo \"OK\"'"
+    },
+    {
+      "prompt": "Przetestuj powiadomienie: zatrzymaj aplikację, uruchom sprawdzenie ręcznie (powinno zwrócić błąd i wywołać powiadom@). Sprawdź dziennik. Uruchom aplikację z powrotem.",
+      "hint": "`systemctl stop sklep`; `systemctl start sprawdz-sklep.service` (OnFailure zadziała); `journalctl -t powiadom`.",
+      "solution": "ssh anna@203.0.113.50 'sudo systemctl stop sklep; sudo systemctl start sprawdz-sklep.service 2>&1 | tail -1; sleep 2; sudo journalctl -t powiadom -n 1 -o cat; sudo journalctl -t sprawdz-sklep -n 1 -o cat; sudo systemctl start sklep'"
+    },
+    {
+      "prompt": "Napisz skrypt kopii bazy `/usr/local/bin/kopia-bazy.sh` z `set -euo pipefail`: pg_dump -Fc do pliku tymczasowego, weryfikacja (pg_restore -l, rozmiar >1MB), zmiana nazwy, retencja 7 dni, rsync poza serwer, log.",
+      "hint": "`runuser -u postgres -- pg_dump`; `find -mtime +6 -delete`.",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /usr/local/bin/kopia-bazy.sh >/dev/null <<\"EOF\"\n#!/bin/bash\nset -euo pipefail\nloguj() { logger -t kopia-bazy -p \"user.$1\" \"${*:2}\"; }\nzakoncz() { loguj err \"${*:2}\"; exit \"$1\"; }\nmain() {\n    local plik=/var/backups/sklep/sklep-$(date -u +%F).dump\n    runuser -u postgres -- pg_dump -Fc sklep > \"$plik.tmp\"\n    runuser -u postgres -- pg_restore -l \"$plik.tmp\" > /dev/null || zakoncz 1 \"zrzut nieczytelny\"\n    (( $(stat -c %s \"$plik.tmp\") > 1000000 )) || zakoncz 1 \"zrzut za maly\"\n    mv \"$plik.tmp\" \"$plik\"\n    find /var/backups/sklep -name \"sklep-*.dump\" -mtime +6 -delete\n    rsync -a --delete -e \"ssh -i /root/.ssh/kopie_sklep01 -o StrictHostKeyChecking=accept-new\" /var/backups/sklep/ kopie@kopie.firma.example:sklep01/ || loguj warning \"rsync poza serwer nieudany\"\n    loguj info \"kopia OK: ${plik##*/} ($(du -h \"$plik\" | cut -f1))\"\n}\nmain\nEOF\nsudo chmod 755 /usr/local/bin/kopia-bazy.sh; sudo bash -n /usr/local/bin/kopia-bazy.sh && echo \"skladnia OK\"'"
+    },
+    {
+      "prompt": "Utwórz jednostkę i timer kopii bazy (codziennie 02:30 UTC, Persistent). Włącz timer i sprawdź najbliższe uruchomienie.",
+      "hint": "kopia-bazy.service oneshot; timer OnCalendar=*-*-* 02:30:00.",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/kopia-bazy.service >/dev/null <<EOF\n[Unit]\nDescription=Kopia bazy sklep\nOnFailure=powiadom@%n.service\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/kopia-bazy.sh\nEOF\nsudo tee /etc/systemd/system/kopia-bazy.timer >/dev/null <<EOF\n[Unit]\nDescription=Codzienna kopia bazy 02:30 UTC\n\n[Timer]\nOnCalendar=*-*-* 02:30:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\nEOF\nsudo systemctl daemon-reload; sudo systemctl enable --now kopia-bazy.timer; systemctl list-timers kopia-bazy.timer --no-pager | sed -n 2p'"
+    },
+    {
+      "prompt": "Uruchom kopię ręcznie i sprawdź wynik: wpis w dzienniku, powstały plik .dump i jego rozmiar.",
+      "hint": "`systemctl start kopia-bazy.service`; `journalctl -t kopia-bazy`; `ls -lh`.",
+      "solution": "ssh anna@203.0.113.50 'sudo systemctl start kopia-bazy.service; sleep 3; sudo journalctl -t kopia-bazy -n 1 -o cat; ls -lh /var/backups/sklep/ | tail -2'"
+    },
+    {
+      "prompt": "Sprawdź zawartość zrzutu bez odtwarzania: spis obiektów (pg_restore -l) i liczbę tabel.",
+      "hint": "`pg_restore -l plik.dump | grep TABLE`.",
+      "solution": "ssh anna@203.0.113.50 'plik=$(ls -t /var/backups/sklep/sklep-*.dump | head -1); sudo -u postgres pg_restore -l \"$plik\" | grep -c \"TABLE DATA\"; echo \"plik: $plik\"'"
+    },
+    {
+      "prompt": "Napisz skrypt próby odtworzenia `/usr/local/bin/proba-odtworzenia.sh`: najnowszy zrzut do bazy `sklep_proba`, porównanie liczności wybranych tabel z produkcją, wynik „zgodne/niezgodne”. Usuwa bazę testową po sprawdzeniu.",
+      "hint": "`dropdb --if-exists; createdb; pg_restore -d`; porównanie SELECT count.",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /usr/local/bin/proba-odtworzenia.sh >/dev/null <<\"EOF\"\n#!/bin/bash\nset -euo pipefail\nloguj() { logger -t proba-odtworzenia -p \"user.$1\" \"${*:2}\"; }\nplik=$(ls -t /var/backups/sklep/sklep-*.dump | head -1)\nrunuser -u postgres -- dropdb --if-exists sklep_proba\nrunuser -u postgres -- createdb sklep_proba\nrunuser -u postgres -- pg_restore -d sklep_proba \"$plik\"\nwynik=zgodne\nfor t in produkty zamowienia klienci; do\n    a=$(runuser -u postgres -- psql -Atc \"SELECT count(*) FROM $t\" sklep 2>/dev/null || echo -)\n    b=$(runuser -u postgres -- psql -Atc \"SELECT count(*) FROM $t\" sklep_proba 2>/dev/null || echo -)\n    echo \"$t produkcja=$a proba=$b\"; [ \"$a\" = \"$b\" ] || wynik=NIEZGODNE\ndone\nrunuser -u postgres -- dropdb sklep_proba\nloguj info \"proba odtworzenia ${plik##*/}: $wynik\"\necho \"WYNIK: $wynik\"\nEOF\nsudo chmod 755 /usr/local/bin/proba-odtworzenia.sh; sudo bash -n /usr/local/bin/proba-odtworzenia.sh && echo \"skladnia OK\"'"
+    },
+    {
+      "prompt": "Uruchom próbę odtworzenia i odczytaj wynik oraz wpis w dzienniku.",
+      "hint": "`proba-odtworzenia.sh`; `journalctl -t proba-odtworzenia`.",
+      "solution": "ssh anna@203.0.113.50 'sudo /usr/local/bin/proba-odtworzenia.sh; sudo journalctl -t proba-odtworzenia -n 1 -o cat'"
+    },
+    {
+      "prompt": "Zaplanuj cotygodniową próbę odtworzenia (niedziela 04:00 UTC) timerem i włącz go.",
+      "hint": "proba-odtworzenia.service + timer OnCalendar=Sun *-*-* 04:00:00.",
+      "solution": "ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/proba-odtworzenia.service >/dev/null <<EOF\n[Unit]\nDescription=Cotygodniowa proba odtworzenia kopii\nOnFailure=powiadom@%n.service\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/proba-odtworzenia.sh\nEOF\nsudo tee /etc/systemd/system/proba-odtworzenia.timer >/dev/null <<EOF\n[Unit]\nDescription=Proba odtworzenia co tydzien\n\n[Timer]\nOnCalendar=Sun *-*-* 04:00:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\nEOF\nsudo systemctl daemon-reload; sudo systemctl enable --now proba-odtworzenia.timer; systemctl list-timers proba-odtworzenia.timer --no-pager | sed -n 2p'"
+    },
+    {
+      "prompt": "Odtwórz pułapkę pustej kopii: napisz starą wersję skryptu bez pipefail (pg_dump | gzip) i pokaż, że przy błędnym haśle kończy się sukcesem, a plik jest pusty.",
+      "hint": "Potok bez pipefail; wymuś błąd (złe hasło); sprawdź rozmiar.",
+      "solution": "ssh anna@203.0.113.50 'cat >/tmp/kopia-stara.sh <<\"EOF\"\n#!/bin/bash\nPGPASSWORD=zle-haslo pg_dump -U sklep -h 127.0.0.1 sklep | gzip > /tmp/sklep-stara.sql.gz\necho \"kod potoku: $?\"\nEOF\nbash /tmp/kopia-stara.sh; ls -l /tmp/sklep-stara.sql.gz | awk \"{print \\$5, \\$9}\"; rm -f /tmp/kopia-stara.sh /tmp/sklep-stara.sql.gz'"
+    },
+    {
+      "prompt": "Pokaż, że z `set -o pipefail` ten sam potok zwraca błąd (kod != 0).",
+      "hint": "`set -o pipefail; zle-haslo pg_dump | gzip > plik; echo $?`.",
+      "solution": "ssh anna@203.0.113.50 'set -o pipefail; PGPASSWORD=zle-haslo pg_dump -U sklep -h 127.0.0.1 sklep 2>/dev/null | gzip > /tmp/x.gz; echo \"kod z pipefail: $?\"; rm -f /tmp/x.gz'"
+    },
+    {
+      "prompt": "Zweryfikuj kopię poza serwerem: sprawdź połączenie kluczem kopii do kopie.firma.example i listę kopii po stronie odbiorcy (katalog ograniczony dla konta kopie).",
+      "hint": "`ssh -i /root/.ssh/kopie_sklep01 kopie@... ls`.",
+      "solution": "ssh anna@203.0.113.50 'sudo ssh -i /root/.ssh/kopie_sklep01 -o StrictHostKeyChecking=accept-new kopie@kopie.firma.example ls -1 sklep01/ 2>&1 | tail -5 || echo \"sprawdz klucz/rrsync po stronie odbiorcy\"'"
+    },
+    {
+      "prompt": "Zapisz w `~/infra/sklep01/pliki/odtwarzanie.md` procedurę odtworzenia bazy po awarii (krok po kroku) i zatwierdź wszystkie skrypty oraz jednostki monitoringu/kopii do repozytorium.",
+      "hint": "scp skryptów i jednostek; procedura: pobierz kopię, dropdb/createdb, pg_restore, restart usługi.",
+      "solution": "cd ~/infra/sklep01\nfor f in sprawdz-sklep.sh kopia-bazy.sh proba-odtworzenia.sh; do ssh anna@203.0.113.50 \"sudo cat /usr/local/bin/$f\" > pliki/$f; done\nscp anna@203.0.113.50:/etc/systemd/system/sprawdz-sklep.service pliki/\nscp anna@203.0.113.50:/etc/systemd/system/kopia-bazy.service pliki/\ncat > pliki/odtwarzanie.md <<'EOF'\n# Odtworzenie bazy sklep po awarii\n1. Pobierz najnowszy zrzut: scp kopie@kopie.firma.example:sklep01/sklep-RRRR-MM-DD.dump .\n2. sudo systemctl stop sklep\n3. sudo -u postgres dropdb --if-exists sklep && sudo -u postgres createdb -O sklep sklep\n4. sudo -u postgres pg_restore -d sklep sklep-RRRR-MM-DD.dump\n5. sudo systemctl start sklep && curl -s 127.0.0.1:8080/actuator/health/readiness\nRPO: do 24 h (kopia dzienna). RTO: zaleznie od rozmiaru bazy (~minuty).\nEOF\ngit add pliki/*.sh pliki/sprawdz-sklep.service pliki/kopia-bazy.service pliki/odtwarzanie.md\ngit commit -qm \"Etap 7: logi, monitoring, kopie z proba odtworzenia\" && echo ok"
+    },
+    {
+      "prompt": "Zweryfikuj całościowo etap 7: aktywne timery (sprawdzanie, kopia, próba odtworzenia), limit dziennika, obecność dzisiejszej kopii.",
+      "hint": "`systemctl list-timers`; `journalctl --disk-usage`; `ls /var/backups/sklep`.",
+      "solution": "ssh anna@203.0.113.50 'echo \"== timery:\"; systemctl list-timers --no-pager | grep -E \"sprawdz-sklep|kopia-bazy|proba-odtworzenia\"; echo \"== dziennik:\"; journalctl --disk-usage; echo \"== kopie:\"; ls -lh /var/backups/sklep/ | tail -3'"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jakie trzy obszary domyka etap 7 projektu?",
+      "options": {
+        "A": "Sieć, zapora, SSH",
+        "B": "Logi, monitoring i kopie zapasowe",
+        "C": "Java, baza, Nginx",
+        "D": "Konta, katalogi, pakiety"
+      },
+      "correct": "B",
+      "explanation": "Wiedza, że serwer działa, co się działo i czy da się odtworzyć."
+    },
+    {
+      "question": "Jaka jest najważniejsza zasada dotycząca kopii zapasowych?",
+      "options": {
+        "A": "Im więcej kopii, tym lepiej",
+        "B": "Kopia, której nie odtworzono, nie jest kopią",
+        "C": "Kopie robi się raz w roku",
+        "D": "Kopia w tym samym katalogu wystarcza"
+      },
+      "correct": "B",
+      "explanation": "Trzeba cyklicznie próbować odtworzenia."
+    },
+    {
+      "question": "Co ustawia SystemMaxUse=1G w konfiguracji journald?",
+      "options": {
+        "A": "Maksymalny rozmiar trwałego dziennika systemd",
+        "B": "Rozmiar logu Nginx",
+        "C": "Limit pamięci RAM",
+        "D": "Limit połączeń"
+      },
+      "correct": "A",
+      "explanation": "Zapobiega zapełnieniu dysku przez dziennik."
+    },
+    {
+      "question": "Gdzie przechowywany jest trwały dziennik systemd?",
+      "options": {
+        "A": "W /var/log/syslog",
+        "B": "W /tmp",
+        "C": "Tylko w RAM",
+        "D": "W /var/log/journal"
+      },
+      "correct": "D",
+      "explanation": "Trwały dziennik przetrwa restart."
+    },
+    {
+      "question": "Jak sprawdzić, ile miejsca zajmuje dziennik systemd?",
+      "options": {
+        "A": "df -h /var/log",
+        "B": "du -sh /journal",
+        "C": "systemctl status journald",
+        "D": "journalctl --disk-usage"
+      },
+      "correct": "D",
+      "explanation": "Pokazuje rozmiar archiwalnych i aktywnych plików."
+    },
+    {
+      "question": "Co rotuje logi Nginx?",
+      "options": {
+        "A": "Sam Nginx",
+        "B": "cron bez konfiguracji",
+        "C": "logrotate (np. codziennie, 14 kopii, kompresja)",
+        "D": "journald"
+      },
+      "correct": "C",
+      "explanation": "/etc/logrotate.d/nginx."
+    },
+    {
+      "question": "Jak przetestować konfigurację logrotate bez realnej rotacji?",
+      "options": {
+        "A": "logrotate -n",
+        "B": "logrotate -d PLIK (tryb debug/dry-run)",
+        "C": "cat PLIK",
+        "D": "logrotate --test"
+      },
+      "correct": "B",
+      "explanation": "Pokazuje, co zostałoby zrobione."
+    },
+    {
+      "question": "Co sprawdza skrypt sprawdz-sklep.sh?",
+      "options": {
+        "A": "Tylko czy serwer odpowiada na ping",
+        "B": "Tylko wersję Javy",
+        "C": "Tylko rozmiar bazy",
+        "D": "Gotowość aplikacji, dni do wygaśnięcia certyfikatu, zajętość dysku, jednostki failed"
+      },
+      "correct": "D",
+      "explanation": "Zwraca 1 przy którymkolwiek problemie."
+    },
+    {
+      "question": "Jak często uruchamiany jest skrypt sprawdzający stan?",
+      "options": {
+        "A": "Co godzinę",
+        "B": "Raz dziennie",
+        "C": "Co minutę (timer)",
+        "D": "Przy starcie serwera"
+      },
+      "correct": "C",
+      "explanation": "OnCalendar=*:0/1."
+    },
+    {
+      "question": "Co robi OnFailure=powiadom@%n.service w jednostce?",
+      "options": {
+        "A": "Restartuje usługę",
+        "B": "Wyłącza timer",
+        "C": "Loguje sukces",
+        "D": "Uruchamia jednostkę powiadamiającą, gdy ta jednostka zawiedzie"
+      },
+      "correct": "D",
+      "explanation": "%n to nazwa jednostki, która zawiodła."
+    },
+    {
+      "question": "Czym jest szablon powiadom@.service?",
+      "options": {
+        "A": "Zwykłą usługą aplikacji",
+        "B": "Timerem",
+        "C": "Jednostką szablonową uruchamianą przy awarii, z nazwą winowajcy w %i",
+        "D": "Skryptem kopii"
+      },
+      "correct": "C",
+      "explanation": "Wysyła powiadomienie (webhook/e-mail)."
+    },
+    {
+      "question": "Jak przetestować powiadomienie o awarii?",
+      "options": {
+        "A": "Wywołać warunek błędu (np. zatrzymać aplikację) i uruchomić sprawdzenie",
+        "B": "Usunąć timer",
+        "C": "Czekać na awarię",
+        "D": "Zrestartować serwer"
+      },
+      "correct": "A",
+      "explanation": "OnFailure wywoła powiadom@."
+    },
+    {
+      "question": "Jakim poleceniem skrypt zapisuje komunikaty do dziennika?",
+      "options": {
+        "A": "logger -t NAZWA -p user.POZIOM",
+        "B": "journalctl --write",
+        "C": "echo do /var/log",
+        "D": "systemd-cat tylko"
+      },
+      "correct": "A",
+      "explanation": "logger trafia do journald ze znacznikiem."
+    },
+    {
+      "question": "Jakim formatem robi się kopię bazy w projekcie?",
+      "options": {
+        "A": "tar bazy w czasie pracy",
+        "B": "pg_dump zwykły SQL do pliku .sql",
+        "C": "pg_dump -Fc (format własny, skompresowany, do pg_restore)",
+        "D": "cp katalogu danych"
+      },
+      "correct": "C",
+      "explanation": "Format custom pozwala na pg_restore z wyborem obiektów."
+    },
+    {
+      "question": "O której i jak często wykonywana jest kopia bazy?",
+      "options": {
+        "A": "Codziennie o 02:30 UTC (timer Persistent)",
+        "B": "Przy każdym wdrożeniu",
+        "C": "Raz w tygodniu",
+        "D": "Co minutę"
+      },
+      "correct": "A",
+      "explanation": "Poza godzinami ruchu."
+    },
+    {
+      "question": "Co robi Persistent=true w timerze kopii?",
+      "options": {
+        "A": "Uruchamia co sekundę",
+        "B": "Zapisuje stan na stałe",
+        "C": "Nadrabia przegapione uruchomienie, jeśli serwer był wyłączony o zaplanowanej porze",
+        "D": "Blokuje usunięcie timera"
+      },
+      "correct": "C",
+      "explanation": "Kopia wykona się po starcie, jeśli termin minął."
+    },
+    {
+      "question": "Jak skrypt kopii weryfikuje zrzut przed użyciem?",
+      "options": {
+        "A": "Tylko sprawdza, czy plik istnieje",
+        "B": "pg_restore -l (czytelność) i sprawdzenie minimalnego rozmiaru",
+        "C": "Nie weryfikuje",
+        "D": "Porównuje z wczorajszym"
+      },
+      "correct": "B",
+      "explanation": "Zapobiega przyjęciu pustego/uszkodzonego zrzutu."
+    },
+    {
+      "question": "Po co zrzut najpierw trafia do pliku .tmp, a dopiero po weryfikacji jest przemianowany?",
+      "options": {
+        "A": "Bez powodu",
+        "B": "Bo pg_dump tego wymaga",
+        "C": "Żeby był szybszy",
+        "D": "Żeby nieudany zrzut nie nadpisał/nie udawał poprawnej kopii"
+      },
+      "correct": "D",
+      "explanation": "Dobra kopia dostaje nazwę docelową dopiero po sprawdzeniu."
+    },
+    {
+      "question": "Jak realizowana jest retencja kopii (7 dni)?",
+      "options": {
+        "A": "ręcznie",
+        "B": "rm wszystkich kopii",
+        "C": "find /var/backups/sklep -name 'sklep-*.dump' -mtime +6 -delete",
+        "D": "logrotate"
+      },
+      "correct": "C",
+      "explanation": "Usuwa zrzuty starsze niż 6 dni."
+    },
+    {
+      "question": "Jak kopia trafia poza serwer?",
+      "options": {
+        "A": "rsync kluczem przeznaczonym tylko do kopii na kopie.firma.example",
+        "B": "e-mailem",
+        "C": "scp jako root",
+        "D": "FTP bez szyfrowania"
+      },
+      "correct": "A",
+      "explanation": "Po stronie odbiorcy konto ograniczone do jednego katalogu."
+    },
+    {
+      "question": "Dlaczego klucz do kopii po stronie odbiorcy jest ograniczony (np. rrsync)?",
+      "options": {
+        "A": "Bez powodu",
+        "B": "Bo rsync tego wymaga",
+        "C": "Żeby w razie przejęcia serwera klucz dawał dostęp tylko do katalogu kopii",
+        "D": "Żeby był szybszy"
+      },
+      "correct": "C",
+      "explanation": "Minimalne uprawnienia także dla kont technicznych."
+    },
+    {
+      "question": "Czym jest próba odtworzenia?",
+      "options": {
+        "A": "Odtworzenie kopii do osobnej bazy i porównanie danych z produkcją",
+        "B": "Kompresja kopii",
+        "C": "Usunięcie kopii",
+        "D": "Wysłanie kopii"
+      },
+      "correct": "A",
+      "explanation": "Potwierdza, że kopia naprawdę działa."
+    },
+    {
+      "question": "Jak często wykonuje się próbę odtworzenia w projekcie?",
+      "options": {
+        "A": "Co godzinę",
+        "B": "Co tydzień (timer, np. niedziela 04:00 UTC)",
+        "C": "Nigdy",
+        "D": "Codziennie przed kopią"
+      },
+      "correct": "B",
+      "explanation": "Wynik też jest monitorowany."
+    },
+    {
+      "question": "Co porównuje skrypt próby odtworzenia?",
+      "options": {
+        "A": "Liczność wybranych tabel w bazie produkcyjnej i odtworzonej",
+        "B": "Sumy sha256",
+        "C": "Rozmiar plików",
+        "D": "Daty modyfikacji"
+      },
+      "correct": "A",
+      "explanation": "Zgodne/niezgodne."
+    },
+    {
+      "question": "Do czego służy set -o pipefail w skrypcie kopii?",
+      "options": {
+        "A": "Włącza tryb debug",
+        "B": "Sprawia, że kod wyjścia potoku to kod pierwszego polecenia, które zawiodło",
+        "C": "Ignoruje błędy",
+        "D": "Ustawia strefę czasową"
+      },
+      "correct": "B",
+      "explanation": "Bez niego błąd pg_dump w potoku ginie."
+    },
+    {
+      "question": "Jaki jest kod wyjścia potoku pg_dump | gzip bez pipefail, gdy pg_dump zawiedzie?",
+      "options": {
+        "A": "137",
+        "B": "1 zawsze",
+        "C": "Kod pg_dump",
+        "D": "0 (kod gzip, które się udało)"
+      },
+      "correct": "D",
+      "explanation": "Dlatego skrypt „kończy się sukcesem”."
+    },
+    {
+      "question": "Jaki jest objaw pustej kopii bez pipefail?",
+      "options": {
+        "A": "Codziennie powstaje plik o rozmiarze kilkudziesięciu bajtów (pusty skompresowany strumień)",
+        "B": "Błąd timera",
+        "C": "Plik za duży",
+        "D": "Brak pliku"
+      },
+      "correct": "A",
+      "explanation": "Retencja usuwa starsze, dobre kopie."
+    },
+    {
+      "question": "Dlaczego pusta kopia jest szczególnie groźna?",
+      "options": {
+        "A": "Timer jest zielony, a problem wychodzi dopiero przy odtworzeniu po awarii",
+        "B": "Spowalnia serwer",
+        "C": "Zajmuje dużo miejsca",
+        "D": "Blokuje bazę"
+      },
+      "correct": "A",
+      "explanation": "Brak weryfikacji usypia czujność."
+    },
+    {
+      "question": "Co oznacza zasada 3-2-1 dla kopii?",
+      "options": {
+        "A": "Trzy serwery, dwie bazy, jeden backup",
+        "B": "Kopia co 3 dni, 2 razy, 1 plik",
+        "C": "Trzy kopie, na dwóch nośnikach, w tym jedna poza lokalizacją",
+        "D": "Trzy kompresje"
+      },
+      "correct": "C",
+      "explanation": "Warto dodać kopię niezmienialną."
+    },
+    {
+      "question": "Co to jest RPO?",
+      "options": {
+        "A": "Czas odtworzenia",
+        "B": "Maksymalna akceptowalna utrata danych (jak daleko wstecz)",
+        "C": "Liczba kopii",
+        "D": "Rozmiar kopii"
+      },
+      "correct": "B",
+      "explanation": "Kopia dzienna daje RPO do 24 h."
+    },
+    {
+      "question": "Co to jest RTO?",
+      "options": {
+        "A": "Utrata danych",
+        "B": "Czas kopii",
+        "C": "Rozmiar bazy",
+        "D": "Maksymalny akceptowalny czas odtworzenia usługi"
+      },
+      "correct": "D",
+      "explanation": "Zależy od rozmiaru bazy i procedury."
+    },
+    {
+      "question": "Kto ustala RPO i RTO?",
+      "options": {
+        "A": "Nikt",
+        "B": "Biznes (właściciel usługi), nie sam administrator",
+        "C": "Zawsze administrator",
+        "D": "Dostawca chmury"
+      },
+      "correct": "B",
+      "explanation": "To decyzja o akceptowalnym ryzyku."
+    },
+    {
+      "question": "Czym jest PITR (odtwarzanie do punktu w czasie)?",
+      "options": {
+        "A": "Replikacja tabel",
+        "B": "Kopia raz w roku",
+        "C": "Odtworzenie bazy do dowolnej chwili dzięki archiwizacji WAL",
+        "D": "Kompresja kopii"
+      },
+      "correct": "C",
+      "explanation": "Narzędzia: pgBackRest, Barman."
+    },
+    {
+      "question": "Kiedy potrzebna jest archiwizacja WAL zamiast dziennych zrzutów?",
+      "options": {
+        "A": "Zawsze",
+        "B": "Tylko dla małych baz",
+        "C": "Nigdy",
+        "D": "Gdy dopuszczalna utrata danych jest mniejsza niż jeden dzień"
+      },
+      "correct": "D",
+      "explanation": "Dzienny zrzut oznacza RPO do 24 h."
+    },
+    {
+      "question": "Jak monitoring wykrywa kończący się certyfikat?",
+      "options": {
+        "A": "Nie sprawdza",
+        "B": "Skrypt liczy dni do enddate certyfikatu i zgłasza, gdy jest ich mniej niż 14",
+        "C": "Czeka na wygaśnięcie",
+        "D": "Sprawdza raz w roku"
+      },
+      "correct": "B",
+      "explanation": "openssl x509 -enddate."
+    },
+    {
+      "question": "Jak monitoring wykrywa zapełniający się dysk?",
+      "options": {
+        "A": "du całego dysku",
+        "B": "Nie sprawdza",
+        "C": "df --output=pcent dla / i /var, próg np. 85%",
+        "D": "Czeka na błąd No space"
+      },
+      "correct": "C",
+      "explanation": "Ostrzeżenie przed zapełnieniem."
+    },
+    {
+      "question": "Jak monitoring wykrywa uszkodzone usługi?",
+      "options": {
+        "A": "systemctl --failed (pusty wynik = OK)",
+        "B": "ps aux",
+        "C": "top",
+        "D": "journalctl bez filtra"
+      },
+      "correct": "A",
+      "explanation": "Niepusta lista oznacza problem."
+    },
+    {
+      "question": "Co pokazuje pg_restore -l dla zrzutu?",
+      "options": {
+        "A": "Spis obiektów w kopii (tabele, dane, indeksy)",
+        "B": "Hasło",
+        "C": "Rozmiar bazy",
+        "D": "Logi"
+      },
+      "correct": "A",
+      "explanation": "Służy też do wyboru obiektów przy odtwarzaniu."
+    },
+    {
+      "question": "Dlaczego próba odtworzenia idzie do osobnej bazy (sklep_proba)?",
+      "options": {
+        "A": "Bo produkcja jest tylko do odczytu",
+        "B": "Bez powodu",
+        "C": "Żeby nie nadpisać bazy produkcyjnej podczas testu",
+        "D": "Bo jest szybsza"
+      },
+      "correct": "C",
+      "explanation": "Po teście baza testowa jest usuwana."
+    },
+    {
+      "question": "Co jest dobrą praktyką oprócz wykonywania kopii?",
+      "options": {
+        "A": "Zapisana procedura odtworzenia krok po kroku",
+        "B": "Kopie tylko lokalnie",
+        "C": "Brak dokumentacji",
+        "D": "Ukrycie kopii przed zespołem"
+      },
+      "correct": "A",
+      "explanation": "Przy awarii nie ma czasu na improwizację."
+    },
+    {
+      "question": "Gdzie zapisuje się procedurę odtworzenia?",
+      "options": {
+        "A": "W pamięci administratora",
+        "B": "W bazie",
+        "C": "W logach",
+        "D": "W repozytorium infrastruktury (np. odtwarzanie.md)"
+      },
+      "correct": "D",
+      "explanation": "Dostępna także, gdy serwer nie działa."
+    },
+    {
+      "question": "Co robi runuser -u postgres -- pg_dump w skrypcie?",
+      "options": {
+        "A": "Uruchamia pg_dump jako użytkownik postgres (uwierzytelnianie peer, bez hasła)",
+        "B": "Zmienia hasło",
+        "C": "Loguje się przez sieć",
+        "D": "Tworzy użytkownika"
+      },
+      "correct": "A",
+      "explanation": "Lokalne gniazdo z metodą peer."
+    },
+    {
+      "question": "Jak przetestować, że kopia poza serwerem działa?",
+      "options": {
+        "A": "Zrestartować serwer",
+        "B": "Usunąć lokalne kopie",
+        "C": "Nie testować",
+        "D": "Połączyć się kluczem kopii i wypisać listę plików po stronie odbiorcy"
+      },
+      "correct": "D",
+      "explanation": "ssh -i /root/.ssh/kopie_sklep01 kopie@... ls."
+    },
+    {
+      "question": "Co jest zaletą kopii niezmienialnej (immutable)?",
+      "options": {
+        "A": "Jest mniejsza",
+        "B": "Nie wymaga klucza",
+        "C": "Jest szybsza",
+        "D": "Przetrwa włamanie, w którym ktoś usunie kopie z serwera"
+      },
+      "correct": "D",
+      "explanation": "Np. magazyn obiektowy z blokadą usuwania."
+    },
+    {
+      "question": "Jaki jest skutek -mtime +6 w retencji?",
+      "options": {
+        "A": "Usuwa pliki starsze niż 6 dni (zostaje ok. 7 ostatnich)",
+        "B": "Usuwa wszystko",
+        "C": "Usuwa pliki z ostatnich 6 dni",
+        "D": "Nic nie usuwa"
+      },
+      "correct": "A",
+      "explanation": "Dla dziennych kopii = tydzień wstecz."
+    },
+    {
+      "question": "Co loguje skrypt kopii po sukcesie?",
+      "options": {
+        "A": "Zawartość bazy",
+        "B": "Nic",
+        "C": "Komunikat „kopia OK” z nazwą pliku i rozmiarem",
+        "D": "Hasło bazy"
+      },
+      "correct": "C",
+      "explanation": "logger -t kopia-bazy."
+    },
+    {
+      "question": "Jaki jest sens monitorowania wyniku próby odtworzenia?",
+      "options": {
+        "A": "Żeby przyspieszyć kopię",
+        "B": "Bez znaczenia",
+        "C": "Żeby zająć dysk",
+        "D": "Niezgodność lub błąd odtworzenia też musi wywołać powiadomienie"
+      },
+      "correct": "D",
+      "explanation": "OnFailure w jednostce próby."
+    },
+    {
+      "question": "Jak odczytać ostatni wpis skryptu kopii w dzienniku?",
+      "options": {
+        "A": "systemctl status kopia",
+        "B": "cat /var/log/kopia",
+        "C": "tail /var/backups",
+        "D": "journalctl -t kopia-bazy -n 1 -o cat"
+      },
+      "correct": "D",
+      "explanation": "Znacznik ustawia logger -t."
+    },
+    {
+      "question": "Co jest celem ograniczenia rozmiaru dziennika (SystemMaxUse)?",
+      "options": {
+        "A": "Blokuje stare logi",
+        "B": "Dziennik nie zajmie całego dysku przy dużej liczbie wpisów",
+        "C": "Szyfruje logi",
+        "D": "Przyspiesza logowanie"
+      },
+      "correct": "B",
+      "explanation": "Stare wpisy są usuwane po przekroczeniu limitu."
+    },
+    {
+      "question": "Jak sprawdzić aktywne timery monitoringu i kopii?",
+      "options": {
+        "A": "atq",
+        "B": "journalctl --timers",
+        "C": "crontab -l",
+        "D": "systemctl list-timers"
+      },
+      "correct": "D",
+      "explanation": "Kolumna NEXT pokazuje następne uruchomienie."
+    },
+    {
+      "question": "Co jest dowodem zakończenia etapu 7?",
+      "options": {
+        "A": "Zablokowane SSH",
+        "B": "Aktywne timery (sprawdzanie, kopia, próba odtworzenia), limit dziennika, obecna kopia",
+        "C": "Działający Nginx",
+        "D": "Certyfikat TLS"
+      },
+      "correct": "B",
+      "explanation": "Monitoring i kopie działają i są weryfikowane."
+    },
+    {
+      "question": "Co jest warunkiem przejścia do lekcji 8 (skrypt automatyzujący)?",
+      "options": {
+        "A": "Działające logi, monitoring i kopie",
+        "B": "Wyłączona baza",
+        "C": "Brak zapory",
+        "D": "Konto root"
+      },
+      "correct": "A",
+      "explanation": "Skrypt zbierze całą konfigurację serwera."
+    },
+    {
+      "question": "Dlaczego skrypt kopii używa set -euo pipefail w całości?",
+      "options": {
+        "A": "Włącza debug",
+        "B": "Ignoruje błędy",
+        "C": "Ustawia locale",
+        "D": "Przerywa przy błędzie, nieustawionej zmiennej i błędzie potoku — nie tworzy fałszywej kopii"
+      },
+      "correct": "D",
+      "explanation": "Krytyczne dla wiarygodności kopii."
+    },
+    {
+      "question": "Co jest typowym celem powiadomienia (webhook) z szablonu powiadom@?",
+      "options": {
+        "A": "Plik w /tmp",
+        "B": "Kanał komunikatora zespołu lub e-mail administratorów",
+        "C": "Rejestr Windows",
+        "D": "Baza danych"
+      },
+      "correct": "B",
+      "explanation": "Zespół dowiaduje się o problemie od razu."
+    },
+    {
+      "question": "Dlaczego kopie i monitoring to osobny etap, a nie dodatek?",
+      "options": {
+        "A": "Bo przyspieszają aplikację",
+        "B": "Serwer bez nich działa „na ślepo” — awaria i utrata danych wychodzą za późno",
+        "C": "Bo tak wymaga systemd",
+        "D": "Bez powodu"
+      },
+      "correct": "B",
+      "explanation": "Druga połowa sukcesu po uruchomieniu usługi."
+    },
+    {
+      "question": "Co jest celem całego etapu 7?",
+      "options": {
+        "A": "Uruchomić aplikację",
+        "B": "Skonfigurować TLS",
+        "C": "Zapewnić obserwowalność (logi, monitoring) i odtwarzalność danych (kopie z próbą odtworzenia)",
+        "D": "Zabezpieczyć SSH"
+      },
+      "correct": "C",
+      "explanation": "Wiedza o stanie serwera i możliwość powrotu po awarii."
+    },
+    {
+      "question": "Jak kopia pomaga przy błędzie użytkownika (np. usunięte dane)?",
+      "options": {
+        "A": "Nie pomaga",
+        "B": "Zrzut sprzed błędu odtwarza się do bazy pomocniczej i importuje brakujące dane",
+        "C": "Przywraca cały serwer",
+        "D": "Restartuje aplikację"
+      },
+      "correct": "B",
+      "explanation": "Nie trzeba odtwarzać całej produkcji."
+    },
+    {
+      "question": "Co należy monitorować oprócz samej aplikacji?",
+      "options": {
+        "A": "Tylko RAM",
+        "B": "Tylko CPU",
+        "C": "Certyfikat, miejsce na dysku, stan usług, wynik kopii i próby odtworzenia",
+        "D": "Tylko sieć"
+      },
+      "correct": "C",
+      "explanation": "Problemy pośrednie też zatrzymują usługę."
+    },
+    {
+      "question": "Jak w skali wielu serwerów zastępuje się skrypty monitoringu?",
+      "options": {
+        "A": "Większą liczbą skryptów",
+        "B": "Centralnym systemem (Prometheus, Grafana) i centralnymi logami",
+        "C": "Ręcznym sprawdzaniem",
+        "D": "Brakiem monitoringu"
+      },
+      "correct": "B",
+      "explanation": "Dla jednego serwera skrypty wystarczą."
+    },
+    {
+      "question": "Co trzeba zrobić, żeby mieć pewność, że koło zapasowe (kopia) działa?",
+      "options": {
+        "A": "Nic",
+        "B": "Trzymać w bagażniku",
+        "C": "Założyć je na próbę — cyklicznie odtwarzać kopię",
+        "D": "Kupić nowe"
+      },
+      "correct": "C",
+      "explanation": "Analogia z lekcji: kopia bez próby odtworzenia bywa „przebita”."
+    }
+  ]
 }
