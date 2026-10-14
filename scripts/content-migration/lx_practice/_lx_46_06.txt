@@ -1,0 +1,584 @@
+#EX
+// 1
+P: Na `sklep01` sprawdź, że rekord DNS domeny `sklep.firma.example` wskazuje adres serwera, a porty 80 i 443 są otwarte w zaporze.
+H: `dig +short`; `ufw status | grep -E '80|443'`.
+S:
+ssh anna@203.0.113.50 'dig +short sklep.firma.example; echo "--- zapora:"; sudo ufw status | grep -E "80|443"'
+#EX
+// 2
+P: Zainstaluj Nginx i certbot z wtyczką nginx. Sprawdź stan usługi Nginx i usuń domyślny wirtualny host.
+H: pakiety `nginx certbot python3-certbot-nginx`; `rm /etc/nginx/sites-enabled/default`.
+S:
+ssh anna@203.0.113.50 'sudo apt-get install -y -qq nginx certbot python3-certbot-nginx >/dev/null; systemctl is-active nginx; sudo rm -f /etc/nginx/sites-enabled/default; ls /etc/nginx/sites-enabled/'
+#EX
+// 3
+P: Utwórz prosty wirtualny host na porcie 80 dla `sklep.firma.example` z proxy do aplikacji (127.0.0.1:8080), włącz go, sprawdź składnię i przeładuj Nginx.
+H: plik w sites-available, dowiązanie w sites-enabled, `nginx -t`.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/nginx/sites-available/sklep >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sklep.firma.example;
+    location / { proxy_pass http://127.0.0.1:8080; }
+}
+EOF
+sudo ln -sfn ../sites-available/sklep /etc/nginx/sites-enabled/sklep; sudo nginx -t && sudo systemctl reload nginx'
+#EX
+// 4
+P: Sprawdź z laptopa, że przez port 80 dociera się do aplikacji (status odpowiedzi), zanim włączysz HTTPS.
+H: `curl -s -o /dev/null -w '%{http_code}' http://sklep.firma.example/`.
+S:
+curl -s -o /dev/null -w 'kod: %{http_code}\n' http://sklep.firma.example/actuator/health 2>&1 || echo "sprawdz DNS/host"
+#EX
+// 5
+P: Uzyskaj certyfikat Let's Encrypt i skonfiguruj HTTPS z przekierowaniem (certbot z wtyczką nginx, tryb nieinteraktywny). Sprawdź pliki certyfikatu.
+H: `certbot --nginx -d DOMENA -m mail --agree-tos --redirect -n`; `/etc/letsencrypt/live/DOMENA/`.
+S:
+ssh anna@203.0.113.50 'sudo certbot --nginx -d sklep.firma.example -m admin@firma.example --agree-tos --redirect -n 2>&1 | grep -E "Successfully|Certificate is saved|Congratulations"; sudo ls /etc/letsencrypt/live/sklep.firma.example/'
+#EX
+// 6
+P: Sprawdź automatyczne odnawianie certyfikatu: stan `certbot.timer` i symulacja odnowienia.
+H: `systemctl list-timers certbot.timer`; `certbot renew --dry-run`.
+S:
+ssh anna@203.0.113.50 'systemctl is-active certbot.timer; systemctl list-timers certbot.timer --no-pager | sed -n 1,2p; sudo certbot renew --dry-run 2>&1 | tail -2'
+#EX
+// 7
+P: Sprawdź z laptopa przekierowanie HTTP -> HTTPS (301) i że HTTPS odpowiada (HTTP/2 200).
+H: `curl -sI http://...`; `curl -sI https://...`.
+S:
+curl -sI http://sklep.firma.example/ | grep -E '^(HTTP|[Ll]ocation)'
+curl -sI https://sklep.firma.example/ | grep -E '^HTTP'
+#EX
+// 8
+P: Uzupełnij blok 443 o limit rozmiaru przesyłanych plików (20m), nagłówki X-Forwarded-*, HSTS i X-Content-Type-Options. Sprawdź składnię i przeładuj.
+H: Dodaj dyrektywy w bloku server 443; `proxy_set_header`.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/nginx/snippets/sklep-proxy.conf >/dev/null <<EOF
+client_max_body_size 20m;
+add_header Strict-Transport-Security "max-age=31536000" always;
+add_header X-Content-Type-Options nosniff always;
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 60s;
+}
+EOF
+sudo sed -i "/listen 443 ssl;/a \ \ \ \ include /etc/nginx/snippets/sklep-proxy.conf;" /etc/nginx/sites-available/sklep
+sudo sed -i "0,/location \/ { proxy_pass http:\/\/127.0.0.1:8080; }/{/location \/ { proxy_pass http:\/\/127.0.0.1:8080; }/d}" /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx'
+#EX
+// 9
+P: Sprawdź z laptopa nagłówki bezpieczeństwa (HSTS) i limit rozmiaru: duży plik (25 MB) powinien dostać 413.
+H: `curl -sI https://...`; `curl -F plik=@duzy https://.../api/import`.
+S:
+curl -sI https://sklep.firma.example/ | grep -iE 'strict-transport|x-content-type'
+head -c 25000000 /dev/zero > /tmp/duzy.bin
+curl -s -o /dev/null -w 'upload 25MB: %{http_code}\n' -F plik=@/tmp/duzy.bin https://sklep.firma.example/api/import
+rm /tmp/duzy.bin
+#EX
+// 10
+P: Ukryj endpointy zarządzania przed internetem: w Nginx zwróć 404 dla /actuator/, zachowując dostęp lokalny. Sprawdź z laptopa i z serwera.
+H: `location /actuator/ { return 404; }`; lokalnie `curl 127.0.0.1:8080/actuator/health`.
+S:
+ssh anna@203.0.113.50 'grep -q "location /actuator/" /etc/nginx/sites-available/sklep || sudo sed -i "/include \/etc\/nginx\/snippets\/sklep-proxy.conf;/a \ \ \ \ location /actuator/ { return 404; }" /etc/nginx/sites-available/sklep; sudo nginx -t && sudo systemctl reload nginx; echo "lokalnie:"; curl -s -o /dev/null -w "%{http_code}\n" 127.0.0.1:8080/actuator/health'
+curl -s -o /dev/null -w 'z internetu /actuator/health: %{http_code}\n' https://sklep.firma.example/actuator/health
+#EX
+// 11
+P: Przygotuj stronę serwisową i skonfiguruj ją dla błędów 502/503/504 (wyświetlaną, gdy aplikacja jest restartowana). Sprawdź składnię.
+H: plik w /var/www/serwis/serwis.html; `error_page 502 503 504 /serwis.html; location = /serwis.html { root /var/www/serwis; internal; }`.
+S:
+ssh anna@203.0.113.50 'sudo install -d -m 755 /var/www/serwis; echo "<h1>Przerwa serwisowa</h1><p>Sklep bedzie dostepny za chwile.</p>" | sudo tee /var/www/serwis/serwis.html >/dev/null
+sudo sed -i "/location \/actuator\//a \ \ \ \ error_page 502 503 504 /serwis.html;\n    location = /serwis.html { root /var/www/serwis; internal; }" /etc/nginx/sites-available/sklep
+sudo nginx -t && sudo systemctl reload nginx'
+#EX
+// 12
+P: Przetestuj stronę serwisową: zatrzymaj aplikację na chwilę i sprawdź z laptopa, że zamiast surowego 502 pojawia się strona serwisowa. Potem uruchom aplikację.
+H: `systemctl stop sklep`; `curl https://...`; `systemctl start sklep`.
+S:
+ssh anna@203.0.113.50 'sudo systemctl stop sklep'
+curl -s https://sklep.firma.example/ | grep -o 'Przerwa serwisowa' ; curl -s -o /dev/null -w 'kod: %{http_code}\n' https://sklep.firma.example/
+ssh anna@203.0.113.50 'sudo systemctl start sklep; sleep 20; systemctl is-active sklep'
+#EX
+// 13
+P: Odtwórz pułapkę „aplikacja nie wie o HTTPS”: tymczasowo usuń obsługę nagłówków przekazywanych (forward-headers) i sprawdź, że przekierowanie /logout prowadzi na http://.
+H: Usuń SERVER_FORWARD_HEADERS_STRATEGY ze sklep.env, restart; `curl -sI https://.../logout | grep -i location`.
+S:
+ssh anna@203.0.113.50 'sudo sed -i "/SERVER_FORWARD_HEADERS_STRATEGY/d" /etc/sklep/sklep.env; sudo systemctl restart sklep; sleep 20'
+curl -sI https://sklep.firma.example/logout | grep -i '^location'
+#EX
+// 14
+P: Sprawdź w logu aplikacji, że bez forward-headers każdy klient ma adres 127.0.0.1 (adres proxy, nie klienta).
+H: `journalctl -u sklep | grep adresu`.
+S:
+ssh anna@203.0.113.50 'sudo journalctl -u sklep --since -3min -o cat | grep -m1 -iE "z adresu|remote" || echo "(brak wpisu logowania w tym oknie)"'
+#EX
+// 15
+P: Napraw: włącz w aplikacji obsługę nagłówków przekazywanych (forward-headers-strategy=framework), zrestartuj i sprawdź, że /logout przekierowuje na https:// oraz że w logu widać prawdziwy adres klienta.
+H: Dodaj SERVER_FORWARD_HEADERS_STRATEGY=framework do sklep.env.
+S:
+ssh anna@203.0.113.50 'grep -q SERVER_FORWARD_HEADERS_STRATEGY /etc/sklep/sklep.env || echo "SERVER_FORWARD_HEADERS_STRATEGY=framework" | sudo tee -a /etc/sklep/sklep.env >/dev/null; sudo systemctl restart sklep; sleep 20'
+curl -sI https://sklep.firma.example/logout | grep -i '^location'
+#EX
+// 16
+P: Zbadaj certyfikat z zewnątrz: wystawca, domena (CN/SAN) i data ważności (openssl s_client).
+H: `openssl s_client -connect ...:443 -servername ...` + `openssl x509 -noout -issuer -subject -dates`.
+S:
+echo | openssl s_client -connect sklep.firma.example:443 -servername sklep.firma.example 2>/dev/null | openssl x509 -noout -issuer -subject -dates
+#EX
+// 17
+P: Sprawdź jakość konfiguracji TLS: obsługiwane protokoły (TLS 1.2/1.3) i że stare (TLS 1.0/1.1) są odrzucane.
+H: `openssl s_client -tls1_3` / `-tls1_1`.
+S:
+echo | openssl s_client -connect sklep.firma.example:443 -tls1_3 2>/dev/null | grep -E 'Protocol|Cipher' | head -2
+echo | openssl s_client -connect sklep.firma.example:443 -tls1_1 2>&1 | grep -iE 'alert|handshake failure|no protocols' | head -1
+#EX
+// 18
+P: Potwierdź, że aplikacja NADAL nie jest dostępna bezpośrednio z internetu na porcie 8080 (tylko przez Nginx).
+H: `nc -zv -w 3 203.0.113.50 8080`.
+S:
+nc -zv -w 3 203.0.113.50 8080 2>&1 | tail -1
+#EX
+// 19
+P: Włącz kompresję gzip dla odpowiedzi tekstowych w Nginx i sprawdź nagłówek Content-Encoding z laptopa.
+H: `gzip on; gzip_types text/css application/json ...;`; `curl -H 'Accept-Encoding: gzip' -sI`.
+S:
+ssh anna@203.0.113.50 'grep -q "gzip on;" /etc/nginx/nginx.conf && echo "gzip juz wlaczony" || echo "sprawdz http{} w nginx.conf"; sudo nginx -t -q && echo "konfiguracja OK"'
+curl -s -H 'Accept-Encoding: gzip' -o /dev/null -w 'content-encoding dla /: %{content_type}\n' https://sklep.firma.example/
+#EX
+// 20
+P: Skopiuj konfigurację Nginx do repozytorium infrastruktury i zweryfikuj całościowo etap 6 (301, HTTPS 200, actuator 404 z zewnątrz, port 8080 zamknięty). Zatwierdź.
+H: scp sites-available/sklep i snippets; przegląd curl.
+S:
+cd ~/infra/sklep01
+scp anna@203.0.113.50:/etc/nginx/sites-available/sklep pliki/nginx-sklep.conf
+scp anna@203.0.113.50:/etc/nginx/snippets/sklep-proxy.conf pliki/
+echo "== weryfikacja etapu 6:"
+curl -sI http://sklep.firma.example/ | grep -E '^HTTP'
+curl -sI https://sklep.firma.example/ | grep -E '^HTTP'
+curl -s -o /dev/null -w 'actuator z internetu: %{http_code}\n' https://sklep.firma.example/actuator/health
+git add pliki/nginx-sklep.conf pliki/sklep-proxy.conf && git commit -qm "Etap 6: Nginx reverse proxy i HTTPS" && echo ok
+#Q
+Q: Na jakim adresie nasłuchuje aplikacja, a co przyjmuje ruch z internetu?
++ Aplikacja na 127.0.0.1:8080, Nginx na 80/443
+- Aplikacja na 0.0.0.0:8080
+- Aplikacja na 443
+- Nginx na 8080
+E: Nginx jest reverse proxy przed aplikacją.
+#Q
+Q: Czym jest reverse proxy?
++ Serwer przyjmujący połączenia klientów i przekazujący je do aplikacji w tle
+- Serwer buforujący DNS
+- Klient HTTP
+- Zapora sieciowa
+E: Nginx: proxy_pass do 127.0.0.1:8080.
+#Q
+Q: Jaki adres widzi aplikacja dla połączeń przez Nginx?
++ 127.0.0.1 (adres proxy) — prawdziwy klient jest w nagłówkach
+- Adres publiczny klienta bezpośrednio
+- Adres serwera DNS
+- 0.0.0.0
+E: Dlatego przekazuje się X-Forwarded-For.
+#Q
+Q: Który nagłówek informuje aplikację o prawdziwym adresie klienta?
++ X-Forwarded-For (i X-Real-IP)
+- Host
+- User-Agent
+- Content-Type
+E: proxy_add_x_forwarded_for dokłada adres.
+#Q
+Q: Który nagłówek mówi aplikacji, że klient użył HTTPS?
++ X-Forwarded-Proto
+- X-Forwarded-For
+- Host
+- Referer
+E: Bez niego aplikacja myśli, że to HTTP.
+#Q
+Q: Jakie ustawienie w Spring Boot każe używać nagłówków X-Forwarded-*?
++ server.forward-headers-strategy=framework (lub native)
+- server.proxy=true
+- server.ssl.enabled=true
+- server.forwarded=on
+E: Bez tego nagłówki są ignorowane.
+#Q
+Q: Czym jest certbot?
++ Klientem ACME do uzyskiwania certyfikatów Let's Encrypt
+- Serwerem WWW
+- Zaporą
+- Menedżerem pakietów
+E: Wtyczka nginx konfiguruje też serwer.
+#Q
+Q: Gdzie certbot zapisuje certyfikaty?
++ W /etc/letsencrypt/live/DOMENA/ (fullchain.pem, privkey.pem)
+- W /etc/nginx/certs
+- W ~/.certbot
+- W /var/www
+E: Nginx wskazuje te pliki.
+#Q
+Q: Jak uzyskać certyfikat i skonfigurować HTTPS jednym poleceniem?
++ certbot --nginx -d DOMENA --redirect
+- certbot new DOMENA
+- nginx --ssl DOMENA
+- openssl req -x509
+E: --redirect dodaje przekierowanie HTTP->HTTPS.
+#Q
+Q: Jak odnawiany jest certyfikat Let's Encrypt?
++ Automatycznie przez certbot.timer
+- Ręcznie co 90 dni
+- Nigdy
+- Przy każdym restarcie Nginx
+E: certbot renew --dry-run testuje odnawianie.
+#Q
+Q: Jak przetestować odnawianie certyfikatu bez realnej zmiany?
++ certbot renew --dry-run
+- certbot test
+- certbot renew --force
+- nginx -t
+E: Symuluje proces odnowienia.
+#Q
+Q: Co robi blok server na porcie 80 w konfiguracji HTTPS?
++ Zwraca 301 (przekierowanie) na https://
+- Serwuje aplikację bez szyfrowania
+- Blokuje ruch
+- Odnawia certyfikat
+E: Wymusza HTTPS.
+#Q
+Q: Co robi nagłówek Strict-Transport-Security (HSTS)?
++ Każe przeglądarce używać tylko HTTPS dla domeny przez zadany czas
+- Szyfruje nagłówki
+- Blokuje ciasteczka
+- Przyspiesza TLS
+E: max-age=31536000 to rok.
+#Q
+Q: Co ustawia client_max_body_size 20m w Nginx?
++ Maksymalny rozmiar przesyłanego ciała żądania (np. import pliku)
+- Rozmiar bufora odpowiedzi
+- Limit połączeń
+- Rozmiar logu
+E: Przekroczenie daje 413.
+#Q
+Q: Jaki kod zwraca Nginx przy przekroczeniu client_max_body_size?
++ 413 (Payload Too Large)
+- 404
+- 502
+- 200
+E: Limit chroni aplikację przed zbyt dużymi żądaniami.
+#Q
+Q: Do czego służy error_page 502 503 504 /serwis.html?
++ Pokazuje stronę serwisową zamiast surowego błędu, gdy aplikacja nie odpowiada
+- Przekierowuje na HTTPS
+- Blokuje actuator
+- Odnawia certyfikat
+E: Przydatne podczas restartu przy wdrożeniu.
+#Q
+Q: Kiedy użytkownik zobaczy stronę serwisową (502/503/504)?
++ Gdy aplikacja jest zatrzymana lub nie odpowiada (np. restart przy wdrożeniu)
+- Przy każdym żądaniu
+- Gdy certyfikat wygasł
+- Gdy klient użył HTTP
+E: Zamiast „502 Bad Gateway”.
+#Q
+Q: Dlaczego /actuator/ blokuje się w Nginx?
++ Endpointy zarządzania nie powinny być dostępne z internetu (monitoring lokalnie)
+- Bo spowalniają serwer
+- Bo wymagają TLS
+- Bez powodu
+E: location /actuator/ { return 404; }.
+#Q
+Q: Jak monitoring z serwera dociera do /actuator/ mimo blokady w Nginx?
++ Łączy się lokalnie z aplikacją na 127.0.0.1:8080
+- Przez internet
+- Przez port 443
+- Nie dociera
+E: Blokada dotyczy tylko ruchu przez Nginx.
+#Q
+Q: Co jest pułapką aplikacji za proxy bez X-Forwarded-Proto?
++ Aplikacja buduje adresy jako http:// (przekierowania, linki, ciasteczka Secure)
+- Aplikacja nie startuje
+- Certyfikat wygasa
+- Port 8080 jest otwarty
+E: Objawy pojawiają się po włączeniu HTTPS.
+#Q
+Q: Jaki jest objaw braku forward-headers w przekierowaniu /logout?
++ Location: http://sklep.firma.example/login (zamiast https://)
+- 404
+- 500
+- Timeout
+E: Przeglądarka wraca na HTTPS przez 301 — pętla/utrata danych.
+#Q
+Q: Co widać w logu aplikacji bez forward-headers?
++ Każdy klient ma adres 127.0.0.1 (adres proxy)
+- Prawdziwe adresy klientów
+- Brak logów
+- Adres DNS
+E: X-Forwarded-For/X-Real-IP naprawiają to.
+#Q
+Q: Dlaczego aplikacja może ufać nagłówkom X-Forwarded-* na sklep01?
++ Nasłuchuje tylko na 127.0.0.1, a jedyną drogą jest Nginx, który je nadpisuje
+- Bo nagłówki są szyfrowane
+- Bo klient je podpisuje
+- Zawsze można im ufać
+E: Przy nasłuchu publicznym klient mógłby je sfałszować.
+#Q
+Q: Co robi forward-headers-strategy=native w Spring Boot?
++ Używa RemoteIpValve Tomcata, ufając domyślnie adresom prywatnym i 127.0.0.1
+- Wyłącza HTTPS
+- Ignoruje nagłówki
+- Szyfruje połączenie z aplikacją
+E: framework używa filtra Spring.
+#Q
+Q: Jak sprawdzić przekierowanie HTTP->HTTPS z laptopa?
++ curl -sI http://DOMENA/ (oczekiwany 301 i Location https://)
+- ping DOMENA
+- openssl s_client
+- nc DOMENA 80
+E: 301 Moved Permanently.
+#Q
+Q: Jak sprawdzić, że HTTPS działa i używa HTTP/2?
++ curl -sI https://DOMENA/ (HTTP/2 200)
+- curl http://
+- ping
+- dig
+E: http2 on; w bloku 443.
+#Q
+Q: Jak zbadać certyfikat serwera z zewnątrz?
++ openssl s_client -connect DOMENA:443 -servername DOMENA, potem openssl x509
+- curl --cert
+- certbot show
+- nginx -t
+E: Pokazuje wystawcę, domenę i daty.
+#Q
+Q: Po co opcja -servername w openssl s_client?
++ Wskazuje nazwę hosta (SNI) — serwer z wieloma domenami poda właściwy certyfikat
+- Ustawia port
+- Wymusza TLS 1.3
+- Szyfruje połączenie
+E: Bez SNI można dostać domyślny certyfikat.
+#Q
+Q: Jakie protokoły TLS powinny być obsługiwane w produkcji?
++ TLS 1.2 i 1.3, a starsze (1.0/1.1) odrzucane
+- Tylko SSL 3.0
+- Wszystkie
+- Tylko TLS 1.0
+E: Konfiguracja certbota ustawia bezpieczne domyślne.
+#Q
+Q: Jak potwierdzić, że port 8080 NIE jest dostępny z internetu?
++ nc -zv -w 3 203.0.113.50 8080 (timeout/refused)
+- curl localhost:8080
+- ss -tlnp
+- ping 8080
+E: Aplikacja tylko na 127.0.0.1 + zapora.
+#Q
+Q: Co robi gzip w Nginx?
++ Kompresuje odpowiedzi tekstowe (HTML, CSS, JSON) — mniejszy transfer
+- Szyfruje odpowiedzi
+- Buforuje pliki
+- Przyspiesza TLS
+E: gzip_types określa typy do kompresji.
+#Q
+Q: Jak sprawdzić składnię konfiguracji Nginx?
++ nginx -t
+- nginx --check
+- systemctl test nginx
+- nginx -v
+E: Zawsze przed reload.
+#Q
+Q: Jak zastosować zmiany w Nginx bez przerywania połączeń?
++ systemctl reload nginx
+- systemctl restart nginx
+- kill -9 nginx
+- nginx -s stop
+E: reload przeładowuje konfigurację łagodnie.
+#Q
+Q: Co ustawia proxy_set_header Host $host?
++ Przekazuje nagłówek Host z oryginalnego żądania do aplikacji
+- Zmienia adres IP
+- Ustawia HTTPS
+- Blokuje ciasteczka
+E: Aplikacja zna domenę, pod którą przyszedł klient.
+#Q
+Q: Co robi proxy_read_timeout 60s?
++ Ogranicza czas oczekiwania Nginx na odpowiedź aplikacji do 60 s
+- Czas połączenia TLS
+- Czas odnawiania certyfikatu
+- Czas sesji
+E: Zbyt wolna odpowiedź daje 504.
+#Q
+Q: Co robi proxy_connect_timeout 5s?
++ Ogranicza czas na nawiązanie połączenia z aplikacją
+- Czas odpowiedzi
+- Czas TLS
+- Czas restartu
+E: Szybko wykrywa niedostępną aplikację.
+#Q
+Q: Gdzie w Ubuntu umieszcza się wirtualne hosty Nginx?
++ W /etc/nginx/sites-available/ z dowiązaniem w sites-enabled/
+- W /etc/nginx/nginx.conf bezpośrednio
+- W /var/www
+- W /etc/hosts
+E: sites-enabled zawiera dowiązania do aktywnych.
+#Q
+Q: Dlaczego usuwa się domyślny host (sites-enabled/default)?
++ Żeby nie serwował strony powitalnej Nginx i nie kolidował z hostem aplikacji
+- Bo jest niebezpieczny
+- Bo zajmuje port 443
+- Bez powodu
+E: Zostaje tylko host sklep.
+#Q
+Q: Co oznacza add_header ... always w Nginx?
++ Nagłówek jest dodawany także do odpowiedzi błędnych (np. 4xx/5xx)
+- Nagłówek jest szyfrowany
+- Nagłówek dotyczy tylko 200
+- Nagłówek jest wymagany
+E: Bez always HSTS nie trafiłby do odpowiedzi błędów.
+#Q
+Q: Co robi X-Content-Type-Options nosniff?
++ Zapobiega zgadywaniu typu MIME przez przeglądarkę (ochrona przed niektórymi atakami)
+- Kompresuje odpowiedź
+- Wymusza HTTPS
+- Blokuje JavaScript
+E: Nagłówek bezpieczeństwa.
+#Q
+Q: Jaki kod zwraca Nginx, gdy aplikacja jest zatrzymana, a jest skonfigurowana strona serwisowa?
++ 503 (lub 502/504) z treścią strony serwisowej
+- 200 z pustą stroną
+- 404
+- 301
+E: internal location serwuje serwis.html.
+#Q
+Q: Co jest zaletą kończenia TLS na Nginx (a nie w aplikacji)?
++ Aplikacja nie zarządza certyfikatami i kluczami; TLS w jednym miejscu
+- Szybszy CPU
+- Mniej pamięci bazy
+- Brak potrzeby HTTPS
+E: Certyfikaty odnawia certbot.
+#Q
+Q: Jak wystawić dwie instancje aplikacji dla wdrożeń bez przerwy?
++ Blok upstream z sklep@8080 i sklep@8082 i proxy_pass do upstream
+- Dwa certyfikaty
+- Dwa porty 443
+- Dwie domeny
+E: Nginx przełącza ruch między instancjami.
+#Q
+Q: Co jest dobrą praktyką dla endpointu logowania w Nginx?
++ limit_req (ograniczenie liczby żądań) chroni przed atakami siłowymi
+- Wyłączenie TLS
+- client_max_body_size 0
+- Brak limitów
+E: Uzupełnia ochronę aplikacji.
+#Q
+Q: Gdzie leży strona serwisowa w projekcie?
++ W /var/www/serwis/serwis.html (internal location)
+- W /etc/nginx
+- W katalogu aplikacji
+- W /opt/sklep
+E: Serwowana przy błędach 502/503/504.
+#Q
+Q: Co potwierdza curl -s -o /dev/null -w '%{http_code}' https://.../actuator/health z internetu?
++ Że endpoint zarządzania jest zablokowany (404) z zewnątrz
+- Że aplikacja działa
+- Że certyfikat jest ważny
+- Że port 8080 jest otwarty
+E: Lokalnie zwraca 200.
+#Q
+Q: Co jest warunkiem uzyskania certyfikatu Let's Encrypt metodą nginx/webroot?
++ Domena wskazuje serwer (DNS) i port 80 jest osiągalny z internetu
+- Otwarty port 8080
+- Konto root
+- Wyłączona zapora
+E: ACME weryfikuje kontrolę nad domeną.
+#Q
+Q: Co jest celem nagłówka Host przekazywanego do aplikacji?
++ Aplikacja generuje poprawne adresy bezwzględne i rozpoznaje domenę
+- Szyfruje połączenie
+- Ustawia IP
+- Blokuje boty
+E: Razem z X-Forwarded-Proto buduje https://sklep.firma.example.
+#Q
+Q: Dlaczego objawy braku forward-headers łatwo przeoczyć przy pierwszych testach?
++ Pojawiają się dopiero po włączeniu HTTPS (przekierowania na http://, złe IP w logach)
+- Bo aplikacja się nie uruchamia
+- Bo Nginx nie działa
+- Bo certyfikat wygasa od razu
+E: Dlatego testuje się przekierowania i logi po włączeniu TLS.
+#Q
+Q: Co sprawdza openssl s_client -tls1_1?
++ Czy serwer akceptuje przestarzały TLS 1.1 (powinien odrzucić)
+- Czy działa HTTP/2
+- Czy certyfikat jest ważny
+- Czy aplikacja odpowiada
+E: Handshake failure oznacza poprawne odrzucenie.
+#Q
+Q: Co jest dowodem zakończenia etapu 6?
++ 301 na HTTPS, HTTPS 200, actuator 404 z internetu, port 8080 zamknięty, poprawne przekierowania aplikacji
+- Zainstalowany Docker
+- Działająca kopia zapasowa
+- Zablokowane SSH
+E: Aplikacja bezpiecznie wystawiona przez Nginx.
+#Q
+Q: Gdzie zapisuje się konfigurację Nginx dla odtwarzalności?
++ W repozytorium infrastruktury (sites-available, snippets)
+- W /tmp
+- W katalogu domowym
+- Nigdzie
+E: Bez kluczy prywatnych certyfikatu.
+#Q
+Q: Co jest warunkiem przejścia do lekcji 7 (logi, monitoring, kopie)?
++ Działająca aplikacja wystawiona przez Nginx z HTTPS
+- Brak zapory
+- Konto root
+- Wyłączona baza
+E: Monitoring sprawdza działającą usługę.
+#Q
+Q: Jak w aplikacji ustawia się forward-headers-strategy przez zmienną środowiskową?
++ SERVER_FORWARD_HEADERS_STRATEGY=framework w sklep.env
+- server.proxy=true w ps
+- -Dforward w ExecStart
+- W pg_hba.conf
+E: Spring mapuje zmienne na właściwości.
+#Q
+Q: Co robi proxy_pass http://127.0.0.1:8080?
++ Przekazuje żądanie do aplikacji nasłuchującej lokalnie
+- Przekierowuje na inny serwer w internecie
+- Serwuje pliki statyczne
+- Blokuje połączenie
+E: Rdzeń reverse proxy.
+#Q
+Q: Jaki jest skutek HSTS po pierwszej wizycie przez HTTPS?
++ Przeglądarka sama zmienia http:// na https:// dla domeny przez czas max-age
+- Blokuje domenę
+- Wyłącza ciasteczka
+- Zmienia certyfikat
+E: Chroni przed atakami przez HTTP.
+#Q
+Q: Co jest celem całego etapu 6?
++ Bezpiecznie wystawić aplikację w internecie przez Nginx z HTTPS i poprawnymi nagłówkami
+- Uruchomić bazę
+- Zabezpieczyć SSH
+- Napisać skrypt wdrożeniowy
+E: Aplikacja staje się dostępna pod domeną przez HTTPS.
+#Q
+Q: Dlaczego aplikacja zostaje na 127.0.0.1 mimo wystawienia przez Nginx?
++ Tylko Nginx ma być dostępny z zewnątrz; aplikacja jest chroniona za proxy
+- Bo nie obsługuje TLS
+- Bo jest wolna
+- Bez powodu
+E: Mniejsza powierzchnia ataku.
+#Q
+Q: Co trzeba otworzyć w zaporze dla Nginx?
++ Porty 80 i 443 (z lekcji 3 już otwarte)
+- Port 8080
+- Port 22
+- Port 5432
+E: 80 przekierowuje na 443.
+#Q
+Q: Jakim protokołem Nginx łączy się z aplikacją za proxy?
++ Zwykłym HTTP (TLS kończy się na Nginx)
+- HTTPS do aplikacji
+- SSH
+- FTP
+E: Dlatego aplikacja musi znać schemat z X-Forwarded-Proto.
