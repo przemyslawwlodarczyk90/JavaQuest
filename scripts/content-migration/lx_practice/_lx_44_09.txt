@@ -1,0 +1,598 @@
+#EX
+P: Ustal w WSL, w jakim środowisku działa system: wynik `systemd-detect-virt` oraz wiersze `Virtualization`, `Operating System` i `Kernel` z `hostnamectl`.
+H: `hostnamectl | grep -E '...'`.
+S:
+systemd-detect-virt
+hostnamectl | grep -E 'Virtualization|Operating System|Kernel|Chassis'
+#EX
+P: Wykonaj to samo rozpoznanie na maszynie `lubuntu-nauka` i serwerze `srv-test` przez SSH w jednej pętli.
+H: `for h in ...; do ssh "$h" '...'; done`; `BatchMode=yes` zapobiega pytaniu o hasło.
+S:
+for h in lubuntu-nauka srv-test; do
+  echo "== $h"
+  ssh -o BatchMode=yes "$h" 'systemd-detect-virt; hostnamectl | grep -E "Virtualization|Kernel"'
+done
+#EX
+P: Sprawdź, czy `systemd-detect-virt` rozróżnia maszynę wirtualną i kontener: użyj opcji `--vm` i `--container` w WSL.
+H: Wynik `none` z kodem wyjścia 1 oznacza brak danego typu.
+S:
+systemd-detect-virt --vm; echo "kod=$?"
+systemd-detect-virt --container; echo "kod=$?"
+#EX
+P: Bez `systemd-detect-virt` rozpoznaj WSL po innych śladach: nazwie jądra, zmiennej `WSL_DISTRO_NAME` i pliku `/proc/sys/fs/binfmt_misc/WSLInterop`.
+H: `uname -r`, `printenv WSL_DISTRO_NAME`.
+S:
+uname -r | grep -qi microsoft && echo "jadro WSL: $(uname -r)"
+echo "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-brak}"
+[ -e /proc/sys/fs/binfmt_misc/WSLInterop ] && echo "interop WSL obecny"
+#EX
+P: Na maszynie wirtualnej rozpoznaj hiperwizor także na podstawie informacji DMI (producent i model „sprzętu”).
+H: `/sys/class/dmi/id/sys_vendor`, `product_name`; lub `sudo dmidecode -s system-product-name`.
+S:
+ssh lubuntu-nauka 'cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name'
+#EX
+P: Utwórz skrypt `~/bin/srodowisko.sh` (wizytówkę środowiska) wypisujący: host, wirtualizację, system, jądro, liczbę CPU, RAM, wersję Javy, domyślny maksymalny heap, strefę czasową i `LANG`. Uruchom go.
+H: `printf '%-10s %s\n'`, `java -XX:+PrintFlagsFinal -version` (pole `MaxHeapSize`), `timedatectl show -p Timezone --value`.
+S:
+mkdir -p ~/bin
+cat > ~/bin/srodowisko.sh <<'EOF'
+#!/bin/bash
+# wizytowka srodowiska: to, co wplywa na zachowanie aplikacji Java
+printf '%-10s %s\n' \
+  host  "$(hostname)" \
+  virt  "$(systemd-detect-virt 2>/dev/null || echo ?)" \
+  os    "$(. /etc/os-release && echo "$PRETTY_NAME")" \
+  jadro "$(uname -r)" \
+  cpu   "$(nproc)" \
+  ram   "$(free -g | awk '/^Mem/ {print $2 " GB"}')" \
+  java  "$(java -version 2>&1 | awk -F'"' 'NR==1 {print $2}')" \
+  heap  "$(java -XX:+PrintFlagsFinal -version 2>/dev/null | awk '/ MaxHeapSize / {printf "%.1f GB", $4/2^30}')" \
+  tz    "$(timedatectl show -p Timezone --value 2>/dev/null)" \
+  lang  "${LANG:-brak}"
+EOF
+chmod +x ~/bin/srodowisko.sh
+~/bin/srodowisko.sh
+#EX
+P: Sprawdź skrypt `srodowisko.sh` narzędziem ShellCheck i popraw ewentualne ostrzeżenia.
+H: `sudo apt install shellcheck`, `shellcheck PLIK`.
+S:
+command -v shellcheck >/dev/null || sudo apt-get install -y -qq shellcheck
+shellcheck ~/bin/srodowisko.sh && echo "brak uwag"
+#EX
+P: Uruchom wizytówkę lokalnie i na serwerach `srv-test` i `app01` bez kopiowania skryptu na serwery. Zapisz wynik do `~/lab/srodowiska.txt`.
+H: `ssh HOST 'bash -s' < skrypt` przekazuje skrypt na standardowe wejście zdalnego basha.
+S:
+mkdir -p ~/lab
+{
+  echo "== $(hostname)"; ~/bin/srodowisko.sh
+  for h in srv-test app01; do echo "== $h"; ssh -o BatchMode=yes "$h" 'bash -s' < ~/bin/srodowisko.sh; done
+} | tee ~/lab/srodowiska.txt
+#EX
+P: Z pliku `~/lab/srodowiska.txt` zbuduj tabelę porównawczą: wiersze to parametry (virt, cpu, ram, heap, tz), kolumny to środowiska.
+H: awk: zapamiętaj nazwę środowiska z linii `==`, wartości w tablicy dwuwymiarowej `v[parametr, host]`.
+S:
+awk '
+  /^==/ { h = $2; hosts[++n] = h; next }
+  { k = $1; $1 = ""; sub(/^ +/, ""); v[k, h] = $0; keys[k] = 1 }
+  END {
+    printf "%-6s", ""; for (i = 1; i <= n; i++) printf " %-16s", hosts[i]; print ""
+    split("virt cpu ram heap tz", p, " ")
+    for (j = 1; j <= 5; j++) { printf "%-6s", p[j]; for (i = 1; i <= n; i++) printf " %-16s", v[p[j], hosts[i]]; print "" }
+  }' ~/lab/srodowiska.txt
+#EX
+P: Pokaż, jak JVM dobiera maksymalną stertę do pamięci: wypisz `MaxHeapSize` dla domyślnych ustawień oraz z ograniczeniem `-XX:MaxRAM=2g` (symulacja serwera z 2 GB RAM).
+H: `java -XX:MaxRAM=2g -XX:+PrintFlagsFinal -version | grep MaxHeapSize`.
+S:
+for opt in "" "-XX:MaxRAM=2g"; do
+  printf '%-16s ' "${opt:-domyslnie}"
+  java $opt -XX:+PrintFlagsFinal -version 2>/dev/null | awk '/ MaxHeapSize / {printf "%d MB\n", $4/2^20}'
+done
+#EX
+P: Sprawdź, ile procesorów i jaki heap widzi JVM w kontenerze z limitami `-m 2g --cpus 2` (jak na app01). Użyj `-XshowSettings:system`.
+H: `docker run --rm -m 2g --cpus 2 eclipse-temurin:21-jre java -XshowSettings:system -version`.
+S:
+docker run --rm -m 2g --cpus 2 eclipse-temurin:21-jre \
+  sh -c 'java -XshowSettings:system -version 2>&1 | grep -E "Memory Limit|CPU"; java -XX:+PrintFlagsFinal -version 2>/dev/null | grep -E " MaxHeapSize | ActiveProcessorCount "'
+#EX
+P: Pokaż różnicę stref czasowych: wypisz bieżącą godzinę w WSL i na `app01`, a potem uruchom polecenie z `TZ=Etc/UTC` lokalnie.
+H: `date`, `ssh app01 date`, `TZ=Etc/UTC date`.
+S:
+date
+ssh app01 date
+TZ=Etc/UTC date
+#EX
+P: Pokaż wpływ ustawień regionalnych na format liczb: wypisz liczbę 1234567.89 przez `printf "%'.2f"` z `LC_NUMERIC=pl_PL.UTF-8` i `C.UTF-8`. Sprawdź dostępne locale.
+H: `locale -a`; jeśli `pl_PL.UTF-8` nie istnieje — `sudo locale-gen pl_PL.UTF-8`.
+S:
+locale -a | grep -i -E '^(pl_PL|C\.utf)' || sudo locale-gen pl_PL.UTF-8
+LC_NUMERIC=pl_PL.UTF-8 printf "%'.2f\n" 1234567.89
+LC_NUMERIC=C.UTF-8 printf "%'.2f\n" 1234567.89
+#EX
+P: Sprawdź w Windows, czy jest włączona platforma wirtualizacji używana przez WSL2 (Virtual Machine Platform, Hyper-V) i czy hiperwizor działa.
+H: `Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform` (jako administrator), `(Get-CimInstance Win32_ComputerSystem).HypervisorPresent`.
+S:
+(Get-CimInstance Win32_ComputerSystem).HypervisorPresent
+Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform, Microsoft-Hyper-V-All -ErrorAction SilentlyContinue | Select-Object FeatureName, State
+#EX
+P: Sprawdź, czy VirtualBox działa na Twoim laptopie w trybie NEM (przez Hyper-V): wyszukaj w logu maszyny `lubuntu-nauka` wpisów o NEM.
+H: Log: `%USERPROFILE%\VirtualBox VMs\lubuntu-nauka\Logs\VBox.log`; `Select-String`.
+S:
+$log = "$env:USERPROFILE\VirtualBox VMs\lubuntu-nauka\Logs\VBox.log"
+Select-String -Path $log -Pattern 'NEM' | Select-Object -First 5 | ForEach-Object { $_.Line }
+#EX
+P: Zrób migawkę maszyny `lubuntu-nauka` przed ryzykowną zmianą (np. zmianą zapory) i wypisz listę migawek. Tego WSL nie potrafi — porównaj z `wsl --export`.
+H: `VBoxManage snapshot NAZWA take NAZWA_MIGAWKI`, `VBoxManage snapshot NAZWA list`.
+S:
+$vbox = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
+& $vbox snapshot lubuntu-nauka take "przed-zapora-$(Get-Date -Format yyyy-MM-dd)" --description "Przed zmiana zapory"
+& $vbox snapshot lubuntu-nauka list
+#EX
+P: Porównaj czas „uruchomienia” WSL i maszyny wirtualnej: zmierz `wsl -d Ubuntu-24.04 -e true` po `wsl --shutdown` oraz czas od startu VM do odpowiedzi SSH.
+H: `Measure-Command`; VM: `VBoxManage startvm --type headless`, potem pętla `Test-NetConnection -Port 22`.
+S:
+wsl --shutdown
+(Measure-Command { wsl -d Ubuntu-24.04 -e true }).TotalSeconds
+$vbox = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
+$t = [Diagnostics.Stopwatch]::StartNew()
+& $vbox startvm srv-test --type headless | Out-Null
+while (-not (Test-NetConnection 192.168.56.20 -Port 22 -InformationLevel Quiet -WarningAction SilentlyContinue)) { Start-Sleep 1 }
+$t.Elapsed.TotalSeconds
+#EX
+P: Odtwórz problem „u mnie działa” na małym programie: w `~/lab/pamiec/Duzo.java` napisz program, który trzyma w liście 1,2 GB danych (bloki po 10 MB). Uruchom go bez limitu i z `-XX:MaxRAM=2g`.
+H: `List<byte[]>`, pętla `add(new byte[10 * 1024 * 1024])`.
+S:
+mkdir -p ~/lab/pamiec && cd ~/lab/pamiec
+cat > Duzo.java <<'EOF'
+import java.util.ArrayList;
+import java.util.List;
+public class Duzo {
+  public static void main(String[] a) {
+    List<byte[]> dane = new ArrayList<>();
+    for (int i = 0; i < 120; i++) dane.add(new byte[10 * 1024 * 1024]);
+    System.out.println("zaladowano " + dane.size() * 10 + " MB");
+  }
+}
+EOF
+java Duzo.java
+java -XX:MaxRAM=2g Duzo.java 2>&1 | tail -1
+#EX
+P: Ten sam program uruchom w kontenerze z limitem pamięci 2 GB i strefą UTC (jak na app01), a potem z jawnym `-XX:MaxRAMPercentage=75`. Porównaj wyniki.
+H: `docker run --rm -m 2g -e TZ=Etc/UTC -v "$PWD:/app" -w /app eclipse-temurin:21-jdk java ...`.
+S:
+cd ~/lab/pamiec
+docker run --rm -m 2g --cpus 2 -e TZ=Etc/UTC -v "$PWD:/app" -w /app eclipse-temurin:21-jdk java Duzo.java 2>&1 | tail -1
+docker run --rm -m 2g --cpus 2 -e TZ=Etc/UTC -v "$PWD:/app" -w /app eclipse-temurin:21-jdk java -XX:MaxRAMPercentage=75 Duzo.java 2>&1 | tail -1
+#EX
+P: Dla zadań z listy przypisz środowisko (WSL, VM, kontener z limitami, serwer testowy, produkcja) i zapisz decyzje w `~/lab/wybor-srodowiska.txt`: (1) zmiana `fstab`, (2) `./mvnw verify`, (3) test importu z 2 GB RAM, (4) pokaz dla klienta, (5) konfiguracja `nftables`, (6) wydanie wersji 2.3.
+H: Kryteria z tabeli lekcji: wierność, odtwarzalność, dostęp dla innych.
+S:
+cat > ~/lab/wybor-srodowiska.txt <<'EOF'
+1 zmiana fstab              -> VM (migawka przed zmiana)
+2 ./mvnw verify             -> WSL
+3 import z 2 GB RAM         -> kontener z limitami (-m 2g --cpus 2) lub srv-test
+4 pokaz dla klienta         -> serwer testowy / staging
+5 konfiguracja nftables     -> VM
+6 wydanie wersji 2.3        -> produkcja (app01) po testach na srv-test
+EOF
+cat ~/lab/wybor-srodowiska.txt
+rm -rf ~/lab/pamiec
+#Q
+Q: Do czego najlepiej nadaje się WSL2?
++ Do programowania, uruchamiania narzędzi i nauki poleceń
+- Do produkcji dla klientów
+- Do ćwiczeń z GRUB i rozruchem
+- Do testów zapory jak na serwerze
+E: WSL daje szybkość i integrację z Windows kosztem wierności serwerowi.
+#Q
+Q: Co daje maszyna wirtualna, czego nie daje WSL?
++ Własne jądro, rozruch z GRUB, dyski, sieć i zaporę jak na serwerze
+- Szybszy start
+- Wspólne pliki z Windows bez konfiguracji
+- Dostęp do localhost Windows
+E: Dlatego VM służy do testów „jak na serwerze”.
+#Q
+Q: Czym serwer różni się od VM na laptopie?
++ Jest dostępny dla innych, ma monitoring, kopie i gwarancje dostępności
+- Ma zawsze inny system
+- Nie ma jądra
+- Nie obsługuje SSH
+E: Produkcja i środowiska współdzielone wymagają serwera.
+#Q
+Q: Czym jest kontener w porównaniu z VM?
++ Izolowanym procesem na współdzielonym jądrze, a nie całym systemem
+- Pełną maszyną z własnym jądrem
+- Fizycznym serwerem
+- Odmianą WSL 1
+E: Szczegóły w rozdziale o kontenerach.
+#Q
+Q: Co oznacza „wierność środowiska” (parity)?
++ Zgodność wersji systemu, JDK, zasobów, strefy czasowej, sieci i zapory z produkcją
+- Taką samą nazwę hosta
+- Ten sam kolor terminala
+- Identyczne hasła
+E: Im większa wierność, tym mniej niespodzianek przy wdrożeniu.
+#Q
+Q: Co wypisze systemd-detect-virt w WSL?
++ wsl
+- none
+- docker
+- hyperv
+E: W VirtualBox — oracle, w KVM — kvm.
+#Q
+Q: Co wypisze systemd-detect-virt w maszynie VirtualBox?
++ oracle
+- virtualbox
+- vbox
+- kvm
+E: Nazwa pochodzi od producenta VirtualBox.
+#Q
+Q: Co wypisze systemd-detect-virt na fizycznym komputerze?
++ none
+- physical
+- metal
+- host
+E: Polecenie kończy się wtedy kodem wyjścia 1.
+#Q
+Q: Co oznacza wynik kvm z systemd-detect-virt?
++ System działa w maszynie wirtualnej KVM — typowe dla serwerów w chmurze
+- System działa w kontenerze
+- System działa w WSL
+- System działa w VirtualBox
+E: app01 w lekcji to VM w chmurze na KVM.
+#Q
+Q: Jaką wartość zwraca systemd-detect-virt dla Hyper-V?
++ microsoft
+- hyperv
+- wsl
+- windows
+E: WSL ma własną wartość wsl, mimo że korzysta z Hyper-V.
+#Q
+Q: Które polecenie pokazuje m.in. pola Virtualization i Chassis?
++ hostnamectl
+- uname -a
+- lsb_release -a
+- free -h
+E: Pole Kernel pokazuje wersję jądra.
+#Q
+Q: Co sprawdza systemd-detect-virt --container?
++ Tylko czy system działa w kontenerze
+- Tylko czy działa w VM
+- Listę kontenerów
+- Wersję Dockera
+E: --vm sprawdza tylko maszyny wirtualne.
+#Q
+Q: Po czym jeszcze można rozpoznać WSL bez systemd-detect-virt?
++ Po jądrze z „microsoft” w nazwie, zmiennej WSL_DISTRO_NAME i wpisie WSLInterop
+- Po pliku /etc/wsl-version
+- Po nazwie użytkownika
+- Po rozmiarze /home
+E: uname -r pokazuje np. 6.6.87.2-microsoft-standard-WSL2.
+#Q
+Q: Gdzie w VM znajdziesz producenta „sprzętu” zgłaszanego przez hiperwizor?
++ /sys/class/dmi/id/sys_vendor
+- /etc/hostname
+- /proc/version
+- /var/log/syslog
+E: product_name w tym samym katalogu podaje model.
+#Q
+Q: Jaki ułamek pamięci RAM JVM domyślnie przeznacza na maksymalną stertę?
++ 25%
+- 50%
+- 100%
+- 10%
+E: Opcja MaxRAMPercentage domyślnie wynosi 25.
+#Q
+Q: Jaki będzie domyślny MaxHeapSize na serwerze z 2 GB RAM?
++ Około 512 MB
+- 2 GB
+- 1 GB
+- 128 MB
+E: 25% z 2 GB.
+#Q
+Q: Dlaczego aplikacja działająca na laptopie może skończyć się OutOfMemoryError na serwerze?
++ JVM na serwerze z mniejszą pamięcią dobiera mniejszą stertę
+- Serwer ma inną wersję Linuksa
+- Serwer nie ma swapu
+- Na serwerze nie ma Javy
+E: Te same opcje uruchomienia dają różne limity w różnych środowiskach.
+#Q
+Q: Jak wypisać rzeczywistą wartość MaxHeapSize wybraną przez JVM?
++ java -XX:+PrintFlagsFinal -version | grep MaxHeapSize
+- java -version
+- jps -l
+- free -h
+E: Wartość jest w bajtach.
+#Q
+Q: Co symuluje opcja -XX:MaxRAM=2g?
++ JVM liczy domyślne limity tak, jakby maszyna miała 2 GB RAM
+- Ogranicza RAM całego systemu
+- Ustawia stertę na 2 GB
+- Wyłącza GC
+E: Dzięki temu można sprawdzić zachowanie z parametrami serwera.
+#Q
+Q: Jak ograniczyć pamięć i procesory kontenera jak na serwerze?
++ docker run -m 2g --cpus 2
+- docker run --ram 2g --cores 2
+- docker run --limit 2g
+- docker run -e MEM=2g
+E: JVM w kontenerze odczytuje limity z cgroups.
+#Q
+Q: Co pokazuje java -XshowSettings:system w kontenerze?
++ Wykryte limity kontenera: pamięć i procesory
+- Listę ustawień systemu Windows
+- Zawartość /etc/os-release
+- Wersję Dockera
+E: Przydatne do sprawdzenia, co JVM widzi w kontenerze.
+#Q
+Q: Co robi opcja -XX:MaxRAMPercentage=75?
++ Ustala maksymalną stertę na 75% dostępnej pamięci
+- Zajmuje 75% CPU
+- Zostawia 75% RAM dla systemu
+- Wyłącza limit pamięci
+E: W kontenerach często ustawia się wyższy procent niż domyślne 25.
+#Q
+Q: Jaki problem może wywołać różnica stref czasowych laptopa i serwera?
++ Zadanie „o północy” uruchamia się o innej godzinie, daty w raportach się różnią
+- Brak połączenia SSH
+- Brak miejsca na dysku
+- Błędy kompilacji
+E: Serwery często działają w UTC.
+#Q
+Q: Jak uruchomić jedno polecenie ze strefą UTC bez zmiany ustawień systemu?
++ TZ=Etc/UTC polecenie
+- timedatectl set-timezone UTC
+- export LANG=UTC
+- date --utc-forever
+E: timedatectl zmieniłby strefę całego systemu.
+#Q
+Q: Jaki wpływ mają ustawienia regionalne (LC_NUMERIC) na raporty?
++ Zmieniają format liczb — separator dziesiętny i grupowanie tysięcy
+- Zmieniają strefę czasową
+- Zmieniają kodowanie plików JAR
+- Nie mają wpływu
+E: pl_PL używa przecinka dziesiętnego, C — kropki.
+#Q
+Q: Jakie polecenie pokazuje dostępne ustawienia regionalne?
++ locale -a
+- localectl list
+- lang -l
+- echo $LOCALE
+E: Brakujące generuje się locale-gen.
+#Q
+Q: Jak uruchomić skrypt lokalny na serwerze przez SSH bez kopiowania go?
++ ssh HOST 'bash -s' < skrypt.sh
+- scp skrypt.sh HOST && ssh HOST
+- ssh HOST skrypt.sh
+- ssh -s skrypt.sh HOST
+E: bash -s czyta skrypt ze standardowego wejścia.
+#Q
+Q: Co robi opcja ssh -o BatchMode=yes?
++ Wyłącza pytania interaktywne, np. o hasło — połączenie bez klucza po prostu się nie uda
+- Uruchamia wiele połączeń naraz
+- Kompresuje transmisję
+- Włącza tryb debugowania
+E: Przydatne w pętlach i skryptach.
+#Q
+Q: Co jest potrzebne, żeby WSL2 działał w Windows?
++ Platforma wirtualizacji Windows (Virtual Machine Platform / Hyper-V)
+- VirtualBox
+- VMware
+- Docker Desktop
+E: WSL2 to lekka maszyna wirtualna.
+#Q
+Q: Jak działa VirtualBox 7, gdy włączona jest platforma Hyper-V (np. dla WSL2)?
++ Korzysta z interfejsu Hyper-V (tryb NEM) — działa, ale wolniej
+- Nie uruchamia się wcale
+- Działa szybciej niż bez Hyper-V
+- Wyłącza WSL2
+E: Ikona żółwia na pasku stanu oznacza ten tryb.
+#Q
+Q: Co oznacza NEM w logu VirtualBox?
++ Native Execution Manager — wykonywanie maszyny przez interfejs Hyper-V
+- Network Emulation Mode
+- New Encrypted Machine
+- No Extensions Mode
+E: Wpisy znajdziesz w VBox.log maszyny.
+#Q
+Q: Jakie są alternatywy, gdy maszyny VirtualBox działają zbyt wolno obok WSL2?
++ Hyper-V (Windows Pro/Enterprise) lub VMware Workstation, albo praca bez WSL na czas ćwiczeń
+- Wyłączenie procesora
+- Instalacja WSL 1 na VM
+- Przeniesienie VM na /mnt/c
+E: VMware Workstation również współpracuje z Hyper-V.
+#Q
+Q: Jak sprawdzić w PowerShellu, czy działa hiperwizor?
++ (Get-CimInstance Win32_ComputerSystem).HypervisorPresent
+- Get-Process hyperv
+- wsl --hypervisor
+- systeminfo /hv
+E: Wynik True oznacza aktywny hiperwizor.
+#Q
+Q: Co daje migawka (snapshot) maszyny wirtualnej?
++ Możliwość szybkiego powrotu do stanu sprzed ryzykownej zmiany
+- Kopię zapasową Windows
+- Szybszy start VM
+- Eksport do WSL
+E: WSL ma tylko export/import całej dystrybucji.
+#Q
+Q: Jakie polecenie robi migawkę maszyny VirtualBox z wiersza poleceń?
++ VBoxManage snapshot NAZWA take NAZWA_MIGAWKI
+- VBoxManage export NAZWA
+- VBoxManage clonevm NAZWA
+- wsl --snapshot NAZWA
+E: VBoxManage snapshot NAZWA list wypisuje migawki.
+#Q
+Q: Ile mniej więcej trwa uruchomienie WSL w porównaniu z VM?
++ WSL 1–2 s, VM kilkadziesiąt sekund (pełny rozruch)
+- Oba po 1 s
+- WSL kilka minut, VM 1 s
+- Oba po kilka minut
+E: VM przechodzi rozruch z GRUB i startuje wszystkie usługi.
+#Q
+Q: Jak uruchomić maszynę VirtualBox bez okna?
++ VBoxManage startvm NAZWA --type headless
+- VBoxManage start NAZWA --hidden
+- wsl -d NAZWA
+- VirtualBox.exe --silent
+E: Do maszyny łączysz się wtedy przez SSH.
+#Q
+Q: Gdzie wykonać zmianę fstab, której chcesz się nauczyć bez ryzyka?
++ W VM, z migawką przed zmianą
+- W WSL
+- Na produkcji
+- W kontenerze
+E: WSL nie ma rozruchu i pełnego fstab.
+#Q
+Q: Gdzie uruchomić ./mvnw verify podczas codziennej pracy?
++ W WSL (lub na Linuksie na laptopie)
+- Na produkcji
+- Tylko w VM
+- Na serwerze klienta
+E: To zadanie programisty, nie wymaga wierności serwerowi.
+#Q
+Q: Gdzie przeprowadzić pokaz aplikacji dla klienta?
++ Na serwerze testowym lub staging
+- Na laptopie w WSL
+- Na produkcji przed testami
+- W kontenerze na laptopie klienta
+E: Środowisko dla innych osób to serwer.
+#Q
+Q: Gdzie najlepiej przetestować import, który na produkcji ma 2 GB RAM?
++ W kontenerze z -m 2g lub na serwerze testowym z takimi zasobami
+- W WSL bez limitów
+- Na produkcji
+- W IDE
+E: Tak problem z pamięcią wychodzi przed wdrożeniem.
+#Q
+Q: Gdzie ćwiczyć konfigurację nftables?
++ W VM — WSL ma sieć i zaporę zarządzane przez Windows
+- W WSL
+- Na produkcji
+- W przeglądarce
+E: W VM ustawienia zapory działają jak na serwerze.
+#Q
+Q: Jaki był powód poprawki „przetwarzanie strumieniowe partiami po 5000” w lekcji?
++ Import ładował wszystko do pamięci i przekraczał stertę na serwerze z 2 GB RAM
+- Import był za szybki
+- Brak indeksu w bazie
+- Zła strefa czasowa
+E: Przetwarzanie partiami ogranicza zużycie pamięci.
+#Q
+Q: Jaka jest kolejność „dojrzewania” zmiany w lekcji (od kodu do produkcji)?
++ WSL → test z parametrami produkcji (kontener/VM/srv-test) → produkcja
+- Produkcja → WSL
+- WSL → produkcja bez testów
+- VM → WSL → produkcja
+E: Analogia: próba czytana, próba generalna, premiera.
+#Q
+Q: Czy produkcja może działać w WSL lub VM na laptopie?
++ Nie — produkcja wymaga serwera z monitoringiem, kopiami i procedurą wdrożeń
+- Tak, jeśli laptop jest szybki
+- Tak, w WSL z systemd
+- Tak, w VM z migawkami
+E: Laptop bywa wyłączany, przenoszony i zmienia sieci.
+#Q
+Q: Do czego służą Testcontainers w pracy programisty Javy?
++ Do testów integracyjnych z prawdziwą bazą lub usługą w kontenerze
+- Do wdrażania na produkcję
+- Do zarządzania VM
+- Do konfiguracji WSL
+E: Kontener jest uruchamiany na czas testu.
+#Q
+Q: Kiedy przydaje się VM w chmurze „na godziny”?
++ Do testów obciążeniowych lub innej architektury (np. ARM)
+- Do edycji kodu
+- Do Git
+- Do przechowywania haseł
+E: Płacisz tylko za czas działania.
+#Q
+Q: Jaki koszt ma WSL w porównaniu z VM i serwerem?
++ Praktycznie zerowy — korzysta z zasobów laptopa wspólnie z Windows
+- Najwyższy
+- Wymaga abonamentu
+- Wymaga osobnego komputera
+E: VM zajmuje przydzielony RAM i dysk, serwer kosztuje abonament lub sprzęt.
+#Q
+Q: Jakie zasoby ma VM laboratorium w porównaniu z WSL?
++ Przydzielone na stałe (np. 2 vCPU, 4 GB), niezależne od reszty laptopa
+- Zawsze wszystkie zasoby laptopa
+- Brak zasobów
+- Takie same jak serwer produkcyjny
+E: WSL dzieli pamięć z Windows (domyślnie do 50%).
+#Q
+Q: Jak w awk zbudować tabelę porównawczą „parametr × środowisko” z pliku wizytówek?
++ Zapamiętać bieżące środowisko z linii == i zapisać wartości w tablicy v[parametr, host]
+- Użyć sort -u
+- Użyć paste bez przetwarzania
+- Nie da się w awk
+E: W bloku END wypisuje się wiersze w zadanej kolejności.
+#Q
+Q: Co jest wynikiem `printf "%'.2f\n" 1234567.89` przy LC_NUMERIC=pl_PL.UTF-8?
++ 1 234 567,89 (spacja jako separator tysięcy, przecinek dziesiętny)
+- 1,234,567.89
+- 1234567.89
+- 1.234.567,89
+E: W C.UTF-8 wynik to 1234567.89.
+#Q
+Q: Dlaczego wizytówka środowiska zawiera wersję Javy i heap?
++ To parametry, które najczęściej różnią się między laptopem a serwerem i wpływają na aplikację
+- Bo hostnamectl ich nie pokazuje — to jedyny powód
+- Żeby sprawdzić licencję
+- Żeby przyspieszyć JVM
+E: Razem z CPU, RAM i strefą czasową tworzą profil środowiska.
+#Q
+Q: Co jest lepsze do odtworzenia środowiska serwera: kopia ręczna czy IaC (infrastruktura jako kod)?
++ IaC — konfiguracja w plikach, powtarzalna i przeglądalna
+- Kopia ręczna
+- Zrzut ekranu ustawień
+- Notatka w zeszycie
+E: Skrypty i narzędzia konfiguracyjne pozwalają odtworzyć serwer.
+#Q
+Q: Masz dwa zadania: nauka SELinux i edycja kodu. Jakie środowiska wybrać?
++ SELinux — VM (np. Rocky), edycja kodu — WSL
+- Oba w WSL
+- Oba na produkcji
+- SELinux w WSL, kod w VM
+E: Jądro WSL i Ubuntu nie służą do nauki SELinux.
+#Q
+Q: Co jest typową przyczyną „u mnie działa” poza pamięcią?
++ Różna liczba rdzeni, strefa czasowa, locale, wersja JDK
+- Kolor terminala
+- Nazwa użytkownika Windows
+- Wersja przeglądarki
+E: Wszystkie te parametry pokazuje wizytówka środowiska.
+#Q
+Q: Czym WSL różni się od VM pod względem dostępu dla innych osób?
++ WSL nie jest przeznaczony do udostępniania usług innym, VM — w ograniczonym zakresie
+- WSL jest zawsze dostępny w sieci
+- VM jest niedostępna nawet dla właściciela
+- Nie ma różnicy
+E: Do pracy zespołowej służą serwery.
+#Q
+Q: Jakie polecenie w ćwiczeniu pokazuje, że kontener ma ograniczoną liczbę procesorów dla JVM?
++ java -XX:+PrintFlagsFinal -version | grep ActiveProcessorCount
+- nproc w Windows
+- docker info
+- lscpu na hoście
+E: Wartość -1 oznacza wykrywanie automatyczne; ważna jest też informacja z -XshowSettings:system.
+#Q
+Q: Jak w lekcji opisano WSL za pomocą analogii teatralnej?
++ Próba czytana przy stole — szybka i wygodna
+- Premiera z publicznością
+- Próba generalna na scenie
+- Bilet do teatru
+E: VM to próba generalna, serwer — premiera.
+#Q
+Q: Co należy zrobić przed ryzykowną zmianą w VM laboratorium?
++ Zrobić migawkę
+- Wyłączyć WSL
+- Usunąć poprzednie migawki
+- Zmienić hasło roota
+E: W razie problemu wracasz do migawki.
+#Q
+Q: Co jest wynikiem `systemd-detect-virt --vm` w WSL?
++ wsl — WSL jest traktowany jako maszyna wirtualna
+- none
+- docker
+- oracle
+E: --container zwróci none.
