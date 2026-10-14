@@ -1,0 +1,617 @@
+#EX
+// 1
+P: Na `sklep01` upewnij się, że plik `/etc/sklep/sklep.env` zawiera profil prod, URL JDBC, użytkownika bazy i JAVA_OPTS (z HeapDump do /var/lib/sklep). Hasła tam nie ma.
+H: Dopisz SPRING_PROFILES_ACTIVE i HeapDump; sprawdź brak hasła.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/sklep/sklep.env >/dev/null <<EOF
+SPRING_PROFILES_ACTIVE=prod
+SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/sklep
+SPRING_DATASOURCE_USERNAME=sklep
+JAVA_OPTS=-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/lib/sklep
+EOF
+sudo chown root:sklep /etc/sklep/sklep.env; sudo chmod 640 /etc/sklep/sklep.env
+grep -i password /etc/sklep/sklep.env || echo "brak hasla (dobrze)"'
+#EX
+// 2
+P: Umieść przykładowy JAR aplikacji jako pierwsze wydanie w `/opt/sklep/releases/1.5.0/sklep.jar` i ustaw dowiązanie `/opt/sklep/sklep.jar`. (Na tym etapie ręcznie; od ćwiczenia 12 robi to skrypt.)
+H: `install -d`, skopiuj JAR, `ln -sfn`.
+S:
+scp ~/projekty/sklep/target/sklep-1.5.0.jar anna@203.0.113.50:/tmp/sklep.jar
+ssh anna@203.0.113.50 'sudo install -d -m 755 /opt/sklep/releases/1.5.0; sudo install -m 644 /tmp/sklep.jar /opt/sklep/releases/1.5.0/sklep.jar; sudo ln -sfn /opt/sklep/releases/1.5.0/sklep.jar /opt/sklep/sklep.jar; rm /tmp/sklep.jar; readlink /opt/sklep/sklep.jar'
+#EX
+// 3
+P: Utwórz jednostkę `/etc/systemd/system/sklep.service`: konto sklep, zależność od bazy, EnvironmentFile, LoadCredential dla hasła, pełna ścieżka do java, adres 127.0.0.1, limit pamięci, zatrzymanie i restart.
+H: Sekcja [Unit] After/Requires postgresql@16-main; [Service] jak w teorii.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/sklep.service >/dev/null <<EOF
+[Unit]
+Description=Sklep (Spring Boot)
+After=network-online.target postgresql@16-main.service
+Wants=network-online.target
+Requires=postgresql@16-main.service
+
+[Service]
+User=sklep
+Group=sklep
+WorkingDirectory=/var/lib/sklep
+EnvironmentFile=/etc/sklep/sklep.env
+LoadCredential=spring.datasource.password:/etc/sklep/poswiadczenia/spring.datasource.password
+Environment=SPRING_CONFIG_IMPORT=optional:configtree:\${CREDENTIALS_DIRECTORY}/
+ExecStart=/usr/lib/jvm/java-21-openjdk-amd64/bin/java \$JAVA_OPTS -jar /opt/sklep/sklep.jar --server.address=127.0.0.1 --server.port=8080
+SuccessExitStatus=143
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=5
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target
+EOF
+echo zapisano'
+#EX
+// 4
+P: Dodaj do jednostki piaskownicę (NoNewPrivileges, ProtectSystem=strict, ReadWritePaths=/var/lib/sklep, ProtectHome, PrivateTmp, PrivateDevices, pusty CapabilityBoundingSet, ograniczone rodziny adresów). Sprawdź składnię jednostki.
+H: Dopisz linie przed [Install] lub przez drop-in; `systemd-analyze verify`.
+S:
+ssh anna@203.0.113.50 'sudo sed -i "/^\[Install\]/i NoNewPrivileges=yes\nProtectSystem=strict\nReadWritePaths=/var/lib/sklep\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nCapabilityBoundingSet=\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n" /etc/systemd/system/sklep.service
+sudo systemd-analyze verify /etc/systemd/system/sklep.service && echo "jednostka OK"'
+#EX
+// 5
+P: Przeładuj konfigurację systemd, włącz i uruchom usługę, a potem sprawdź jej stan i główny proces (jako kto działa).
+H: `daemon-reload`, `enable --now sklep`, `systemctl status`, `ps -o user,cmd`.
+S:
+ssh anna@203.0.113.50 'sudo systemctl daemon-reload; sudo systemctl enable --now sklep; sleep 25; systemctl status sklep --no-pager | sed -n "1,4p"; ps -o user,pid,cmd -C java | tail -1 | cut -c1-70'
+#EX
+// 6
+P: Sprawdź gotowość aplikacji (readiness) i że hasło trafiło do niej przez LoadCredential (jest w katalogu poświadczeń usługi, nie w sklep.env ani w ps).
+H: `curl 127.0.0.1:8080/actuator/health/readiness`; `ps -o cmd` nie pokazuje hasła.
+S:
+ssh anna@203.0.113.50 'curl -s 127.0.0.1:8080/actuator/health/readiness; echo; ps -o cmd -C java | grep -i password && echo "UWAGA haslo w ps" || echo "brak hasla w ps (dobrze)"'
+#EX
+// 7
+P: Sprawdź ocenę bezpieczeństwa usługi (piaskownica) i limit pamięci oraz adres nasłuchu z systemd.
+H: `systemd-analyze security sklep`; `systemctl show -p MemoryMax`; `ss -tlnp | grep 8080`.
+S:
+ssh anna@203.0.113.50 'systemd-analyze security sklep --no-pager | tail -1; systemctl show sklep -p MemoryMax --value; sudo ss -tlnp | grep 8080 | awk "{print \$4}"'
+#EX
+// 8
+P: Przetestuj łagodne zatrzymanie: zatrzymaj usługę i sprawdź w dzienniku, że Spring Boot zamknął się czysto (graceful shutdown), a kod wyjścia 143 jest traktowany jako sukces.
+H: `systemctl stop sklep`; `journalctl -u sklep | grep -i shutdown`; `systemctl show -p ExecMainStatus`.
+S:
+ssh anna@203.0.113.50 'sudo systemctl stop sklep; sudo journalctl -u sklep --since -1min -o cat | grep -iE "graceful|shutdown" | tail -2; systemctl show sklep -p ExecMainStatus --value; sudo systemctl start sklep'
+#EX
+// 9
+P: Pokaż, co zależność Requires=postgresql robi przy starcie: zatrzymaj bazę i spróbuj zrestartować aplikację. Przywróć bazę.
+H: `systemctl stop postgresql@16-main`; `systemctl restart sklep` (powinno pociągnąć bazę lub odmówić).
+S:
+ssh anna@203.0.113.50 'sudo systemctl stop postgresql@16-main; sudo systemctl restart sklep 2>&1 | tail -2; systemctl is-active postgresql@16-main sklep; sudo systemctl start postgresql@16-main sklep'
+#EX
+// 10
+P: Napisz skrypt wdrożeniowy `/usr/local/bin/wdroz-sklep.sh` (root, 755): przyjmuje wersję i sumę sha256, czyta JAR ze stdin, sprawdza sumę, tworzy wydanie, atomowo podmienia dowiązanie, restartuje usługę, czeka na gotowość, wycofuje przy błędzie, retencja 5.
+H: Funkcje zakoncz/loguj/czekaj_na_gotowosc/retencja; `ln -sfn` + `mv -T`.
+S:
+ssh anna@203.0.113.50 'sudo tee /usr/local/bin/wdroz-sklep.sh >/dev/null <<"EOF"
+#!/bin/bash
+set -euo pipefail
+loguj() { echo "wdroz-sklep.sh: [$1] ${*:2}"; }
+zakoncz() { loguj err "${*:2}"; exit "$1"; }
+czekaj_na_gotowosc() {
+    local port=$1 limit=$2 i=0
+    while (( i < limit )); do
+        curl -fs "127.0.0.1:$port/actuator/health/readiness" >/dev/null 2>&1 && return 0
+        sleep 1; ((i++))
+    done
+    return 1
+}
+retencja() { ls -1dt /opt/sklep/releases/*/ | tail -n +"$(( $1 + 1 ))" | xargs -r rm -rf; }
+main() {
+    local wersja=$1 suma=$2 katalog=/opt/sklep/releases/$1 poprzednie
+    [[ $wersja =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || zakoncz 2 "zla wersja: $wersja"
+    install -d -m 755 "$katalog"
+    cat > "$katalog/sklep.jar"
+    echo "$suma  $katalog/sklep.jar" | sha256sum -c --quiet || { rm -rf "$katalog"; zakoncz 2 "zla suma kontrolna"; }
+    poprzednie=$(readlink -f /opt/sklep/sklep.jar || true)
+    ln -sfn "$katalog/sklep.jar" /opt/sklep/.sklep.jar.nowy && mv -T /opt/sklep/.sklep.jar.nowy /opt/sklep/sklep.jar
+    systemctl restart sklep
+    if czekaj_na_gotowosc 8080 90; then
+        loguj info "wdrozono $wersja (wdrazal: ${SUDO_USER:-$USER})"; retencja 5
+    else
+        loguj err "brak gotowosci $wersja - wycofanie do ${poprzednie:-brak}"
+        [[ -n $poprzednie ]] && ln -sfn "$poprzednie" /opt/sklep/.sklep.jar.nowy && mv -T /opt/sklep/.sklep.jar.nowy /opt/sklep/sklep.jar
+        systemctl restart sklep; zakoncz 1 "wdrozenie $wersja wycofane"
+    fi
+}
+main "\$@"
+EOF
+sudo chmod 755 /usr/local/bin/wdroz-sklep.sh; sudo bash -n /usr/local/bin/wdroz-sklep.sh && echo "skladnia OK"'
+#EX
+// 11
+P: Sprawdź, że konto `deploy` może uruchomić skrypt przez sudo bez hasła, a nic innego nie może.
+H: `sudo -l -U deploy`.
+S:
+ssh anna@203.0.113.50 'sudo -l -U deploy | grep -A1 "may run"'
+#EX
+// 12
+P: Wdróż wersję 1.5.1 z laptopa jako `deploy` przez SSH: policz sumę sha256, prześlij JAR na stdin skryptu. Sprawdź kod wyjścia.
+H: `SUMA=$(sha256sum ... | cut -d' ' -f1)`; `ssh -i deploy_sklep deploy@... sudo wdroz-sklep.sh 1.5.1 "$SUMA" < jar`.
+S:
+cp ~/projekty/sklep/target/sklep-1.5.0.jar ~/projekty/sklep/target/sklep-1.5.1.jar
+SUMA=$(sha256sum ~/projekty/sklep/target/sklep-1.5.1.jar | cut -d' ' -f1)
+ssh -i ~/.ssh/deploy_sklep deploy@203.0.113.50 sudo /usr/local/bin/wdroz-sklep.sh 1.5.1 "$SUMA" < ~/projekty/sklep/target/sklep-1.5.1.jar; echo "kod: $?"
+#EX
+// 13
+P: Potwierdź wdrożenie: bieżące dowiązanie wskazuje 1.5.1, usługa działa i jest gotowa.
+H: `readlink /opt/sklep/sklep.jar`; `systemctl is-active sklep`; `curl readiness`.
+S:
+ssh anna@203.0.113.50 'readlink /opt/sklep/sklep.jar; systemctl is-active sklep; curl -s 127.0.0.1:8080/actuator/health/readiness; echo'
+#EX
+// 14
+P: Przetestuj odrzucenie złej sumy kontrolnej: spróbuj wdrożyć 1.5.2 z błędną sumą i sprawdź, że skrypt kończy się kodem 2, a dowiązanie nadal wskazuje 1.5.1.
+H: Podaj losową sumę; sprawdź readlink po próbie.
+S:
+ssh -i ~/.ssh/deploy_sklep deploy@203.0.113.50 sudo /usr/local/bin/wdroz-sklep.sh 1.5.2 0000000000000000000000000000000000000000000000000000000000000000 < ~/projekty/sklep/target/sklep-1.5.1.jar; echo "kod: $?"
+ssh anna@203.0.113.50 'readlink /opt/sklep/sklep.jar; ls /opt/sklep/releases/'
+#EX
+// 15
+P: Przetestuj WYCOFANIE: przygotuj wadliwy JAR (np. pusty plik), wdróż jako 1.5.3 i sprawdź, że po braku gotowości skrypt wraca do 1.5.1, a usługa znów działa.
+H: Pusty/uszkodzony JAR nie wstanie; skrypt po 90 s wycofa dowiązanie.
+S:
+: > /tmp/zly.jar; SUMA=$(sha256sum /tmp/zly.jar | cut -d' ' -f1)
+ssh -i ~/.ssh/deploy_sklep deploy@203.0.113.50 sudo /usr/local/bin/wdroz-sklep.sh 1.5.3 "$SUMA" < /tmp/zly.jar; echo "kod: $?"
+ssh anna@203.0.113.50 'readlink /opt/sklep/sklep.jar; systemctl is-active sklep; curl -s 127.0.0.1:8080/actuator/health/readiness; echo'
+rm /tmp/zly.jar
+#EX
+// 16
+P: Odtwórz pułapkę piaskownicy: ustaw katalog raportów na /srv/sklep/raporty (poza ReadWritePaths), zrestartuj usługę i wywołaj eksport raportu. Odczytaj błąd Read-only file system.
+H: Dopisz SKLEP_RAPORTY_KATALOG do sklep.env; `curl -X POST .../admin/raporty/sprzedaz`.
+S:
+ssh anna@203.0.113.50 'grep -q SKLEP_RAPORTY_KATALOG /etc/sklep/sklep.env || echo "SKLEP_RAPORTY_KATALOG=/srv/sklep/raporty" | sudo tee -a /etc/sklep/sklep.env >/dev/null; sudo install -d -o sklep -g sklep -m 750 /srv/sklep/raporty; sudo systemctl restart sklep; sleep 20; curl -s -X POST 127.0.0.1:8080/admin/raporty/sprzedaz | head -c 80; echo; sudo journalctl -u sklep --since -1min -o cat | grep -m1 "Read-only file system"'
+#EX
+// 17
+P: Napraw: dodaj /srv/sklep/raporty do ReadWritePaths przez drop-in, zrestartuj i sprawdź, że eksport działa.
+H: `systemctl edit sklep --drop-in=raporty`; sprawdź `systemctl show -p ReadWritePaths`.
+S:
+ssh anna@203.0.113.50 'printf "[Service]\nReadWritePaths=/srv/sklep/raporty\n" | sudo tee /etc/systemd/system/sklep.service.d/raporty.conf >/dev/null; sudo systemctl daemon-reload; systemctl show sklep -p ReadWritePaths; sudo systemctl restart sklep; sleep 20; curl -s -X POST 127.0.0.1:8080/admin/raporty/sprzedaz; echo'
+#EX
+// 18
+P: Sprawdź retencję wydań: wypisz katalogi w /opt/sklep/releases (powinno zostać maks. 5 najnowszych po kilku wdrożeniach).
+H: `ls -1dt /opt/sklep/releases/*/`.
+S:
+ssh anna@203.0.113.50 'ls -1dt /opt/sklep/releases/*/ | head; echo "liczba wydan: $(ls -1d /opt/sklep/releases/*/ | wc -l)"'
+#EX
+// 19
+P: Przejrzyj dziennik usługi: ostatnie wdrożenia (kto wdrażał), start aplikacji i ewentualne błędy. Logi aplikacji trafiają do journald.
+H: `journalctl -u sklep`; `grep Started`; wpisy skryptu logger/echo.
+S:
+ssh anna@203.0.113.50 'sudo journalctl -u sklep --since -1h --no-pager | grep -E "Started SklepApplication|HikariPool" | tail -3; echo "--- wdrozenia:"; sudo journalctl --since -1h --no-pager | grep "wdroz-sklep" | tail -3'
+#EX
+// 20
+P: Skopiuj jednostkę, drop-in i skrypt wdrożeniowy do repozytorium infrastruktury (bez sekretów) i zatwierdź.
+H: scp plików do `~/infra/sklep01/pliki/`.
+S:
+cd ~/infra/sklep01
+scp anna@203.0.113.50:/etc/systemd/system/sklep.service pliki/
+scp anna@203.0.113.50:/etc/systemd/system/sklep.service.d/raporty.conf pliki/
+ssh anna@203.0.113.50 'sudo cat /usr/local/bin/wdroz-sklep.sh' > pliki/wdroz-sklep.sh
+git add pliki/sklep.service pliki/raporty.conf pliki/wdroz-sklep.sh
+git commit -qm "Etap 5: usluga sklep.service i skrypt wdrozeniowy" && echo ok
+#Q
+Q: Co jest „sercem” uruchomienia aplikacji na serwerze w tym projekcie?
++ Jednostka systemd sklep.service
+- Skrypt w ~/.bashrc
+- Wpis w cronie
+- Kontener Docker
+E: Jednostka decyduje o koncie, środowisku, zasobach i restartach.
+#Q
+Q: Jako kto działa usługa sklep?
++ Jako konto systemowe sklep (User=sklep)
+- root
+- anna
+- deploy
+E: Konto usługi z minimalnymi uprawnieniami.
+#Q
+Q: Skąd usługa bierze zmienne środowiskowe?
++ Z EnvironmentFile=/etc/sklep/sklep.env
+- Z ~/.bashrc
+- Z /etc/environment tylko
+- Z argumentów docker run
+E: Plik 640 root:sklep.
+#Q
+Q: Jak usługa otrzymuje hasło do bazy bez umieszczania go w sklep.env?
++ LoadCredential= z katalogu sekretów + SPRING_CONFIG_IMPORT configtree
+- Przez zmienną w sklep.env
+- Przez argument -Dpassword
+- Przez plik w katalogu domowym
+E: Hasło widoczne tylko dla usługi, nie w ps.
+#Q
+Q: Gdzie aplikacja znajduje sekret wczytany przez LoadCredential?
++ W katalogu wskazanym przez ${CREDENTIALS_DIRECTORY}
+- W /etc/sklep/sklep.env
+- W /tmp
+- W zmiennej PASSWORD
+E: configtree czyta pliki z tego katalogu jako właściwości.
+#Q
+Q: Dlaczego w ExecStart używa się $JAVA_OPTS, a nie ${JAVA_OPTS}?
++ systemd dzieli $JAVA_OPTS na osobne słowa (argumenty), a ${JAVA_OPTS} traktuje jako jeden
+- Nie ma różnicy
+- ${JAVA_OPTS} jest wymagane
+- $JAVA_OPTS nie działa
+E: Dla wielu opcji potrzebny jest podział na słowa.
+#Q
+Q: Dlaczego w ExecStart podaje się pełną ścieżkę do java?
++ Żeby uniezależnić się od zmian domyślnej wersji przez update-alternatives
+- Bo java nie jest w PATH usługi
+- Bo przyspiesza start
+- Bez powodu
+E: /usr/lib/jvm/java-21-openjdk-amd64/bin/java.
+#Q
+Q: Na jakim adresie nasłuchuje aplikacja?
++ 127.0.0.1:8080 (--server.address=127.0.0.1)
+- 0.0.0.0:8080
+- 203.0.113.50:443
+- 127.0.0.1:443
+E: Ruch z zewnątrz idzie przez Nginx.
+#Q
+Q: Co oznacza SuccessExitStatus=143?
++ Kod 143 (SIGTERM, łagodne zatrzymanie) jest traktowany jako poprawne zakończenie
+- Błąd aplikacji
+- OOM
+- Restart
+E: 128+15; bez tego systemd uznałby zatrzymanie za awarię.
+#Q
+Q: Do czego służy TimeoutStopSec=45?
++ Daje aplikacji 45 s na łagodne zamknięcie przed SIGKILL
+- Opóźnia start o 45 s
+- Restart co 45 s
+- Limit czasu wdrożenia
+E: Musi być dłuższy niż czas graceful shutdown Spring Boot.
+#Q
+Q: Co robi Restart=on-failure w jednostce?
++ Restartuje usługę po zakończeniu kodem błędu
+- Restartuje zawsze co minutę
+- Nigdy nie restartuje
+- Restartuje po kodzie 0
+E: Kod 143 (sukces) nie wywoła restartu.
+#Q
+Q: Co ogranicza MemoryMax=2G?
++ Maksymalną pamięć usługi (cgroup) — JVM liczy stertę od tego limitu
+- Rozmiar dysku
+- Liczbę wątków
+- Liczbę połączeń
+E: Przekroczenie kończy się OOM w obrębie usługi.
+#Q
+Q: Co robi ProtectSystem=strict?
++ Montuje cały system plików tylko do odczytu dla usługi
+- Szyfruje system
+- Blokuje sieć
+- Ukrywa procesy
+E: Zapis możliwy tylko w ReadWritePaths (i /tmp prywatnym).
+#Q
+Q: Do czego służy ReadWritePaths=?
++ Lista katalogów, w których usługa może zapisywać mimo ProtectSystem=strict
+- Katalogi tylko do odczytu
+- Ścieżki w PATH
+- Katalogi logów
+E: Np. /var/lib/sklep.
+#Q
+Q: Co robi ProtectHome=yes?
++ Ukrywa katalogi domowe użytkowników przed usługą
+- Chroni /home przed usunięciem
+- Tworzy katalog domowy
+- Montuje /home do zapisu
+E: Usługa nie potrzebuje dostępu do /home.
+#Q
+Q: Co daje PrivateTmp=yes?
++ Usługa ma własny, prywatny /tmp (izolowany od reszty systemu)
+- Wyłącza /tmp
+- Montuje /tmp tylko do odczytu
+- Współdzieli /tmp z innymi
+E: Zapobiega atakom przez pliki w /tmp.
+#Q
+Q: Co oznacza pusty CapabilityBoundingSet=?
++ Usługa nie ma żadnych capabilities roota
+- Pełne uprawnienia
+- Tylko CAP_NET_BIND
+- Domyślny zestaw
+E: Aplikacja na porcie 8080 ich nie potrzebuje.
+#Q
+Q: Do czego służy RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX?
++ Ogranicza usługę do wymienionych rodzin gniazd sieciowych
+- Blokuje całą sieć
+- Zezwala na wszystkie rodziny
+- Ustawia adres IP
+E: Odcina np. gniazda surowe.
+#Q
+Q: Jak ocenić poziom ograniczeń (piaskownicy) usługi?
++ systemd-analyze security sklep
+- systemctl status
+- systemd-analyze verify
+- journalctl -u sklep
+E: Niższy wynik = lepiej zabezpieczona usługa.
+#Q
+Q: Co sprawdza systemd-analyze verify?
++ Poprawność składni i odwołań jednostki
+- Poziom bezpieczeństwa
+- Zużycie pamięci
+- Logi
+E: Wykrywa błędy przed uruchomieniem.
+#Q
+Q: Co deklaruje Requires=postgresql@16-main.service?
++ Twardą zależność — aplikacja wymaga działającej bazy
+- Że baza jest opcjonalna
+- Kolejność tylko
+- Że baza działa po aplikacji
+E: After= ustala kolejność startu.
+#Q
+Q: Czym różni się Requires= od After=?
++ Requires= wymusza zależność, After= tylko kolejność startu
+- Niczym
+- After= wymusza, Requires= kolejność
+- Oba to kolejność
+E: Zwykle używa się obu razem.
+#Q
+Q: Co robi systemctl enable --now sklep?
++ Włącza autostart i od razu uruchamia usługę
+- Tylko włącza autostart
+- Tylko uruchamia bez autostartu
+- Restartuje
+E: enable = autostart, --now = start teraz.
+#Q
+Q: Jak sprawdzić gotowość aplikacji Spring Boot?
++ curl 127.0.0.1:8080/actuator/health/readiness
+- systemctl is-ready sklep
+- ping 8080
+- docker healthcheck
+E: Zwraca {"status":"UP"} gdy gotowa.
+#Q
+Q: Gdzie trafiają logi aplikacji uruchomionej jako usługa?
++ Do dziennika systemd (journald) — journalctl -u sklep
+- Do /root/sklep.log
+- Do bazy
+- Nigdzie
+E: Standardowe wyjście przechwytuje journald.
+#Q
+Q: Co robi skrypt wdroz-sklep.sh jako pierwsze po otrzymaniu JAR?
++ Sprawdza sumę kontrolną sha256
+- Restartuje bazę
+- Usuwa stare wydania
+- Zmienia hasło
+E: Zły plik odrzuca przed podmianą dowiązania.
+#Q
+Q: Jak skrypt atomowo podmienia bieżące wydanie?
++ ln -sfn na plik tymczasowy, potem mv -T na dowiązanie docelowe
+- cp -f
+- rm + ln
+- mv jaru
+E: Atomowa zamiana dowiązania unika stanu pośredniego.
+#Q
+Q: Co robi skrypt, gdy nowa wersja nie osiągnie gotowości w 90 s?
++ Przywraca dowiązanie do poprzedniej wersji, restartuje i kończy się kodem 1
+- Zostawia niedziałającą wersję
+- Usuwa bazę
+- Czeka w nieskończoność
+E: Wycofanie chroni przed dłuższą awarią.
+#Q
+Q: Skąd skrypt zna poprzednią wersję do wycofania?
++ readlink -f /opt/sklep/sklep.jar przed podmianą
+- Z pliku WERSJA
+- Z bazy
+- Z argumentu
+E: Zapisuje ścieżkę bieżącego wydania.
+#Q
+Q: Co robi retencja 5 w skrypcie?
++ Zostawia 5 najnowszych wydań, starsze usuwa
+- Usuwa wszystkie wydania
+- Zostawia 5 najstarszych
+- Tworzy 5 kopii
+E: Oszczędza miejsce, zachowując możliwość wycofania.
+#Q
+Q: Jak CI wdraża nową wersję?
++ ssh deploy@sklep01 sudo /usr/local/bin/wdroz-sklep.sh WERSJA SUMA < plik.jar
+- scp jaru i ręczny restart
+- docker push
+- git push na serwer
+E: JAR idzie na standardowe wejście skryptu.
+#Q
+Q: Jakim kontem CI uruchamia wdrożenie?
++ deploy (sudo tylko na skrypt wdrożeniowy)
+- root
+- anna
+- sklep
+E: Minimalne uprawnienia dla CI.
+#Q
+Q: Co jest wynikiem (kodem wyjścia) udanego wdrożenia?
++ 0
+- 1
+- 2
+- 143
+E: Kod 2 to zła suma/wersja, 1 to wycofanie.
+#Q
+Q: Co oznacza kod wyjścia 2 ze skryptu wdrożeniowego?
++ Zła wersja lub zła suma kontrolna (odrzucenie przed podmianą)
+- Udane wdrożenie
+- Wycofanie
+- Brak gotowości
+E: Dowiązanie pozostaje bez zmian.
+#Q
+Q: Co oznacza kod wyjścia 1 ze skryptu?
++ Nowa wersja nie wstała — nastąpiło wycofanie do poprzedniej
+- Sukces
+- Zła suma
+- Brak JAR
+E: Aplikacja wraca do działającej wersji.
+#Q
+Q: Jaki błąd daje ProtectSystem=strict bez ReadWritePaths dla katalogu zapisu?
++ Read-only file system przy pierwszej próbie zapisu
+- Permission denied przy starcie
+- OutOfMemory
+- Connection refused
+E: Często ujawnia się dopiero na produkcji.
+#Q
+Q: Gdzie typowo aplikacja próbuje zapisywać poza /var/lib/sklep?
++ Załączniki, raporty, zrzut sterty, pliki tymczasowe spoza /tmp
+- Tylko do bazy
+- Tylko logi
+- Nigdzie
+E: Każdy taki katalog musi być w ReadWritePaths.
+#Q
+Q: Jak dodać katalog zapisu bez edycji głównego pliku jednostki?
++ Drop-in: systemctl edit sklep --drop-in=raporty z ReadWritePaths=
+- Edycja /etc/fstab
+- chmod 777 katalogu
+- Zmiana ProtectSystem na off
+E: Drop-in dokłada ustawienia do jednostki.
+#Q
+Q: Gdzie systemd zapisuje drop-in utworzony przez systemctl edit?
++ W /etc/systemd/system/sklep.service.d/NAZWA.conf
+- W /etc/systemd/system/sklep.service
+- W ~/.config/systemd
+- W /usr/lib/systemd
+E: Po zmianie potrzebny daemon-reload.
+#Q
+Q: Co trzeba zrobić po dodaniu drop-in?
++ systemctl daemon-reload i restart usługi
+- Nic
+- Restart serwera
+- Przeinstalować systemd
+E: daemon-reload wczytuje zmiany jednostek.
+#Q
+Q: Dlaczego HeapDumpPath musi wskazywać katalog w ReadWritePaths?
++ Przy OutOfMemory JVM zapisuje zrzut — poza dozwolonym katalogiem dostanie Read-only
+- Bo zrzut jest duży
+- Bo wymaga roota
+- Bez powodu
+E: W projekcie wskazuje /var/lib/sklep.
+#Q
+Q: Dlaczego restart jednej instancji aplikacji oznacza krótką przerwę?
++ Jest tylko jedna instancja — podczas zatrzymania i startu Nginx zwraca 502
+- Bo baza się restartuje
+- Bo zmienia się IP
+- Bo TLS wygasa
+E: Wdrożenie bez przerwy wymaga co najmniej dwóch instancji.
+#Q
+Q: Jak osiągnąć wdrożenie bez przerwy?
++ Dwie instancje (np. sklep@8080 i sklep@8082) i przełączanie ruchu w Nginx
+- Jedna instancja z restartem
+- Wyłączenie healthcheck
+- Większy MemoryMax
+E: Albo dwa serwery za równoważeniem obciążenia.
+#Q
+Q: Co jest zaletą szablonu sklep@.service?
++ Uruchomienie wielu instancji z portem w %i bez kopiowania jednostki
+- Szybszy start
+- Mniej pamięci
+- Automatyczne TLS
+E: Np. sklep@8080 i sklep@8082.
+#Q
+Q: Co jest dobrą praktyką przy decyzji o przerwie w dostępności?
++ Świadomie zapisać ją w README (zaplanowane okno), zamiast traktować jako niespodziankę
+- Ignorować
+- Nigdy nie restartować
+- Ukryć przed zespołem
+E: Dla wielu aplikacji krótka przerwa jest akceptowalna.
+#Q
+Q: Jak sprawdzić, że hasło nie trafiło do argumentów procesu?
++ ps -o cmd -C java | grep -i password (powinno nic nie znaleźć)
+- cat /proc/1/environ
+- journalctl | grep password
+- docker inspect
+E: LoadCredential trzyma hasło poza wierszem poleceń.
+#Q
+Q: Co pokazuje systemctl show sklep -p ReadWritePaths?
++ Pełną listę katalogów zapisu (z jednostki i drop-inów)
+- Logi
+- Zużycie pamięci
+- Status
+E: Potwierdza, że drop-in dodał katalog.
+#Q
+Q: Dlaczego skrypt wdrożeniowy musi należeć do root i mieć prawa 755?
++ Reguła NOPASSWD dla deploy jest bezpieczna tylko, gdy deploy nie może zmienić skryptu
+- Żeby działał szybciej
+- Bo bash tego wymaga
+- Bez powodu
+E: Edytowalny skrypt NOPASSWD = luka do roota.
+#Q
+Q: Co robi set -euo pipefail w skrypcie wdrożeniowym?
++ Przerywa przy błędzie, nieustawionej zmiennej i błędzie w potoku
+- Włącza tryb debug
+- Ignoruje błędy
+- Ustawia strefę czasową
+E: Zapobiega kontynuacji po nieudanym kroku.
+#Q
+Q: Jaką zależność ma sklep.service od sieci?
++ After=network-online.target, Wants=network-online.target
+- Brak
+- Before=network.target
+- Requires=network.service
+E: Aplikacja startuje po skonfigurowaniu sieci.
+#Q
+Q: Gdzie zapisuje się jednostkę i skrypt dla odtwarzalności?
++ W repozytorium infrastruktury (bez sekretów)
+- W katalogu domowym sklep
+- W /tmp
+- Nigdzie
+E: Hasło zostaje w katalogu sekretów serwera.
+#Q
+Q: Co jest dowodem zakończenia etapu 5?
++ Usługa active (running), gotowa, wdrożenie z CI działa, wycofanie przetestowane
+- Zainstalowany Nginx
+- Certyfikat TLS
+- Działający monitoring
+E: Aplikacja działa jako usługa z wdrażaniem.
+#Q
+Q: Co jest warunkiem przejścia do lekcji 6 (Nginx i HTTPS)?
++ Działająca aplikacja na 127.0.0.1:8080 jako usługa
+- Brak zapory
+- Konto root
+- Wyłączona baza
+E: Nginx będzie proxy do tej aplikacji.
+#Q
+Q: Jak przetestować wycofanie, nie psując produkcji?
++ Najpierw na serwerze testowym wdrożyć celowo wadliwą wersję
+- Od razu na produkcji
+- Nie testować
+- Wyłączyć skrypt
+E: Wycofanie musi działać, zanim będzie potrzebne.
+#Q
+Q: Co oznacza active (running) w systemctl status sklep?
++ Usługa działa (główny proces żyje)
+- Usługa jest zatrzymana
+- Usługa w pętli restartów
+- Usługa wyłączona
+E: Main PID wskazuje proces java.
+#Q
+Q: Dlaczego WorkingDirectory=/var/lib/sklep?
++ Aplikacja ma działać w katalogu danych, do którego ma prawo zapisu
+- Bo tam jest JAR
+- Bo tak wymaga JVM
+- Bez znaczenia
+E: Zrzuty i pliki względne trafiają tam.
+#Q
+Q: Jak zrestartować usługę po zmianie JAR bez pełnego daemon-reload?
++ systemctl restart sklep (gdy zmienił się tylko plik, nie jednostka)
+- systemctl reload
+- kill -9
+- reboot
+E: daemon-reload potrzebny po zmianie pliku jednostki.
+#Q
+Q: Co jest celem całego etapu 5?
++ Uruchomić aplikację jako bezpieczną usługę systemd i zapewnić powtarzalne wdrożenia z wycofaniem
+- Zabezpieczyć SSH
+- Skonfigurować bazę
+- Napisać monitoring
+E: Usługa i wdrażanie to rdzeń działania serwera.
+#Q
+Q: Jak systemd traktuje $JAVA_OPTS z wieloma opcjami w ExecStart?
++ Dzieli na osobne argumenty po spacjach
+- Przekazuje jako jeden argument
+- Ignoruje
+- Wymaga cudzysłowów
+E: ${JAVA_OPTS} nie byłoby dzielone.
+#Q
+Q: Co zapewnia atomowa podmiana dowiązania przy wdrożeniu?
++ W żadnym momencie dowiązanie nie wskazuje stanu pośredniego/nieistniejącego
+- Szybsze kopiowanie
+- Mniejszy JAR
+- Brak restartu
+E: mv -T zamienia dowiązanie w jednym kroku.
