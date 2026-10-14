@@ -1,0 +1,657 @@
+#EX
+// 1
+P: W `~/infra/sklep01` utwórz `lista-kontrolna.md`: każdy punkt odbioru z poleceniem weryfikującym i oczekiwanym wynikiem (usługi, nasłuch, SSH, zapora, sekrety, limit, kopia, certyfikat). Zatwierdź.
+H: Tabela: wymaganie | polecenie | oczekiwany wynik.
+S:
+cd ~/infra/sklep01
+cat > lista-kontrolna.md <<'EOF'
+| wymaganie                     | polecenie                                                   | oczekiwane |
+|-------------------------------|-------------------------------------------------------------|------------|
+| uslugi aktywne                | systemctl is-active sklep nginx postgresql@16-main fail2ban | active     |
+| nasluch publiczny             | ss -tlnp (bez 127.0.0.1)                                     | 22 80 443  |
+| ssh bez hasel                 | sshd -T \| grep passwordauthentication                      | no         |
+| ssh bez roota                 | sshd -T \| grep permitrootlogin                             | no         |
+| zapora aktywna                | ufw status                                                  | active     |
+| sekrety 700 root              | stat -c %a /etc/sklep/poswiadczenia                         | 700        |
+| limit pamieci aplikacji       | systemctl show sklep -p MemoryMax                           | != infinity|
+| kopia bazy < 26 h             | find /var/backups/sklep -mmin -1560                          | niepusty   |
+| certyfikat >= 14 dni          | openssl x509 -checkend 1209600                              | ok         |
+| brak reboot-required          | test ! -e /var/run/reboot-required                          | ok         |
+EOF
+git add lista-kontrolna.md && git commit -qm "Lista kontrolna odbioru sklep01" && echo ok
+#EX
+// 2
+P: Napisz skrypt kontroli wewnętrznej `/usr/local/bin/kontrola-sklep01.sh` z funkcją `sprawdz OPIS POLECENIE...` ([OK]/[UWAGA], kod wyjścia 1 przy problemie). Dodaj punkty: usługi, brak failed, zapora.
+H: `sprawdz() { if "$@"; then echo OK; else echo UWAGA; WYNIK=1; fi; }`.
+S:
+ssh anna@203.0.113.50 'sudo tee /usr/local/bin/kontrola-sklep01.sh >/dev/null <<"EOF"
+#!/bin/bash
+WYNIK=0
+sprawdz() { local opis=$1; shift; if "$@" &>/dev/null; then printf "[OK]     %s\n" "$opis"; else printf "[UWAGA]  %s\n" "$opis"; WYNIK=1; fi; }
+sprawdz "uslugi aktywne"        systemctl is-active -q sklep nginx postgresql@16-main fail2ban
+sprawdz "brak jednostek failed" bash -c "[ -z \"\$(systemctl --failed --plain --no-legend)\" ]"
+sprawdz "zapora aktywna"        bash -c "ufw status | grep -q active"
+EOF
+sudo chmod 755 /usr/local/bin/kontrola-sklep01.sh; sudo bash -n /usr/local/bin/kontrola-sklep01.sh && echo "skladnia OK"'
+#EX
+// 3
+P: Dodaj do skryptu punkty: nasłuch zgodny z planem (publicznie tylko 22/80/443), SSH bez haseł i roota, sekrety 700, limit pamięci, kopia < 26 h, certyfikat >= 14 dni, brak reboot-required.
+H: Dopisz kolejne wywołania `sprawdz`; warunki jak w teorii.
+S:
+ssh anna@203.0.113.50 'sudo tee -a /usr/local/bin/kontrola-sklep01.sh >/dev/null <<"EOF"
+sprawdz "nasluch tylko 22 80 443" bash -c "[ \"\$(ss -tlnH | awk '"'"'{print \$4}'"'"' | grep -vE '"'"'^(127\.|\[::1\]|\[::ffff:127)'"'"' | sed '"'"'s/.*://'"'"' | sort -un | xargs)\" = '"'"'22 80 443'"'"' ]"
+sprawdz "ssh bez hasel"        bash -c "sshd -T | grep -qx '"'"'passwordauthentication no'"'"'"
+sprawdz "ssh bez roota"        bash -c "sshd -T | grep -qx '"'"'permitrootlogin no'"'"'"
+sprawdz "sekrety 700 root"     bash -c "[ \$(stat -c %a /etc/sklep/poswiadczenia) = 700 ]"
+sprawdz "limit pamieci"        bash -c "[ \$(systemctl show sklep -p MemoryMax --value) != infinity ]"
+sprawdz "kopia bazy < 26 h"    bash -c "find /var/backups/sklep -name '"'"'sklep-*.dump'"'"' -mmin -1560 | grep -q ."
+sprawdz "certyfikat >= 14 dni" openssl x509 -checkend 1209600 -noout -in /etc/letsencrypt/live/sklep.firma.example/cert.pem
+sprawdz "brak reboot-required" test ! -e /var/run/reboot-required
+exit $WYNIK
+EOF
+sudo bash -n /usr/local/bin/kontrola-sklep01.sh && echo "skladnia OK"'
+#EX
+// 4
+P: Uruchom kontrolę wewnętrzną i odczytaj wynik oraz kod wyjścia.
+H: `sudo kontrola-sklep01.sh; echo $?`.
+S:
+ssh anna@203.0.113.50 'sudo /usr/local/bin/kontrola-sklep01.sh; echo "kod: $?"'
+#EX
+// 5
+P: Zweryfikuj kluczowy punkt ręcznie: że publicznie nasłuchują tylko 22, 80, 443, a 8080 i 5432 są na 127.0.0.1.
+H: `ss -tlnp` z filtrem adresów.
+S:
+ssh anna@203.0.113.50 'sudo ss -tlnp | awk "NR>1 {print \$4}" | grep -E ":(22|80|443|8080|5432)\$" | sort'
+#EX
+// 6
+P: Uruchom kontrolę timerem (codziennie) z powiadomieniem przy problemie. Włącz timer.
+H: kontrola-sklep01.service oneshot z OnFailure=powiadom@%n.service; timer OnCalendar=daily.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/systemd/system/kontrola-sklep01.service >/dev/null <<EOF
+[Unit]
+Description=Codzienna kontrola sklep01
+OnFailure=powiadom@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kontrola-sklep01.sh
+EOF
+sudo tee /etc/systemd/system/kontrola-sklep01.timer >/dev/null <<EOF
+[Unit]
+Description=Kontrola sklep01 codziennie
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+sudo systemctl daemon-reload; sudo systemctl enable --now kontrola-sklep01.timer; systemctl list-timers kontrola-sklep01.timer --no-pager | sed -n 2p'
+#EX
+// 7
+P: Napisz lokalnie skrypt kontroli zewnętrznej `kontrola-zewnetrzna.sh DOMENA`: przekierowanie HTTP->HTTPS, HSTS, TLS dla domeny i www, zamknięte porty 8080/5432, ukryty actuator.
+H: `curl -sI`, `nc -z -w 3`, `curl -o /dev/null -w %{http_code}`.
+S:
+cd ~/infra/sklep01
+cat > kontrola-zewnetrzna.sh <<'EOF'
+#!/bin/bash
+D=$1
+curl -sI "http://$D/" | grep -q '301' && echo "[OK] http -> https" || echo "[UWAGA] brak 301"
+curl -sI "https://$D/" | grep -qi '^strict-transport-security' && echo "[OK] HSTS" || echo "[UWAGA] brak HSTS"
+for n in "$D" "www.$D"; do curl -s -o /dev/null "https://$n/" && echo "[OK] TLS $n" || echo "[UWAGA] TLS $n"; done
+for p in 8080 5432; do nc -z -w 3 "$D" "$p" 2>/dev/null && echo "[UWAGA] port $p otwarty" || echo "[OK] port $p zamkniety"; done
+[ "$(curl -s -o /dev/null -w '%{http_code}' "https://$D/actuator/health")" = 404 ] && echo "[OK] actuator ukryty" || echo "[UWAGA] actuator widoczny"
+EOF
+chmod +x kontrola-zewnetrzna.sh && bash -n kontrola-zewnetrzna.sh && echo "skladnia OK"
+#EX
+// 8
+P: Uruchom kontrolę zewnętrzną z laptopa dla domeny sklep.firma.example i odczytaj wynik.
+H: `./kontrola-zewnetrzna.sh sklep.firma.example`.
+S:
+cd ~/infra/sklep01
+./kontrola-zewnetrzna.sh sklep.firma.example
+#EX
+// 9
+P: Odtwórz pułapkę „tylko jedna nazwa”: sprawdź DNS dla www.sklep.firma.example i spróbuj połączyć się HTTPS tą nazwą. Odczytaj błąd certyfikatu, jeśli certyfikat nie obejmuje www.
+H: `dig +short www...`; `curl -sv https://www... | grep subject`.
+S:
+dig +short www.sklep.firma.example
+curl -s -o /dev/null https://www.sklep.firma.example/; echo "kod curl: $?"
+curl -sv https://www.sklep.firma.example/ 2>&1 | grep -m1 -i 'subject name\|certificate'
+#EX
+// 10
+P: Napraw: rozszerz server_name w Nginx o www i rozszerz certyfikat (certbot --expand). Sprawdź nazwy w certyfikacie (SAN).
+H: `sed` na server_name; `certbot --nginx --expand -d ... -d www....`; `openssl x509 -ext subjectAltName`.
+S:
+ssh anna@203.0.113.50 'sudo sed -i "s/server_name sklep.firma.example;/server_name sklep.firma.example www.sklep.firma.example;/" /etc/nginx/sites-available/sklep; sudo nginx -t -q && sudo certbot --nginx --expand -d sklep.firma.example -d www.sklep.firma.example -n 2>&1 | grep -m1 -i successful; sudo openssl x509 -noout -ext subjectAltName -in /etc/letsencrypt/live/sklep.firma.example/cert.pem | tail -1'
+#EX
+// 11
+P: Ponów kontrolę zewnętrzną i potwierdź, że obie nazwy (z www i bez) mają poprawne TLS.
+H: `./kontrola-zewnetrzna.sh ... | grep TLS`.
+S:
+cd ~/infra/sklep01
+./kontrola-zewnetrzna.sh sklep.firma.example | grep TLS
+#EX
+// 12
+P: Zbadaj łańcuch certyfikatu i daty z zewnątrz (openssl), potwierdzając wystawcę Let's Encrypt i ważność.
+H: `openssl s_client -connect ...:443 -servername ... | openssl x509`.
+S:
+echo | openssl s_client -connect sklep.firma.example:443 -servername sklep.firma.example 2>/dev/null | openssl x509 -noout -issuer -dates -ext subjectAltName
+#EX
+// 13
+P: Sprawdź rekordy DNS domeny (A, AAAA, CNAME dla www) i porównaj z adresem serwera — czy nic nie wskazuje starego adresu.
+H: `dig +short ... A/AAAA/CNAME`.
+S:
+echo "A:"; dig +short sklep.firma.example A
+echo "AAAA:"; dig +short sklep.firma.example AAAA
+echo "www CNAME/A:"; dig +short www.sklep.firma.example
+#EX
+// 14
+P: Napisz skrypt ćwiczenia odtworzenia `cwiczenie-odtworzenia.sh ADRES`: uruchom instaluj.sh, odtwórz najnowszą kopię bazy (z kopie.firma.example), wdróż bieżącą wersję, uruchom kontrolę. Sprawdź składnię.
+H: Łączy rsync+instaluj.sh, scp kopii+pg_restore, wdroz-sklep.sh, kontrola-sklep01.sh.
+S:
+cd ~/infra/sklep01
+cat > cwiczenie-odtworzenia.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+ADRES=$1
+echo "== instaluj.sh"
+rsync -a ./ anna@"$ADRES":infra/
+ssh -t anna@"$ADRES" sudo infra/instaluj.sh
+echo "== odtworzenie kopii"
+ssh -t anna@"$ADRES" 'sudo scp -i /root/.ssh/kopie_sklep01 -o StrictHostKeyChecking=accept-new "kopie@kopie.firma.example:sklep01/$(ssh -i /root/.ssh/kopie_sklep01 kopie@kopie.firma.example ls -t sklep01 | head -1)" /tmp/kopia.dump && sudo -u postgres pg_restore -c -d sklep /tmp/kopia.dump'
+echo "== wdrozenie biezacej wersji"
+SUMA=$(sha256sum ~/projekty/sklep/target/sklep-1.5.0.jar | cut -d" " -f1)
+ssh -i ~/.ssh/deploy_sklep deploy@"$ADRES" sudo /usr/local/bin/wdroz-sklep.sh 1.5.0 "$SUMA" < ~/projekty/sklep/target/sklep-1.5.0.jar
+echo "== kontrola"
+ssh -t anna@"$ADRES" sudo /usr/local/bin/kontrola-sklep01.sh
+EOF
+chmod +x cwiczenie-odtworzenia.sh && bash -n cwiczenie-odtworzenia.sh && echo "skladnia OK"
+#EX
+// 15
+P: Przeprowadź ćwiczenie odtworzenia na czystej maszynie sklep02 (203.0.113.51) z pomiarem czasu. Zmierzony czas = rzeczywiste RTO.
+H: `time ./cwiczenie-odtworzenia.sh 203.0.113.51`.
+S:
+cd ~/infra/sklep01
+time ./cwiczenie-odtworzenia.sh 203.0.113.51
+#EX
+// 16
+P: Po odtworzeniu zweryfikuj zgodność danych na sklep02 (liczność tabel) z produkcją i działanie aplikacji.
+H: Porównaj SELECT count na obu serwerach; `curl readiness`.
+S:
+for h in 203.0.113.50 203.0.113.51; do echo "== $h"; ssh anna@$h 'sudo -u postgres psql -Atc "SELECT (SELECT count(*) FROM produkty), (SELECT count(*) FROM zamowienia)" sklep; curl -s 127.0.0.1:8080/actuator/health/readiness'; echo; done
+#EX
+// 17
+P: Zapisz zmierzone RTO i RPO oraz ewentualne świadome wyjątki w `wyjatki.md` i w `README.md`. Zatwierdź.
+H: RPO = wiek kopii, RTO = czas ćwiczenia; wyjątki z uzasadnieniem.
+S:
+cd ~/infra/sklep01
+cat > wyjatki.md <<'EOF'
+# Swiadome wyjatki od listy kontrolnej (z uzasadnieniem)
+- Brak (stan na odbior). Kazdy przyszly wyjatek: punkt, powod, data, osoba akceptujaca.
+
+# Zmierzone wartosci
+- RTO (cwiczenie odtworzenia sklep02): ~14 min
+- RPO (kopia dzienna 02:30 UTC): do 24 h
+EOF
+git add wyjatki.md && git commit -qm "Wyniki odbioru: RTO ~14 min, RPO 24 h, brak wyjatkow" && echo ok
+#EX
+// 18
+P: Przygotuj dokumentację przekazania: uzupełnij `README.md` o spis procedur (wdrożenie, wycofanie, odtworzenie, rotacja haseł) i dostęp awaryjny (konsola dostawcy chmury). Zatwierdź.
+H: Sekcja "Procedury" i "Dostep awaryjny" w README.
+S:
+cd ~/infra/sklep01
+cat >> README.md <<'EOF'
+
+## Procedury
+- Wdrozenie: ssh deploy@sklep01 sudo /usr/local/bin/wdroz-sklep.sh WERSJA SUMA < jar (lekcja 5)
+- Wycofanie: wdroz-sklep.sh robi je automatycznie; recznie - zmiana dowiazania na poprzednie wydanie
+- Odtworzenie kopii: pliki/odtwarzanie.md
+- Rotacja hasla bazy: nowe haslo -> /etc/sklep/poswiadczenia + ALTER ROLE sklep PASSWORD -> restart sklep
+
+## Dostep awaryjny
+- Konsola dostawcy chmury (gdy SSH niedostepne): panel -> sklep01 -> konsola (haslo awaryjne w sejfie zespolu)
+- Odblokowanie konta w fail2ban: fail2ban-client set sshd unbanip ADRES
+EOF
+git add README.md && git commit -qm "Dokumentacja przekazania: procedury i dostep awaryjny" && echo ok
+#EX
+// 19
+P: Zatwierdź skrypty kontroli do repozytorium i wykonaj końcowy przegląd: kontrola wewnętrzna OK, kontrola zewnętrzna OK. To odbiór techniczny serwera.
+H: scp kontrola-sklep01.sh; uruchom obie kontrole.
+S:
+cd ~/infra/sklep01
+ssh anna@203.0.113.50 'sudo cat /usr/local/bin/kontrola-sklep01.sh' > pliki/kontrola-sklep01.sh
+git add pliki/kontrola-sklep01.sh kontrola-zewnetrzna.sh cwiczenie-odtworzenia.sh && git commit -qm "Skrypty kontroli i cwiczenia odtworzenia"
+echo "== kontrola wewnetrzna:"; ssh anna@203.0.113.50 'sudo /usr/local/bin/kontrola-sklep01.sh | tail -3; echo kod=$?'
+echo "== kontrola zewnetrzna:"; ./kontrola-zewnetrzna.sh sklep.firma.example
+#EX
+// 20
+P: Serwer przeszedł odbiór. Wykonaj końcowy commit podsumowujący, wyczyść maszynę testową sklep02 (wyrejestruj/usuń u dostawcy) i zapisz, że ruch można przełączyć na sklep01. Kurs zakończony.
+H: `git commit`; usunięcie maszyny testowej po stronie dostawcy; notatka o przełączeniu DNS.
+S:
+cd ~/infra/sklep01
+echo "$(date -u +%F): odbior sklep01 zakonczony, RTO ~14 min, lista kontrolna OK, mozna przelaczyc DNS" >> README.md
+git commit -qam "Odbior sklep01 zakonczony - serwer gotowy do produkcji"
+git log --oneline | head -5
+echo "sklep02 (cwiczenie odtworzenia) - usunac u dostawcy chmury po potwierdzeniu wynikow"
+#Q
+Q: Czym jest odbiór techniczny serwera przed uruchomieniem produkcji?
++ Przejściem listy kontrolnej, w której każdy punkt ma polecenie weryfikujące i oczekiwany wynik
+- Restartem serwera
+- Instalacją aplikacji
+- Kopią zapasową
+E: Plus kontrola zewnętrzna i ćwiczenie odtworzenia.
+#Q
+Q: Co powinien zawierać każdy punkt listy kontrolnej?
++ Wymaganie, polecenie sprawdzające i oczekiwany wynik
+- Tylko opis
+- Tylko nazwę usługi
+- Zrzut ekranu
+E: Nie „sprawdzone wzrokowo”, lecz pomiar.
+#Q
+Q: Czym różni się kontrola wewnętrzna od zewnętrznej?
++ Wewnętrzna działa na serwerze, zewnętrzna sprawdza serwer z innej maszyny (jak klienci)
+- Niczym
+- Wewnętrzna jest wolniejsza
+- Zewnętrzna wymaga roota
+E: Niektóre problemy widać tylko z zewnątrz.
+#Q
+Q: Co sprawdza skrypt kontroli wewnętrznej kontrola-sklep01.sh?
++ Usługi, nasłuch, SSH, zaporę, sekrety, limity, kopie, certyfikat, reboot-required
+- Tylko CPU
+- Tylko logi
+- Tylko wersję Javy
+E: Zwraca kod 1 przy jakimkolwiek problemie.
+#Q
+Q: Jak funkcja sprawdz raportuje wynik punktu?
++ [OK] lub [UWAGA] i ustawia WYNIK=1 przy problemie
+- Tylko echo
+- Wysyła e-mail
+- Restartuje usługę
+E: Kod wyjścia skryptu zależy od WYNIK.
+#Q
+Q: Jak kontrola sprawdza nasłuch zgodny z planem?
++ ss -tlnp z filtrem adresów — publicznie tylko 22, 80, 443
+- ping portów
+- curl localhost
+- nmap z serwera
+E: 8080 i 5432 mają być na 127.0.0.1.
+#Q
+Q: Jak kontrola sprawdza, że logowanie hasłem jest wyłączone?
++ sshd -T | grep -qx 'passwordauthentication no'
+- cat sshd_config
+- grep w pliku
+- test ręczny
+E: sshd -T pokazuje efektywną wartość.
+#Q
+Q: Jak kontrola sprawdza ważność certyfikatu?
++ openssl x509 -checkend 1209600 (czy ważny jeszcze przez 14 dni)
+- dig certyfikatu
+- curl certyfikatu
+- cat cert.pem
+E: checkend zwraca błąd, gdy wygaśnie w zadanym czasie.
+#Q
+Q: Jak kontrola sprawdza świeżość kopii bazy?
++ find /var/backups/sklep -name 'sklep-*.dump' -mmin -1560 (plik z ostatnich ~26 h)
+- ls -l
+- stat kopii
+- du kopii
+E: Brak wyniku = brak świeżej kopii.
+#Q
+Q: Jak uruchamia się kontrolę wewnętrzną automatycznie?
++ Timerem (np. codziennie) z OnFailure=powiadom@%n.service
+- Przy każdym logowaniu
+- Co sekundę
+- Ręcznie raz w roku
+E: Problem natychmiast trafia do zespołu.
+#Q
+Q: Co sprawdza kontrola zewnętrzna?
++ Przekierowania, HSTS, certyfikat dla wszystkich nazw, zamknięte porty, ukryty actuator
+- Logi serwera
+- Zużycie CPU
+- Konta użytkowników
+E: Serwer tak, jak widzą go klienci i atakujący.
+#Q
+Q: Dlaczego kontrola zewnętrzna testuje też port 8080 i 5432?
++ Żeby potwierdzić, że są ZAMKNIĘTE z zewnątrz (otwarty = UWAGA)
+- Żeby je otworzyć
+- Żeby sprawdzić aplikację
+- Bez powodu
+E: nc -z nie powinien się połączyć.
+#Q
+Q: Czym jest ćwiczenie odtworzenia (DR drill)?
++ Postawieniem kopii serwera z repozytorium i kopii bazy na czystej maszynie, z pomiarem czasu
+- Usunięciem kopii
+- Testem wydajności
+- Restartem produkcji
+E: Potwierdza, że da się odtworzyć serwer.
+#Q
+Q: Co mierzy się podczas ćwiczenia odtworzenia?
++ Czas przywrócenia usługi (RTO) i wiek kopii (RPO)
+- Zużycie CPU
+- Liczbę plików
+- Przepustowość sieci
+E: Rzeczywiste, nie teoretyczne wartości.
+#Q
+Q: Co oznacza RTO zmierzone na 14 minut?
++ Tyle trwa przywrócenie działającej usługi na nowej maszynie
+- Kopia ma 14 minut
+- Serwer restartuje się 14 minut
+- Certyfikat ważny 14 minut
+E: Suma: instaluj.sh + odtworzenie bazy + wdrożenie + testy.
+#Q
+Q: Co jest pułapką odbioru wyłącznie „od środka”?
++ Problemy widoczne tylko z zewnątrz (np. certyfikat bez www, zły rekord AAAA) umkną
+- Serwer działa za wolno
+- Za dużo logów
+- Brak pamięci
+E: Testy z serwera używają jednej nazwy.
+#Q
+Q: Jaki błąd popełniono w pułapce z certyfikatem?
++ Certyfikat wydano tylko dla sklep.firma.example, a klienci używają też www
+- Certyfikat wygasł
+- Zły port
+- Brak HSTS
+E: Z serwera testowano tylko jedną nazwę.
+#Q
+Q: Jaki komunikat daje curl przy certyfikacie nieobejmującym nazwy?
++ no alternative certificate subject name matches target host name
+- Connection refused
+- 404 Not Found
+- Timeout
+E: Nazwa hosta nie pasuje do SAN certyfikatu.
+#Q
+Q: Jak rozszerzyć certyfikat Let's Encrypt o kolejną nazwę?
++ certbot --nginx --expand -d sklep.firma.example -d www.sklep.firma.example
+- certbot renew
+- openssl req -new
+- edycja cert.pem
+E: Wcześniej dodaje się nazwę do server_name w Nginx.
+#Q
+Q: Gdzie w certyfikacie są wszystkie obsługiwane nazwy?
++ W rozszerzeniu subjectAltName (SAN)
+- W polu issuer
+- W dacie ważności
+- W kluczu publicznym
+E: openssl x509 -ext subjectAltName.
+#Q
+Q: Dlaczego sprawdza się rekord AAAA domeny?
++ Może wskazywać stary adres IPv6 i kierować część klientów w złe miejsce
+- Bo IPv6 jest szybsze
+- Bo wymaga tego TLS
+- Bez powodu
+E: Testy IPv4 tego nie wykryją.
+#Q
+Q: Co jest kryterium gotowości serwera do produkcji?
++ Wszystkie punkty OK lub świadome wyjątki zapisane z uzasadnieniem
+- Działający SSH
+- Zainstalowana aplikacja
+- Brak logów błędów
+E: wyjatki.md dokumentuje odstępstwa.
+#Q
+Q: Gdzie zapisuje się świadome odstępstwa od listy kontrolnej?
++ W wyjatki.md (punkt, powód, data, osoba akceptująca)
+- W logach
+- W pamięci administratora
+- Nigdzie
+E: Każdy wyjątek musi być uzasadniony.
+#Q
+Q: Co powinna zawierać dokumentacja przekazania serwera?
++ Założenia, lista kontrolna, procedury (wdrożenie, wycofanie, odtworzenie, rotacja haseł), dostęp awaryjny
+- Tylko hasła
+- Tylko adres IP
+- Tylko logi
+E: Następca ma wiedzieć, jak serwer działa.
+#Q
+Q: Czym jest dostęp awaryjny do serwera w chmurze?
++ Konsola dostawcy, gdy SSH jest niedostępne (np. po błędzie zapory)
+- Drugie konto root
+- Otwarty port 23
+- Brak zabezpieczeń
+E: Hasło awaryjne trzyma się w sejfie zespołu.
+#Q
+Q: Jak często przeprowadza się ćwiczenie odtworzenia?
++ Co kwartał (oraz po większych zmianach)
+- Raz na zawsze
+- Codziennie
+- Nigdy
+E: Procedura musi działać, zanim będzie potrzebna.
+#Q
+Q: Kiedy przeprowadza się pełny odbiór z ćwiczeniem odtworzenia?
++ Przed uruchomieniem produkcji i po każdej większej zmianie
+- Tylko raz w życiu serwera
+- Codziennie
+- Nigdy
+E: Większa zmiana może naruszyć wcześniejsze założenia.
+#Q
+Q: Co robi się dopiero po pozytywnym odbiorze?
++ Przełącza DNS/ruch na nowy serwer i obserwuje logi przez pierwsze godziny
+- Usuwa kopie
+- Wyłącza monitoring
+- Otwiera port 8080
+E: Odbiór poprzedza przekierowanie klientów.
+#Q
+Q: Co jest dowodem konfiguracji serwera dla audytora?
++ Lista kontrolna z poleceniami i wynikami oraz skrypty kontroli
+- Słowo administratora
+- Zrzuty ekranu
+- Historia powłoki
+E: Weryfikowalne polecenia, nie deklaracje.
+#Q
+Q: Jak kontrola zewnętrzna sprawdza przekierowanie HTTP na HTTPS?
++ curl -sI http://DOMENA/ i oczekiwanie kodu 301 z Location https://
+- ping DOMENA
+- dig DOMENA
+- nc DOMENA 80
+E: Brak 301 to UWAGA.
+#Q
+Q: Jak kontrola zewnętrzna sprawdza, że actuator jest ukryty?
++ curl kodu HTTP dla https://DOMENA/actuator/health == 404
+- curl localhost:8080
+- ss -tlnp
+- journalctl
+E: Z internetu endpoint zarządzania ma być niewidoczny.
+#Q
+Q: Co potwierdza test TLS dla domeny i www w kontroli zewnętrznej?
++ Że certyfikat obejmuje obie nazwy, którymi łączą się klienci
+- Że aplikacja działa
+- Że baza jest dostępna
+- Że port 22 jest otwarty
+E: Pułapka: certyfikat tylko dla jednej nazwy.
+#Q
+Q: Jak zbadać łańcuch i wystawcę certyfikatu z zewnątrz?
++ openssl s_client -connect ...:443 -servername ... | openssl x509 -issuer -dates
+- curl --cert
+- dig cert
+- nginx -t
+E: Potwierdza Let's Encrypt i ważność.
+#Q
+Q: Co jest wynikiem udanej kontroli wewnętrznej?
++ Wszystkie punkty [OK] i kod wyjścia 0
+- [UWAGA] przy kilku punktach
+- Kod 1
+- Brak wyniku
+E: Problem daje [UWAGA] i kod 1.
+#Q
+Q: Dlaczego ćwiczenie odtworzenia robi się na czystej maszynie, a nie na produkcji?
++ Żeby realnie sprawdzić odtworzenie od zera, nie psując działającego serwera
+- Bo produkcja jest wolniejsza
+- Bo brakuje miejsca
+- Bez powodu
+E: Potwierdza skrypt, kopię i procedurę.
+#Q
+Q: Co potwierdza porównanie liczności tabel na odtworzonym serwerze z produkcją?
++ Że odtworzona baza zawiera te same dane
+- Że aplikacja jest szybsza
+- Że certyfikat jest ważny
+- Że port jest otwarty
+E: Zgodność danych = udane odtworzenie.
+#Q
+Q: Co należy zrobić z maszyną testową po ćwiczeniu odtworzenia?
++ Usunąć ją u dostawcy po potwierdzeniu wyników (koszt i powierzchnia ataku)
+- Zostawić działającą na stałe
+- Przełączyć na nią ruch
+- Zignorować
+E: Środowisko testowe tworzy się na czas próby.
+#Q
+Q: Co jest rzeczywistym RPO przy dziennej kopii o 02:30 UTC?
++ Do 24 godzin (tyle danych można stracić w najgorszym razie)
+- Zero
+- 1 godzina
+- Tydzień
+E: Mniejsze RPO wymaga archiwizacji WAL.
+#Q
+Q: Jak udokumentować rotację hasła bazy w procedurach?
++ Nowe hasło do pliku sekretu + ALTER ROLE sklep PASSWORD + restart usługi
+- Zmiana w kodzie
+- Nowy certyfikat
+- Restart serwera
+E: Hasło zostaje poza repozytorium.
+#Q
+Q: Co jest zaletą automatycznej kontroli wewnętrznej timerem?
++ Codzienne potwierdzenie zgodności serwera z listą i szybkie wykrycie dryfu
+- Szybsza aplikacja
+- Mniej logów
+- Brak kopii
+E: OnFailure powiadamia zespół.
+#Q
+Q: Dlaczego odbiór sprawdza wszystkie nazwy i protokoły, którymi łączą się klienci?
++ Bo problem (np. zły certyfikat, rekord AAAA) może dotyczyć tylko części z nich
+- Bo jest szybciej
+- Bo wymaga tego certbot
+- Bez powodu
+E: „U mnie na serwerze działa” to za mało.
+#Q
+Q: Co jest końcowym etapem projektu i kursu?
++ Odbiór techniczny: lista kontrolna, kontrola zewnętrzna i ćwiczenie odtworzenia
+- Instalacja Javy
+- Konfiguracja SSH
+- Pierwsze logowanie
+E: Od pustej maszyny do sprawdzonego serwera.
+#Q
+Q: Jakie są naturalne kolejne kroki nauki po tym kursie?
++ Ansible, Kubernetes, Prometheus/Grafana, HA PostgreSQL, chmura/Terraform, certyfikacje
+- Zakończenie nauki Linuksa
+- Tylko Windows
+- Tylko programowanie w Javie
+E: Linux to dziedzina ciągłej nauki.
+#Q
+Q: Jaka jest najlepsza metoda dalszej nauki według lekcji?
++ Praktyka: utrzymywać serwer, czytać logi, automatyzować powtarzalne zadania, sprawdzać kopie
+- Tylko czytanie dokumentacji
+- Tylko kursy wideo
+- Unikanie produkcji
+E: Nauka przez robienie.
+#Q
+Q: Co jest celem skryptu cwiczenie-odtworzenia.sh?
++ Zautomatyzować próbę odtworzenia (instaluj.sh + kopia bazy + wdrożenie + kontrola) z pomiarem czasu
+- Usunąć serwer
+- Zrobić kopię
+- Zmienić DNS
+E: time przed skryptem daje RTO.
+#Q
+Q: Dlaczego skrypty kontroli zapisuje się w repozytorium infrastruktury?
++ Żeby odbiór był powtarzalny i wersjonowany, a nie jednorazowy
+- Żeby ukryć hasła
+- Bo Git tego wymaga
+- Bez powodu
+E: Kontrola uruchamiana przy każdej zmianie.
+#Q
+Q: Co oznacza, że punkt listy kontrolnej jest „świadomym wyjątkiem”?
++ Celowo odstępuje od wzorca, z zapisanym powodem i akceptacją
+- Jest błędem
+- Jest pomijany bez śladu
+- Jest tajny
+E: wyjatki.md zapewnia rozliczalność.
+#Q
+Q: Jak kontrola sprawdza brak oczekującego restartu po aktualizacji?
++ test ! -e /var/run/reboot-required
+- uptime
+- systemctl status
+- dmesg
+E: Istnienie pliku = wymagany restart.
+#Q
+Q: Co jest dowodem, że kopia zapasowa naprawdę działa?
++ Udane ćwiczenie odtworzenia z porównaniem danych
+- Zielony timer kopii
+- Istnienie pliku .dump
+- Rozmiar kopii
+E: Kopia bez odtworzenia to tylko plik.
+#Q
+Q: Dlaczego warto zmierzyć RTO w praktyce, a nie szacować?
++ Rzeczywisty czas (pobranie kopii, pg_restore, testy) bywa inny niż teoretyczny
+- Bo szacunki są zakazane
+- Bo RTO nie ma znaczenia
+- Bez powodu
+E: Ćwiczenie ujawnia wąskie gardła.
+#Q
+Q: Co pokazuje porównanie curl localhost (serwer) i curl z laptopa (zewnątrz)?
++ Że lokalny sukces nie gwarantuje poprawności widzianej przez klientów
+- Że serwer jest wolny
+- Że DNS nie działa
+- Nic
+E: Dlatego odbiór obejmuje oba poziomy.
+#Q
+Q: Jaka jest kolejność działań przy przełączaniu ruchu na nowy serwer?
++ Odbiór (wewnętrzny + zewnętrzny + ćwiczenie) -> przełączenie DNS -> obserwacja logów
+- Przełączenie DNS -> odbiór
+- Tylko przełączenie DNS
+- Usunięcie starego serwera najpierw
+E: Problem lepiej wykryć przed przekierowaniem klientów.
+#Q
+Q: Co jest najdokładniejszym świadectwem stanu serwera na odbiorze?
++ Wyniki poleceń z listy kontrolnej (OK/UWAGA)
+- Deklaracja administratora
+- Wygląd panelu
+- Liczba commitów
+E: Weryfikacja, nie zaufanie.
+#Q
+Q: Co jest zaletą tego, że kontrola zewnętrzna jest skryptem, a nie ręcznym sprawdzeniem?
++ Powtarzalność, brak pominiętych punktów, łatwe uruchomienie po każdej zmianie
+- Szybszy serwer
+- Mniej pamięci
+- Wymóg TLS
+E: Skrypt można uruchomić też z CI.
+#Q
+Q: Co zamyka cały projekt końcowy (i kurs)?
++ Udokumentowany, zautomatyzowany i sprawdzony serwer produkcyjny dla aplikacji Spring Boot
+- Pierwsze logowanie przez SSH
+- Instalacja pakietów
+- Konfiguracja strefy czasowej
+E: Droga od pustej maszyny do produkcji.
+#Q
+Q: Dlaczego odbiór techniczny poprzedza produkcję, a nie odwrotnie?
++ Problemy taniej i bezpieczniej wykryć przed przyjęciem ruchu klientów
+- Bo tak wymaga systemd
+- Bo produkcja jest wolniejsza
+- Bez powodu
+E: Analogia: przegląd auta przed trasą.
+#Q
+Q: Jaki jest sens analogii „wymiana koła na próbę na parkingu”?
++ Ćwiczenie odtworzenia lepiej wykonać w spokoju niż po raz pierwszy podczas awarii
+- Koło trzeba wymieniać co dzień
+- Kopia jest jak koło zapasowe tylko z nazwy
+- Bez znaczenia
+E: Procedura odtworzenia musi być sprawdzona wcześniej.
+#Q
+Q: Co jest ostatecznym kryterium zakończenia odbioru?
++ Kontrola wewnętrzna i zewnętrzna bez UWAG (lub z zaakceptowanymi wyjątkami) i udane ćwiczenie odtworzenia
+- Działający SSH
+- Zielony timer kopii
+- Zainstalowany Nginx
+E: Dopiero wtedy przełącza się ruch.
+#Q
+Q: Co jest zaletą zapisania listy kontrolnej jako pliku w repozytorium?
++ Jest wersjonowana, powtarzalna i służy jako dokumentacja odbioru oraz dowód dla audytu
+- Przyspiesza serwer
+- Zastępuje monitoring
+- Ukrywa konfigurację
+E: lista-kontrolna.md obok skryptów kontroli.
+#Q
+Q: Dlaczego po przełączeniu ruchu obserwuje się logi i monitoring przez pierwsze godziny?
++ Żeby szybko wykryć problemy ujawniające się dopiero pod realnym ruchem klientów
+- Bo serwer się restartuje
+- Bo certyfikat wygasa
+- Bez powodu
+E: Odbiór nie zastępuje obserwacji po starcie.
