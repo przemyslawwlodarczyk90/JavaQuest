@@ -76,6 +76,768 @@
       "body": "- Projekt końcowy łączy umiejętności z całego kursu: od pustej maszyny do serwera produkcyjnego dla Spring Boot.\n- Architektura: Nginx z TLS na 80/443 → aplikacja na `127.0.0.1:8080` → PostgreSQL na `127.0.0.1:5432`.\n- Konta: administrator (`anna`), wdrożenia (`deploy`), usługa (`sklep`) — każde z minimalnymi uprawnieniami.\n- Założenia (porty, konta, katalogi, wersje, kopie, monitoring) zapisuje się w repozytorium przed instalacją.\n- Stan serwera po każdym etapie porównuje się z planem — `ss -tlnp`, `ufw status`, `ps`."
     }
   ],
-  "exercises": [],
-  "quiz": []
+  "exercises": [
+    {
+      "prompt": "Zaloguj się na nowy serwer `sklep01` (203.0.113.50) kluczem jako domyślny użytkownik chmury `ubuntu` i wypisz podstawowe informacje o systemie (nazwa, system, jądro, wirtualizacja).",
+      "hint": "`ssh -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50`; na serwerze `hostnamectl`.",
+      "solution": "ssh -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50 'hostnamectl | grep -E \"Static|Operating|Kernel|Virtualization\"'"
+    },
+    {
+      "prompt": "Sprawdź zasoby serwera: liczbę procesorów, pamięć, wolne miejsce na dysku głównym i strefę czasową.",
+      "hint": "`nproc`, `free -h`, `df -h /`, `timedatectl show -p Timezone --value`.",
+      "solution": "ssh ubuntu@203.0.113.50 'nproc; free -h | awk \"/^Mem/ {print \\$2}\"; df -h / | tail -1; timedatectl show -p Timezone --value'"
+    },
+    {
+      "prompt": "Sprawdź adres sieciowy serwera i porty, które nasłuchują zaraz po utworzeniu maszyny. Co jest otwarte na świat?",
+      "hint": "`ip -4 -br addr`, `sudo ss -tlnp`.",
+      "solution": "ssh ubuntu@203.0.113.50 'ip -4 -br addr | grep -v \"^lo\"; echo \"--- porty:\"; sudo ss -tlnp | awk \"NR>1 {print \\$4, \\$6}\"'"
+    },
+    {
+      "prompt": "Utwórz lokalnie repozytorium infrastruktury `~/infra/sklep01` z podkatalogiem `pliki/` i zainicjuj Git.",
+      "hint": "`mkdir -p`, `git init`.",
+      "solution": "mkdir -p ~/infra/sklep01/pliki && cd ~/infra/sklep01 && git init -q && ls -la && git status --short"
+    },
+    {
+      "prompt": "Zapisz w `~/infra/sklep01/README.md` założenia projektu: maszyna, ruch publiczny/lokalny, konta, katalogi, kopie i monitoring. Zatwierdź w Git.",
+      "hint": "Heredoc do pliku; `git add`, `git commit`.",
+      "solution": "cd ~/infra/sklep01\ncat > README.md <<'EOF'\n# sklep01 - serwer produkcyjny aplikacji sklep\n\n## Maszyna\n- Ubuntu 24.04 LTS, 2 vCPU, 4 GB RAM, 48 GB, 203.0.113.50, sklep.firma.example\n- strefa czasowa: Etc/UTC\n\n## Ruch\n- publicznie: 22 (klucze, fail2ban), 80 (-> 301), 443 (Nginx, TLS)\n- lokalnie: aplikacja 127.0.0.1:8080, PostgreSQL 127.0.0.1:5432\n\n## Konta\n- anna (sudo), deploy (sudo tylko /usr/local/bin/wdroz-sklep.sh), sklep (systemowe, nologin)\n\n## Katalogi\n- /opt/sklep/releases/WERSJA/sklep.jar, /opt/sklep/sklep.jar -> biezace\n- /etc/sklep/sklep.env, /etc/sklep/poswiadczenia/ (700 root), /var/lib/sklep, /var/backups/sklep\n\n## Kopie i monitoring\n- pg_dump codziennie 02:30 UTC, 7 dni lokalnie + rsync na kopie.firma.example\n- /actuator/health co minute, powiadomienie przy bledzie\nEOF\ngit add README.md && git commit -qm \"sklep01: zalozenia projektu\" && git log --oneline -1"
+    },
+    {
+      "prompt": "Narysuj w `pliki/architektura.txt` schemat ruchu (internet -> Nginx -> aplikacja -> PostgreSQL) i zatwierdź. Dokument posłuży jako odniesienie w kolejnych lekcjach.",
+      "hint": "Zwykły plik tekstowy ASCII.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/architektura.txt <<'EOF'\ninternet --443/TLS--> nginx --proxy_pass--> 127.0.0.1:8080 (sklep.service, User=sklep)\n                                                  |\n                                                  +--jdbc--> 127.0.0.1:5432 (postgresql@16-main)\npublicznie otwarte: 22, 80, 443   | lokalnie: 8080, 5432\nEOF\ngit add pliki/architektura.txt && git commit -qm \"Schemat architektury\" && echo zapisano"
+    },
+    {
+      "prompt": "Utwórz listę portów docelowych w `pliki/porty.md` (publiczne i lokalne) z uzasadnieniem i zatwierdź. To wzorzec do porównania ze stanem serwera.",
+      "hint": "Tabela markdown lub prosta lista.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/porty.md <<'EOF'\n| port | zakres     | usluga      | uzasadnienie                         |\n|------|------------|-------------|--------------------------------------|\n| 22   | publiczny  | sshd        | administracja (tylko klucze)         |\n| 80   | publiczny  | nginx       | przekierowanie 301 na https          |\n| 443  | publiczny  | nginx       | ruch aplikacji (TLS)                 |\n| 8080 | 127.0.0.1  | sklep (JVM) | tylko za reverse proxy               |\n| 5432 | 127.0.0.1  | postgresql  | tylko lokalnie dla aplikacji         |\nEOF\ngit add pliki/porty.md && git commit -qm \"Plan portow\" && cat pliki/porty.md"
+    },
+    {
+      "prompt": "Porównaj plan portów ze stanem serwera: wypisz nasłuchujące porty na `sklep01` i sprawdź, czy 8080 i 5432 są dostępne z zewnątrz (z laptopa).",
+      "hint": "`ss -tlnp` na serwerze; `nc -zv -w 3` z laptopa.",
+      "solution": "ssh ubuntu@203.0.113.50 'sudo ss -tlnp | awk \"NR>1 {print \\$4}\" | grep -E \":(22|80|443|8080|5432)\\$\" | sort'\nfor p in 22 8080 5432; do nc -zv -w 3 203.0.113.50 $p 2>&1 | tail -1; done"
+    },
+    {
+      "prompt": "Zapisz w `pliki/konta.md` plan kont z uprawnieniami (anna, deploy, sklep) i zatwierdź. Dla każdego konta podaj sposób logowania i zakres sudo.",
+      "hint": "Lista z opisem.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/konta.md <<'EOF'\n- anna  : administrator; logowanie kluczem; sudo pelne\n- deploy: wdrozenia CI; logowanie kluczem; sudo TYLKO /usr/local/bin/wdroz-sklep.sh (NOPASSWD)\n- sklep : konto uslugi; systemowe (--system), /usr/sbin/nologin, bez hasla, bez logowania\n- postgres: konto systemowe bazy (z pakietu)\nEOF\ngit add pliki/konta.md && git commit -qm \"Plan kont\" && echo ok"
+    },
+    {
+      "prompt": "Zapisz w `pliki/katalogi.md` układ katalogów (wydania, konfiguracja, sekrety, dane, kopie) z prawami i właścicielami, i zatwierdź.",
+      "hint": "Lista ścieżek z prawami.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/katalogi.md <<'EOF'\n/opt/sklep/releases/WERSJA/sklep.jar   root:sklep 750   (wydania)\n/opt/sklep/sklep.jar -> releases/...    dowiazanie do biezacego wydania\n/etc/sklep/sklep.env                    root:sklep 640   (zmienne, nie-sekretne)\n/etc/sklep/poswiadczenia/               root:root  700   (hasla, klucze)\n/var/lib/sklep                          sklep:sklep 750  (dane aplikacji)\n/var/backups/sklep                      root:root  700   (kopie bazy)\nEOF\ngit add pliki/katalogi.md && git commit -qm \"Plan katalogow\" && echo ok"
+    },
+    {
+      "prompt": "Zapisz w `pliki/wersje.md` wybrane wersje i źródła (Ubuntu 24.04 LTS, OpenJDK 21 JRE headless, PostgreSQL 16, Nginx, certbot). Sprawdź, czy serwer ma Ubuntu 24.04.",
+      "hint": "`lsb_release -ds` lub `/etc/os-release` na serwerze.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/wersje.md <<'EOF'\n- Ubuntu 24.04 LTS (noble)\n- OpenJDK 21 (openjdk-21-jre-headless) z repozytorium Ubuntu\n- PostgreSQL 16 (postgresql) z repozytorium Ubuntu\n- Nginx z repozytorium Ubuntu\n- certbot (Let's Encrypt) - wtyczka nginx\nEOF\ngit add pliki/wersje.md && git commit -qm \"Plan wersji\"\nssh ubuntu@203.0.113.50 '. /etc/os-release; echo \"$PRETTY_NAME\"'"
+    },
+    {
+      "prompt": "Zapisz w `pliki/utrzymanie.md` wymagania niefunkcjonalne: aktualizacje bezpieczeństwa, logowanie tylko kluczami, kopie (7 dni + poza serwerem), monitoring zdrowia, odtwarzalność skryptem. Zatwierdź.",
+      "hint": "Lista wymagań.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/utrzymanie.md <<'EOF'\n- unattended-upgrades: automatyczne poprawki bezpieczenstwa\n- SSH: PasswordAuthentication no, tylko klucze, fail2ban dla sshd\n- kopie: pg_dump codziennie 02:30 UTC, retencja 7 dni lokalnie, rsync na kopie.firma.example\n- monitoring: /actuator/health co minute (timer), powiadomienie przy bledzie\n- odtwarzalnosc: instaluj.sh odtwarza serwer, lista-kontrolna.md do odbioru\nEOF\ngit add pliki/utrzymanie.md && git commit -qm \"Plan utrzymania\" && echo ok"
+    },
+    {
+      "prompt": "Pokaż problem „serwer bez planu”: sprawdź na przykładzie, co byłoby źle, gdyby aplikacja nasłuchiwała na `0.0.0.0:8080` i baza na `0.0.0.0:5432`. Napisz polecenie weryfikujące, że tak NIE jest w stanie docelowym.",
+      "hint": "Docelowo 8080 i 5432 tylko na 127.0.0.1; `ss -tlnp` + `grep`.",
+      "solution": "ssh ubuntu@203.0.113.50 'sudo ss -tlnp | awk \"/:8080|:5432/ {print \\$4, \\$6}\"' || echo \"uslugi jeszcze nie zainstalowane (lekcje 4-5)\"\necho \"warunek docelowy: 8080 i 5432 wylacznie na 127.0.0.1\""
+    },
+    {
+      "prompt": "Zbuduj plik `pliki/weryfikacja.sh` — skrypt sprawdzający zgodność serwera z planem portów (uruchamiany na serwerze). Na razie ma wypisać otwarte porty i porównać z oczekiwanym zestawem 22/80/443.",
+      "hint": "`ss -tlnp`, zbiór oczekiwanych portów publicznych.",
+      "solution": "cd ~/infra/sklep01\ncat > pliki/weryfikacja.sh <<'EOF'\n#!/bin/bash\n# weryfikacja zgodnosci sklep01 z planem (uruchom na serwerze)\necho \"== porty nasluchujace na adresach publicznych (oczekiwane: 22 80 443):\"\nsudo ss -tlnH | awk '{print $4}' | grep -vE '^(127\\.|\\[::1\\]|\\[::ffff:127)' | sed -E 's/.*:([0-9]+)$/\\1/' | sort -un\necho \"== porty lokalne (oczekiwane m.in. 8080 5432):\"\nsudo ss -tlnH | awk '{print $4}' | grep -E '^(127\\.|\\[::1\\]|\\[::ffff:127)' | sed -E 's/.*:([0-9]+)$/\\1/' | sort -un\nEOF\nchmod +x pliki/weryfikacja.sh && git add pliki/weryfikacja.sh && git commit -qm \"Skrypt weryfikacji portow\" && echo ok"
+    },
+    {
+      "prompt": "Prześlij skrypt weryfikacji na serwer i uruchom go. Porównaj wynik z planem (na tym etapie działa tylko SSH).",
+      "hint": "`scp`, `ssh ... bash /tmp/weryfikacja.sh`.",
+      "solution": "scp ~/infra/sklep01/pliki/weryfikacja.sh ubuntu@203.0.113.50:/tmp/\nssh ubuntu@203.0.113.50 'bash /tmp/weryfikacja.sh'"
+    },
+    {
+      "prompt": "Zapisz w `README.md` plan lekcji (kolejne kroki projektu: 2-9) i zatwierdź. Dzięki temu wiadomo, co jeszcze przed Tobą.",
+      "hint": "Dopisz sekcję `## Plan` do README.",
+      "solution": "cd ~/infra/sklep01\ncat >> README.md <<'EOF'\n\n## Plan lekcji\n2. serwer i konta  3. SSH i zapora  4. Java i PostgreSQL  5. usluga systemd\n6. Nginx i HTTPS   7. logi, monitoring, kopie  8. skrypt instaluj.sh  9. lista kontrolna\nEOF\ngit add README.md && git commit -qm \"Plan lekcji projektu\" && echo ok"
+    },
+    {
+      "prompt": "Sprawdź rozpoznanie DNS domeny `sklep.firma.example` i porównaj z adresem serwera. Zapisz wynik w notatce `pliki/dns.md`.",
+      "hint": "`getent hosts` lub `dig +short`; porównaj z 203.0.113.50.",
+      "solution": "cd ~/infra/sklep01\n{ echo \"oczekiwany adres: 203.0.113.50\"; echo \"A sklep.firma.example:\"; dig +short sklep.firma.example A 2>/dev/null || getent hosts sklep.firma.example; } | tee pliki/dns.md\ngit add pliki/dns.md && git commit -qm \"Notatka DNS\""
+    },
+    {
+      "prompt": "Zabezpiecz repozytorium przed przypadkowym zatwierdzeniem sekretów: dodaj `.gitignore` wykluczający pliki haseł i kluczy, i zatwierdź.",
+      "hint": "Wpisy: `*.key`, `*poswiadczenia*`, `*.env` z prawdziwymi wartościami, `*.dump`.",
+      "solution": "cd ~/infra/sklep01\ncat > .gitignore <<'EOF'\n*.key\n*.pem\nposwiadczenia/\n*.dump\nsekrety*\nEOF\ngit add .gitignore && git commit -qm \"gitignore: nie commituj sekretow\" && git status --short"
+    },
+    {
+      "prompt": "Wypisz historię repozytorium infrastruktury i jego strukturę plików — to dokumentacja projektu przed rozpoczęciem instalacji.",
+      "hint": "`git log --oneline`, `ls -R` lub `find`.",
+      "solution": "cd ~/infra/sklep01\ngit log --oneline\necho \"--- struktura:\"\nfind . -path ./.git -prune -o -type f -print | sort"
+    },
+    {
+      "prompt": "Zrób kopię publicznego klucza anny na serwer dla konta `ubuntu` (jeśli logujesz się hasłem dostawcy) i potwierdź logowanie kluczem bez hasła. To warunek dalszych lekcji.",
+      "hint": "`ssh-copy-id` lub ręczne dopisanie do `~/.ssh/authorized_keys`; test `ssh ... true`.",
+      "solution": "ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@203.0.113.50 2>/dev/null || echo \"klucz juz obecny\"\nssh -o PasswordAuthentication=no -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50 'echo \"logowanie kluczem dziala jako $(whoami)\"'"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Czym jest projekt końcowy tego kursu?",
+      "options": {
+        "A": "Pisaniem aplikacji w Javie",
+        "B": "Konfiguracją Windows",
+        "C": "Zbudowaniem zabezpieczonego serwera produkcyjnego dla aplikacji Spring Boot od pustej maszyny",
+        "D": "Nauką nowych poleceń powłoki"
+      },
+      "correct": "C",
+      "explanation": "Łączy umiejętności z poprzednich 45 rozdziałów."
+    },
+    {
+      "question": "Jaki jest przepływ ruchu w architekturze sklep01?",
+      "options": {
+        "A": "internet -> Nginx (80/443, TLS) -> aplikacja 127.0.0.1:8080 -> PostgreSQL 127.0.0.1:5432",
+        "B": "internet -> PostgreSQL -> aplikacja",
+        "C": "internet -> aplikacja -> Nginx -> baza",
+        "D": "internet -> aplikacja bezpośrednio na 8080"
+      },
+      "correct": "A",
+      "explanation": "Nginx jest reverse proxy z TLS."
+    },
+    {
+      "question": "Które porty są otwarte na świat w projekcie?",
+      "options": {
+        "A": "Tylko 443",
+        "B": "22, 8080, 5432",
+        "C": "Wszystkie",
+        "D": "22, 80, 443"
+      },
+      "correct": "D",
+      "explanation": "Aplikacja (8080) i baza (5432) tylko lokalnie."
+    },
+    {
+      "question": "Na jakim adresie ma nasłuchiwać aplikacja sklep?",
+      "options": {
+        "A": "127.0.0.1:8080 (tylko lokalnie, za reverse proxy)",
+        "B": "203.0.113.50:8080",
+        "C": "127.0.0.1:443",
+        "D": "0.0.0.0:8080"
+      },
+      "correct": "A",
+      "explanation": "Z zewnątrz ruch idzie przez Nginx."
+    },
+    {
+      "question": "Na jakim adresie ma nasłuchiwać PostgreSQL?",
+      "options": {
+        "A": "0.0.0.0:5432",
+        "B": "127.0.0.1:5432 (tylko lokalnie)",
+        "C": "Na wszystkich interfejsach",
+        "D": "203.0.113.50:5432"
+      },
+      "correct": "B",
+      "explanation": "Baza jest dostępna tylko dla aplikacji na tym samym serwerze."
+    },
+    {
+      "question": "Jaką rolę pełni konto anna w projekcie?",
+      "options": {
+        "A": "Konta bazy danych",
+        "B": "Konta CI",
+        "C": "Konta usługi",
+        "D": "Administratora z pełnym sudo, logującego się kluczem"
+      },
+      "correct": "D",
+      "explanation": "deploy to konto wdrożeń, sklep to konto usługi."
+    },
+    {
+      "question": "Jakie uprawnienia sudo ma konto deploy?",
+      "options": {
+        "A": "Pełne sudo",
+        "B": "Żadne",
+        "C": "sudo do wszystkich usług",
+        "D": "Tylko do skryptu wdrożeniowego /usr/local/bin/wdroz-sklep.sh (NOPASSWD)"
+      },
+      "correct": "D",
+      "explanation": "Minimalne uprawnienia potrzebne do wdrożeń z CI."
+    },
+    {
+      "question": "Jakim kontem działa usługa aplikacji sklep?",
+      "options": {
+        "A": "deploy",
+        "B": "Kontem systemowym sklep (nologin, bez hasła)",
+        "C": "anna",
+        "D": "root"
+      },
+      "correct": "B",
+      "explanation": "Konto usługi nie służy do logowania."
+    },
+    {
+      "question": "Gdzie przechowywane są wydania aplikacji?",
+      "options": {
+        "A": "W /opt/sklep/releases/WERSJA/ z dowiązaniem /opt/sklep/sklep.jar do bieżącego",
+        "B": "W katalogu domowym anny",
+        "C": "W /etc/sklep",
+        "D": "W /tmp"
+      },
+      "correct": "A",
+      "explanation": "Dowiązanie ułatwia wycofanie do poprzedniej wersji."
+    },
+    {
+      "question": "Gdzie trzyma się sekrety aplikacji?",
+      "options": {
+        "A": "W /etc/sklep/poswiadczenia/ z prawami 700 (root)",
+        "B": "W repozytorium Git",
+        "C": "W application.properties w katalogu domowym",
+        "D": "W /tmp"
+      },
+      "correct": "A",
+      "explanation": "Sekrety poza kodem i z ograniczonymi prawami."
+    },
+    {
+      "question": "Jaką wersję Javy przewiduje projekt?",
+      "options": {
+        "A": "JRE z Docker Desktop",
+        "B": "Oracle JDK 17",
+        "C": "OpenJDK 8",
+        "D": "OpenJDK 21 (JRE headless) z repozytorium Ubuntu"
+      },
+      "correct": "D",
+      "explanation": "Wersja headless — bez bibliotek graficznych."
+    },
+    {
+      "question": "Dlaczego projekt używa JRE headless, a nie pełnego JDK?",
+      "options": {
+        "A": "Serwer nie potrzebuje bibliotek graficznych — mniejszy, mniej podatności",
+        "B": "Bo wymaga tego Nginx",
+        "C": "Bo jest szybszy o połowę",
+        "D": "Bo JDK nie działa na serwerze"
+      },
+      "correct": "A",
+      "explanation": "Na serwerach stosuje się wersje headless."
+    },
+    {
+      "question": "Jaką strefę czasową ustawiono dla serwera?",
+      "options": {
+        "A": "Europe/Warsaw",
+        "B": "America/New_York",
+        "C": "Etc/UTC (logi i harmonogramy w UTC)",
+        "D": "Lokalną dostawcy chmury"
+      },
+      "correct": "C",
+      "explanation": "Serwery często działają w UTC dla spójności logów."
+    },
+    {
+      "question": "Co to jest repozytorium infrastruktury ~/infra/sklep01?",
+      "options": {
+        "A": "Katalog z aplikacją",
+        "B": "Kopia bazy danych",
+        "C": "Katalog logów",
+        "D": "Repozytorium Git z założeniami, konfiguracjami i skryptami serwera"
+      },
+      "correct": "D",
+      "explanation": "Serwer bez spisanej konfiguracji trudno odtworzyć."
+    },
+    {
+      "question": "Dlaczego założenia zapisuje się PRZED instalacją?",
+      "options": {
+        "A": "Bo instalacja tego wymaga",
+        "B": "Bo Git nie działa później",
+        "C": "Żeby mieć punkt odniesienia, uzasadnić decyzje i móc odtworzyć serwer",
+        "D": "Bez powodu"
+      },
+      "correct": "C",
+      "explanation": "Plan chroni przed improwizacją i chaosem."
+    },
+    {
+      "question": "Jaki jest sens porównywania ss -tlnp z planem portów po każdym etapie?",
+      "options": {
+        "A": "Wykrywa usługi nasłuchujące szerzej, niż powinny (np. baza na 0.0.0.0)",
+        "B": "Tworzy kopie",
+        "C": "Przyspiesza serwer",
+        "D": "Aktualizuje pakiety"
+      },
+      "correct": "A",
+      "explanation": "Rozbieżność z planem to sygnał problemu."
+    },
+    {
+      "question": "Co jest typowym błędem instalacji „na żywo” bez planu?",
+      "options": {
+        "A": "Zbyt wiele kopii",
+        "B": "Zbyt restrykcyjna zapora",
+        "C": "Za dużo kont",
+        "D": "Aplikacja i baza na 0.0.0.0, hasła w katalogu domowym, wyłączona zapora"
+      },
+      "correct": "D",
+      "explanation": "Wszystko działa i wszystko jest wystawione."
+    },
+    {
+      "question": "Dlaczego baza na 0.0.0.0:5432 z publicznym adresem to problem?",
+      "options": {
+        "A": "Zajmuje więcej miejsca",
+        "B": "Jest dostępna z całego internetu — cel ataków",
+        "C": "Jest wolniejsza",
+        "D": "Nie obsługuje SSL"
+      },
+      "correct": "B",
+      "explanation": "Baza powinna nasłuchiwać tylko na 127.0.0.1."
+    },
+    {
+      "question": "Dlaczego w projekcie wybrano instalację natywną zamiast kontenerów?",
+      "options": {
+        "A": "Bo to jedyny sposób",
+        "B": "Żeby przećwiczyć administrację Linuksem: konta, systemd, zaporę, dziennik, kopie",
+        "C": "Bo kontenery nie działają z Javą",
+        "D": "Bo Docker jest płatny"
+      },
+      "correct": "B",
+      "explanation": "Oba podejścia są w praktyce spotykane."
+    },
+    {
+      "question": "Czy zasady projektu (minimalne porty, osobne konta, sekrety poza kodem) obowiązują też w kontenerach?",
+      "options": {
+        "A": "Tak — w każdym wariancie wdrożenia",
+        "B": "Tylko na Windows",
+        "C": "Nie, tylko natywnie",
+        "D": "Tylko w Kubernetesie"
+      },
+      "correct": "A",
+      "explanation": "To uniwersalne dobre praktyki."
+    },
+    {
+      "question": "Jakie zabezpieczenia SSH przewiduje projekt?",
+      "options": {
+        "A": "Brak SSH",
+        "B": "Logowanie tylko kluczami (PasswordAuthentication no) i fail2ban dla sshd",
+        "C": "Otwarty port 22 bez ograniczeń",
+        "D": "Logowanie hasłem z captchą"
+      },
+      "correct": "B",
+      "explanation": "Hasła są podatne na zgadywanie."
+    },
+    {
+      "question": "Jak projekt zapewnia aktualizacje bezpieczeństwa?",
+      "options": {
+        "A": "Brak aktualizacji",
+        "B": "Tylko przy restarcie",
+        "C": "Ręczna aktualizacja raz w roku",
+        "D": "unattended-upgrades (automatyczne poprawki)"
+      },
+      "correct": "D",
+      "explanation": "Poprawki bezpieczeństwa instalowane automatycznie."
+    },
+    {
+      "question": "Jaki jest plan kopii zapasowych bazy?",
+      "options": {
+        "A": "Brak kopii",
+        "B": "Tylko kopia katalogu danych w czasie pracy",
+        "C": "Raz w miesiącu ręcznie",
+        "D": "pg_dump codziennie 02:30 UTC, 7 dni lokalnie i kopia poza serwerem (rsync)"
+      },
+      "correct": "D",
+      "explanation": "Kopia poza serwerem chroni przed awarią maszyny."
+    },
+    {
+      "question": "Jak projekt monitoruje aplikację?",
+      "options": {
+        "A": "Tylko docker ps",
+        "B": "Brak monitoringu",
+        "C": "Ręcznie raz dziennie",
+        "D": "Sprawdzanie /actuator/health co minutę i powiadomienie przy błędzie"
+      },
+      "correct": "D",
+      "explanation": "Endpoint zdrowia mówi o rzeczywistym stanie aplikacji."
+    },
+    {
+      "question": "Co oznacza wymaganie „odtwarzalność skryptem”?",
+      "options": {
+        "A": "Nie trzeba kopii",
+        "B": "Baza odtwarza się automatycznie",
+        "C": "Serwer restartuje się sam",
+        "D": "Serwer da się odtworzyć skryptem instaluj.sh według tych samych założeń"
+      },
+      "correct": "D",
+      "explanation": "Skrypt i lista kontrolna powstają w lekcjach 8-9."
+    },
+    {
+      "question": "Co powinno znaleźć się w repozytorium infrastruktury?",
+      "options": {
+        "A": "Hasła produkcyjne",
+        "B": "Klucze prywatne SSH",
+        "C": "Kopie bazy",
+        "D": "README z założeniami, pliki konfiguracji, skrypt instalacyjny, lista kontrolna"
+      },
+      "correct": "D",
+      "explanation": "Sekrety trzyma się poza repozytorium."
+    },
+    {
+      "question": "Dlaczego do repozytorium infrastruktury dodaje się .gitignore z *.key i poswiadczenia/?",
+      "options": {
+        "A": "Żeby przyspieszyć Git",
+        "B": "Bo Git nie obsługuje tych plików",
+        "C": "Żeby przypadkiem nie zatwierdzić sekretów do Gita",
+        "D": "Żeby ukryć logi"
+      },
+      "correct": "C",
+      "explanation": "Raz zatwierdzony sekret zostaje w historii."
+    },
+    {
+      "question": "Jaki jest pierwszy krok pracy z nowym serwerem według lekcji?",
+      "options": {
+        "A": "Wyłączenie zapory",
+        "B": "Instalacja PostgreSQL",
+        "C": "Spisanie celu, aplikacji i wymagań",
+        "D": "Logowanie jako root"
+      },
+      "correct": "C",
+      "explanation": "Plan poprzedza instalację."
+    },
+    {
+      "question": "Co ustala się, rysując ruch sieciowy serwera?",
+      "options": {
+        "A": "Wersję jądra",
+        "B": "Kolor interfejsu",
+        "C": "Co jest publiczne (80/443, SSH), a co tylko lokalne (aplikacja, baza)",
+        "D": "Nazwę użytkownika"
+      },
+      "correct": "C",
+      "explanation": "To podstawa konfiguracji zapory i usług."
+    },
+    {
+      "question": "Jakim narzędziem sprawdzisz z laptopa, czy port 5432 serwera jest dostępny?",
+      "options": {
+        "A": "ssh 5432",
+        "B": "ping 5432",
+        "C": "nc -zv -w 3 203.0.113.50 5432",
+        "D": "curl 5432"
+      },
+      "correct": "C",
+      "explanation": "W stanie docelowym połączenie powinno się nie udać (timeout)."
+    },
+    {
+      "question": "Co oznacza timeout przy nc na port 5432 w stanie docelowym?",
+      "options": {
+        "A": "Baza jest uszkodzona",
+        "B": "Błąd sieci laptopa",
+        "C": "Baza nie jest dostępna z zewnątrz — tak ma być",
+        "D": "Serwer nie działa"
+      },
+      "correct": "C",
+      "explanation": "5432 nasłuchuje tylko na 127.0.0.1."
+    },
+    {
+      "question": "Jaki serwer WWW pełni rolę reverse proxy z TLS w projekcie?",
+      "options": {
+        "A": "Apache Tomcat",
+        "B": "HAProxy",
+        "C": "Nginx",
+        "D": "Caddy"
+      },
+      "correct": "C",
+      "explanation": "Nginx z certyfikatem Let's Encrypt."
+    },
+    {
+      "question": "Skąd pochodzi certyfikat TLS w projekcie?",
+      "options": {
+        "A": "Z Let's Encrypt (certbot)",
+        "B": "Kupiony od dostawcy chmury",
+        "C": "Samopodpisany",
+        "D": "Wbudowany w Ubuntu"
+      },
+      "correct": "A",
+      "explanation": "Certbot ma wtyczkę do Nginx."
+    },
+    {
+      "question": "Co jest celem dowiązania /opt/sklep/sklep.jar?",
+      "options": {
+        "A": "Szyfruje JAR",
+        "B": "Tworzy kopię",
+        "C": "Wskazuje bieżące wydanie; wycofanie to zmiana dowiązania na poprzednią wersję",
+        "D": "Przyspiesza aplikację"
+      },
+      "correct": "C",
+      "explanation": "Wydania leżą w releases/WERSJA."
+    },
+    {
+      "question": "Jaki jest sens osobnego konta sklep dla usługi?",
+      "options": {
+        "A": "Szybsze działanie",
+        "B": "Wymóg Javy",
+        "C": "Łatwiejsze logowanie",
+        "D": "Ograniczenie uprawnień — awaria aplikacji nie daje dostępu do całego systemu"
+      },
+      "correct": "D",
+      "explanation": "Konto systemowe bez powłoki i hasła."
+    },
+    {
+      "question": "Gdzie w projekcie trafiają logi aplikacji?",
+      "options": {
+        "A": "Do /root/sklep.log",
+        "B": "Do dziennika systemd (journald)",
+        "C": "Nigdzie",
+        "D": "Do bazy danych"
+      },
+      "correct": "B",
+      "explanation": "journald zarządza rotacją i limitami."
+    },
+    {
+      "question": "Co zawiera plik /etc/sklep/sklep.env?",
+      "options": {
+        "A": "Kod aplikacji",
+        "B": "Zmienne środowiskowe aplikacji (nie-sekretne ustawienia)",
+        "C": "Kopię bazy",
+        "D": "Hasła i klucze"
+      },
+      "correct": "B",
+      "explanation": "Sekrety są osobno, w poswiadczenia/."
+    },
+    {
+      "question": "Dlaczego sekrety mają prawa 700 i właściciela root?",
+      "options": {
+        "A": "Żeby tylko root (i proces usługi przez systemd) mógł je czytać",
+        "B": "Bo tak jest szybciej",
+        "C": "Żeby każdy mógł je czytać",
+        "D": "Bez powodu"
+      },
+      "correct": "A",
+      "explanation": "Hasła nie powinny być dostępne dla innych kont."
+    },
+    {
+      "question": "Jakie konto systemowe zarządza bazą danych?",
+      "options": {
+        "A": "deploy",
+        "B": "postgres (z pakietu PostgreSQL)",
+        "C": "sklep",
+        "D": "anna"
+      },
+      "correct": "B",
+      "explanation": "Standardowe konto usługi PostgreSQL."
+    },
+    {
+      "question": "Co jest dobrą praktyką przy przekazaniu serwera następcy?",
+      "options": {
+        "A": "Repozytorium infrastruktury z założeniami i decyzjami",
+        "B": "Zrzuty ekranu",
+        "C": "Dostęp root bez dokumentacji",
+        "D": "Ustne wyjaśnienie"
+      },
+      "correct": "A",
+      "explanation": "Dokumentacja pozwala zrozumieć, co i dlaczego skonfigurowano."
+    },
+    {
+      "question": "Jak sprawdzić system operacyjny serwera?",
+      "options": {
+        "A": "uname -n",
+        "B": "whoami",
+        "C": "cat /etc/os-release lub lsb_release -ds",
+        "D": "hostname"
+      },
+      "correct": "C",
+      "explanation": "PRETTY_NAME zawiera nazwę i wersję."
+    },
+    {
+      "question": "Co pokazuje hostnamectl w polu Virtualization dla serwera w chmurze?",
+      "options": {
+        "A": "Adres IP",
+        "B": "Wersję jądra",
+        "C": "Nazwę domeny",
+        "D": "Typ wirtualizacji, np. kvm"
+      },
+      "correct": "D",
+      "explanation": "Serwery w chmurze to zwykle maszyny KVM."
+    },
+    {
+      "question": "Jak sprawdzić liczbę procesorów serwera?",
+      "options": {
+        "A": "free -c",
+        "B": "lscpu --count",
+        "C": "nproc",
+        "D": "cat /proc/cpu"
+      },
+      "correct": "C",
+      "explanation": "lscpu podaje więcej szczegółów."
+    },
+    {
+      "question": "Dlaczego warto znać zasoby serwera (CPU, RAM) przed instalacją?",
+      "options": {
+        "A": "Bez znaczenia",
+        "B": "JVM dobiera stertę i wątki do zasobów — wpływa to na konfigurację aplikacji",
+        "C": "Żeby zmienić jądro",
+        "D": "Żeby wybrać kolor terminala"
+      },
+      "correct": "B",
+      "explanation": "4 GB RAM to inna domyślna sterta niż 16 GB."
+    },
+    {
+      "question": "Co jest pierwszym poleceniem weryfikującym stan portów na serwerze?",
+      "options": {
+        "A": "sudo ss -tlnp",
+        "B": "systemctl status",
+        "C": "ping localhost",
+        "D": "docker ps"
+      },
+      "correct": "A",
+      "explanation": "Pokazuje nasłuchujące gniazda i procesy."
+    },
+    {
+      "question": "Co oznacza nasłuch sshd na 0.0.0.0:22 zaraz po utworzeniu maszyny?",
+      "options": {
+        "A": "SSH jest dostępny ze wszystkich adresów — normalne na starcie, później ograniczane zaporą",
+        "B": "Serwer jest zhakowany",
+        "C": "Błąd konfiguracji",
+        "D": "SSH nie działa"
+      },
+      "correct": "A",
+      "explanation": "Port 22 pozostaje publiczny, ale z fail2ban i tylko kluczami."
+    },
+    {
+      "question": "Co jest celem pliku pliki/weryfikacja.sh?",
+      "options": {
+        "A": "Kopia bazy",
+        "B": "Sprawdzenie zgodności otwartych portów serwera z planem",
+        "C": "Instalacja pakietów",
+        "D": "Tworzenie kont"
+      },
+      "correct": "B",
+      "explanation": "Uruchamiany na serwerze po każdym etapie."
+    },
+    {
+      "question": "Jak przesłać skrypt na serwer?",
+      "options": {
+        "A": "docker cp",
+        "B": "scp plik ubuntu@203.0.113.50:/tmp/",
+        "C": "ssh plik serwer",
+        "D": "git push na serwer"
+      },
+      "correct": "B",
+      "explanation": "scp kopiuje pliki przez SSH."
+    },
+    {
+      "question": "Co jest warunkiem rozpoczęcia dalszych lekcji projektu?",
+      "options": {
+        "A": "Wyłączona zapora",
+        "B": "Działające logowanie kluczem SSH na serwer",
+        "C": "Konto root z hasłem",
+        "D": "Zainstalowany Docker"
+      },
+      "correct": "B",
+      "explanation": "Lekcja 3 zajmuje się utwardzeniem SSH."
+    },
+    {
+      "question": "Jakim poleceniem skopiujesz klucz publiczny na serwer?",
+      "options": {
+        "A": "git push klucz",
+        "B": "ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@203.0.113.50",
+        "C": "scp klucz",
+        "D": "ssh-keygen -copy"
+      },
+      "correct": "B",
+      "explanation": "Dopisuje klucz do authorized_keys."
+    },
+    {
+      "question": "Jak przetestować logowanie wyłącznie kluczem (bez hasła)?",
+      "options": {
+        "A": "ssh -k",
+        "B": "ssh -o PasswordAuthentication=no -i klucz serwer",
+        "C": "ssh --no-password",
+        "D": "ssh --key-only"
+      },
+      "correct": "B",
+      "explanation": "Jeśli klucz działa, logowanie się uda."
+    },
+    {
+      "question": "Co jest sensem dokumentu pliki/porty.md?",
+      "options": {
+        "A": "Lista użytkowników",
+        "B": "Kopia zapasowa",
+        "C": "Wzorzec oczekiwanych portów do porównania ze stanem serwera",
+        "D": "Konfiguracja Nginx"
+      },
+      "correct": "C",
+      "explanation": "Każdy port ma uzasadnienie."
+    },
+    {
+      "question": "Dlaczego aplikacja nie powinna być wystawiona bezpośrednio na 443?",
+      "options": {
+        "A": "Bo 443 jest zajęty",
+        "B": "Bo to nielegalne",
+        "C": "Bo Java nie obsługuje HTTPS",
+        "D": "Reverse proxy (Nginx) obsługuje TLS, nagłówki, limity i odciąża aplikację"
+      },
+      "correct": "D",
+      "explanation": "Aplikacja słucha lokalnie na 8080."
+    },
+    {
+      "question": "Co należy sprawdzić po każdym etapie instalacji?",
+      "options": {
+        "A": "Zgodność stanu serwera z planem (ss -tlnp, ufw status, ps)",
+        "B": "Tylko wersję Dockera",
+        "C": "Nic",
+        "D": "Tylko logi"
+      },
+      "correct": "A",
+      "explanation": "Weryfikacja wychwytuje odstępstwa od projektu."
+    },
+    {
+      "question": "Jaki jest plan kolejnych lekcji projektu po tej?",
+      "options": {
+        "A": "Serwer i konta, SSH i zapora, Java i PostgreSQL, usługa systemd, Nginx i HTTPS, logi/monitoring/kopie, skrypt, lista kontrolna",
+        "B": "Konfiguracja Windows",
+        "C": "Tylko instalacja Dockera",
+        "D": "Pisanie aplikacji"
+      },
+      "correct": "A",
+      "explanation": "Projekt realizowany etapami."
+    },
+    {
+      "question": "Dlaczego strefa UTC jest wygodna na serwerze?",
+      "options": {
+        "A": "Logi i harmonogramy z różnych serwerów są spójne, bez problemów ze zmianą czasu",
+        "B": "Bo wymaga jej Java",
+        "C": "Bo jest szybsza",
+        "D": "Bo zajmuje mniej miejsca"
+      },
+      "correct": "A",
+      "explanation": "Czas lokalny komplikuje korelację zdarzeń."
+    },
+    {
+      "question": "Co powinno być w .gitignore repozytorium infrastruktury?",
+      "options": {
+        "A": "Pliki README",
+        "B": "Skrypty instalacyjne",
+        "C": "Pliki haseł, kluczy, zrzutów bazy i sekretów",
+        "D": "Pliki konfiguracji Nginx"
+      },
+      "correct": "C",
+      "explanation": "Konfiguracje bez sekretów można wersjonować."
+    },
+    {
+      "question": "Co jest celem dokumentu architektura.txt?",
+      "options": {
+        "A": "Lista pakietów",
+        "B": "Logi aplikacji",
+        "C": "Schemat ruchu i usług jako odniesienie w kolejnych lekcjach",
+        "D": "Kopia bazy"
+      },
+      "correct": "C",
+      "explanation": "Pokazuje, jak elementy łączą się ze sobą."
+    },
+    {
+      "question": "Jaki jest najważniejszy wniosek tej lekcji?",
+      "options": {
+        "A": "Plan jest zbędny",
+        "B": "Serwer produkcyjny buduje się według spisanego planu, a stan porównuje z planem",
+        "C": "Najpierw instaluj, potem myśl",
+        "D": "Root wystarcza"
+      },
+      "correct": "B",
+      "explanation": "Plan zapewnia bezpieczeństwo i odtwarzalność."
+    },
+    {
+      "question": "Dlaczego warto rozpoznać serwer (hostnamectl, ss, df) zaraz po utworzeniu?",
+      "options": {
+        "A": "Żeby go zrestartować",
+        "B": "Bez powodu",
+        "C": "Żeby zmienić jądro",
+        "D": "Żeby znać punkt wyjścia: system, zasoby, co już nasłuchuje"
+      },
+      "correct": "D",
+      "explanation": "Rozpoznanie poprzedza zmiany."
+    }
+  ]
 }

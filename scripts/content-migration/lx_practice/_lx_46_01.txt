@@ -1,0 +1,646 @@
+#EX
+// 1
+P: Zaloguj się na nowy serwer `sklep01` (203.0.113.50) kluczem jako domyślny użytkownik chmury `ubuntu` i wypisz podstawowe informacje o systemie (nazwa, system, jądro, wirtualizacja).
+H: `ssh -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50`; na serwerze `hostnamectl`.
+S:
+ssh -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50 'hostnamectl | grep -E "Static|Operating|Kernel|Virtualization"'
+#EX
+// 2
+P: Sprawdź zasoby serwera: liczbę procesorów, pamięć, wolne miejsce na dysku głównym i strefę czasową.
+H: `nproc`, `free -h`, `df -h /`, `timedatectl show -p Timezone --value`.
+S:
+ssh ubuntu@203.0.113.50 'nproc; free -h | awk "/^Mem/ {print \$2}"; df -h / | tail -1; timedatectl show -p Timezone --value'
+#EX
+// 3
+P: Sprawdź adres sieciowy serwera i porty, które nasłuchują zaraz po utworzeniu maszyny. Co jest otwarte na świat?
+H: `ip -4 -br addr`, `sudo ss -tlnp`.
+S:
+ssh ubuntu@203.0.113.50 'ip -4 -br addr | grep -v "^lo"; echo "--- porty:"; sudo ss -tlnp | awk "NR>1 {print \$4, \$6}"'
+#EX
+// 4
+P: Utwórz lokalnie repozytorium infrastruktury `~/infra/sklep01` z podkatalogiem `pliki/` i zainicjuj Git.
+H: `mkdir -p`, `git init`.
+S:
+mkdir -p ~/infra/sklep01/pliki && cd ~/infra/sklep01 && git init -q && ls -la && git status --short
+#EX
+// 5
+P: Zapisz w `~/infra/sklep01/README.md` założenia projektu: maszyna, ruch publiczny/lokalny, konta, katalogi, kopie i monitoring. Zatwierdź w Git.
+H: Heredoc do pliku; `git add`, `git commit`.
+S:
+cd ~/infra/sklep01
+cat > README.md <<'EOF'
+# sklep01 - serwer produkcyjny aplikacji sklep
+
+## Maszyna
+- Ubuntu 24.04 LTS, 2 vCPU, 4 GB RAM, 48 GB, 203.0.113.50, sklep.firma.example
+- strefa czasowa: Etc/UTC
+
+## Ruch
+- publicznie: 22 (klucze, fail2ban), 80 (-> 301), 443 (Nginx, TLS)
+- lokalnie: aplikacja 127.0.0.1:8080, PostgreSQL 127.0.0.1:5432
+
+## Konta
+- anna (sudo), deploy (sudo tylko /usr/local/bin/wdroz-sklep.sh), sklep (systemowe, nologin)
+
+## Katalogi
+- /opt/sklep/releases/WERSJA/sklep.jar, /opt/sklep/sklep.jar -> biezace
+- /etc/sklep/sklep.env, /etc/sklep/poswiadczenia/ (700 root), /var/lib/sklep, /var/backups/sklep
+
+## Kopie i monitoring
+- pg_dump codziennie 02:30 UTC, 7 dni lokalnie + rsync na kopie.firma.example
+- /actuator/health co minute, powiadomienie przy bledzie
+EOF
+git add README.md && git commit -qm "sklep01: zalozenia projektu" && git log --oneline -1
+#EX
+// 6
+P: Narysuj w `pliki/architektura.txt` schemat ruchu (internet -> Nginx -> aplikacja -> PostgreSQL) i zatwierdź. Dokument posłuży jako odniesienie w kolejnych lekcjach.
+H: Zwykły plik tekstowy ASCII.
+S:
+cd ~/infra/sklep01
+cat > pliki/architektura.txt <<'EOF'
+internet --443/TLS--> nginx --proxy_pass--> 127.0.0.1:8080 (sklep.service, User=sklep)
+                                                  |
+                                                  +--jdbc--> 127.0.0.1:5432 (postgresql@16-main)
+publicznie otwarte: 22, 80, 443   | lokalnie: 8080, 5432
+EOF
+git add pliki/architektura.txt && git commit -qm "Schemat architektury" && echo zapisano
+#EX
+// 7
+P: Utwórz listę portów docelowych w `pliki/porty.md` (publiczne i lokalne) z uzasadnieniem i zatwierdź. To wzorzec do porównania ze stanem serwera.
+H: Tabela markdown lub prosta lista.
+S:
+cd ~/infra/sklep01
+cat > pliki/porty.md <<'EOF'
+| port | zakres     | usluga      | uzasadnienie                         |
+|------|------------|-------------|--------------------------------------|
+| 22   | publiczny  | sshd        | administracja (tylko klucze)         |
+| 80   | publiczny  | nginx       | przekierowanie 301 na https          |
+| 443  | publiczny  | nginx       | ruch aplikacji (TLS)                 |
+| 8080 | 127.0.0.1  | sklep (JVM) | tylko za reverse proxy               |
+| 5432 | 127.0.0.1  | postgresql  | tylko lokalnie dla aplikacji         |
+EOF
+git add pliki/porty.md && git commit -qm "Plan portow" && cat pliki/porty.md
+#EX
+// 8
+P: Porównaj plan portów ze stanem serwera: wypisz nasłuchujące porty na `sklep01` i sprawdź, czy 8080 i 5432 są dostępne z zewnątrz (z laptopa).
+H: `ss -tlnp` na serwerze; `nc -zv -w 3` z laptopa.
+S:
+ssh ubuntu@203.0.113.50 'sudo ss -tlnp | awk "NR>1 {print \$4}" | grep -E ":(22|80|443|8080|5432)\$" | sort'
+for p in 22 8080 5432; do nc -zv -w 3 203.0.113.50 $p 2>&1 | tail -1; done
+#EX
+// 9
+P: Zapisz w `pliki/konta.md` plan kont z uprawnieniami (anna, deploy, sklep) i zatwierdź. Dla każdego konta podaj sposób logowania i zakres sudo.
+H: Lista z opisem.
+S:
+cd ~/infra/sklep01
+cat > pliki/konta.md <<'EOF'
+- anna  : administrator; logowanie kluczem; sudo pelne
+- deploy: wdrozenia CI; logowanie kluczem; sudo TYLKO /usr/local/bin/wdroz-sklep.sh (NOPASSWD)
+- sklep : konto uslugi; systemowe (--system), /usr/sbin/nologin, bez hasla, bez logowania
+- postgres: konto systemowe bazy (z pakietu)
+EOF
+git add pliki/konta.md && git commit -qm "Plan kont" && echo ok
+#EX
+// 10
+P: Zapisz w `pliki/katalogi.md` układ katalogów (wydania, konfiguracja, sekrety, dane, kopie) z prawami i właścicielami, i zatwierdź.
+H: Lista ścieżek z prawami.
+S:
+cd ~/infra/sklep01
+cat > pliki/katalogi.md <<'EOF'
+/opt/sklep/releases/WERSJA/sklep.jar   root:sklep 750   (wydania)
+/opt/sklep/sklep.jar -> releases/...    dowiazanie do biezacego wydania
+/etc/sklep/sklep.env                    root:sklep 640   (zmienne, nie-sekretne)
+/etc/sklep/poswiadczenia/               root:root  700   (hasla, klucze)
+/var/lib/sklep                          sklep:sklep 750  (dane aplikacji)
+/var/backups/sklep                      root:root  700   (kopie bazy)
+EOF
+git add pliki/katalogi.md && git commit -qm "Plan katalogow" && echo ok
+#EX
+// 11
+P: Zapisz w `pliki/wersje.md` wybrane wersje i źródła (Ubuntu 24.04 LTS, OpenJDK 21 JRE headless, PostgreSQL 16, Nginx, certbot). Sprawdź, czy serwer ma Ubuntu 24.04.
+H: `lsb_release -ds` lub `/etc/os-release` na serwerze.
+S:
+cd ~/infra/sklep01
+cat > pliki/wersje.md <<'EOF'
+- Ubuntu 24.04 LTS (noble)
+- OpenJDK 21 (openjdk-21-jre-headless) z repozytorium Ubuntu
+- PostgreSQL 16 (postgresql) z repozytorium Ubuntu
+- Nginx z repozytorium Ubuntu
+- certbot (Let's Encrypt) - wtyczka nginx
+EOF
+git add pliki/wersje.md && git commit -qm "Plan wersji"
+ssh ubuntu@203.0.113.50 '. /etc/os-release; echo "$PRETTY_NAME"'
+#EX
+// 12
+P: Zapisz w `pliki/utrzymanie.md` wymagania niefunkcjonalne: aktualizacje bezpieczeństwa, logowanie tylko kluczami, kopie (7 dni + poza serwerem), monitoring zdrowia, odtwarzalność skryptem. Zatwierdź.
+H: Lista wymagań.
+S:
+cd ~/infra/sklep01
+cat > pliki/utrzymanie.md <<'EOF'
+- unattended-upgrades: automatyczne poprawki bezpieczenstwa
+- SSH: PasswordAuthentication no, tylko klucze, fail2ban dla sshd
+- kopie: pg_dump codziennie 02:30 UTC, retencja 7 dni lokalnie, rsync na kopie.firma.example
+- monitoring: /actuator/health co minute (timer), powiadomienie przy bledzie
+- odtwarzalnosc: instaluj.sh odtwarza serwer, lista-kontrolna.md do odbioru
+EOF
+git add pliki/utrzymanie.md && git commit -qm "Plan utrzymania" && echo ok
+#EX
+// 13
+P: Pokaż problem „serwer bez planu”: sprawdź na przykładzie, co byłoby źle, gdyby aplikacja nasłuchiwała na `0.0.0.0:8080` i baza na `0.0.0.0:5432`. Napisz polecenie weryfikujące, że tak NIE jest w stanie docelowym.
+H: Docelowo 8080 i 5432 tylko na 127.0.0.1; `ss -tlnp` + `grep`.
+S:
+ssh ubuntu@203.0.113.50 'sudo ss -tlnp | awk "/:8080|:5432/ {print \$4, \$6}"' || echo "uslugi jeszcze nie zainstalowane (lekcje 4-5)"
+echo "warunek docelowy: 8080 i 5432 wylacznie na 127.0.0.1"
+#EX
+// 14
+P: Zbuduj plik `pliki/weryfikacja.sh` — skrypt sprawdzający zgodność serwera z planem portów (uruchamiany na serwerze). Na razie ma wypisać otwarte porty i porównać z oczekiwanym zestawem 22/80/443.
+H: `ss -tlnp`, zbiór oczekiwanych portów publicznych.
+S:
+cd ~/infra/sklep01
+cat > pliki/weryfikacja.sh <<'EOF'
+#!/bin/bash
+# weryfikacja zgodnosci sklep01 z planem (uruchom na serwerze)
+echo "== porty nasluchujace na adresach publicznych (oczekiwane: 22 80 443):"
+sudo ss -tlnH | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[::ffff:127)' | sed -E 's/.*:([0-9]+)$/\1/' | sort -un
+echo "== porty lokalne (oczekiwane m.in. 8080 5432):"
+sudo ss -tlnH | awk '{print $4}' | grep -E '^(127\.|\[::1\]|\[::ffff:127)' | sed -E 's/.*:([0-9]+)$/\1/' | sort -un
+EOF
+chmod +x pliki/weryfikacja.sh && git add pliki/weryfikacja.sh && git commit -qm "Skrypt weryfikacji portow" && echo ok
+#EX
+// 15
+P: Prześlij skrypt weryfikacji na serwer i uruchom go. Porównaj wynik z planem (na tym etapie działa tylko SSH).
+H: `scp`, `ssh ... bash /tmp/weryfikacja.sh`.
+S:
+scp ~/infra/sklep01/pliki/weryfikacja.sh ubuntu@203.0.113.50:/tmp/
+ssh ubuntu@203.0.113.50 'bash /tmp/weryfikacja.sh'
+#EX
+// 16
+P: Zapisz w `README.md` plan lekcji (kolejne kroki projektu: 2-9) i zatwierdź. Dzięki temu wiadomo, co jeszcze przed Tobą.
+H: Dopisz sekcję `## Plan` do README.
+S:
+cd ~/infra/sklep01
+cat >> README.md <<'EOF'
+
+## Plan lekcji
+2. serwer i konta  3. SSH i zapora  4. Java i PostgreSQL  5. usluga systemd
+6. Nginx i HTTPS   7. logi, monitoring, kopie  8. skrypt instaluj.sh  9. lista kontrolna
+EOF
+git add README.md && git commit -qm "Plan lekcji projektu" && echo ok
+#EX
+// 17
+P: Sprawdź rozpoznanie DNS domeny `sklep.firma.example` i porównaj z adresem serwera. Zapisz wynik w notatce `pliki/dns.md`.
+H: `getent hosts` lub `dig +short`; porównaj z 203.0.113.50.
+S:
+cd ~/infra/sklep01
+{ echo "oczekiwany adres: 203.0.113.50"; echo "A sklep.firma.example:"; dig +short sklep.firma.example A 2>/dev/null || getent hosts sklep.firma.example; } | tee pliki/dns.md
+git add pliki/dns.md && git commit -qm "Notatka DNS"
+#EX
+// 18
+P: Zabezpiecz repozytorium przed przypadkowym zatwierdzeniem sekretów: dodaj `.gitignore` wykluczający pliki haseł i kluczy, i zatwierdź.
+H: Wpisy: `*.key`, `*poswiadczenia*`, `*.env` z prawdziwymi wartościami, `*.dump`.
+S:
+cd ~/infra/sklep01
+cat > .gitignore <<'EOF'
+*.key
+*.pem
+poswiadczenia/
+*.dump
+sekrety*
+EOF
+git add .gitignore && git commit -qm "gitignore: nie commituj sekretow" && git status --short
+#EX
+// 19
+P: Wypisz historię repozytorium infrastruktury i jego strukturę plików — to dokumentacja projektu przed rozpoczęciem instalacji.
+H: `git log --oneline`, `ls -R` lub `find`.
+S:
+cd ~/infra/sklep01
+git log --oneline
+echo "--- struktura:"
+find . -path ./.git -prune -o -type f -print | sort
+#EX
+// 20
+P: Zrób kopię publicznego klucza anny na serwer dla konta `ubuntu` (jeśli logujesz się hasłem dostawcy) i potwierdź logowanie kluczem bez hasła. To warunek dalszych lekcji.
+H: `ssh-copy-id` lub ręczne dopisanie do `~/.ssh/authorized_keys`; test `ssh ... true`.
+S:
+ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@203.0.113.50 2>/dev/null || echo "klucz juz obecny"
+ssh -o PasswordAuthentication=no -i ~/.ssh/id_ed25519 ubuntu@203.0.113.50 'echo "logowanie kluczem dziala jako $(whoami)"'
+#Q
+Q: Czym jest projekt końcowy tego kursu?
++ Zbudowaniem zabezpieczonego serwera produkcyjnego dla aplikacji Spring Boot od pustej maszyny
+- Nauką nowych poleceń powłoki
+- Pisaniem aplikacji w Javie
+- Konfiguracją Windows
+E: Łączy umiejętności z poprzednich 45 rozdziałów.
+#Q
+Q: Jaki jest przepływ ruchu w architekturze sklep01?
++ internet -> Nginx (80/443, TLS) -> aplikacja 127.0.0.1:8080 -> PostgreSQL 127.0.0.1:5432
+- internet -> aplikacja -> Nginx -> baza
+- internet -> PostgreSQL -> aplikacja
+- internet -> aplikacja bezpośrednio na 8080
+E: Nginx jest reverse proxy z TLS.
+#Q
+Q: Które porty są otwarte na świat w projekcie?
++ 22, 80, 443
+- 22, 8080, 5432
+- Wszystkie
+- Tylko 443
+E: Aplikacja (8080) i baza (5432) tylko lokalnie.
+#Q
+Q: Na jakim adresie ma nasłuchiwać aplikacja sklep?
++ 127.0.0.1:8080 (tylko lokalnie, za reverse proxy)
+- 0.0.0.0:8080
+- 203.0.113.50:8080
+- 127.0.0.1:443
+E: Z zewnątrz ruch idzie przez Nginx.
+#Q
+Q: Na jakim adresie ma nasłuchiwać PostgreSQL?
++ 127.0.0.1:5432 (tylko lokalnie)
+- 0.0.0.0:5432
+- 203.0.113.50:5432
+- Na wszystkich interfejsach
+E: Baza jest dostępna tylko dla aplikacji na tym samym serwerze.
+#Q
+Q: Jaką rolę pełni konto anna w projekcie?
++ Administratora z pełnym sudo, logującego się kluczem
+- Konta usługi
+- Konta bazy danych
+- Konta CI
+E: deploy to konto wdrożeń, sklep to konto usługi.
+#Q
+Q: Jakie uprawnienia sudo ma konto deploy?
++ Tylko do skryptu wdrożeniowego /usr/local/bin/wdroz-sklep.sh (NOPASSWD)
+- Pełne sudo
+- Żadne
+- sudo do wszystkich usług
+E: Minimalne uprawnienia potrzebne do wdrożeń z CI.
+#Q
+Q: Jakim kontem działa usługa aplikacji sklep?
++ Kontem systemowym sklep (nologin, bez hasła)
+- root
+- anna
+- deploy
+E: Konto usługi nie służy do logowania.
+#Q
+Q: Gdzie przechowywane są wydania aplikacji?
++ W /opt/sklep/releases/WERSJA/ z dowiązaniem /opt/sklep/sklep.jar do bieżącego
+- W katalogu domowym anny
+- W /tmp
+- W /etc/sklep
+E: Dowiązanie ułatwia wycofanie do poprzedniej wersji.
+#Q
+Q: Gdzie trzyma się sekrety aplikacji?
++ W /etc/sklep/poswiadczenia/ z prawami 700 (root)
+- W application.properties w katalogu domowym
+- W repozytorium Git
+- W /tmp
+E: Sekrety poza kodem i z ograniczonymi prawami.
+#Q
+Q: Jaką wersję Javy przewiduje projekt?
++ OpenJDK 21 (JRE headless) z repozytorium Ubuntu
+- OpenJDK 8
+- Oracle JDK 17
+- JRE z Docker Desktop
+E: Wersja headless — bez bibliotek graficznych.
+#Q
+Q: Dlaczego projekt używa JRE headless, a nie pełnego JDK?
++ Serwer nie potrzebuje bibliotek graficznych — mniejszy, mniej podatności
+- Bo JDK nie działa na serwerze
+- Bo jest szybszy o połowę
+- Bo wymaga tego Nginx
+E: Na serwerach stosuje się wersje headless.
+#Q
+Q: Jaką strefę czasową ustawiono dla serwera?
++ Etc/UTC (logi i harmonogramy w UTC)
+- Europe/Warsaw
+- Lokalną dostawcy chmury
+- America/New_York
+E: Serwery często działają w UTC dla spójności logów.
+#Q
+Q: Co to jest repozytorium infrastruktury ~/infra/sklep01?
++ Repozytorium Git z założeniami, konfiguracjami i skryptami serwera
+- Katalog z aplikacją
+- Kopia bazy danych
+- Katalog logów
+E: Serwer bez spisanej konfiguracji trudno odtworzyć.
+#Q
+Q: Dlaczego założenia zapisuje się PRZED instalacją?
++ Żeby mieć punkt odniesienia, uzasadnić decyzje i móc odtworzyć serwer
+- Bo instalacja tego wymaga
+- Bo Git nie działa później
+- Bez powodu
+E: Plan chroni przed improwizacją i chaosem.
+#Q
+Q: Jaki jest sens porównywania ss -tlnp z planem portów po każdym etapie?
++ Wykrywa usługi nasłuchujące szerzej, niż powinny (np. baza na 0.0.0.0)
+- Przyspiesza serwer
+- Aktualizuje pakiety
+- Tworzy kopie
+E: Rozbieżność z planem to sygnał problemu.
+#Q
+Q: Co jest typowym błędem instalacji „na żywo” bez planu?
++ Aplikacja i baza na 0.0.0.0, hasła w katalogu domowym, wyłączona zapora
+- Zbyt restrykcyjna zapora
+- Za dużo kont
+- Zbyt wiele kopii
+E: Wszystko działa i wszystko jest wystawione.
+#Q
+Q: Dlaczego baza na 0.0.0.0:5432 z publicznym adresem to problem?
++ Jest dostępna z całego internetu — cel ataków
+- Jest wolniejsza
+- Zajmuje więcej miejsca
+- Nie obsługuje SSL
+E: Baza powinna nasłuchiwać tylko na 127.0.0.1.
+#Q
+Q: Dlaczego w projekcie wybrano instalację natywną zamiast kontenerów?
++ Żeby przećwiczyć administrację Linuksem: konta, systemd, zaporę, dziennik, kopie
+- Bo kontenery nie działają z Javą
+- Bo to jedyny sposób
+- Bo Docker jest płatny
+E: Oba podejścia są w praktyce spotykane.
+#Q
+Q: Czy zasady projektu (minimalne porty, osobne konta, sekrety poza kodem) obowiązują też w kontenerach?
++ Tak — w każdym wariancie wdrożenia
+- Nie, tylko natywnie
+- Tylko w Kubernetesie
+- Tylko na Windows
+E: To uniwersalne dobre praktyki.
+#Q
+Q: Jakie zabezpieczenia SSH przewiduje projekt?
++ Logowanie tylko kluczami (PasswordAuthentication no) i fail2ban dla sshd
+- Logowanie hasłem z captchą
+- Otwarty port 22 bez ograniczeń
+- Brak SSH
+E: Hasła są podatne na zgadywanie.
+#Q
+Q: Jak projekt zapewnia aktualizacje bezpieczeństwa?
++ unattended-upgrades (automatyczne poprawki)
+- Ręczna aktualizacja raz w roku
+- Brak aktualizacji
+- Tylko przy restarcie
+E: Poprawki bezpieczeństwa instalowane automatycznie.
+#Q
+Q: Jaki jest plan kopii zapasowych bazy?
++ pg_dump codziennie 02:30 UTC, 7 dni lokalnie i kopia poza serwerem (rsync)
+- Raz w miesiącu ręcznie
+- Tylko kopia katalogu danych w czasie pracy
+- Brak kopii
+E: Kopia poza serwerem chroni przed awarią maszyny.
+#Q
+Q: Jak projekt monitoruje aplikację?
++ Sprawdzanie /actuator/health co minutę i powiadomienie przy błędzie
+- Tylko docker ps
+- Ręcznie raz dziennie
+- Brak monitoringu
+E: Endpoint zdrowia mówi o rzeczywistym stanie aplikacji.
+#Q
+Q: Co oznacza wymaganie „odtwarzalność skryptem”?
++ Serwer da się odtworzyć skryptem instaluj.sh według tych samych założeń
+- Serwer restartuje się sam
+- Baza odtwarza się automatycznie
+- Nie trzeba kopii
+E: Skrypt i lista kontrolna powstają w lekcjach 8-9.
+#Q
+Q: Co powinno znaleźć się w repozytorium infrastruktury?
++ README z założeniami, pliki konfiguracji, skrypt instalacyjny, lista kontrolna
+- Hasła produkcyjne
+- Klucze prywatne SSH
+- Kopie bazy
+E: Sekrety trzyma się poza repozytorium.
+#Q
+Q: Dlaczego do repozytorium infrastruktury dodaje się .gitignore z *.key i poswiadczenia/?
++ Żeby przypadkiem nie zatwierdzić sekretów do Gita
+- Żeby przyspieszyć Git
+- Bo Git nie obsługuje tych plików
+- Żeby ukryć logi
+E: Raz zatwierdzony sekret zostaje w historii.
+#Q
+Q: Jaki jest pierwszy krok pracy z nowym serwerem według lekcji?
++ Spisanie celu, aplikacji i wymagań
+- Instalacja PostgreSQL
+- Wyłączenie zapory
+- Logowanie jako root
+E: Plan poprzedza instalację.
+#Q
+Q: Co ustala się, rysując ruch sieciowy serwera?
++ Co jest publiczne (80/443, SSH), a co tylko lokalne (aplikacja, baza)
+- Kolor interfejsu
+- Wersję jądra
+- Nazwę użytkownika
+E: To podstawa konfiguracji zapory i usług.
+#Q
+Q: Jakim narzędziem sprawdzisz z laptopa, czy port 5432 serwera jest dostępny?
++ nc -zv -w 3 203.0.113.50 5432
+- ping 5432
+- curl 5432
+- ssh 5432
+E: W stanie docelowym połączenie powinno się nie udać (timeout).
+#Q
+Q: Co oznacza timeout przy nc na port 5432 w stanie docelowym?
++ Baza nie jest dostępna z zewnątrz — tak ma być
+- Serwer nie działa
+- Błąd sieci laptopa
+- Baza jest uszkodzona
+E: 5432 nasłuchuje tylko na 127.0.0.1.
+#Q
+Q: Jaki serwer WWW pełni rolę reverse proxy z TLS w projekcie?
++ Nginx
+- Apache Tomcat
+- HAProxy
+- Caddy
+E: Nginx z certyfikatem Let's Encrypt.
+#Q
+Q: Skąd pochodzi certyfikat TLS w projekcie?
++ Z Let's Encrypt (certbot)
+- Samopodpisany
+- Kupiony od dostawcy chmury
+- Wbudowany w Ubuntu
+E: Certbot ma wtyczkę do Nginx.
+#Q
+Q: Co jest celem dowiązania /opt/sklep/sklep.jar?
++ Wskazuje bieżące wydanie; wycofanie to zmiana dowiązania na poprzednią wersję
+- Przyspiesza aplikację
+- Szyfruje JAR
+- Tworzy kopię
+E: Wydania leżą w releases/WERSJA.
+#Q
+Q: Jaki jest sens osobnego konta sklep dla usługi?
++ Ograniczenie uprawnień — awaria aplikacji nie daje dostępu do całego systemu
+- Szybsze działanie
+- Łatwiejsze logowanie
+- Wymóg Javy
+E: Konto systemowe bez powłoki i hasła.
+#Q
+Q: Gdzie w projekcie trafiają logi aplikacji?
++ Do dziennika systemd (journald)
+- Do /root/sklep.log
+- Do bazy danych
+- Nigdzie
+E: journald zarządza rotacją i limitami.
+#Q
+Q: Co zawiera plik /etc/sklep/sklep.env?
++ Zmienne środowiskowe aplikacji (nie-sekretne ustawienia)
+- Hasła i klucze
+- Kod aplikacji
+- Kopię bazy
+E: Sekrety są osobno, w poswiadczenia/.
+#Q
+Q: Dlaczego sekrety mają prawa 700 i właściciela root?
++ Żeby tylko root (i proces usługi przez systemd) mógł je czytać
+- Żeby każdy mógł je czytać
+- Bo tak jest szybciej
+- Bez powodu
+E: Hasła nie powinny być dostępne dla innych kont.
+#Q
+Q: Jakie konto systemowe zarządza bazą danych?
++ postgres (z pakietu PostgreSQL)
+- sklep
+- anna
+- deploy
+E: Standardowe konto usługi PostgreSQL.
+#Q
+Q: Co jest dobrą praktyką przy przekazaniu serwera następcy?
++ Repozytorium infrastruktury z założeniami i decyzjami
+- Ustne wyjaśnienie
+- Dostęp root bez dokumentacji
+- Zrzuty ekranu
+E: Dokumentacja pozwala zrozumieć, co i dlaczego skonfigurowano.
+#Q
+Q: Jak sprawdzić system operacyjny serwera?
++ cat /etc/os-release lub lsb_release -ds
+- uname -n
+- hostname
+- whoami
+E: PRETTY_NAME zawiera nazwę i wersję.
+#Q
+Q: Co pokazuje hostnamectl w polu Virtualization dla serwera w chmurze?
++ Typ wirtualizacji, np. kvm
+- Wersję jądra
+- Adres IP
+- Nazwę domeny
+E: Serwery w chmurze to zwykle maszyny KVM.
+#Q
+Q: Jak sprawdzić liczbę procesorów serwera?
++ nproc
+- lscpu --count
+- cat /proc/cpu
+- free -c
+E: lscpu podaje więcej szczegółów.
+#Q
+Q: Dlaczego warto znać zasoby serwera (CPU, RAM) przed instalacją?
++ JVM dobiera stertę i wątki do zasobów — wpływa to na konfigurację aplikacji
+- Bez znaczenia
+- Żeby zmienić jądro
+- Żeby wybrać kolor terminala
+E: 4 GB RAM to inna domyślna sterta niż 16 GB.
+#Q
+Q: Co jest pierwszym poleceniem weryfikującym stan portów na serwerze?
++ sudo ss -tlnp
+- docker ps
+- ping localhost
+- systemctl status
+E: Pokazuje nasłuchujące gniazda i procesy.
+#Q
+Q: Co oznacza nasłuch sshd na 0.0.0.0:22 zaraz po utworzeniu maszyny?
++ SSH jest dostępny ze wszystkich adresów — normalne na starcie, później ograniczane zaporą
+- Błąd konfiguracji
+- Serwer jest zhakowany
+- SSH nie działa
+E: Port 22 pozostaje publiczny, ale z fail2ban i tylko kluczami.
+#Q
+Q: Co jest celem pliku pliki/weryfikacja.sh?
++ Sprawdzenie zgodności otwartych portów serwera z planem
+- Instalacja pakietów
+- Tworzenie kont
+- Kopia bazy
+E: Uruchamiany na serwerze po każdym etapie.
+#Q
+Q: Jak przesłać skrypt na serwer?
++ scp plik ubuntu@203.0.113.50:/tmp/
+- ssh plik serwer
+- docker cp
+- git push na serwer
+E: scp kopiuje pliki przez SSH.
+#Q
+Q: Co jest warunkiem rozpoczęcia dalszych lekcji projektu?
++ Działające logowanie kluczem SSH na serwer
+- Zainstalowany Docker
+- Wyłączona zapora
+- Konto root z hasłem
+E: Lekcja 3 zajmuje się utwardzeniem SSH.
+#Q
+Q: Jakim poleceniem skopiujesz klucz publiczny na serwer?
++ ssh-copy-id -i ~/.ssh/id_ed25519.pub ubuntu@203.0.113.50
+- scp klucz
+- ssh-keygen -copy
+- git push klucz
+E: Dopisuje klucz do authorized_keys.
+#Q
+Q: Jak przetestować logowanie wyłącznie kluczem (bez hasła)?
++ ssh -o PasswordAuthentication=no -i klucz serwer
+- ssh --no-password
+- ssh -k
+- ssh --key-only
+E: Jeśli klucz działa, logowanie się uda.
+#Q
+Q: Co jest sensem dokumentu pliki/porty.md?
++ Wzorzec oczekiwanych portów do porównania ze stanem serwera
+- Lista użytkowników
+- Kopia zapasowa
+- Konfiguracja Nginx
+E: Każdy port ma uzasadnienie.
+#Q
+Q: Dlaczego aplikacja nie powinna być wystawiona bezpośrednio na 443?
++ Reverse proxy (Nginx) obsługuje TLS, nagłówki, limity i odciąża aplikację
+- Bo Java nie obsługuje HTTPS
+- Bo 443 jest zajęty
+- Bo to nielegalne
+E: Aplikacja słucha lokalnie na 8080.
+#Q
+Q: Co należy sprawdzić po każdym etapie instalacji?
++ Zgodność stanu serwera z planem (ss -tlnp, ufw status, ps)
+- Tylko wersję Dockera
+- Tylko logi
+- Nic
+E: Weryfikacja wychwytuje odstępstwa od projektu.
+#Q
+Q: Jaki jest plan kolejnych lekcji projektu po tej?
++ Serwer i konta, SSH i zapora, Java i PostgreSQL, usługa systemd, Nginx i HTTPS, logi/monitoring/kopie, skrypt, lista kontrolna
+- Tylko instalacja Dockera
+- Pisanie aplikacji
+- Konfiguracja Windows
+E: Projekt realizowany etapami.
+#Q
+Q: Dlaczego strefa UTC jest wygodna na serwerze?
++ Logi i harmonogramy z różnych serwerów są spójne, bez problemów ze zmianą czasu
+- Bo jest szybsza
+- Bo wymaga jej Java
+- Bo zajmuje mniej miejsca
+E: Czas lokalny komplikuje korelację zdarzeń.
+#Q
+Q: Co powinno być w .gitignore repozytorium infrastruktury?
++ Pliki haseł, kluczy, zrzutów bazy i sekretów
+- Pliki README
+- Skrypty instalacyjne
+- Pliki konfiguracji Nginx
+E: Konfiguracje bez sekretów można wersjonować.
+#Q
+Q: Co jest celem dokumentu architektura.txt?
++ Schemat ruchu i usług jako odniesienie w kolejnych lekcjach
+- Kopia bazy
+- Lista pakietów
+- Logi aplikacji
+E: Pokazuje, jak elementy łączą się ze sobą.
+#Q
+Q: Jaki jest najważniejszy wniosek tej lekcji?
++ Serwer produkcyjny buduje się według spisanego planu, a stan porównuje z planem
+- Najpierw instaluj, potem myśl
+- Plan jest zbędny
+- Root wystarcza
+E: Plan zapewnia bezpieczeństwo i odtwarzalność.
+#Q
+Q: Dlaczego warto rozpoznać serwer (hostnamectl, ss, df) zaraz po utworzeniu?
++ Żeby znać punkt wyjścia: system, zasoby, co już nasłuchuje
+- Żeby go zrestartować
+- Żeby zmienić jądro
+- Bez powodu
+E: Rozpoznanie poprzedza zmiany.
