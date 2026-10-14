@@ -1,0 +1,948 @@
+#EX
+// 1
+P: Na `srv-docker` wypisz sieci Dockera ze sterownikiem i zakresem adresów (podsieć).
+H: `docker network ls`, `docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`.
+S:
+docker network ls --format '{{.Name}} {{.Driver}}'
+for n in $(docker network ls -q); do docker network inspect -f '{{.Name}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' "$n"; done
+#EX
+// 2
+P: Sprawdź na gospodarzu interfejs mostu `docker0`: adres, stan i interfejsy `veth` do niego podłączone.
+H: `ip -br addr show docker0`, `ip link show master docker0`.
+S:
+ip -br addr show docker0
+ip -br link show master docker0
+#EX
+// 3
+P: Uruchom kontener `demo` (nginx:1.27) z portem 8081 opublikowanym na 80. Wypisz mapowanie portów i sprawdź odpowiedź HTTP.
+H: `docker run -d -p 8081:80`, `docker port`, `curl -w '%{http_code}'`.
+S:
+docker run -d --name demo -p 8081:80 nginx:1.27 > /dev/null
+docker port demo
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8081
+#EX
+// 4
+P: Sprawdź, jaki proces nasłuchuje na porcie 8081 gospodarza i jaki adres IP ma kontener `demo`.
+H: `sudo ss -tlnp 'sport = :8081'`, `docker inspect -f '{{.NetworkSettings.IPAddress}}'`.
+S:
+sudo ss -tlnp 'sport = :8081'
+docker inspect -f '{{.NetworkSettings.IPAddress}}' demo
+curl -s -o /dev/null -w '%{http_code}\n' "http://$(docker inspect -f '{{.NetworkSettings.IPAddress}}' demo)/"
+#EX
+// 5
+P: Wyświetl reguły NAT, które Docker dodał dla portu 8081 (łańcuchy `DOCKER` i `POSTROUTING`).
+H: `sudo iptables -t nat -S DOCKER`, `sudo iptables -t nat -S POSTROUTING`; przy nftables: `sudo nft list ruleset | grep 8081`.
+S:
+sudo iptables -t nat -S DOCKER | grep 8081
+sudo iptables -t nat -S POSTROUTING | grep MASQUERADE
+#EX
+// 6
+P: Opublikuj port 80 kontenera na losowym porcie gospodarza i odczytaj, który port został przydzielony.
+H: `-p 80` (bez portu gospodarza) lub `-P` dla wszystkich portów z `EXPOSE`.
+S:
+docker run -d --name losowy -p 80 nginx:1.27 > /dev/null
+docker port losowy 80
+curl -s -o /dev/null -w '%{http_code}\n' "localhost:$(docker port losowy 80 | head -1 | cut -d: -f2)"
+docker rm -f losowy > /dev/null
+#EX
+// 7
+P: Pokaż brak rozwiązywania nazw w sieci domyślnej: spróbuj z kontenera `busybox:1.36` odpytać nazwę `demo`, a potem połączyć się z nim po adresie IP.
+H: `docker run --rm busybox:1.36 nslookup demo`, `wget -qO- http://IP/`.
+S:
+docker run --rm busybox:1.36 nslookup demo 2>&1 | tail -1
+IP=$(docker inspect -f '{{.NetworkSettings.IPAddress}}' demo)
+docker run --rm busybox:1.36 wget -qO- -T 3 "http://$IP/" | grep -o '<title>.*</title>'
+#EX
+// 8
+P: Utwórz sieć użytkownika `lab-net`, uruchom w niej `demo2` (nginx) i sprawdź z innego kontenera w tej sieci rozwiązywanie nazwy i połączenie.
+H: `docker network create`, `--network lab-net`, `nslookup demo2`, `wget -qO- http://demo2/`.
+S:
+docker network create lab-net > /dev/null
+docker run -d --name demo2 --network lab-net nginx:1.27 > /dev/null
+docker run --rm --network lab-net busybox:1.36 nslookup demo2
+docker run --rm --network lab-net busybox:1.36 wget -qO- -T 3 http://demo2/ | grep -o '<title>.*</title>'
+#EX
+// 9
+P: Sprawdź, jaki serwer DNS widzi kontener w sieci użytkownika, a jaki w sieci domyślnej (`/etc/resolv.conf`).
+H: W sieci użytkownika `nameserver 127.0.0.11`.
+S:
+docker run --rm --network lab-net busybox:1.36 cat /etc/resolv.conf
+docker run --rm busybox:1.36 cat /etc/resolv.conf
+#EX
+// 10
+P: Nadaj kontenerowi w sieci dodatkowy alias `www` i sprawdź, że obie nazwy wskazują ten sam adres.
+H: `docker network connect --alias www lab-net demo` lub przy uruchomieniu `--network-alias`.
+S:
+docker network connect --alias www lab-net demo
+docker run --rm --network lab-net busybox:1.36 sh -c 'nslookup www | tail -2; nslookup demo | tail -2'
+#EX
+// 11
+P: Sprawdź, do jakich sieci jest podłączony kontener `demo` i jakie ma adresy w każdej z nich.
+H: `docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{$v.IPAddress}}{{println}}{{end}}'`.
+S:
+docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{$v.IPAddress}}{{println}}{{end}}' demo
+#EX
+// 12
+P: Pokaż, że `localhost` w kontenerze to sam kontener: z kontenera `busybox` w sieci `lab-net` spróbuj połączyć się z `localhost:80`, a potem z `demo2:80`.
+H: `wget -qO- -T 3 http://localhost/`.
+S:
+docker run --rm --network lab-net busybox:1.36 sh -c 'wget -qO- -T 3 http://localhost/ 2>&1 | head -1; wget -qO- -T 3 http://demo2/ | grep -o "<title>.*</title>"'
+#EX
+// 13
+P: Przygotuj plik z hasłem do bazy w `~/sekrety/db` (prawa 600) i uruchom bazę `db` w sieci `sklep-net` bez publikowania portów, z hasłem czytanym z pliku.
+H: `POSTGRES_PASSWORD_FILE=/run/secrets/db`, montowanie `-v ~/sekrety/db:/run/secrets/db:ro`.
+S:
+mkdir -p ~/sekrety && chmod 700 ~/sekrety
+[ -f ~/sekrety/db ] || openssl rand -base64 18 > ~/sekrety/db
+chmod 600 ~/sekrety/db
+docker network create sklep-net 2>/dev/null || true
+docker run -d --name db --network sklep-net -e POSTGRES_DB=sklep -e POSTGRES_USER=sklep \
+  -e POSTGRES_PASSWORD_FILE=/run/secrets/db -v ~/sekrety/db:/run/secrets/db:ro postgres:16 > /dev/null
+docker port db || echo "brak opublikowanych portow"
+#EX
+// 14
+P: Uruchom aplikację `sklep` (sklep:1.4.2) w sieci `sklep-net`, łączącą się z bazą po nazwie `db`; hasło przekaż jako plik przez `configtree`. Sprawdź logi połączenia z bazą.
+H: `SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/sklep`, `SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/`, plik `spring.datasource.password`.
+S:
+docker rm -f sklep 2>/dev/null
+docker run -d --name sklep --network sklep-net \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/sklep -e SPRING_DATASOURCE_USERNAME=sklep \
+  -e SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/ \
+  -v ~/sekrety/db:/run/secrets/spring.datasource.password:ro sklep:1.4.2 > /dev/null
+sleep 20; docker logs sklep 2>&1 | grep -E 'HikariPool|Started' | tail -3
+#EX
+// 15
+P: Uruchom `web` (nginx:1.27) w `sklep-net` z portem 80 i konfiguracją z `~/sklep-stack/nginx/sklep.conf` (proxy do `sklep:8080`). Sprawdź endpoint zdrowia przez Nginx.
+H: `-p 80:80 -v ...:/etc/nginx/conf.d/default.conf:ro`; `curl localhost/actuator/health`.
+S:
+docker rm -f web 2>/dev/null
+docker run -d --name web --network sklep-net -p 80:80 -v ~/sklep-stack/nginx/sklep.conf:/etc/nginx/conf.d/default.conf:ro nginx:1.27 > /dev/null
+docker exec web grep proxy_pass /etc/nginx/conf.d/default.conf
+curl -s localhost/actuator/health; echo
+#EX
+// 16
+P: Sprawdź z kontenera `sklep` rozwiązywanie nazw `db` i `web` oraz łączność z portem bazy bez narzędzi sieciowych w obrazie (bash `/dev/tcp`).
+H: `docker exec sklep getent hosts db web`; `bash -c '</dev/tcp/db/5432'` (jeśli obraz ma bash).
+S:
+docker exec sklep getent hosts db web
+docker exec sklep bash -c '</dev/tcp/db/5432 && echo "db:5432 otwarty"' 2>/dev/null || docker run --rm --network sklep-net busybox:1.36 nc -zv -w 3 db 5432
+#EX
+// 17
+P: Wypisz kontenery podłączone do sieci `sklep-net` z ich adresami IP.
+H: `docker network inspect -f '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{println}}{{end}}'`.
+S:
+docker network inspect -f '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{println}}{{end}}' sklep-net
+#EX
+// 18
+P: Pokaż, że adres IP kontenera zmienia się po odtworzeniu: zapisz adres `sklep`, usuń kontener, uruchom go ponownie (te same opcje, najpierw uruchamiając inny kontener w sieci) i porównaj. Nazwa nadal działa.
+H: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`.
+S:
+ip_sklep() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' sklep; }
+echo "przed: $(ip_sklep)"
+docker rm -f sklep > /dev/null
+docker run -d --name zajmij --network sklep-net busybox:1.36 sleep 600 > /dev/null
+docker run -d --name sklep --network sklep-net \
+  -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/sklep -e SPRING_DATASOURCE_USERNAME=sklep \
+  -e SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/ \
+  -v ~/sekrety/db:/run/secrets/spring.datasource.password:ro sklep:1.4.2 > /dev/null
+echo "po: $(ip_sklep)"
+docker exec web getent hosts sklep
+docker rm -f zajmij > /dev/null
+#EX
+// 19
+P: Odtwórz błąd `localhost` w konfiguracji: uruchom kontener `sklep-zly` z `SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/sklep` i odczytaj błąd z logu.
+H: `docker logs sklep-zly 2>&1 | grep -m1 -i 'refused'`.
+S:
+docker run -d --name sklep-zly --network sklep-net -e SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/sklep sklep:1.4.2 > /dev/null
+sleep 20; docker logs sklep-zly 2>&1 | grep -m1 -i 'connection refused'
+docker inspect -f 'status={{.State.Status}} kod={{.State.ExitCode}}' sklep-zly
+docker rm -f sklep-zly > /dev/null
+#EX
+// 20
+P: Sprawdź połączenie z kontenera do usługi na gospodarzu: uruchom na `srv-docker` prosty serwer HTTP na porcie 9100 (`python3 -m http.server`) i odczytaj go z kontenera przez `host.docker.internal`.
+H: Na Linuksie: `--add-host=host.docker.internal:host-gateway`. Serwer musi nasłuchiwać na adresie dostępnym z mostu (np. `0.0.0.0` lub adres `docker0`).
+S:
+(cd /tmp && python3 -m http.server 9100 --bind 172.17.0.1 > /dev/null 2>&1 &)
+sleep 1
+docker run --rm --add-host=host.docker.internal:host-gateway busybox:1.36 sh -c 'grep host.docker.internal /etc/hosts; wget -qO- -T 3 http://host.docker.internal:9100/ | head -3'
+pkill -f 'http.server 9100'
+#EX
+// 21
+P: Odtwórz pułapkę z `ufw`: sprawdź reguły zapory, uruchom `db-test` z `-p 5432:5432` i z `lubuntu-nauka` sprawdź, czy port jest osiągalny.
+H: `sudo ufw status`, `sudo iptables -t nat -S DOCKER | grep 5432`, na drugiej maszynie `nc -zv -w 3 192.168.56.30 5432`.
+S:
+sudo ufw status | grep -E 'Status|ALLOW'
+docker run -d --name db-test -p 5432:5432 -e POSTGRES_PASSWORD=test123 postgres:16 > /dev/null
+sudo iptables -t nat -S DOCKER | grep 5432
+ssh lubuntu-nauka 'nc -zv -w 3 192.168.56.30 5432'
+#EX
+// 22
+P: Pokaż, dlaczego `ufw` nie widzi tego ruchu: wypisz liczniki pakietów w łańcuchu `FORWARD`/`DOCKER` dla portu 5432 i zwróć uwagę, że reguły `ufw-user-input` nie mają z nim związku.
+H: `sudo iptables -L DOCKER -nv`, `sudo iptables -L FORWARD -nv | head`.
+S:
+sudo iptables -L FORWARD -nv --line-numbers | head -8
+sudo iptables -L DOCKER -nv | grep 5432
+sudo iptables -L ufw-user-input -nv | head -6
+#EX
+// 23
+P: Napraw problem: usuń `db-test` i uruchom ponownie z portem opublikowanym tylko na `127.0.0.1` i hasłem z pliku. Sprawdź lokalnie `pg_isready` i z `lubuntu-nauka` brak dostępu.
+H: `-p 127.0.0.1:5432:5432`.
+S:
+docker rm -f db-test > /dev/null
+docker run -d --name db-test -p 127.0.0.1:5432:5432 -e POSTGRES_PASSWORD_FILE=/run/secrets/db -v ~/sekrety/db:/run/secrets/db:ro postgres:16 > /dev/null
+docker port db-test
+sleep 3; pg_isready -h 127.0.0.1 -p 5432
+ssh lubuntu-nauka 'nc -zv -w 3 192.168.56.30 5432'
+#EX
+// 24
+P: Ogranicz dostęp do opublikowanego portu 8081 (kontener `demo`) tylko do sieci laboratorium `192.168.56.0/24` regułą w łańcuchu `DOCKER-USER`. Sprawdź regułę.
+H: `sudo iptables -I DOCKER-USER -i eth1 -p tcp -m conntrack --ctorigdstport 8081 ! -s 192.168.56.0/24 -j DROP`.
+S:
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 8081 --ctdir ORIGINAL ! -s 192.168.56.0/24 -j DROP
+sudo iptables -L DOCKER-USER -nv --line-numbers
+ssh lubuntu-nauka 'curl -s -o /dev/null -w "%{http_code}\n" http://192.168.56.30:8081/'
+#EX
+// 25
+P: Usuń regułę z `DOCKER-USER` (po numerze) i sprawdź, że łańcuch zawiera tylko domyślne `RETURN`. Dlaczego takiej reguły nie dopisuje się przez `ufw`?
+H: `sudo iptables -D DOCKER-USER 1`.
+S:
+sudo iptables -D DOCKER-USER 1
+sudo iptables -L DOCKER-USER -n --line-numbers
+#EX
+// 26
+P: Uruchom kontener w trybie `--network host` i sprawdź, jakie interfejsy widzi i czy opcja `-p` ma jakiekolwiek znaczenie.
+H: `docker run --rm --network host busybox:1.36 ip -br addr`; Docker zgłosi ostrzeżenie dla `-p` z `host`.
+S:
+docker run --rm --network host busybox:1.36 ip -br addr | head -5
+docker run --rm --network host -p 9999:80 busybox:1.36 true 2>&1 | head -2
+#EX
+// 27
+P: Uruchom kontener z `--network none` i sprawdź, że ma tylko interfejs `lo` i brak dostępu do sieci.
+H: `ip -br addr`, `wget -T 3`.
+S:
+docker run --rm --network none busybox:1.36 sh -c 'ip -br addr; wget -qO- -T 3 http://example.com 2>&1 | head -1'
+#EX
+// 28
+P: Na laptopie z Docker Desktop uruchom bazę `pg-dev` z `-p 5433:5432` i połącz się z nią z PowerShella (Test-NetConnection) oraz z kontenera w Docker Desktop do usługi na Windows przez `host.docker.internal`.
+H: W Docker Desktop `host.docker.internal` działa bez dodatkowych opcji.
+S:
+docker run -d --name pg-dev -e POSTGRES_PASSWORD=dev -p 5433:5432 postgres:16 | Out-Null
+Test-NetConnection localhost -Port 5433 -InformationLevel Quiet
+docker run --rm busybox:1.36 nslookup host.docker.internal
+#EX
+// 29
+P: Zdiagnozuj sieć kontenera `sklep` narzędziami gospodarza: wejdź do jego przestrzeni sieci (`nsenter`) i wypisz nawiązane połączenia TCP (do bazy) oraz trasę domyślną.
+H: `PID=$(docker inspect -f '{{.State.Pid}}' sklep)`, `sudo nsenter -t $PID -n ss -tn`.
+S:
+PID=$(docker inspect -f '{{.State.Pid}}' sklep)
+sudo nsenter -t "$PID" -n ss -tn state established
+sudo nsenter -t "$PID" -n ip route
+#EX
+// 30
+P: Posprzątaj laboratorium: usuń kontenery `demo`, `demo2`, `db-test` i sieć `lab-net`. Zostaw `db`, `sklep`, `web` i sieć `sklep-net`. Sprawdź listę sieci i kontenerów.
+H: `docker rm -f`, `docker network rm`; sieci nieużywane usuwa też `docker network prune`.
+S:
+docker rm -f demo demo2 db-test > /dev/null
+docker network rm lab-net
+docker network ls --format '{{.Name}}'
+docker ps --format '{{.Names}} {{.Ports}}'
+#Q
+Q: Jaki most sieciowy tworzy Docker dla sieci domyślnej?
++ docker0
+- br0
+- eth0
+- virbr0
+E: virbr0 tworzy libvirt.
+#Q
+Q: Jaki jest domyślny zakres adresów sieci bridge Dockera?
++ 172.17.0.0/16
+- 192.168.0.0/24
+- 10.0.0.0/8
+- 127.0.0.0/8
+E: Sieci użytkownika dostają kolejne zakresy (172.18.0.0/16 itd.).
+#Q
+Q: Czy kontenery w domyślnej sieci bridge widzą się po nazwach?
++ Nie — rozwiązywanie nazw działa w sieciach użytkownika
+- Tak, zawsze
+- Tylko po restarcie
+- Tylko z --privileged
+E: W sieci domyślnej trzeba by używać adresów IP.
+#Q
+Q: Jak utworzyć sieć użytkownika sklep-net?
++ docker network create sklep-net
+- docker net add sklep-net
+- ip link add sklep-net
+- docker create network sklep-net
+E: Domyślny sterownik to bridge.
+#Q
+Q: Jaki adres ma wbudowany serwer DNS Dockera widoczny w kontenerach sieci użytkownika?
++ 127.0.0.11
+- 8.8.8.8
+- 172.17.0.1
+- 127.0.0.53
+E: Rozwiązuje nazwy kontenerów i przekazuje inne zapytania dalej.
+#Q
+Q: Jaką sieć tworzy Docker Compose dla projektu?
++ Sieć użytkownika, w której nazwy usług są nazwami hostów
+- Zawsze sieć domyślną bridge
+- Sieć host
+- Brak sieci
+E: Np. usługa db jest dostępna pod nazwą db.
+#Q
+Q: Co oznacza -p 8080:80?
++ Port 8080 gospodarza jest przekazywany do portu 80 kontenera
+- Port 80 gospodarza do 8080 kontenera
+- Kontener ma dwa porty
+- Port 8080 jest blokowany
+E: Format: gospodarz:kontener.
+#Q
+Q: Na jakich adresach gospodarza publikowany jest port przy -p 8080:8080?
++ Na wszystkich (0.0.0.0 i ::)
+- Tylko 127.0.0.1
+- Tylko na adresie docker0
+- Na żadnym
+E: Dlatego port jest dostępny z sieci.
+#Q
+Q: Jak opublikować port tylko lokalnie na gospodarzu?
++ -p 127.0.0.1:5433:5432
+- -p local:5433:5432
+- -p 5433:5432 --local
+- --expose 5432
+E: Z innych maszyn połączenie zostanie odrzucone.
+#Q
+Q: Co robi -p 80 (bez portu gospodarza)?
++ Publikuje port 80 kontenera na losowym wolnym porcie gospodarza
+- Publikuje port 80 na 80
+- Blokuje port 80
+- Nic
+E: Przydzielony port pokaże docker port.
+#Q
+Q: Co robi opcja -P (wielkie P)?
++ Publikuje wszystkie porty z EXPOSE na losowych portach gospodarza
+- Publikuje port 80
+- Wyłącza porty
+- Uruchamia kontener jako uprzywilejowany
+E: Rzadko stosowane w produkcji.
+#Q
+Q: Co robi instrukcja EXPOSE w Dockerfile?
++ Dokumentuje port aplikacji — sama nie publikuje go na gospodarzu
+- Publikuje port
+- Otwiera port w ufw
+- Przypisuje adres IP
+E: Publikowanie to -p przy uruchomieniu.
+#Q
+Q: Które polecenie pokazuje mapowanie portów kontenera?
++ docker port NAZWA
+- docker ports
+- docker network ports
+- docker ps --ports
+E: Kolumna PORTS w docker ps pokazuje to samo w skrócie.
+#Q
+Q: Jaki proces na gospodarzu nasłuchuje na opublikowanym porcie (domyślna konfiguracja)?
++ docker-proxy
+- dockerd zawsze
+- nginx
+- containerd
+E: Główną rolę grają reguły DNAT; docker-proxy obsługuje m.in. ruch z localhost.
+#Q
+Q: Jak Docker przekazuje ruch z opublikowanego portu do kontenera?
++ Regułą DNAT w tablicy nat (łańcuch DOCKER) i przekazaniem w FORWARD
+- Przez SSH
+- Przez Samba
+- Przez /etc/hosts
+E: Odpowiedzi wracają dzięki śledzeniu połączeń.
+#Q
+Q: Co robi reguła MASQUERADE dla sieci Dockera w POSTROUTING?
++ Zamienia adres źródłowy ruchu wychodzącego z kontenerów na adres gospodarza
+- Blokuje ruch
+- Zmienia port docelowy
+- Szyfruje ruch
+E: Dzięki temu kontenery mają dostęp do internetu.
+#Q
+Q: Dlaczego port opublikowany przez Dockera omija reguły ufw?
++ Ruch po DNAT trafia do łańcucha FORWARD, a ufw filtruje ruch do gospodarza w INPUT
+- Bo ufw nie obsługuje TCP
+- Bo Docker wyłącza ufw
+- Bo kontenery mają osobną zaporę
+E: ufw status nie pokazuje reguł Dockera.
+#Q
+Q: W którym łańcuchu iptables wpisuje się własne ograniczenia ruchu do kontenerów?
++ DOCKER-USER
+- INPUT
+- OUTPUT
+- ufw-user-input
+E: Docker nie nadpisuje tego łańcucha.
+#Q
+Q: Jakie jest domyślne zakończenie łańcucha DOCKER-USER?
++ RETURN — ruch przechodzi dalej do reguł Dockera
+- DROP
+- ACCEPT dla wszystkiego bez dalszych reguł
+- REJECT
+E: Własne reguły dodaje się przed nim (iptables -I).
+#Q
+Q: Dlaczego w regule DOCKER-USER używa się --ctorigdstport zamiast --dport?
++ Po DNAT port docelowy jest już portem kontenera — oryginalny port opublikowany zna conntrack
+- Bo --dport nie istnieje
+- Bo DOCKER-USER działa przed DNAT
+- To bez znaczenia
+E: Moduł conntrack pamięta pierwotny adres i port.
+#Q
+Q: Jakie jest najlepsze rozwiązanie dla bazy, która nie musi być dostępna z sieci?
++ Nie publikować portu — kontenery łączą się przez sieć użytkownika; ewentualnie -p 127.0.0.1:...
+- Opublikować port i dodać regułę ufw deny
+- Zmienić port na 15432
+- Wyłączyć ufw
+E: Nieopublikowany port nie jest dostępny spoza gospodarza.
+#Q
+Q: Czym jest localhost w kontenerze?
++ Samym kontenerem — jego własna przestrzeń nazw sieci
+- Gospodarzem
+- Innym kontenerem w sieci
+- Bramą sieci
+E: Aplikacja w kontenerze nie znajdzie pod localhost bazy z innego kontenera.
+#Q
+Q: Jaki błąd zobaczy aplikacja Spring Boot z URL jdbc:postgresql://localhost:5432/sklep w kontenerze bez bazy?
++ Connection refused
+- Unknown host
+- Authentication failed
+- Timeout zawsze po 5 minutach
+E: Na localhost kontenera nic nie nasłuchuje na 5432.
+#Q
+Q: Jak aplikacja w kontenerze powinna łączyć się z bazą w innym kontenerze?
++ Przez nazwę kontenera/usługi w sieci użytkownika, np. db:5432
+- Przez adres IP 172.18.0.2 wpisany na stałe
+- Przez localhost
+- Przez adres publiczny gospodarza
+E: Nazwa pozostaje stała, adres IP się zmienia.
+#Q
+Q: Dlaczego nie wpisuje się adresów IP kontenerów do konfiguracji?
++ Zmieniają się przy odtworzeniu kontenera
+- Są publiczne
+- Są zbyt długie
+- Docker ich nie udostępnia
+E: Nazwy w sieci użytkownika są stabilne.
+#Q
+Q: Jak przekazać URL bazy do aplikacji Spring Boot w kontenerze bez zmiany obrazu?
++ Zmienną środowiskową SPRING_DATASOURCE_URL
+- Edytując application.properties w kontenerze
+- Przebudowując obraz dla każdego środowiska
+- Przez /etc/hosts
+E: Ten sam obraz działa wtedy w każdym środowisku.
+#Q
+Q: Co robi SPRING_CONFIG_IMPORT=optional:configtree:/run/secrets/?
++ Wczytuje właściwości z plików w katalogu — nazwa pliku to nazwa właściwości, treść to wartość
+- Importuje klasy Javy
+- Szyfruje hasła
+- Pobiera konfigurację z sieci
+E: Plik spring.datasource.password zawiera hasło.
+#Q
+Q: Dlaczego hasło do bazy przekazuje się jako plik zamiast zmiennej środowiskowej?
++ Zmienne widać w docker inspect i środowisku procesów; plik ma prawa i nie trafia do metadanych
+- Bo zmienne nie działają w Dockerze
+- Bo plik jest szybszy
+- Bo PostgreSQL nie obsługuje zmiennych
+E: Obraz postgres obsługuje POSTGRES_PASSWORD_FILE.
+#Q
+Q: Co oznacza zmienna POSTGRES_PASSWORD_FILE w obrazie postgres?
++ Ścieżkę do pliku z hasłem użytkownika bazy
+- Plik z kopią bazy
+- Plik konfiguracyjny pg_hba
+- Ścieżkę do logów
+E: Wariant _FILE obsługuje wiele zmiennych obrazu.
+#Q
+Q: Jak kontener na Linuksie może połączyć się z usługą na gospodarzu?
++ Przez host.docker.internal z opcją --add-host=host.docker.internal:host-gateway
+- Przez localhost
+- Przez 127.0.0.11
+- Nie może
+E: host-gateway to adres gospodarza w sieci kontenera.
+#Q
+Q: Czy host.docker.internal działa w Docker Desktop bez dodatkowych opcji?
++ Tak
+- Nie, nigdy
+- Tylko w trybie host
+- Tylko dla Windows Server
+E: Na Linuksie z Docker Engine trzeba dodać --add-host.
+#Q
+Q: Na jakim adresie musi nasłuchiwać usługa gospodarza, by kontener mógł się z nią połączyć przez host.docker.internal?
++ Na adresie dostępnym z mostu (np. 0.0.0.0 lub adres docker0), nie tylko 127.0.0.1
+- Tylko 127.0.0.1
+- Na adresie 127.0.0.11
+- Na adresie kontenera
+E: 127.0.0.1 gospodarza nie jest osiągalny z sieci kontenera.
+#Q
+Q: Co robi --network host?
++ Kontener używa sieci gospodarza — bez izolacji i bez potrzeby -p
+- Tworzy sieć o nazwie host
+- Odłącza kontener od sieci
+- Łączy kontener z docker0
+E: Porty aplikacji otwierają się bezpośrednio na gospodarzu.
+#Q
+Q: Co robi --network none?
++ Kontener ma tylko interfejs lo — brak dostępu do sieci
+- Kontener ma dostęp tylko do internetu
+- Kontener używa sieci gospodarza
+- Błąd
+E: Przydatne dla zadań przetwarzania bez sieci.
+#Q
+Q: Do czego służy sterownik macvlan?
++ Daje kontenerowi własny adres MAC i IP w sieci lokalnej
+- Szyfruje sieć
+- Łączy kontenery przez VPN
+- Tworzy sieć tylko dla localhost
+E: Kontener wygląda w sieci jak osobna maszyna.
+#Q
+Q: Jak dodać kontener do drugiej sieci, gdy już działa?
++ docker network connect SIEĆ KONTENER
+- docker network add KONTENER
+- docker restart --network
+- Nie da się
+E: Kontener może być w wielu sieciach jednocześnie.
+#Q
+Q: Do czego służy opcja --alias przy docker network connect?
++ Dodaje kontenerowi dodatkową nazwę DNS w danej sieci
+- Zmienia nazwę kontenera
+- Zmienia adres IP
+- Tworzy kopię kontenera
+E: Przy uruchomieniu odpowiednikiem jest --network-alias.
+#Q
+Q: Jak wypisać kontenery podłączone do sieci z adresami?
++ docker network inspect SIEĆ (sekcja Containers)
+- docker ps --network
+- ip neigh
+- docker network ls -v
+E: Szablon -f pozwala wypisać tylko nazwy i adresy.
+#Q
+Q: Co pokazuje `docker inspect -f '{{.NetworkSettings.IPAddress}}'` dla kontenera w sieci użytkownika?
++ Często pusty wynik — adresy w sieciach użytkownika są w .NetworkSettings.Networks
+- Adres gospodarza
+- Adres DNS
+- Zawsze 172.17.0.2
+E: Pole IPAddress dotyczy sieci domyślnej.
+#Q
+Q: Jak bezpiecznie udostępnić aplikację z kontenera na zewnątrz?
++ Opublikować tylko port reverse proxy (80/443), aplikację i bazę zostawić w sieci wewnętrznej
+- Opublikować porty wszystkich kontenerów
+- Użyć --network host dla bazy
+- Wyłączyć zaporę
+E: Jedno wejście łatwiej zabezpieczyć i monitorować.
+#Q
+Q: Jaki adres proxy_pass ma Nginx w kontenerze web w lekcji?
++ http://sklep:8080
+- http://localhost:8080
+- http://172.18.0.3:8080
+- http://srv-docker:8080
+E: Nazwa usługi w sieci sklep-net.
+#Q
+Q: Co sprawdza polecenie `docker exec sklep getent hosts db web`?
++ Rozwiązywanie nazw db i web z wnętrza kontenera sklep
+- Plik /etc/hosts gospodarza
+- Połączenie HTTP
+- Stan bazy
+E: getent korzysta z mechanizmu NSS w kontenerze.
+#Q
+Q: Jak bez narzędzi sieciowych w obrazie sprawdzić, czy port bazy jest otwarty (gdy jest bash)?
++ bash -c '</dev/tcp/db/5432'
+- ping db:5432
+- cat /dev/net/db
+- curl db:5432 zawsze
+E: Specjalna ścieżka basha otwiera połączenie TCP.
+#Q
+Q: Co oznacza wynik nc -zv „succeeded!” z lubuntu-nauka do 192.168.56.30:5432?
++ Port bazy jest osiągalny z sieci
+- Baza ma hasło
+- Port jest zamknięty
+- Połączenie jest szyfrowane
+E: W lekcji to dowód, że ufw nie chronił bazy.
+#Q
+Q: Co oznacza wynik Connection refused z sieci przy porcie opublikowanym na 127.0.0.1?
++ Port nie nasłuchuje na adresie sieciowym serwera — z zewnątrz nie ma dostępu
+- Baza nie działa
+- ufw zablokował połączenie
+- Hasło jest błędne
+E: Lokalnie pg_isready nadal działa.
+#Q
+Q: Co sprawdza pg_isready?
++ Czy serwer PostgreSQL przyjmuje połączenia
+- Czy baza ma kopie zapasowe
+- Czy hasło jest poprawne
+- Czy Docker działa
+E: Wynik: accepting connections.
+#Q
+Q: Jak w nftables zobaczyć reguły Dockera dla portu 8081?
++ sudo nft list ruleset | grep 8081
+- sudo ufw show 8081
+- sudo nft show docker
+- iptables-save --nft
+E: Docker może używać backendu iptables-nft.
+#Q
+Q: Jakie polecenie wypisuje reguły tablicy nat łańcucha DOCKER?
++ sudo iptables -t nat -S DOCKER
+- sudo iptables -L DOCKER
+- sudo ufw nat
+- docker network nat
+E: -S wypisuje reguły w formacie poleceń.
+#Q
+Q: Masz ufw z deny incoming i opublikowany port 5432. Czy ufw deny 5432 rozwiąże problem?
++ Nie — reguła trafi do INPUT, a ruch do kontenera przechodzi przez FORWARD
+- Tak
+- Tylko po restarcie Dockera
+- Tylko dla IPv6
+E: Trzeba użyć DOCKER-USER lub nie publikować portu.
+#Q
+Q: Dlaczego problem z ufw jest szczególnie groźny na serwerze z publicznym adresem?
++ Opublikowana baza jest dostępna z całego internetu
+- Bo serwer się restartuje
+- Bo ufw przestaje działać
+- Bo Docker wyłącza SSH
+E: Boty skanują porty baz danych nieustannie.
+#Q
+Q: Jak sprawdzić, czy kontener ma dostęp do internetu?
++ docker run --rm busybox wget -qO- -T 3 http://example.com
+- docker ping internet
+- docker network inspect internet
+- curl na gospodarzu
+E: Kontener z --network none nie ma dostępu.
+#Q
+Q: Do czego służy nsenter -t PID -n ss -tn w diagnozie kontenera?
++ Pokazuje połączenia TCP kontenera narzędziem ss gospodarza
+- Restartuje sieć
+- Pokazuje połączenia gospodarza
+- Zmienia adres IP kontenera
+E: Działa nawet dla obrazów bez ss.
+#Q
+Q: Jaką trasę domyślną ma kontener w sieci sklep-net?
++ Przez bramę mostu sieci (np. 172.18.0.1) — adres gospodarza na tym moście
+- Przez 127.0.0.11
+- Przez router domowy bezpośrednio
+- Brak trasy
+E: Gospodarz przekazuje ruch dalej z NAT.
+#Q
+Q: Co zrobić z adresem localhost w konfiguracji aplikacji przenoszonej do kontenera?
++ Zastąpić nazwą usługi (np. db) lub host.docker.internal i przekazać przez zmienne
+- Zostawić
+- Zastąpić 127.0.0.11
+- Zastąpić adresem IP kontenera
+E: localhost wskazuje sam kontener.
+#Q
+Q: Jak z Windows połączyć się z bazą w kontenerze Docker Desktop opublikowaną jako -p 5433:5432?
++ localhost:5433
+- adres WSL:5432
+- host.docker.internal:5433 z Windows
+- 172.17.0.2:5432
+E: Docker Desktop przekazuje porty do Windows.
+#Q
+Q: Jak kontener w Docker Desktop połączy się z usługą działającą w Windows?
++ Przez host.docker.internal
+- Przez localhost
+- Przez /mnt/c
+- Nie da się
+E: Nazwa wskazuje gospodarza (Windows).
+#Q
+Q: Co dzieje się z opcją -p przy --network host?
++ Jest ignorowana — Docker wypisuje ostrzeżenie
+- Działa jak zwykle
+- Powoduje błąd startu zawsze
+- Przenosi port na 127.0.0.1
+E: Port i tak otwiera się na gospodarzu.
+#Q
+Q: Dlaczego --network host bywa używany mimo braku izolacji?
++ Dla wydajności lub protokołów trudnych do przekazania przez NAT
+- Bo jest bezpieczniejszy
+- Bo wymaga go Compose
+- Bo przyspiesza budowanie obrazów
+E: Stosuj świadomie.
+#Q
+Q: Jakie interfejsy podłączone są do mostu docker0?
++ Końce par veth kontenerów z sieci domyślnej
+- eth0 gospodarza
+- lo
+- wlan0
+E: ip link show master docker0 je wypisze.
+#Q
+Q: Co jest drugim końcem pary veth widocznej na gospodarzu?
++ Interfejs eth0 w przestrzeni sieci kontenera
+- Interfejs lo gospodarza
+- Router
+- Plik w /var/lib/docker
+E: Para veth łączy kontener z mostem.
+#Q
+Q: Jaki adres ma brama docker0 na gospodarzu?
++ 172.17.0.1
+- 172.17.0.2
+- 127.0.0.1
+- 192.168.56.30
+E: Pierwszy adres zakresu przydziela się mostowi.
+#Q
+Q: Jak usunąć sieć lab-net?
++ docker network rm lab-net (gdy nie ma w niej kontenerów)
+- ip link del lab-net
+- docker rm lab-net
+- docker network prune lab-net
+E: docker network prune usuwa wszystkie nieużywane sieci.
+#Q
+Q: Co robi docker network prune?
++ Usuwa wszystkie sieci użytkownika, do których nie jest podłączony żaden kontener
+- Usuwa sieć domyślną
+- Usuwa kontenery
+- Czyści reguły iptables
+E: Sieci bridge, host i none nie są usuwane.
+#Q
+Q: Kontener web ma -p 80:80, a sklep i db nie mają -p. Co jest dostępne z sieci?
++ Tylko port 80 Nginx
+- Porty 80, 8080 i 5432
+- Nic
+- Tylko 5432
+E: Aplikacja i baza są dostępne tylko wewnątrz sklep-net.
+#Q
+Q: Jak z gospodarza połączyć się z bazą db, która nie ma opublikowanego portu?
++ docker exec db psql ... lub tymczasowy kontener klienta w tej samej sieci
+- psql -h localhost
+- ssh db
+- Nie da się wcale
+E: Można też chwilowo opublikować port na 127.0.0.1.
+#Q
+Q: Co zrobi `docker run --rm --network sklep-net postgres:16 psql -h db -U sklep sklep`?
++ Uruchomi klienta psql w tej samej sieci i połączy się z bazą db
+- Uruchomi drugą bazę
+- Usunie bazę
+- Zmieni hasło
+E: Hasło trzeba podać (np. PGPASSWORD) lub wpisać.
+#Q
+Q: Jakie ograniczenie DNS dotyczy nazw kontenerów?
++ Działają tylko w obrębie sieci, do której kontener jest podłączony
+- Działają w całym internecie
+- Działają tylko w sieci domyślnej
+- Działają tylko z gospodarza
+E: Gospodarz nie rozwiązuje nazw kontenerów bez dodatkowej konfiguracji.
+#Q
+Q: Czy z gospodarza `curl http://sklep:8080` zadziała?
++ Nie — gospodarz nie używa DNS Dockera; trzeba użyć opublikowanego portu lub adresu IP
+- Tak, zawsze
+- Tylko z sudo
+- Tylko w Compose
+E: Nazwy kontenerów rozwiązuje DNS 127.0.0.11 wewnątrz sieci.
+#Q
+Q: Co jest typowym rozwiązaniem bazy dla programisty na laptopie?
++ Kontener z -p 127.0.0.1:5433:5432 (lub localhost w Docker Desktop) używany przez IntelliJ IDEA
+- Baza na serwerze produkcyjnym
+- Baza z -p 0.0.0.0:5432 w sieci firmowej
+- Baza z --network host w chmurze
+E: Port lokalny nie wystawia bazy kolegom w sieci.
+#Q
+Q: Co zawiera /etc/hosts kontenera uruchomionego z --add-host=host.docker.internal:host-gateway?
++ Wpis host.docker.internal z adresem bramy gospodarza
+- Wpisy wszystkich kontenerów
+- Pusty plik
+- Wpis localhost wskazujący gospodarza
+E: Docker dopisuje dodatkowe hosty do /etc/hosts kontenera.
+#Q
+Q: W jakiej kolejności Docker przetwarza ruch do opublikowanego portu?
++ PREROUTING (DNAT) → FORWARD (DOCKER-USER, DOCKER) → kontener
+- INPUT → ufw → kontener
+- OUTPUT → kontener
+- POSTROUTING → INPUT
+E: Łańcuch INPUT nie bierze udziału.
+#Q
+Q: Jaką rolę pełni conntrack w regułach Dockera?
++ Śledzi połączenia, dzięki czemu odpowiedzi kontenera wracają do klienta, a reguły znają pierwotny port
+- Szyfruje ruch
+- Rozwiązuje nazwy
+- Tworzy mosty
+E: Moduł conntrack udostępnia --ctorigdstport.
+#Q
+Q: Co jest zaletą sieci użytkownika poza DNS?
++ Izolacja — kontenery z różnych sieci nie widzą się nawzajem
+- Szybsze dyski
+- Mniejsze obrazy
+- Automatyczne kopie zapasowe
+E: Aplikacje różnych projektów można oddzielić sieciami.
+#Q
+Q: Czy kontener z sieci sklep-net połączy się z kontenerem z domyślnej sieci bridge po adresie IP?
++ Zwykle nie — sieci są od siebie izolowane regułami Dockera
+- Tak, zawsze
+- Tylko przez nazwę
+- Tylko dla UDP
+E: Kontener trzeba podłączyć do wspólnej sieci.
+#Q
+Q: Co jest wynikiem `docker port demo` dla -p 8081:80?
++ 80/tcp -> 0.0.0.0:8081 oraz 80/tcp -> [::]:8081
+- 8081/tcp -> 80
+- 80 -> 8081 udp
+- Brak wyniku
+E: Docker publikuje port dla IPv4 i IPv6.
+#Q
+Q: Co należy zrobić z regułą DOCKER-USER, by przetrwała restart?
++ Zapisać ją w trwałej konfiguracji zapory (np. skrypt przy starcie lub iptables-persistent)
+- Nic — Docker ją zapisuje
+- Dopisać do ufw
+- Dopisać do /etc/hosts
+E: Reguły dodane poleceniem iptables są w pamięci.
+#Q
+Q: Jak sprawdzić, czy kontener `sklep` nawiązał połączenie z bazą?
++ Logi (HikariPool ... Start completed) lub połączenia ESTAB w ss przez nsenter
+- docker port sklep
+- docker images
+- ufw status
+E: Pula połączeń HikariCP loguje start.
+#Q
+Q: Co jest typowym objawem złej nazwy hosta bazy w konfiguracji kontenera?
++ UnknownHostException w logu aplikacji
+- Kod 137
+- Brak logów
+- Błąd 413
+E: Nazwa nie istnieje w DNS sieci.
+#Q
+Q: Kontener sklep i db są w różnych sieciach. Jak je połączyć bez przebudowy?
++ docker network connect sklep-net db (lub odwrotnie)
+- Restart obu kontenerów
+- Zmiana obrazu
+- Publikacja portu 5432 na 0.0.0.0
+E: Kontener może należeć do kilku sieci.
+#Q
+Q: Gdzie w Compose deklaruje się sieci?
++ W sekcji networks na najwyższym poziomie i przy usługach
+- W Dockerfile
+- W /etc/docker/daemon.json
+- W pliku .env
+E: Bez deklaracji Compose tworzy sieć domyślną projektu.
+#Q
+Q: Jaki zakres dostanie zwykle druga sieć użytkownika?
++ Kolejny zakres, np. 172.18.0.0/16 lub 172.19.0.0/16
+- Ten sam co docker0
+- 192.168.56.0/24
+- 127.0.0.0/8
+E: Zakresy można ustawić ręcznie --subnet.
+#Q
+Q: Jak utworzyć sieć z własnym zakresem adresów?
++ docker network create --subnet 10.50.0.0/24 NAZWA
+- docker network create --range 10.50
+- ip addr add 10.50.0.0/24 dev docker0
+- Nie da się
+E: Przydatne, gdy domyślne zakresy kolidują z siecią firmową.
+#Q
+Q: Dlaczego domyślne zakresy 172.17-172.31 mogą sprawiać problem w firmie?
++ Mogą kolidować z adresacją sieci firmowej lub VPN
+- Są publiczne
+- Nie obsługują IPv4
+- Są zarezerwowane dla Windows
+E: Wtedy ustawia się inne zakresy w daemon.json lub przy tworzeniu sieci.
+#Q
+Q: W jakim pliku konfiguruje się domyślne zakresy sieci Dockera?
++ /etc/docker/daemon.json (np. default-address-pools)
+- /etc/hosts
+- /etc/network/interfaces
+- compose.yaml
+E: Zmiana wymaga restartu silnika.
+#Q
+Q: Co pokazuje `docker run --rm busybox nslookup demo` w sieci domyślnej?
++ NXDOMAIN — nazwa nie istnieje w DNS
+- Adres 172.17.0.3
+- Adres gospodarza
+- Timeout
+E: W sieci domyślnej nie ma DNS kontenerów.
+#Q
+Q: Jak sprawdzić, który kontener zajmuje port 80 na gospodarzu?
++ docker ps --filter publish=80
+- docker port 80
+- ss -p (zawsze pokazuje nazwę kontenera)
+- docker network ls
+E: ss pokaże docker-proxy, a nie nazwę kontenera.
+#Q
+Q: Co jest ryzykiem uruchomienia bazy z --network host?
++ Baza nasłuchuje bezpośrednio na interfejsach gospodarza — jej dostępność zależy tylko od jej konfiguracji i zapory gospodarza
+- Baza nie ma sieci
+- Baza nie może się uruchomić
+- Brak ryzyka
+E: W trybie host reguły ufw działają, ale izolacja kontenera znika.
+#Q
+Q: Masz dwa kontenery z -p 8080:8080. Co się stanie przy drugim?
++ Błąd: port is already allocated
+- Oba działają na tym samym porcie
+- Drugi dostaje losowy port
+- Pierwszy zostaje zatrzymany
+E: Port gospodarza może być zajęty tylko raz.
+#Q
+Q: Jak uruchomić drugą instancję aplikacji, gdy port 8080 jest zajęty?
++ Opublikować ją na innym porcie gospodarza, np. -p 8082:8080
+- Zmienić port w obrazie
+- Użyć --network none
+- Nie da się
+E: Port w kontenerze może być ten sam.
+#Q
+Q: Co jest dobrym pierwszym krokiem diagnozy „nie mogę się połączyć z kontenerem z sieci”?
++ docker port NAZWA i sudo ss -tlnp — czy port jest opublikowany i na jakim adresie
+- Restart serwera
+- Usunięcie obrazu
+- Zmiana DNS
+E: Port na 127.0.0.1 nie jest dostępny z sieci.
+#Q
+Q: Jakie polecenie usunie wszystkie reguły z łańcucha DOCKER-USER poza ostatnią?
++ Usuwanie po numerach: sudo iptables -D DOCKER-USER 1 (powtarzane)
+- sudo iptables -F (bez łańcucha)
+- docker network prune
+- sudo ufw reset
+E: iptables -F bez nazwy łańcucha wyczyściłby wszystkie reguły, także Dockera.
+#Q
+Q: Dlaczego nie czyści się reguł iptables poleceniem iptables -F na serwerze z Dockerem?
++ Usunie reguły Dockera — kontenery stracą sieć do restartu silnika
+- Bo jest wolne
+- Bo usuwa kontenery
+- Bo wyłącza SSH na stałe
+E: Docker odtwarza reguły przy restarcie.
+#Q
+Q: Co pokaże `sudo iptables -L ufw-user-input -nv` w kontekście portu 5432 opublikowanego przez Dockera?
++ Brak związku z 5432 — reguły ufw dotyczą ruchu do gospodarza
+- Regułę ACCEPT dla 5432
+- Regułę DNAT
+- Błąd
+E: ufw nie wie o portach Dockera.
+#Q
+Q: Jak w lekcji ograniczono dostęp do portu 8081?
++ Regułą DROP w DOCKER-USER dla adresów spoza 192.168.56.0/24
+- Regułą ufw deny
+- Zmianą portu
+- Opcją --network none
+E: Reguła używa conntrack --ctorigdstport 8081.
+#Q
+Q: Co wypisze `docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' bridge`?
++ 172.17.0.0/16
+- docker0
+- 127.0.0.11
+- bridge
+E: IPAM — zarządzanie adresami sieci.
+#Q
+Q: Czym różni się sieć użytkownika od sieci domyślnej pod względem nazw?
++ W sieci użytkownika działa DNS z nazwami kontenerów i aliasami
+- Niczym
+- Sieć domyślna ma lepszy DNS
+- Sieć użytkownika nie ma DNS
+E: To główny powód, by zawsze tworzyć własne sieci.
+#Q
+Q: Kontener ma nazwę sklep-stack-sklep-1 w Compose. Pod jaką nazwą widzą go inne usługi?
++ sklep (nazwa usługi) — oraz pełna nazwa kontenera
+- Tylko sklep-stack-sklep-1
+- Tylko jego IP
+- localhost
+E: Compose rejestruje nazwę usługi jako alias.
+#Q
+Q: Co dzieje się z ruchem wychodzącym z kontenera do internetu?
++ Przechodzi przez bramę mostu i MASQUERADE na adres gospodarza
+- Jest blokowany
+- Idzie przez 127.0.0.11
+- Idzie przez docker-proxy
+E: Dla świata zewnętrznego ruch pochodzi z gospodarza.
+#Q
+Q: Jak sprawdzić, czy port 80 kontenera web jest dostępny z innej maszyny?
++ Z tej maszyny: curl lub nc -zv ADRES_SERWERA 80
+- docker port web na serwerze wystarczy
+- ping serwera
+- docker logs web
+E: Test z zewnątrz potwierdza rzeczywistą dostępność.
+#Q
+Q: Co jest prawdą o kontenerach i protokole IPv6 przy -p?
++ Docker publikuje port także na [::], więc port jest dostępny przez IPv6, jeśli gospodarz ma adres IPv6
+- IPv6 nigdy nie działa
+- Port jest dostępny tylko przez IPv6
+- IPv6 wymaga --network host
+E: Reguły zapory warto sprawdzać dla obu protokołów.
