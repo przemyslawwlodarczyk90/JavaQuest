@@ -1,0 +1,572 @@
+#EX
+// 1
+P: Na `sklep01` zainstaluj minimalne środowisko uruchomieniowe Javy 21 (JRE headless) i sprawdź wersję oraz pełną ścieżkę do `java`.
+H: `openjdk-21-jre-headless`; `readlink -f "$(command -v java)"`.
+S:
+ssh anna@203.0.113.50 'sudo apt-get install -y -qq openjdk-21-jre-headless >/dev/null; java -version 2>&1 | head -1; readlink -f "$(command -v java)"'
+#EX
+// 2
+P: Potwierdź, że zainstalowano wersję headless (bez JDK i bibliotek graficznych): wypisz pakiety openjdk i sprawdź brak `javac` oraz `libawt_xawt.so`.
+H: `dpkg -l | grep openjdk`; `command -v javac`.
+S:
+ssh anna@203.0.113.50 'dpkg -l | awk "/^ii/ && /openjdk/ {print \$2}"; command -v javac || echo "brak javac (dobrze)"; find /usr/lib/jvm -name libawt_xawt.so 2>/dev/null | grep . || echo "brak bibliotek graficznych (headless)"'
+#EX
+// 3
+P: Zainstaluj PostgreSQL 16 i sprawdź klaster (`pg_lsclusters`) oraz stan usługi.
+H: pakiet `postgresql`; `systemctl is-active postgresql@16-main`.
+S:
+ssh anna@203.0.113.50 'sudo apt-get install -y -qq postgresql >/dev/null; pg_lsclusters; systemctl is-active postgresql@16-main'
+#EX
+// 4
+P: Sprawdź, że baza nasłuchuje wyłącznie lokalnie: wartość `listen_addresses` i porty w `ss`.
+H: `psql -Atc 'SHOW listen_addresses'`; `ss -tlnp | grep 5432`.
+S:
+ssh anna@203.0.113.50 "sudo -u postgres psql -Atc 'SHOW listen_addresses'; sudo ss -tlnp | grep 5432 | awk '{print \$4}'"
+#EX
+// 5
+P: Potwierdź z laptopa, że port 5432 serwera NIE jest dostępny z zewnątrz (baza lokalna + zapora z lekcji 3).
+H: `nc -zv -w 3 203.0.113.50 5432`.
+S:
+nc -zv -w 3 203.0.113.50 5432 2>&1 | tail -1
+#EX
+// 6
+P: Wygeneruj losowe hasło aplikacji do pliku sekretu `/etc/sklep/poswiadczenia/spring.datasource.password` (root, 600). Sprawdź prawa.
+H: `umask 077; openssl rand -base64 24 > plik`; `stat -c '%U %a %n'`.
+S:
+ssh anna@203.0.113.50 "sudo sh -c 'umask 077; openssl rand -base64 24 > /etc/sklep/poswiadczenia/spring.datasource.password'; sudo stat -c '%U %a %n' /etc/sklep/poswiadczenia/spring.datasource.password"
+#EX
+// 7
+P: Utwórz rolę `sklep` (LOGIN) z hasłem z pliku i bazę `sklep` należącą do tej roli. Hasło przekaż zmienną psql, nie w treści polecenia (nie trafi do `ps` ani historii).
+H: `psql -v haslo="$(...)" <<SQL ... PASSWORD :'haslo' ...`.
+S:
+ssh anna@203.0.113.50 'sudo -u postgres psql -q -v haslo="$(sudo cat /etc/sklep/poswiadczenia/spring.datasource.password)" <<SQL
+CREATE ROLE sklep LOGIN PASSWORD :'"'"'haslo'"'"';
+CREATE DATABASE sklep OWNER sklep;
+SQL
+sudo -u postgres psql -Atc "\du sklep" | head -1; sudo -u postgres psql -Atlc "SELECT datname FROM pg_database WHERE datname='"'"'sklep'"'"'"'
+#EX
+// 8
+P: Ogranicz dostęp w `pg_hba.conf`: rola `sklep` do bazy `sklep` z adresu `127.0.0.1/32` metodą `scram-sha-256`. Przeładuj konfigurację.
+H: Dodaj wpis `host sklep sklep 127.0.0.1/32 scram-sha-256`; `systemctl reload postgresql@16-main`.
+S:
+ssh anna@203.0.113.50 'grep -qE "^host\s+sklep\s+sklep\s+127" /etc/postgresql/16/main/pg_hba.conf || echo "host    sklep           sklep           127.0.0.1/32            scram-sha-256" | sudo tee -a /etc/postgresql/16/main/pg_hba.conf >/dev/null; sudo systemctl reload postgresql@16-main; grep -E "^host\s+sklep" /etc/postgresql/16/main/pg_hba.conf'
+#EX
+// 9
+P: Sprawdź połączenie jako rola `sklep` przez `127.0.0.1` z hasłem z pliku (bez hasła w argumentach).
+H: `PGPASSWORD="$(sudo cat ...)" psql -h 127.0.0.1 -U sklep -d sklep`.
+S:
+ssh anna@203.0.113.50 'PGPASSWORD="$(sudo cat /etc/sklep/poswiadczenia/spring.datasource.password)" psql -h 127.0.0.1 -U sklep -d sklep -Atc "SELECT current_user, current_database()"'
+#EX
+// 10
+P: Rozpisz budżet pamięci serwera (4 GB) w `~/infra/sklep01/pliki/pamiec.md`: JVM, PostgreSQL, system, pamięć podręczna. Zatwierdź.
+H: Lista z wartościami sumującymi się do ~3,8 GiB.
+S:
+cd ~/infra/sklep01
+cat > pliki/pamiec.md <<'EOF'
+Budzet pamieci sklep01 (RAM 3.8 GiB):
+- JVM sklep: MemoryMax=2G, MaxRAMPercentage=70 -> sterta ~1.4G + poza sterta ~0.4G = ~1.8G
+- PostgreSQL: shared_buffers 512M + polaczenia (50 x work_mem 8M, procesy) ~0.3G = ~0.8G
+- system (nginx, fail2ban, journald): ~0.3G
+- pamiec podreczna plikow: reszta ~0.9G (effective_cache_size=1500M)
+Warunek: HikariCP maximum-pool-size 10 <= max_connections 50
+EOF
+git add pliki/pamiec.md && git commit -qm "Budzet pamieci serwera" && cat pliki/pamiec.md
+#EX
+// 11
+P: Ustaw parametry pamięci PostgreSQL w pliku `conf.d/90-sklep01.conf` zgodnie z budżetem (shared_buffers 512MB, effective_cache_size 1500MB, work_mem 8MB, max_connections 50) i zrestartuj bazę.
+H: Plik w `/etc/postgresql/16/main/conf.d/`.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/postgresql/16/main/conf.d/90-sklep01.conf >/dev/null <<EOF
+# budzet pamieci sklep01 (4 GB)
+shared_buffers = 512MB
+effective_cache_size = 1500MB
+work_mem = 8MB
+maintenance_work_mem = 128MB
+max_connections = 50
+EOF
+sudo systemctl restart postgresql@16-main; systemctl is-active postgresql@16-main'
+#EX
+// 12
+P: Sprawdź w `pg_settings`, że parametry pamięci i liczby połączeń zostały zastosowane.
+H: `SELECT name, setting, unit FROM pg_settings WHERE name IN (...)`.
+S:
+ssh anna@203.0.113.50 "sudo -u postgres psql -c \"SELECT name, setting, unit FROM pg_settings WHERE name IN ('shared_buffers','effective_cache_size','work_mem','max_connections')\""
+#EX
+// 13
+P: Sprawdź efektywną stertę JVM przy limicie 2 GB i MaxRAMPercentage=70 (symulacja ustawień usługi), bez uruchamiania aplikacji.
+H: `systemd-run --scope -p MemoryMax=2G java -XX:MaxRAMPercentage=70 -XX:+PrintFlagsFinal -version | grep MaxHeapSize`.
+S:
+ssh anna@203.0.113.50 'sudo systemd-run -q --scope -p MemoryMax=2G java -XX:MaxRAMPercentage=70 -XX:+PrintFlagsFinal -version 2>/dev/null | grep " MaxHeapSize "'
+#EX
+// 14
+P: Zapisz zmienne uruchomieniowe aplikacji w `/etc/sklep/sklep.env` (JAVA_OPTS z MaxRAMPercentage i ExitOnOutOfMemoryError, URL JDBC, nazwa użytkownika bazy). Hasło NIE trafia do tego pliku.
+H: Plik 640 root:sklep; hasło przez LoadCredential w lekcji 5.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/sklep/sklep.env >/dev/null <<EOF
+JAVA_OPTS=-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError
+SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/sklep
+SPRING_DATASOURCE_USERNAME=sklep
+SERVER_ADDRESS=127.0.0.1
+SERVER_PORT=8080
+EOF
+sudo chown root:sklep /etc/sklep/sklep.env; sudo chmod 640 /etc/sklep/sklep.env; sudo stat -c "%U:%G %a %n" /etc/sklep/sklep.env'
+#EX
+// 15
+P: Zweryfikuj, że hasła NIE ma w `sklep.env` ani w argumentach procesów (ps), a jest tylko w pliku sekretu.
+H: `grep -i password sklep.env`; sprawdzenie, że plik sekretu istnieje i ma 600.
+S:
+ssh anna@203.0.113.50 'grep -i password /etc/sklep/sklep.env || echo "brak hasla w sklep.env (dobrze)"; sudo stat -c "%a %n" /etc/sklep/poswiadczenia/spring.datasource.password'
+#EX
+// 16
+P: Odtwórz pułapkę „hojnych” ustawień: pokaż, co stałoby się przy `-Xmx3g` i `shared_buffers 1GB` na 4 GB RAM — policz sumę i porównaj z dostępną pamięcią.
+H: Sumuj 3G (JVM) + ~1.5G (JVM poza sterta nie, ale baza 1G + procesy) i porównaj z 3.8G.
+S:
+ssh anna@203.0.113.50 'free -g | awk "/^Mem/ {print \"RAM:\", \$2, \"GiB\"}"; echo "JVM -Xmx3g (+~0.5G poza sterta) = ~3.5G; PostgreSQL shared_buffers 1G (+polaczenia) = ~1.3G; suma ~4.8G > 3.8G -> OOM"'
+#EX
+// 17
+P: Sprawdź, czy w dzienniku jądra są jakiekolwiek zdarzenia OOM (po poprawnej konfiguracji powinno być 0).
+H: `journalctl -k | grep -c oom-kill`.
+S:
+ssh anna@203.0.113.50 'sudo journalctl -k --since today --no-pager | grep -c -i "oom-kill\|Out of memory" || true; echo "(0 = brak zdarzen OOM)"'
+#EX
+// 18
+P: Sprawdź zgodność puli połączeń: oczekiwana pula HikariCP (10) musi mieścić się w max_connections (50) z zapasem na administrację i kopie. Policz bieżące połączenia do bazy.
+H: `SELECT count(*) FROM pg_stat_activity`.
+S:
+ssh anna@203.0.113.50 "sudo -u postgres psql -Atc 'SELECT count(*) AS polaczenia FROM pg_stat_activity'; echo 'HikariCP 10 + admin/kopie < max_connections 50 -> OK'"
+#EX
+// 19
+P: Skopiuj konfiguracje bazy (conf.d, wpis pg_hba) do repozytorium infrastruktury (bez haseł) i zatwierdź.
+H: scp pliku conf.d; wpis pg_hba zapisz ręcznie (nie zawiera hasła).
+S:
+cd ~/infra/sklep01
+scp anna@203.0.113.50:/etc/postgresql/16/main/conf.d/90-sklep01.conf pliki/
+echo "host    sklep           sklep           127.0.0.1/32            scram-sha-256" > pliki/pg_hba-sklep.txt
+git add pliki/90-sklep01.conf pliki/pg_hba-sklep.txt
+git commit -qm "Etap 4: Java, PostgreSQL, budzet pamieci" && echo ok
+#EX
+// 20
+P: Zweryfikuj całościowo etap 4: wersja Javy, stan bazy, nasłuch tylko lokalny, połączenie roli sklep, parametry pamięci. To dowód gotowości środowiska uruchomieniowego.
+H: Połącz kilka sprawdzeń w jeden przegląd.
+S:
+ssh anna@203.0.113.50 'echo "== Java:"; java -version 2>&1 | head -1; echo "== Baza:"; systemctl is-active postgresql@16-main; sudo ss -tlnp | grep 5432 | awk "{print \$4}"; echo "== Polaczenie sklep:"; PGPASSWORD="$(sudo cat /etc/sklep/poswiadczenia/spring.datasource.password)" psql -h 127.0.0.1 -U sklep -d sklep -Atc "SELECT 1"; echo "== Pamiec:"; sudo -u postgres psql -Atc "SELECT setting FROM pg_settings WHERE name=\x27shared_buffers\x27"'
+#Q
+Q: Jaki pakiet Javy instaluje się na serwerze produkcyjnym aplikacji sklep?
++ openjdk-21-jre-headless
+- openjdk-21-jdk
+- default-jdk
+- oracle-java21
+E: JRE wystarcza do uruchomienia, headless — bez grafiki.
+#Q
+Q: Dlaczego na serwerze nie instaluje się pełnego JDK?
++ Serwer uruchamia aplikację, nie kompiluje — mniej pakietów, mniej podatności
+- Bo JDK nie działa na serwerze
+- Bo JDK jest płatne
+- Bo wymaga grafiki
+E: Kompilacja odbywa się w CI.
+#Q
+Q: Co oznacza wersja headless JRE?
++ Bez bibliotek graficznych (AWT/Swing)
+- Bez kompilatora tylko
+- Bez sieci
+- Bez konsoli
+E: Serwer nie potrzebuje grafiki.
+#Q
+Q: Jaką wersję PostgreSQL przewiduje projekt?
++ PostgreSQL 16 z repozytorium Ubuntu 24.04
+- PostgreSQL 9
+- PostgreSQL 17 z PGDG zawsze
+- MySQL 8
+E: Z repozytorium dystrybucji, chyba że jest powód na nowszą.
+#Q
+Q: Na jakim adresie domyślnie nasłuchuje PostgreSQL w tym projekcie?
++ localhost (127.0.0.1) — tylko lokalnie
+- 0.0.0.0
+- 203.0.113.50
+- Na wszystkich interfejsach
+E: Baza dostępna tylko dla aplikacji na tym serwerze.
+#Q
+Q: Jak nazywa się usługa klastra PostgreSQL 16 w Ubuntu?
++ postgresql@16-main
+- postgres16
+- pgsql.service
+- postgresql.service jako jedyna
+E: postgresql.service jest jednostką zbiorczą.
+#Q
+Q: Które polecenie pokazuje klastry PostgreSQL?
++ pg_lsclusters
+- psql -l
+- systemctl list-postgres
+- pg_ctl status
+E: Wersja, nazwa, port, stan, katalog danych.
+#Q
+Q: Jak generuje się hasło aplikacji w projekcie?
++ Losowo (openssl rand) do pliku w katalogu sekretów (600, root)
+- Ręcznie wpisane w application.properties
+- To samo co hasło anny
+- Puste
+E: Hasło nie trafia do kodu ani historii powłoki.
+#Q
+Q: Dlaczego hasło przekazuje się do psql zmienną (-v), a nie w treści polecenia?
++ Żeby nie trafiło do historii powłoki ani do argumentów widocznych w ps
+- Bo psql nie przyjmuje haseł inaczej
+- Żeby było szybciej
+- Bez powodu
+E: Argumenty procesów są widoczne dla innych.
+#Q
+Q: Jak w psql użyć zmiennej z hasłem w CREATE ROLE?
++ psql -v haslo=... i PASSWORD :'haslo'
+- PASSWORD $haslo
+- PASSWORD {{haslo}}
+- PASSWORD %haslo%
+E: :'nazwa' wstawia wartość jako literał tekstowy.
+#Q
+Q: Jaką rolę i bazę tworzy się dla aplikacji?
++ Rolę sklep (LOGIN) i bazę sklep należącą do tej roli
+- Konto postgres
+- Rolę admin z superuser
+- Bazę o nazwie aplikacji w koncie postgres
+E: Aplikacja nie używa konta postgres.
+#Q
+Q: Co ogranicza wpis `host sklep sklep 127.0.0.1/32 scram-sha-256` w pg_hba.conf?
++ Dostęp roli sklep do bazy sklep tylko z 127.0.0.1, z uwierzytelnianiem SCRAM
+- Dostęp wszystkich ról
+- Dostęp z całej sieci
+- Logowanie bez hasła
+E: scram-sha-256 to bezpieczna metoda uwierzytelniania.
+#Q
+Q: Co to jest scram-sha-256 w PostgreSQL?
++ Nowoczesna metoda uwierzytelniania hasłem (bezpieczniejsza niż md5)
+- Szyfrowanie dysku
+- Protokół sieciowy
+- Format kopii
+E: Domyślna w nowych instalacjach.
+#Q
+Q: Ile RAM ma serwer sklep01?
++ 4 GB (ok. 3,8 GiB dostępne)
+- 16 GB
+- 1 GB
+- 64 GB
+E: Budżet pamięci dzieli się między JVM, bazę i system.
+#Q
+Q: Jakie składniki dzielą pamięć serwera?
++ JVM (sterta + poza stertą), PostgreSQL, system, pamięć podręczna plików
+- Tylko JVM
+- Tylko baza
+- Tylko system
+E: Każdy musi zmieścić się w budżecie.
+#Q
+Q: Jaką wartość shared_buffers ustawiono dla PostgreSQL na 4 GB RAM?
++ 512MB
+- 3GB
+- 1GB
+- 64MB
+E: Reszta pamięci dla JVM, systemu i pamięci podręcznej.
+#Q
+Q: Do czego służy effective_cache_size w PostgreSQL?
++ Informuje planistę zapytań, ile pamięci podręcznej (systemu + bazy) jest dostępne
+- Rezerwuje pamięć
+- Ustala rozmiar połączeń
+- Ustala shared_buffers
+E: To wskazówka dla optymalizatora, nie alokacja.
+#Q
+Q: Co ogranicza max_connections = 50?
++ Maksymalną liczbę równoczesnych połączeń do bazy
+- Liczbę baz
+- Liczbę ról
+- Rozmiar sterty
+E: Każde połączenie zużywa pamięć.
+#Q
+Q: Dlaczego pula HikariCP musi mieścić się w max_connections?
++ Połączenia aplikacji, administracji i kopii razem nie mogą przekroczyć limitu bazy
+- Bo HikariCP wymaga 50
+- Bo baza zlicza tylko aplikację
+- Bez znaczenia
+E: Pula 10 + admin + kopie < 50.
+#Q
+Q: Co jest pułapką konfiguracji pamięci na współdzielonym serwerze?
++ Każdy składnik ustawiony hojnie osobno, razem przekraczają RAM
+- Zbyt małe shared_buffers
+- Za mało połączeń
+- Zbyt restrykcyjny limit
+E: Prowadzi do OOM killera.
+#Q
+Q: Który proces OOM killer często zabija przy przekroczeniu pamięci?
++ Często PostgreSQL (duży proces) — aplikacja traci bazę
+- Zawsze aplikację
+- Zawsze systemd
+- Zawsze sshd
+E: Wybierany jest proces z wysoką oceną OOM.
+#Q
+Q: Jak ograniczyć pamięć aplikacji w projekcie?
++ MemoryMax= w jednostce systemd i MaxRAMPercentage zamiast sztywnego -Xmx
+- Tylko -Xmx3g
+- ulimit -m
+- Nic
+E: Sterta liczona od limitu cgroup.
+#Q
+Q: Co robi -XX:MaxRAMPercentage=70 przy MemoryMax=2G?
++ Ustawia maksymalną stertę na ok. 70% z 2 GB (ok. 1,4 GB)
+- Zajmuje 70% CPU
+- Ustawia 70 MB
+- Wyłącza limit
+E: Zostawia miejsce na pamięć poza stertą.
+#Q
+Q: Co robi -XX:+ExitOnOutOfMemoryError?
++ Kończy JVM przy błędzie braku pamięci (zamiast działać w niestabilnym stanie)
+- Zwiększa stertę
+- Ignoruje OOM
+- Wyłącza GC
+E: systemd może wtedy zrestartować usługę.
+#Q
+Q: Gdzie zapisuje się budżet pamięci serwera?
++ W repozytorium infrastruktury (np. pliki/pamiec.md)
+- W historii powłoki
+- W pamięci administratora
+- W logach bazy
+E: Jeden wspólny budżet dla wszystkich składników.
+#Q
+Q: Gdzie umieszcza się własne parametry PostgreSQL w Ubuntu?
++ W pliku conf.d/90-*.conf klastra
+- W postgresql.conf bezpośrednio na końcu
+- W pg_hba.conf
+- W /etc/sklep
+E: Pliki conf.d są dołączane i przetrwają aktualizacje.
+#Q
+Q: Co pokazuje pg_settings?
++ Aktualne wartości parametrów konfiguracyjnych bazy
+- Listę baz
+- Listę ról
+- Logi
+E: Potwierdza zastosowanie ustawień.
+#Q
+Q: Dlaczego shared_buffers w pg_settings pokazuje 65536 z jednostką 8kB?
++ Wartość podawana jest w blokach 8 kB — 65536 * 8 kB = 512 MB
+- To błąd
+- To 65 MB
+- To liczba połączeń
+E: 512MB w conf.d odpowiada 65536 blokom.
+#Q
+Q: Dlaczego warto podać pełną ścieżkę do java w jednostce systemd?
++ Zapobiega niezamierzonej zmianie wersji przez update-alternatives
+- Bo java nie jest w PATH
+- Bo przyspiesza start
+- Bez powodu
+E: /usr/lib/jvm/java-21-openjdk-amd64/bin/java.
+#Q
+Q: Kiedy warto użyć repozytorium PGDG zamiast dystrybucji?
++ Gdy aplikacja wymaga nowszej wersji PostgreSQL lub konkretnej funkcji
+- Zawsze
+- Nigdy
+- Tylko na Windows
+E: Każde dodatkowe repozytorium to koszt utrzymania.
+#Q
+Q: Dlaczego domyślnie zostaje się przy pakietach dystrybucji?
++ Dostają poprawki bezpieczeństwa z systemem, mniej źródeł do śledzenia
+- Są nowsze
+- Są szybsze
+- Nie wymagają aktualizacji
+E: Powód odejścia zapisuje się w README.
+#Q
+Q: Co trzeba zrobić, by przenieść bazę na osobny serwer?
++ Zmienić listen_addresses, pg_hba.conf i reguły zapory
+- Tylko zmienić hasło
+- Nic
+- Przeinstalować aplikację
+E: Baza przestaje być lokalna.
+#Q
+Q: Gdzie jest katalog danych klastra PostgreSQL 16?
++ /var/lib/postgresql/16/main
+- /var/lib/pgsql
+- /etc/postgresql/16
+- /opt/postgres
+E: pg_lsclusters pokazuje tę ścieżkę.
+#Q
+Q: Jak sprawdzić połączenie jako rola sklep bez hasła w argumentach?
++ PGPASSWORD="$(sudo cat plik)" psql -h 127.0.0.1 -U sklep -d sklep
+- psql -U sklep -p haslo
+- psql --password haslo
+- psql sklep:haslo@localhost
+E: PGPASSWORD to zmienna środowiskowa.
+#Q
+Q: Co jest celem pliku /etc/sklep/sklep.env?
++ Zmienne uruchomieniowe aplikacji (JAVA_OPTS, URL, użytkownik) bez hasła
+- Hasła
+- Kod aplikacji
+- Kopia bazy
+E: Hasło przekazuje systemd przez LoadCredential (lekcja 5).
+#Q
+Q: Jakie prawa ma plik sklep.env?
++ 640 root:sklep (usługa czyta, inni nie)
+- 777
+- 600 root:root
+- 644
+E: Usługa działa jako sklep i musi go czytać.
+#Q
+Q: Dlaczego hasło nie trafia do sklep.env?
++ Plik jest mniej chroniony niż katalog sekretów; hasło idzie osobno (LoadCredential)
+- Bo env nie obsługuje haseł
+- Bo jest za długie
+- Bez powodu
+E: Rozdzielenie konfiguracji i sekretów.
+#Q
+Q: Co oznaczałaby suma -Xmx3g + shared_buffers 1GB na 4 GB RAM?
++ Przekroczenie dostępnej pamięci i ryzyko OOM
+- Optymalne wykorzystanie
+- Szybsze działanie
+- Brak wpływu
+E: ~4,8G przy 3,8G dostępnych.
+#Q
+Q: Co pokazuje journalctl -k | grep oom-kill?
++ Zdarzenia zabicia procesu przez OOM killer (0 = brak problemów)
+- Logi aplikacji
+- Połączenia bazy
+- Status usługi
+E: Po poprawnej konfiguracji powinno być 0.
+#Q
+Q: Jak symulować stertę JVM przy limicie 2 GB bez uruchamiania aplikacji?
++ systemd-run --scope -p MemoryMax=2G java -XX:+PrintFlagsFinal -version | grep MaxHeapSize
+- java -Xmx2g
+- free -h
+- top
+E: Scope nadaje procesowi limit cgroup.
+#Q
+Q: Co pokazuje pg_stat_activity?
++ Aktywne połączenia i zapytania do bazy
+- Konfigurację
+- Rozmiar bazy
+- Logi
+E: Pozwala policzyć bieżące połączenia.
+#Q
+Q: Dlaczego aplikacja łączy się z bazą przez 127.0.0.1, a nie localhost w URL?
++ Jednoznaczny adres IPv4 unika niejednoznaczności localhost (IPv4/IPv6)
+- Bo localhost nie działa
+- Bo jest szybsze
+- Bez różnicy w praktyce — oba są akceptowane, projekt wybiera 127.0.0.1
+E: Oba wskazują lokalny serwer; projekt stosuje jawny adres.
+#Q
+Q: Co jest dowodem gotowości środowiska uruchomieniowego (etap 4)?
++ Działa Java, baza nasłuchuje lokalnie, rola sklep się łączy, parametry pamięci zastosowane
+- Zainstalowany Nginx
+- Certyfikat TLS
+- Działający monitoring
+E: Weryfikacja przed uruchomieniem usługi.
+#Q
+Q: Gdzie zapisuje się konfiguracje bazy dla odtwarzalności?
++ W repozytorium infrastruktury (conf.d, wpis pg_hba — bez haseł)
+- W katalogu domowym postgres
+- W /tmp
+- Nigdzie
+E: Hasła pozostają w katalogu sekretów serwera.
+#Q
+Q: Co to jest maintenance_work_mem?
++ Pamięć na operacje konserwacyjne (VACUUM, tworzenie indeksów)
+- Pamięć na połączenia
+- Rozmiar sterty JVM
+- Limit połączeń
+E: Ustawiono 128MB.
+#Q
+Q: Dlaczego work_mem ustawia się ostrożnie (8MB), a nie bardzo wysoko?
++ Jest przydzielany na operację sortowania/haszowania na połączenie — przy wielu połączeniach sumuje się
+- Bo baza go ignoruje
+- Bo większe wartości nie działają
+- Bez powodu
+E: 50 połączeń x duży work_mem = dużo pamięci.
+#Q
+Q: Co daje osobna rola sklep zamiast konta postgres dla aplikacji?
++ Ograniczenie uprawnień — aplikacja ma dostęp tylko do swojej bazy
+- Szybsze zapytania
+- Mniej pamięci
+- Nic
+E: postgres to superużytkownik.
+#Q
+Q: Jakie polecenie sprawdza aktywność usługi bazy?
++ systemctl is-active postgresql@16-main
+- pg_isready --service
+- docker ps
+- ps aux | grep sql
+E: Zwraca active lub inactive.
+#Q
+Q: Co jest warunkiem przejścia do lekcji 5 (usługa systemd)?
++ Działające JRE i baza z rolą sklep oraz hasło w pliku sekretu
+- Działający Nginx
+- Certyfikat TLS
+- Monitoring
+E: Usługa korzysta z tych elementów.
+#Q
+Q: Jak PostgreSQL korzysta z pamięci podręcznej plików systemu?
++ Dane spoza shared_buffers czyta z pamięci podręcznej jądra — dlatego zostawia się na nią miejsce
+- Nie korzysta
+- Tylko przez swap
+- Tylko shared_buffers
+E: effective_cache_size informuje o jej rozmiarze.
+#Q
+Q: Dlaczego instaluje się tylko to, co potrzebne do uruchomienia?
++ Mniejsza powierzchnia ataku i mniej do aktualizowania
+- Szybszy procesor
+- Więcej pamięci
+- Wymóg Javy
+E: Zasada minimalnej instalacji.
+#Q
+Q: Co robi umask 077 przed utworzeniem pliku sekretu?
++ Powoduje, że nowy plik ma prawa tylko dla właściciela (600)
+- Usuwa plik
+- Ustawia roota
+- Szyfruje plik
+E: Zapobiega odczytowi przez innych.
+#Q
+Q: Jak sprawdzić, że hasła nie ma w argumentach procesów?
++ Przekazywać je zmienną/plikiem — wtedy ps go nie pokaże
+- grep ps | password
+- cat /proc/haslo
+- Nie da się
+E: Argumenty w ps są widoczne dla innych użytkowników.
+#Q
+Q: Co jest celem całego etapu 4?
++ Przygotować środowisko uruchomieniowe: Javę i bazę z rozsądnym budżetem pamięci
+- Zabezpieczyć SSH
+- Skonfigurować TLS
+- Napisać skrypt wdrożeniowy
+E: Fundament pod usługę aplikacji.
+#Q
+Q: Jaki jest skutek ExitOnOutOfMemoryError w połączeniu z Restart w usłudze systemd?
++ Po błędzie pamięci JVM kończy się, a systemd restartuje usługę w czystym stanie
+- JVM ignoruje błąd
+- Serwer się wyłącza
+- Baza jest usuwana
+E: Lepsze niż działanie w niestabilnym stanie.
+#Q
+Q: Dlaczego update-alternatives --display java jest przydatne?
++ Pokazuje, która wersja Javy jest domyślna i jakie są alternatywy
+- Instaluje Javę
+- Usuwa Javę
+- Zmienia port
+E: Pełna ścieżka w jednostce uniezależnia od tej zmiany.
+#Q
+Q: Co jest ryzykiem używania konta postgres w aplikacji?
++ To superużytkownik — błąd lub włamanie daje pełną kontrolę nad bazą
+- Jest wolniejsze
+- Wymaga hasła
+- Nie obsługuje SSL
+E: Aplikacja powinna mieć minimalne uprawnienia.
+#Q
+Q: Jak przekazać wiele poleceń SQL do psql bezpiecznie z hasłem?
++ Heredoc z psql -v haslo=... i :'haslo' w CREATE ROLE
+- Wpisać hasło w każdej linii
+- Zapisać hasło w pliku SQL
+- Użyć echo
+E: Zmienna nie trafia do treści ani historii.
+#Q
+Q: Co jest zaletą ustawienia budżetu pamięci przed obciążeniem?
++ Unika się OOM przy pierwszym imporcie/raporcie w produkcji
+- Szybszy start
+- Mniej logów
+- Brak kopii
+E: Problem ujawnia się dopiero pod obciążeniem.
+#Q
+Q: Jakie polecenie instaluje JRE headless i PostgreSQL naraz?
++ apt-get install openjdk-21-jre-headless postgresql
+- apt install java postgres
+- snap install jre postgresql
+- yum install
+E: Oba z repozytorium dystrybucji.
