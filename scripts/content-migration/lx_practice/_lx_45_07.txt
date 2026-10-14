@@ -1,0 +1,978 @@
+#EX
+// 1
+P: Na nowej maszynie testowej `srv-test` sprawdź, czy są zainstalowane pakiety Dockera z repozytorium Ubuntu (`docker.io`, `podman-docker`, `containerd`) i usuń je przed instalacją Docker Engine.
+H: `dpkg -l | awk ...`; dokumentacja Dockera zaleca usunięcie pakietów kolidujących.
+S:
+dpkg -l | awk '/^ii/ && $2 ~ /^(docker\.io|docker-compose|docker-doc|podman-docker|containerd|runc)$/ {print $2, $3}'
+for p in docker.io docker-doc docker-compose podman-docker containerd runc; do sudo apt-get remove -y -qq $p 2>/dev/null; done
+#EX
+// 2
+P: Dodaj klucz i repozytorium Dockera dla Ubuntu (`noble`) zgodnie z dokumentacją. Sprawdź wpis i odcisk klucza.
+H: `/etc/apt/keyrings/docker.asc`, wpis z `signed-by=`; odcisk: `gpg --show-keys`.
+S:
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list
+gpg --show-keys /etc/apt/keyrings/docker.asc | sed -n 2p
+#EX
+// 3
+P: Sprawdź, z którego repozytorium i w jakiej wersji zostanie zainstalowany `docker-ce` oraz jaką wersję oferuje Ubuntu w pakiecie `docker.io`.
+H: `apt-cache policy docker-ce docker.io`.
+S:
+sudo apt-get update -qq
+apt-cache policy docker-ce docker.io | grep -E '^[a-z]|Candidate' | head -6
+#EX
+// 4
+P: Zainstaluj Docker Engine z wtyczkami Buildx i Compose. Sprawdź stan usług `docker`, `docker.socket` i `containerd` oraz wersje.
+H: Pakiety: `docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`.
+S:
+sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl is-active docker docker.socket containerd
+systemctl is-enabled docker containerd
+sudo docker version --format 'klient {{.Client.Version}} / serwer {{.Server.Version}}'
+docker compose version; docker buildx version
+#EX
+// 5
+P: Sprawdź działanie silnika kontenerem `hello-world` (przez `sudo`) i odczytaj, gdzie demon przechowuje dane i jakiego sterownika magazynu oraz cgroup używa.
+H: `sudo docker run --rm hello-world`; `docker info --format '{{.DockerRootDir}} {{.Driver}}'`.
+S:
+sudo docker run --rm hello-world | grep -m1 Hello
+sudo docker info --format '{{.DockerRootDir}} {{.Driver}} cgroup={{.CgroupDriver}} v{{.CgroupVersion}}'
+#EX
+// 6
+P: Sprawdź gniazdo demona i grupę `docker`. Kto jest w tej grupie?
+H: `ls -l /var/run/docker.sock`, `getent group docker`.
+S:
+ls -l /var/run/docker.sock
+getent group docker
+#EX
+// 7
+P: Dodaj konto `deploy` (używane przez CI do wdrożeń) do grupy `docker` i sprawdź, że w nowej sesji może używać klienta bez `sudo`. Zapisz uzasadnienie w `/root/DOSTEP-DOCKER.txt`.
+H: `sudo usermod -aG docker deploy`; nowa sesja: `sudo -iu deploy docker ps`.
+S:
+sudo usermod -aG docker deploy
+sudo -iu deploy docker ps --format '{{.Names}}' && echo "deploy ma dostep"
+echo "$(date -I) deploy -> grupa docker (wdrozenia CI), zatwierdzila: anna" | sudo tee -a /root/DOSTEP-DOCKER.txt
+#EX
+// 8
+P: Zrób przegląd dostępu do demona: wypisz członków grupy `docker`, porównaj z listą zatwierdzonych kont w `/root/DOSTEP-DOCKER.txt` i usuń z grupy konto, którego tam nie ma (np. `staz`).
+H: `getent group docker | cut -d: -f4 | tr ',' '\n'`, `sudo gpasswd -d KONTO docker`.
+S:
+getent group docker | cut -d: -f4 | tr ',' '\n' | sort > /tmp/w-grupie
+sudo awk '{print $2}' /root/DOSTEP-DOCKER.txt | sort -u > /tmp/zatwierdzone
+comm -23 /tmp/w-grupie /tmp/zatwierdzone
+for u in $(comm -23 /tmp/w-grupie /tmp/zatwierdzone); do [ "$u" != anna ] && sudo gpasswd -d "$u" docker; done
+getent group docker
+#EX
+// 9
+P: Sprawdź domyślny sterownik logów i ustawienia logów istniejących kontenerów na `srv-docker`.
+H: `docker info --format '{{.LoggingDriver}}'`, `docker inspect -f '{{.HostConfig.LogConfig}}'`.
+S:
+docker info --format '{{.LoggingDriver}}'
+docker inspect -f '{{.Name}} {{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' $(docker ps -q)
+#EX
+// 10
+P: Znajdź największe pliki logów kontenerów i przypisz je do nazw kontenerów.
+H: `sudo du -sh /var/lib/docker/containers/*`; nazwa: `docker inspect -f '{{.Name}}' ID`.
+S:
+sudo sh -c 'du -s /var/lib/docker/containers/*/*-json.log 2>/dev/null' | sort -n | tail -3 | while read -r kb plik; do
+  id=$(basename "$(dirname "$plik")"); echo "$((kb/1024)) MB $(docker inspect -f '{{.Name}}' "$id" 2>/dev/null)"
+done
+#EX
+// 11
+P: Odtwórz problem na małą skalę: uruchom kontener `gadula`, który wypisuje dużo linii, bez rotacji logów, i obserwuj wzrost pliku logu przez 20 sekund.
+H: `docker run -d --name gadula --log-driver json-file alpine sh -c 'while :; do echo ...; done'`; ścieżka: `docker inspect -f '{{.LogPath}}'`.
+S:
+docker run -d --name gadula --log-driver json-file alpine:3.20 sh -c 'while :; do echo "$(date) komunikat diagnostyczny aplikacji"; done' > /dev/null
+L=$(docker inspect -f '{{.LogPath}}' gadula)
+for i in 1 2; do sudo ls -lh "$L" | awk '{print $5}'; sleep 10; done
+#EX
+// 12
+P: Uruchom ten sam kontener z rotacją (`json-file`, `max-size=1m`, `max-file=3`) i sprawdź, że pliki logu nie przekraczają limitu. Usuń oba kontenery.
+H: `--log-opt max-size=1m --log-opt max-file=3`; pliki `*-json.log*` w katalogu kontenera.
+S:
+docker run -d --name gadula2 --log-driver json-file --log-opt max-size=1m --log-opt max-file=3 alpine:3.20 sh -c 'while :; do echo "$(date) komunikat"; done' > /dev/null
+sleep 20
+sudo ls -lh "$(dirname "$(docker inspect -f '{{.LogPath}}' gadula2)")" | grep json.log
+docker rm -f gadula gadula2 > /dev/null
+#EX
+// 13
+P: Zrób kopię `/etc/docker/daemon.json` (jeśli istnieje) i utwórz konfigurację z rotacją logów (`local`, 10m, 3 pliki), `live-restore` i pulą adresów `10.210.0.0/16` z podsieciami /24. Sprawdź poprawność JSON przed restartem.
+H: `python3 -m json.tool` lub `jq .`; `sudo dockerd --validate --config-file`.
+S:
+[ -f /etc/docker/daemon.json ] && sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.$(date +%F)
+sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
+  "log-driver": "local",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "live-restore": true,
+  "default-address-pools": [ { "base": "10.210.0.0/16", "size": 24 } ]
+}
+EOF
+jq . /etc/docker/daemon.json > /dev/null && echo "JSON poprawny"
+sudo dockerd --validate --config-file /etc/docker/daemon.json
+#EX
+// 14
+P: Zrestartuj demona i sprawdź nowe ustawienia w `docker info`. Czy działające kontenery zostały zatrzymane (dzięki `live-restore`)?
+H: `docker ps --format '{{.Names}} {{.RunningFor}}'` przed i po.
+S:
+docker ps --format '{{.Names}} {{.RunningFor}}'
+sudo systemctl restart docker
+docker info --format '{{.LoggingDriver}} live-restore={{.LiveRestoreEnabled}}'
+docker ps --format '{{.Names}} {{.RunningFor}}'
+#EX
+// 15
+P: Sprawdź, że nowe ustawienia logów dotyczą tylko nowych kontenerów: porównaj konfigurację logów kontenera `sklep` (sprzed zmiany) i nowo utworzonego kontenera testowego.
+H: `docker inspect -f '{{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}'`.
+S:
+docker inspect -f 'sklep: {{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' sklep
+docker run -d --name nowy alpine:3.20 sleep 60 > /dev/null
+docker inspect -f 'nowy:  {{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' nowy
+docker rm -f nowy > /dev/null
+#EX
+// 16
+P: Odtwórz kontener `sklep` przez Compose, żeby przejął rotację logów, i sprawdź ustawienia.
+H: `docker compose up -d --force-recreate sklep` w `~/sklep-stack`.
+S:
+cd ~/sklep-stack && docker compose up -d --force-recreate sklep
+docker inspect -f '{{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' sklep
+#EX
+// 17
+P: Sprawdź nową pulę adresów: utwórz sieć testową i odczytaj jej podsieć. Usuń ją.
+H: `docker network create test-pula`, `docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`.
+S:
+docker network create test-pula > /dev/null
+docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' test-pula
+docker network rm test-pula > /dev/null
+#EX
+// 18
+P: Uruchom kontener ze sterownikiem logów `journald` i odczytaj jego logi przez `journalctl`, filtrując po nazwie kontenera.
+H: `--log-driver journald`; `journalctl CONTAINER_NAME=NAZWA`.
+S:
+docker run -d --name log-journal --log-driver journald alpine:3.20 sh -c 'for i in 1 2 3; do echo "wpis $i"; done; sleep 30' > /dev/null
+sleep 2
+sudo journalctl CONTAINER_NAME=log-journal -o cat --no-pager
+docker logs log-journal
+docker rm -f log-journal > /dev/null
+#EX
+// 19
+P: Sprawdź zajętość miejsca przez Dockera i usuń nieużywane obrazy starsze niż 7 dni (bez obrazów używanych przez kontenery).
+H: `docker system df`, `docker image prune -a --filter until=168h -f`.
+S:
+docker system df
+df -h /var | tail -1
+docker image prune -a -f --filter until=168h
+docker system df
+#EX
+// 20
+P: Utwórz timer systemd `docker-sprzatanie.timer`, który co tydzień usuwa nieużywane obrazy starsze niż 7 dni i cache budowania. Sprawdź listę timerów.
+H: Jednostka usługi `Type=oneshot` z dwoma `ExecStart`; timer `OnCalendar=weekly`, `Persistent=true`.
+S:
+sudo tee /etc/systemd/system/docker-sprzatanie.service > /dev/null <<'EOF'
+[Unit]
+Description=Sprzatanie nieuzywanych obrazow Dockera
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker image prune -a -f --filter until=168h
+ExecStart=/usr/bin/docker builder prune -f --filter until=168h
+EOF
+sudo tee /etc/systemd/system/docker-sprzatanie.timer > /dev/null <<'EOF'
+[Unit]
+Description=Cotygodniowe sprzatanie Dockera
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+sudo systemctl daemon-reload && sudo systemctl enable --now docker-sprzatanie.timer
+systemctl list-timers docker-sprzatanie.timer --no-pager
+#EX
+// 21
+P: Na `lubuntu-nauka` przygotuj konto `kuba` do trybu rootless: sprawdź pakiet `uidmap`, zakresy w `/etc/subuid` i `/etc/subgid` oraz czy `kuba` nie jest w grupie `docker`.
+H: `dpkg -l uidmap`, `grep kuba /etc/subuid /etc/subgid`, `id -nG kuba`.
+S:
+dpkg -l uidmap | awk '/^ii/ {print $2, $3}' || sudo apt-get install -y -qq uidmap
+grep kuba /etc/subuid /etc/subgid
+id -nG kuba | tr ' ' '\n' | grep -x docker || echo "kuba nie jest w grupie docker"
+#EX
+// 22
+P: Jako `kuba` zainstaluj demona rootless, włącz go jako usługę użytkownika i włącz `linger`, aby działał bez otwartej sesji.
+H: `dockerd-rootless-setuptool.sh install` (pakiet `docker-ce-rootless-extras`), `systemctl --user enable --now docker`, `sudo loginctl enable-linger kuba`.
+S:
+dpkg -l docker-ce-rootless-extras | grep -q ^ii || sudo apt-get install -y -qq docker-ce-rootless-extras
+sudo loginctl enable-linger kuba
+sudo -iu kuba bash -c 'dockerd-rootless-setuptool.sh install 2>&1 | tail -2; systemctl --user enable --now docker; systemctl --user is-active docker'
+loginctl show-user kuba -p Linger
+#EX
+// 23
+P: Ustaw dla kuby zmienną `DOCKER_HOST` na gniazdo rootless w `~/.bashrc` i sprawdź, że klient łączy się z jego demonem (opcja `rootless` w `SecurityOptions`, katalog danych w `~/.local/share/docker`).
+H: `export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock`; alternatywa: `docker context use rootless`.
+S:
+sudo -iu kuba bash -c 'grep -q DOCKER_HOST ~/.bashrc || echo "export DOCKER_HOST=unix:///run/user/\$(id -u)/docker.sock" >> ~/.bashrc'
+sudo -iu kuba bash -ic 'echo $DOCKER_HOST; docker info --format "{{.SecurityOptions}} {{.DockerRootDir}}"'
+#EX
+// 24
+P: Jako `kuba` uruchom kontener i porównaj UID „roota” w kontenerze z UID procesu widzianym na gospodarzu (mapowanie przestrzeni nazw użytkownika).
+H: W kontenerze `id -u` i `cat /proc/self/uid_map`; na gospodarzu `ps -o user,pid,cmd`.
+S:
+sudo -iu kuba bash -ic 'docker run -d --name mapa alpine:3.20 sleep 120 > /dev/null; docker exec mapa sh -c "id -u; cat /proc/self/uid_map"'
+ps -eo user:12,pid,cmd | grep '[s]leep 120'
+sudo -iu kuba bash -ic 'docker rm -f mapa > /dev/null'
+#EX
+// 25
+P: Jako `kuba` spróbuj opublikować port 80 w trybie rootless, a potem port 8085. Odczytaj komunikat i sprawdź ustawienie `net.ipv4.ip_unprivileged_port_start`.
+H: `docker run -d -p 80:80 nginx:1.27`; `sysctl net.ipv4.ip_unprivileged_port_start`.
+S:
+sudo -iu kuba bash -ic 'docker run -d --name p80 -p 80:80 nginx:1.27 2>&1 | tail -1; docker rm -f p80 >/dev/null 2>&1'
+sudo -iu kuba bash -ic 'docker run -d --name p8085 -p 8085:80 nginx:1.27 > /dev/null && curl -s -o /dev/null -w "%{http_code}\n" localhost:8085; docker rm -f p8085 > /dev/null'
+sysctl net.ipv4.ip_unprivileged_port_start
+#EX
+// 26
+P: Sprawdź, czy w trybie rootless działają limity pamięci (`-m 64m`) — jakie kontrolery cgroup są delegowane do sesji kuby?
+H: `cat /sys/fs/cgroup/user.slice/user-1003.slice/user@1003.service/cgroup.controllers`.
+S:
+cat /sys/fs/cgroup/user.slice/user-1003.slice/user@1003.service/cgroup.controllers
+sudo -iu kuba bash -ic 'docker run --rm -m 64m alpine:3.20 cat /sys/fs/cgroup/memory.max'
+#EX
+// 27
+P: Porównaj obrazy i kontenery widoczne dla kuby (demon rootless) i dla anny (demon systemowy). Dlaczego się różnią?
+H: Dwa niezależne demony z osobnymi katalogami danych.
+S:
+docker images --format '{{.Repository}}:{{.Tag}}' | head -5
+sudo -iu kuba bash -ic 'docker images --format "{{.Repository}}:{{.Tag}}"'
+#EX
+// 28
+P: Na `rocky-lab` sprawdź alternatywę — Podmana: wersję, czy działa bez demona i jako zwykły użytkownik, oraz uruchom ten sam kontener co w Dockerze.
+H: `podman --version`, `podman info --format '{{.Host.Security.Rootless}}'`, `podman run --rm docker.io/library/alpine:3.20 id -u`.
+S:
+ssh rocky-lab 'podman --version; podman info --format "rootless={{.Host.Security.Rootless}}"; podman run --rm docker.io/library/alpine:3.20 sh -c "id -u; cat /etc/alpine-release"'
+#EX
+// 29
+P: Sprawdź na `srv-docker` logi samego demona Dockera z ostatniej godziny (np. komunikaty przy restarcie) oraz listę jednostek Dockera w systemd.
+H: `journalctl -u docker --since -1h`, `systemctl list-unit-files 'docker*' 'containerd*'`.
+S:
+sudo journalctl -u docker --since -1h --no-pager | tail -5
+systemctl list-unit-files 'docker*' 'containerd*' --no-pager --no-legend
+#EX
+// 30
+P: Zapisz w `~/notatki/docker-serwer.txt` listę kontrolną serwera z Docker Engine: repozytorium, `daemon.json` (rotacja, live-restore, pula), grupa `docker` tylko dla zatwierdzonych kont, sprzątanie timerem, rootless dla zwykłych użytkowników, monitorowanie `/var`.
+H: Zwykły plik tekstowy w notatkach.
+S:
+mkdir -p ~/notatki
+cat > ~/notatki/docker-serwer.txt <<'EOF'
+[ ] Docker Engine z download.docker.com (klucz w /etc/apt/keyrings)
+[ ] /etc/docker/daemon.json: log-driver local / max-size, live-restore, default-address-pools
+[ ] kontenery odtworzone po zmianie ustawien logow
+[ ] grupa docker tylko dla zatwierdzonych kont (/root/DOSTEP-DOCKER.txt)
+[ ] docker-sprzatanie.timer (prune obrazow i cache co tydzien)
+[ ] zwykli uzytkownicy: tryb rootless lub Podman
+[ ] monitorowanie zajetosci /var i /var/lib/docker
+EOF
+cat ~/notatki/docker-serwer.txt
+#Q
+Q: Co wystarcza do uruchamiania kontenerów na serwerze z Linuksem?
++ Docker Engine (dockerd, containerd i klient) — bez Docker Desktop
+- Docker Desktop
+- WSL2
+- VirtualBox
+E: Jądro Linuksa ma wszystkie potrzebne mechanizmy.
+#Q
+Q: Z jakiego repozytorium instaluje się aktualny Docker Engine?
++ download.docker.com (pakiet docker-ce)
+- Tylko z repozytorium Ubuntu (docker.io)
+- Ze Snap Store wyłącznie
+- Z Docker Hub
+E: docker.io z Ubuntu bywa starszy.
+#Q
+Q: Jakie pakiety instaluje się dla pełnego Docker Engine?
++ docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin
+- docker.io i docker-compose
+- docker-desktop
+- moby-engine wyłącznie
+E: Wtyczki dają polecenia docker buildx i docker compose.
+#Q
+Q: Gdzie zapisuje się klucz repozytorium Dockera według aktualnej dokumentacji?
++ /etc/apt/keyrings/docker.asc
+- /etc/apt/trusted.gpg
+- ~/.gnupg
+- /usr/share/docker
+E: Wpis repozytorium wskazuje go przez signed-by=.
+#Q
+Q: Jakie usługi systemd tworzy Docker Engine?
++ docker.service, docker.socket i containerd.service
+- dockerd.target
+- docker-desktop.service
+- moby.service
+E: docker.socket pozwala uruchamiać demona przy pierwszym połączeniu.
+#Q
+Q: Gdzie demon Docker Engine przechowuje dane domyślnie?
++ /var/lib/docker
+- /opt/docker
+- /home/docker
+- /etc/docker
+E: Można to zmienić opcją data-root w daemon.json.
+#Q
+Q: Jaki plik konfiguruje demona Dockera?
++ /etc/docker/daemon.json
+- /etc/default/docker.conf zawsze
+- ~/.docker/config.json
+- /etc/docker.yaml
+E: ~/.docker/config.json to konfiguracja klienta.
+#Q
+Q: Co trzeba zrobić po zmianie daemon.json?
++ Zrestartować demona (systemctl restart docker)
+- Nic
+- Zrestartować serwer
+- Przeinstalować Dockera
+E: Przed restartem warto sprawdzić plik: dockerd --validate.
+#Q
+Q: Jak sprawdzić poprawność daemon.json przed restartem?
++ sudo dockerd --validate --config-file /etc/docker/daemon.json
+- docker check config
+- systemctl validate docker
+- cat daemon.json
+E: Błąd w pliku uniemożliwiłby start demona.
+#Q
+Q: Co daje uprawnienie do gniazda /var/run/docker.sock (grupa docker)?
++ Pełną kontrolę nad demonem działającym jako root — w praktyce uprawnienia administracyjne
+- Tylko odczyt listy kontenerów
+- Dostęp do logów systemu
+- Nic szczególnego
+E: Dlatego grupę przyznaje się jak sudo — wąsko i świadomie.
+#Q
+Q: Komu przyznawać grupę docker na serwerze?
++ Tylko zaufanym administratorom i kontom wdrożeniowym, z udokumentowanym uzasadnieniem
+- Wszystkim programistom
+- Wszystkim użytkownikom
+- Nikomu — Docker działa tylko z root
+E: Pozostali — tryb rootless lub Podman.
+#Q
+Q: Jak usunąć użytkownika z grupy docker?
++ sudo gpasswd -d KONTO docker
+- sudo userdel docker
+- sudo usermod -G docker KONTO
+- docker user rm KONTO
+E: Zmiana działa od nowej sesji użytkownika.
+#Q
+Q: Kiedy członkostwo w grupie zaczyna obowiązywać po usermod -aG?
++ Od nowej sesji (ponowne zalogowanie lub newgrp)
+- Natychmiast we wszystkich sesjach
+- Po restarcie Dockera
+- Po restarcie serwera wyłącznie
+E: Grupy procesu ustala się przy logowaniu.
+#Q
+Q: Jaki jest domyślny sterownik logów Dockera?
++ json-file
+- journald
+- syslog
+- local
+E: Bez max-size nie ma rotacji.
+#Q
+Q: Gdzie leży log kontenera przy sterowniku json-file?
++ /var/lib/docker/containers/ID/ID-json.log
+- /var/log/docker.log
+- /var/log/containers
+- ~/.docker/logs
+E: docker inspect -f '{{.LogPath}}' podaje ścieżkę.
+#Q
+Q: Co dzieje się z logiem json-file bez opcji max-size?
++ Rośnie bez ograniczeń
+- Jest rotowany codziennie
+- Jest kasowany po restarcie
+- Ma limit 100 MB
+E: Może zapełnić partycję /var.
+#Q
+Q: Czy logrotate obejmuje domyślnie logi kontenerów json-file?
++ Nie
+- Tak, zawsze
+- Tylko w Ubuntu
+- Tylko z journald
+E: Rotację ustawia się w Dockerze.
+#Q
+Q: Jakie opcje ograniczają logi json-file?
++ max-size i max-file w log-opts
+- log-limit
+- max-lines
+- rotate=true
+E: Np. max-size=10m, max-file=3 — maks. ok. 30 MB.
+#Q
+Q: Czym jest sterownik logów local?
++ Sterownikiem z wbudowaną rotacją i kompresją, wydajniejszym od json-file
+- Sterownikiem zapisującym do /tmp
+- Sterownikiem bez logów
+- Sterownikiem dla Windows
+E: docker logs nadal działa.
+#Q
+Q: Jak odczytać logi kontenera ze sterownikiem journald?
++ journalctl CONTAINER_NAME=NAZWA (lub docker logs)
+- cat /var/log/journald
+- docker journal NAZWA
+- tail /var/lib/docker/journal
+E: Logi trafiają do dziennika systemd razem z resztą systemu.
+#Q
+Q: Czy nowe ustawienia logów w daemon.json działają dla istniejących kontenerów?
++ Nie — tylko dla kontenerów utworzonych po zmianie; istniejące trzeba odtworzyć
+- Tak, od razu
+- Tak, po restarcie demona
+- Tylko dla kontenerów w Compose
+E: docker compose up -d --force-recreate.
+#Q
+Q: Co robi live-restore w daemon.json?
++ Pozwala kontenerom działać dalej podczas restartu lub aktualizacji demona
+- Restartuje kontenery co godzinę
+- Przywraca usunięte kontenery
+- Zapisuje stan pamięci
+E: Ułatwia aktualizacje bez przestoju.
+#Q
+Q: Do czego służy default-address-pools?
++ Ustala zakresy adresów dla sieci tworzonych przez Dockera (np. by uniknąć kolizji z siecią firmy)
+- Ustala adresy DNS
+- Ustala porty
+- Ustala adres IP gospodarza
+E: Np. base 10.210.0.0/16, size 24.
+#Q
+Q: Jak sprawdzić bieżący sterownik logów i live-restore?
++ docker info --format '{{.LoggingDriver}} {{.LiveRestoreEnabled}}'
+- docker version
+- systemctl status docker
+- docker logs --info
+E: docker info pokazuje konfigurację demona.
+#Q
+Q: Jaki objaw daje pełna partycja /var na serwerze z kontenerami?
++ Błędy No space left on device w aplikacjach i bazie, df pokazuje 100%
+- Szybsze działanie
+- Brak sieci
+- Restart serwera
+E: Przyczyną bywa log jednego kontenera.
+#Q
+Q: Jak znaleźć kontener z największym logiem?
++ sudo du na /var/lib/docker/containers/* i dopasowanie ID do nazwy przez docker inspect
+- docker ps --size
+- docker logs --size
+- df -h
+E: Katalog kontenera ma nazwę jego ID.
+#Q
+Q: Co robi docker image prune -a --filter until=168h?
++ Usuwa nieużywane obrazy starsze niż 7 dni
+- Usuwa wszystkie obrazy
+- Usuwa obrazy z ostatnich 7 dni
+- Usuwa kontenery
+E: Obrazy używane przez kontenery zostają.
+#Q
+Q: Jak zautomatyzować sprzątanie obrazów na serwerze?
++ Timer systemd uruchamiający docker image prune i docker builder prune
+- Wpis w ~/.bashrc
+- Ręcznie raz w roku
+- live-restore
+E: Persistent=true nadrabia przegapione uruchomienia.
+#Q
+Q: Dlaczego jednostka sprzątania ma Requires=docker.service i After=docker.service?
++ Polecenia docker potrzebują działającego demona
+- Żeby wyłączyć Dockera
+- Żeby uruchamiać się co minutę
+- Bez znaczenia
+E: Zależności ustalają kolejność i wymagania.
+#Q
+Q: Czym jest tryb rootless Dockera?
++ Osobnym demonem uruchamianym przez zwykłego użytkownika, z mapowaniem UID
+- Dockerem bez kontenerów
+- Trybem bez sieci
+- Wyłączeniem roota w obrazach
+E: Root w kontenerze to zwykły UID na gospodarzu.
+#Q
+Q: Jakie pakiety i pliki są potrzebne do trybu rootless?
++ uidmap oraz zakresy w /etc/subuid i /etc/subgid (i docker-ce-rootless-extras)
+- Tylko docker.io
+- Grupa docker
+- sudo bez hasła
+E: newuidmap i newgidmap mapują zakresy UID.
+#Q
+Q: Co zawiera wpis kuba:296608:65536 w /etc/subuid?
++ Kuba może używać 65536 podrzędnych UID od 296608 w przestrzeniach nazw użytkownika
+- UID kuby to 296608
+- Kuba ma 65536 plików
+- Hasło kuby
+E: Te UID widzą procesy kontenerów na gospodarzu.
+#Q
+Q: Jakim poleceniem instaluje się demona rootless?
++ dockerd-rootless-setuptool.sh install (jako użytkownik)
+- sudo apt install rootless
+- docker rootless enable
+- systemctl enable docker-rootless
+E: Tworzy usługę systemd użytkownika.
+#Q
+Q: Jak demon rootless jest uruchamiany?
++ Jako usługa systemd użytkownika: systemctl --user start docker
+- Jako docker.service systemowy
+- Przez cron
+- Ręcznie przy każdym logowaniu
+E: Działa w ramach sesji użytkownika.
+#Q
+Q: Po co loginctl enable-linger kuba przy trybie rootless?
++ Żeby usługi użytkownika (w tym demon) działały bez otwartej sesji i startowały z systemem
+- Żeby dać kubie sudo
+- Żeby zwiększyć limity
+- Żeby włączyć SSH
+E: Bez linger demon kończy się po wylogowaniu.
+#Q
+Q: Gdzie jest gniazdo demona rootless kuby (UID 1003)?
++ /run/user/1003/docker.sock
+- /var/run/docker.sock
+- /home/kuba/docker.sock
+- /tmp/docker.sock
+E: Klient wskazuje je przez DOCKER_HOST lub kontekst.
+#Q
+Q: Gdzie demon rootless przechowuje dane?
++ ~/.local/share/docker
+- /var/lib/docker
+- /opt/docker
+- /tmp
+E: Konfiguracja w ~/.config/docker/daemon.json.
+#Q
+Q: Jak rozpoznać w docker info, że to demon rootless?
++ SecurityOptions zawiera name=rootless
+- Driver to rootless
+- OperatingSystem to Rootless
+- Brak informacji
+E: Katalog danych też jest w domu użytkownika.
+#Q
+Q: Co pokazuje /proc/self/uid_map w kontenerze rootless kuby?
++ Że UID 0 w kontenerze odpowiada UID 1003 (kuba), a kolejne — zakresowi z /etc/subuid
+- Że UID 0 to root gospodarza
+- Pusty plik
+- Listę użytkowników
+E: To mapowanie ogranicza skutki ucieczki z kontenera.
+#Q
+Q: Jaki użytkownik gospodarza jest właścicielem procesu sleep z kontenera rootless kuby?
++ kuba (lub UID z jego zakresu podrzędnego)
+- root
+- docker
+- nobody zawsze
+E: Widać to w ps na gospodarzu.
+#Q
+Q: Dlaczego w trybie rootless nie można domyślnie opublikować portu 80?
++ Porty poniżej 1024 są uprzywilejowane — wymaga to zmiany net.ipv4.ip_unprivileged_port_start
+- Bo port 80 jest zajęty zawsze
+- Bo rootless nie ma sieci
+- Bo nginx tego nie obsługuje
+E: Alternatywa: port >= 1024 i reverse proxy.
+#Q
+Q: Co wymaga działania limitów pamięci w trybie rootless?
++ Delegacji kontrolerów cgroup do sesji użytkownika (systemd)
+- Grupy docker
+- Uruchomienia demona jako root
+- Nic — działa zawsze
+E: cgroup.controllers sesji użytkownika pokazuje delegowane kontrolery.
+#Q
+Q: Czy demon rootless kuby widzi obrazy demona systemowego?
++ Nie — to dwa niezależne demony z osobnymi danymi
+- Tak, wspólne
+- Tylko obrazy z Docker Hub
+- Tylko po restarcie
+E: Każdy pobiera i przechowuje obrazy osobno.
+#Q
+Q: Jaka jest wada wydajnościowa trybu rootless?
++ Nieco wolniejsza sieć (slirp4netns/pasta w przestrzeni użytkownika)
+- Wolniejszy CPU
+- Brak dysku
+- Brak obrazów
+E: Dla programowania zwykle bez znaczenia.
+#Q
+Q: Czym jest Podman?
++ Narzędziem do kontenerów bez demona, domyślnie rootless, zgodnym z poleceniami docker
+- Wtyczką Dockera
+- Hiperwizorem
+- Menedżerem pakietów
+E: Domyślny w Rocky/RHEL.
+#Q
+Q: Jak w Podmanie podać pełną nazwę obrazu z Docker Hub?
++ docker.io/library/alpine:3.20
+- hub/alpine
+- alpine@docker
+- library:alpine
+E: Podman może pytać o rejestr przy nazwach skróconych.
+#Q
+Q: Czy tryb rootless zastępuje inne zabezpieczenia kontenerów?
++ Nie — nadal potrzebne są aktualizacje obrazów, USER w Dockerfile, limity i ograniczanie portów
+- Tak, całkowicie
+- Tak, poza siecią
+- Tak, poza logami
+E: Rootless ogranicza skutki, ale nie zapobiega błędom.
+#Q
+Q: Jaki model dostępu zwykle stosuje się na serwerach produkcyjnych?
++ Klasyczny demon zarządzany przez administratorów; dostęp mają tylko wdrożenia (CI) i administratorzy
+- Grupa docker dla wszystkich
+- Rootless dla każdej usługi zawsze
+- Brak kontroli
+E: Uprawnienia przyznaje się jak sudo.
+#Q
+Q: Gdzie zapisano w ćwiczeniu uzasadnienie dostępu do grupy docker?
++ W /root/DOSTEP-DOCKER.txt
+- W /etc/group
+- W daemon.json
+- W ~/.bashrc
+E: Ułatwia późniejsze przeglądy dostępu.
+#Q
+Q: Do czego w przeglądzie dostępu użyto polecenia comm -23?
++ Do znalezienia kont w grupie docker, których nie ma na liście zatwierdzonych
+- Do porównania obrazów
+- Do sortowania logów
+- Do usuwania plików
+E: Oba wejścia muszą być posortowane.
+#Q
+Q: Jak odczytać logi samego demona Dockera?
++ journalctl -u docker
+- docker logs docker
+- cat /var/log/docker
+- docker info --logs
+E: Demon jest usługą systemd.
+#Q
+Q: Co oznacza cgroup=systemd v2 w docker info?
++ Demon używa sterownika cgroup systemd na cgroups v2
+- Docker działa w kontenerze
+- Brak cgroups
+- Tryb rootless
+E: Zalecana konfiguracja na nowoczesnych systemach.
+#Q
+Q: Jaki sterownik magazynu używa Docker na Ubuntu 24.04 domyślnie?
++ overlay2 (lub containerd snapshotter overlayfs w nowszych wersjach)
+- devicemapper
+- aufs
+- btrfs zawsze
+E: docker info --format '{{.Driver}}'.
+#Q
+Q: Dlaczego przed instalacją docker-ce usuwa się docker.io i podman-docker?
++ Mogą kolidować plikami i usługami z pakietami z repozytorium Dockera
+- Bo są złośliwe
+- Bo zajmują dużo miejsca
+- Nie trzeba
+E: Dokumentacja Dockera zaleca ich usunięcie.
+#Q
+Q: Co pokazuje apt-cache policy docker-ce docker.io?
++ Wersje kandydujące i źródła obu pakietów
+- Listę kontenerów
+- Zależności obrazów
+- Rozmiar pakietów
+E: Widać, że docker-ce pochodzi z download.docker.com.
+#Q
+Q: Co uruchamia docker.socket?
++ Demona dockerd przy pierwszym połączeniu z gniazdem (aktywacja przez gniazdo)
+- Sieć Dockera
+- Kontenery z restart: always
+- containerd
+E: Mechanizm socket activation systemd.
+#Q
+Q: Kontenery Compose na serwerze mają restart: unless-stopped. Co dzieje się po restarcie serwera?
++ Uruchamiają się automatycznie, gdy wystartuje demon Dockera
+- Nie uruchamiają się
+- Uruchamiają się dopiero po docker compose up
+- Są usuwane
+E: Demon jest włączony w systemd (enabled).
+#Q
+Q: Co jest typowym zastosowaniem Docker Engine poza serwerami aplikacji?
++ Agenci CI budujący i testujący obrazy (Buildx, Testcontainers)
+- Edycja dokumentów
+- Hosting poczty
+- Konfiguracja BIOS
+E: Również stacje robocze z Linuksem.
+#Q
+Q: Jak w WSL bez licencji Docker Desktop uruchomić kontenery?
++ Zainstalować Docker Engine w dystrybucji z systemd
+- Używać Docker Desktop bez licencji
+- Nie da się
+- Zainstalować VirtualBox w WSL
+E: Wymaga systemd=true w /etc/wsl.conf.
+#Q
+Q: Co jest ryzykiem uruchamiania kontenerów aplikacji jako root w obrazie (bez rootless)?
++ Proces w kontenerze ma UID 0 gospodarza — ucieczka z kontenera daje pełne uprawnienia
+- Wolniejsze działanie
+- Brak logów
+- Brak sieci
+E: Dobrą praktyką jest USER w Dockerfile.
+#Q
+Q: Gdzie konfiguruje się demona rootless?
++ ~/.config/docker/daemon.json
+- /etc/docker/daemon.json
+- /etc/subuid
+- ~/.docker/config.json
+E: Ustawienia dotyczą tylko demona użytkownika.
+#Q
+Q: Co robi docker builder prune?
++ Usuwa pamięć podręczną budowania obrazów
+- Usuwa obrazy
+- Usuwa wolumeny
+- Usuwa Buildx
+E: Cache potrafi zajmować dużo miejsca na agentach CI.
+#Q
+Q: Jak sprawdzić, kiedy następnie uruchomi się timer sprzątania?
++ systemctl list-timers docker-sprzatanie.timer
+- docker info
+- crontab -l
+- atq
+E: Kolumna NEXT.
+#Q
+Q: Co oznacza OnCalendar=weekly?
++ Uruchamianie raz w tygodniu (poniedziałek 00:00)
+- Co 7 minut
+- W każdy weekend
+- Raz w miesiącu
+E: Persistent=true nadrobi przegapione uruchomienie.
+#Q
+Q: Co może pójść źle przy restarcie demona bez live-restore?
++ Wszystkie kontenery zostaną zatrzymane i uruchomione ponownie — przerwa w działaniu usług
+- Usunięcie obrazów
+- Utrata wolumenów
+- Zmiana adresów IP gospodarza
+E: live-restore utrzymuje kontenery podczas restartu.
+#Q
+Q: Jakie zabezpieczenie zostawiono w ćwiczeniu przed nadpisaniem daemon.json?
++ Kopię pliku z datą w nazwie
+- Wyłączenie Dockera
+- Prawa 777
+- Brak zabezpieczenia
+E: Przy błędzie łatwo przywrócić poprzednią wersję.
+#Q
+Q: Do czego w ćwiczeniu użyto kontenera gadula?
++ Do pokazania szybkiego wzrostu logu bez rotacji
+- Do testu sieci
+- Do testu pamięci
+- Do testu Compose
+E: Kontener z rotacją (gadula2) miał pliki ograniczone do limitu.
+#Q
+Q: Jaki maksymalny rozmiar logów zajmie kontener z max-size=1m i max-file=3?
++ Około 3 MB
+- 1 MB
+- Nieograniczony
+- 3 GB
+E: Trzy pliki po maksymalnie 1 MB.
+#Q
+Q: Czy docker logs działa ze sterownikiem journald?
++ Tak, w nowych wersjach Dockera
+- Nie, nigdy
+- Tylko z sudo
+- Tylko w Compose
+E: Logi można też czytać journalctl.
+#Q
+Q: Co jest zaletą sterownika journald na serwerze?
++ Logi kontenerów są w jednym miejscu z logami systemu i podlegają limitom journald
+- Brak logów
+- Szybsze kontenery
+- Szyfrowanie
+E: Pole CONTAINER_NAME pozwala filtrować.
+#Q
+Q: Jakie polecenie pokazało w ćwiczeniu podsieć nowej sieci po zmianie puli?
++ docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' test-pula
+- ip route
+- docker info --pools
+- docker network ls --subnet
+E: Wynik z zakresu 10.210.x.0/24.
+#Q
+Q: Czym różni się demon klasyczny od rootless pod kątem portów?
++ Klasyczny może publikować dowolne porty, rootless domyślnie tylko od 1024
+- Rootless może tylko porty poniżej 1024
+- Nie ma różnicy
+- Klasyczny nie publikuje portów
+E: Zależy od net.ipv4.ip_unprivileged_port_start.
+#Q
+Q: Gdzie powinna być udokumentowana lista kontrolna serwera z Docker Engine według ćwiczenia?
++ W notatkach administratora (np. ~/notatki/docker-serwer.txt) lub repozytorium konfiguracji
+- Tylko w pamięci
+- W obrazie
+- W daemon.json
+E: Ułatwia odtworzenie i przegląd serwera.
+#Q
+Q: Co jest częścią monitorowania serwera z kontenerami?
++ Zajętość /var i /var/lib/docker, stan usług, rozmiar logów
+- Tylko liczba kontenerów
+- Tylko wersja Dockera
+- Nic
+E: Pełny dysk to częsta przyczyna awarii.
+#Q
+Q: Jak sprawdzić rozmiar obrazów, kontenerów i wolumenów w Docker Engine?
++ docker system df
+- du -sh /
+- docker ps -s wyłącznie
+- docker images -a
+E: -v daje szczegóły.
+#Q
+Q: Jakie polecenie aktywuje zmianę grupy docker w bieżącej sesji bez ponownego logowania?
++ newgrp docker
+- source ~/.bashrc
+- sudo su
+- docker login
+E: Uruchamia nową powłokę z grupą.
+#Q
+Q: Jak przełączyć klienta na demona rootless bez zmiennej DOCKER_HOST?
++ docker context use rootless (kontekst utworzony przez narzędzie instalacyjne)
+- docker rootless on
+- systemctl --user switch docker
+- sudo docker
+E: Kontekst wskazuje gniazdo w /run/user/UID.
+#Q
+Q: Co oznacza stan Linger=yes w loginctl show-user?
++ Usługi użytkownika działają niezależnie od jego sesji logowania
+- Użytkownik jest zablokowany
+- Użytkownik ma sudo
+- Użytkownik jest zalogowany
+E: Potrzebne dla demona rootless na serwerze.
+#Q
+Q: Co jest zalecanym wyborem dla programistów współdzielących jedną maszynę z Linuksem?
++ Tryb rootless (lub Podman) dla każdego, zamiast wspólnej grupy docker
+- Wspólne konto root
+- Grupa docker dla wszystkich
+- Docker Desktop
+E: Każdy ma własnego demona i dane.
+#Q
+Q: Jakie pole docker inspect pokazuje konfigurację logów kontenera?
++ .HostConfig.LogConfig
+- .Config.Logs
+- .State.Logs
+- .LogDriver
+E: Type i Config (opcje).
+#Q
+Q: Kiedy log kontenera trafi do pliku -json.log?
++ Gdy kontener używa sterownika json-file (domyślny)
+- Zawsze, niezależnie od sterownika
+- Tylko z journald
+- Tylko w Compose
+E: Sterownik local zapisuje w innym formacie.
+#Q
+Q: Co jest przyczyną błędu „No space left on device” w logu aplikacji sklep w lekcji?
++ Partycja /var zapełniona przez log kontenera bez rotacji
+- Brak pamięci RAM
+- Pełna baza danych
+- Zbyt wiele plików otwartych
+E: 17 GB logu jednego kontenera.
+#Q
+Q: Czy samo usunięcie pliku -json.log działającego kontenera rozwiązuje problem?
++ Nie trwale — miejsce może nie zostać zwolnione, a log rośnie dalej; trzeba ustawić rotację i odtworzyć kontener
+- Tak, na zawsze
+- Tak, Docker sam ustawi rotację
+- Tak, po restarcie gospodarza
+E: Otwarty plik zajmuje miejsce do zamknięcia.
+#Q
+Q: Jakie polecenie pokazuje wersję Buildx?
++ docker buildx version
+- buildx -v
+- docker build --version
+- docker info --buildx
+E: Buildx to wtyczka klienta.
+#Q
+Q: Czy Docker Engine wymaga graficznego interfejsu?
++ Nie — to usługa systemowa i klient wiersza poleceń
+- Tak
+- Tylko do instalacji
+- Tylko w Ubuntu Desktop
+E: Interfejs graficzny ma Docker Desktop.
+#Q
+Q: Jakie polecenie wypisuje odcisk klucza repozytorium Dockera z pliku?
++ gpg --show-keys /etc/apt/keyrings/docker.asc
+- apt-key list
+- docker key show
+- cat docker.asc | md5sum
+E: Odcisk porównuje się z dokumentacją Dockera.
+#Q
+Q: Co oznacza signed-by= we wpisie repozytorium APT?
++ Pakiety z tego repozytorium muszą być podpisane wskazanym kluczem
+- Repozytorium jest szyfrowane
+- Pakiety są podpisywane przez użytkownika
+- Wpis jest tylko do odczytu
+E: Klucz nie jest wtedy zaufany dla innych repozytoriów.
+#Q
+Q: Skąd we wpisie repozytorium Dockera pochodzi nazwa noble?
++ Z VERSION_CODENAME w /etc/os-release (Ubuntu 24.04)
+- Z nazwy hosta
+- Z wersji Dockera
+- Z architektury
+E: Polecenie wstawia ją automatycznie.
+#Q
+Q: Co sprawdza hello-world po instalacji Dockera?
++ Że klient, demon, pobieranie obrazów i uruchamianie kontenerów działają
+- Szybkość dysku
+- Sieć firmową
+- Licencję
+E: Wypisuje komunikat Hello from Docker!.
+#Q
+Q: Co jest celem pakietu docker-ce-rootless-extras?
++ Dostarcza skrypty i narzędzia do trybu rootless (dockerd-rootless-setuptool.sh, rootlesskit)
+- Dodatkowe obrazy
+- Interfejs graficzny
+- Sterowniki logów
+E: Instalowany zwykle razem z docker-ce.
+#Q
+Q: Jakie narzędzie realizuje sieć w trybie rootless?
++ slirp4netns lub pasta (sieć w przestrzeni użytkownika)
+- docker0 z iptables roota
+- NetworkManager
+- WireGuard
+E: Stąd nieco niższa wydajność.
+#Q
+Q: Co robi rootlesskit?
++ Tworzy przestrzenie nazw (m.in. user) dla demona rootless i przekazuje porty
+- Usuwa uprawnienia roota z systemu
+- Instaluje Dockera
+- Szyfruje obrazy
+E: Jest częścią trybu rootless.
+#Q
+Q: Czym różni się ~/.docker/config.json od /etc/docker/daemon.json?
++ Pierwszy konfiguruje klienta (np. kontekst, logowanie do rejestrów), drugi — demona
+- Niczym
+- Pierwszy konfiguruje demona rootless
+- Drugi konfiguruje Compose
+E: Ustawień logów nie wpisuje się w config.json.
+#Q
+Q: Co oznacza opcja data-root w daemon.json?
++ Inny katalog na dane Dockera (zamiast /var/lib/docker), np. na większym dysku
+- Katalog domowy roota
+- Katalog z daemon.json
+- Katalog logów
+E: Zmiana wymaga przeniesienia danych i restartu.
+#Q
+Q: Jak bezpiecznie przenieść dane Dockera na inny dysk?
++ Zatrzymać demona, skopiować /var/lib/docker (rsync -a), ustawić data-root i uruchomić demona
+- Zmienić data-root przy działającym demonie
+- Usunąć /var/lib/docker
+- Przenieść tylko obrazy
+E: Po sprawdzeniu można usunąć stary katalog.
+#Q
+Q: Jakie jest typowe źródło gigabajtów logów aplikacji Spring Boot w kontenerze?
++ Poziom DEBUG lub zapętlony wyjątek wypisywany na stdout
+- Pliki JAR
+- Obraz bazowy
+- Wolumeny
+E: Logi kontenera to wszystko, co proces wypisze.
+#Q
+Q: Jak ograniczyć logi jednego kontenera bez zmiany daemon.json?
++ Opcjami --log-opt max-size=... --log-opt max-file=... (lub logging: w Compose)
+- docker logs --limit
+- ulimit -f
+- logrotate
+E: Ustawienia dotyczą tylko tego kontenera.
+#Q
+Q: Jak ustawić rotację logów usługi w compose.yaml?
++ Sekcją logging: z driver i options (max-size, max-file)
+- Sekcją logs: rotate
+- W .env
+- Nie da się
+E: Nadpisuje domyślne ustawienia demona dla usługi.
+#Q
+Q: Co pokazuje docker inspect -f '{{.LogPath}}' KONTENER?
++ Ścieżkę pliku logu kontenera na gospodarzu
+- Ścieżkę logów aplikacji w kontenerze
+- Adres serwera logów
+- Rozmiar logu
+E: Dla journald ścieżka jest pusta.
+#Q
+Q: Jakie polecenie sprawdza, które jednostki Dockera są zainstalowane w systemd?
++ systemctl list-unit-files 'docker*' 'containerd*'
+- docker units
+- ls /etc/docker
+- dpkg -L docker
+E: docker.service, docker.socket, containerd.service.
