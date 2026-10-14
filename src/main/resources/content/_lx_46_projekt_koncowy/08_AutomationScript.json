@@ -76,6 +76,768 @@
       "body": "- `instaluj.sh` z plikami z `pliki/` odtwarza konfigurację sklep01 na dowolnej świeżej maszynie.\n- Skrypt jest idempotentny: sprawdza stan przed każdą zmianą, a drugie uruchomienie kończy się „bez zmian”.\n- `wgraj` porównuje pliki (`cmp -s`) i zgłasza zmianę, po której następuje walidacja i przeładowanie tylko tej usługi.\n- Tryb ścisły, `trap ERR`, dziennik i tryb `-n` czynią skrypt bezpiecznym i przejrzystym.\n- Skrypt bez strażników działa tylko raz — przy kolejnych uruchomieniach przerywa się lub duplikuje konfigurację."
     }
   ],
-  "exercises": [],
-  "quiz": []
+  "exercises": [
+    {
+      "prompt": "W repozytorium `~/infra/sklep01` sprawdź, jakie pliki konfiguracyjne zebrałeś w `pliki/` w poprzednich etapach (sshd, usługa, nginx, timery, skrypty). To materiał dla skryptu instalacyjnego.",
+      "hint": "`find pliki -type f`.",
+      "solution": "cd ~/infra/sklep01\nfind pliki -type f | sort"
+    },
+    {
+      "prompt": "Utwórz `zmienne.conf` z parametrami serwera (domena, FQDN, adres, nazwa hosta, wersje) — skrypt będzie z niego korzystał. Zatwierdź.",
+      "hint": "Zmienne powłoki: DOMENA, FQDN, ADRES, NAZWA_HOSTA, STREFA.",
+      "solution": "cd ~/infra/sklep01\ncat > zmienne.conf <<'EOF'\nDOMENA=sklep.firma.example\nFQDN=sklep01.firma.example\nNAZWA_HOSTA=sklep01\nADRES=203.0.113.50\nSTREFA=Etc/UTC\nEOF\ngit add zmienne.conf && git commit -qm \"Zmienne serwera dla instaluj.sh\" && cat zmienne.conf"
+    },
+    {
+      "prompt": "Utwórz szkielet `instaluj.sh` z trybem ścisłym, wczytaniem zmiennych, dziennikiem, trap ERR z numerem linii i funkcją `uruchom` (tryb symulacji -n). Sprawdź składnię.",
+      "hint": "`set -euo pipefail`; `exec > >(tee -a ...)`; `trap ... ERR`.",
+      "solution": "cd ~/infra/sklep01\ncat > instaluj.sh <<'EOF'\n#!/bin/bash\n# instaluj.sh - doprowadza serwer do stanu z README.md (idempotentnie)\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\nsource ./zmienne.conf\nexec > >(tee -a /var/log/instaluj-sklep01.log) 2>&1\ntrap 'echo \"BLAD w linii $LINENO: $BASH_COMMAND\" >&2' ERR\nSYMULACJA=0; ZMIANY=0\nuruchom() { if (( SYMULACJA )); then echo \"[symulacja] $*\"; else \"$@\"; fi; }\nwhile getopts \"n\" opt; do case $opt in n) SYMULACJA=1;; esac; done\nshift $((OPTIND-1))\necho \"== instaluj.sh (symulacja=$SYMULACJA) $(date -u +%FT%TZ)\"\nEOF\nchmod +x instaluj.sh && bash -n instaluj.sh && echo \"skladnia OK\""
+    },
+    {
+      "prompt": "Dodaj do skryptu funkcję `wgraj ZRODLO CEL TRYB [WLASCICIEL]`, która porównuje pliki (`cmp -s`) i zwraca 0 tylko, gdy plik się zmienił (wtedy go instaluje i zwiększa licznik ZMIANY).",
+      "hint": "`cmp -s`; `install -D -m -o -g`.",
+      "solution": "cd ~/infra/sklep01\ncat >> instaluj.sh <<'EOF'\nwgraj() {\n    local zrodlo=pliki/$1 cel=$2 tryb=$3 wlasciciel=${4:-root:root}\n    if [[ -f $cel ]] && cmp -s \"$zrodlo\" \"$cel\"; then return 1; fi\n    echo \"  zmiana: $cel\"\n    uruchom install -D -m \"$tryb\" -o \"${wlasciciel%%:*}\" -g \"${wlasciciel##*:}\" \"$zrodlo\" \"$cel\"\n    ZMIANY=$((ZMIANY + 1)); return 0\n}\nEOF\nbash -n instaluj.sh && echo \"OK\""
+    },
+    {
+      "prompt": "Dodaj strażniki: `konto_systemowe NAZWA KATALOG` (tworzy konto tylko, gdy nie istnieje) i `linia_w_pliku LINIA PLIK` (dopisuje tylko, gdy jej nie ma).",
+      "hint": "`id NAZWA &>/dev/null`; `grep -qxF`.",
+      "solution": "cd ~/infra/sklep01\ncat >> instaluj.sh <<'EOF'\nkonto_systemowe() {\n    id \"$1\" &>/dev/null && return 0\n    echo \"  nowe konto systemowe: $1\"\n    uruchom useradd --system --home-dir \"$2\" --shell /usr/sbin/nologin \"$1\"\n}\nlinia_w_pliku() {\n    grep -qxF \"$1\" \"$2\" 2>/dev/null && return 0\n    echo \"  dopisano do $2: $1\"\n    uruchom bash -c 'printf \"%s\\n\" \"$1\" >> \"$2\"' _ \"$1\" \"$2\"\n}\nEOF\nbash -n instaluj.sh && echo \"OK\""
+    },
+    {
+      "prompt": "Pokaż, dlaczego strażniki są potrzebne: na serwerze spróbuj dwa razy utworzyć konto `sklep` zwykłym `useradd` i zobacz błąd przy drugim razie. Potem to samo przez `konto_systemowe` (bez błędu).",
+      "hint": "`useradd sklep` dwa razy; funkcja sprawdza `id`.",
+      "solution": "ssh anna@203.0.113.50 'id sklep &>/dev/null && echo \"konto sklep juz istnieje\"; sudo useradd --system sklep 2>&1 | tail -1'\necho \"--- ze straznikiem: id sklep && return 0 -> brak proby utworzenia, brak bledu\""
+    },
+    {
+      "prompt": "Dodaj etap `etap_ssh`: wgraj plik konfiguracji SSH, a przy zmianie sprawdź składnię (`sshd -t`) i przeładuj usługę. Dodaj też wywołanie etapów na końcu skryptu.",
+      "hint": "`wgraj ... && { sshd -t; systemctl reload ssh; }`.",
+      "solution": "cd ~/infra/sklep01\ncat >> instaluj.sh <<'EOF'\netap_ssh() {\n    echo \"== ssh\"\n    if wgraj sshd/10-sklep01.conf /etc/ssh/sshd_config.d/10-sklep01.conf 644; then\n        uruchom sshd -t && uruchom systemctl reload ssh\n    fi\n}\netap_konta() {\n    echo \"== konta\"\n    linia_w_pliku \"$ADRES $FQDN $NAZWA_HOSTA\" /etc/hosts\n    konto_systemowe sklep /var/lib/sklep\n    uruchom install -d -o sklep -g sklep -m 750 /var/lib/sklep\n}\nETAPY=(\"$@\"); [[ ${#ETAPY[@]} -eq 0 ]] && ETAPY=(konta ssh)\nfor e in \"${ETAPY[@]}\"; do \"etap_$e\"; done\necho \"PODSUMOWANIE: zmieniono $ZMIANY plikow\"\nEOF\nbash -n instaluj.sh && echo \"OK\""
+    },
+    {
+      "prompt": "Sprawdź cały skrypt narzędziem ShellCheck i popraw zgłoszone problemy (lub potwierdź brak uwag).",
+      "hint": "`shellcheck -x instaluj.sh`.",
+      "solution": "cd ~/infra/sklep01\ncommand -v shellcheck >/dev/null || sudo apt-get install -y -qq shellcheck\nshellcheck -x instaluj.sh && echo \"brak uwag ShellCheck\""
+    },
+    {
+      "prompt": "Przygotuj plik SSH w strukturze `pliki/sshd/`: skopiuj z `pliki/10-sklep01.conf` (z etapu 3 projektu) do `pliki/sshd/10-sklep01.conf`, żeby ścieżki w skrypcie się zgadzały.",
+      "hint": "`install -D`.",
+      "solution": "cd ~/infra/sklep01\ninstall -D pliki/10-sklep01.conf pliki/sshd/10-sklep01.conf\ngit add pliki/sshd/10-sklep01.conf && git commit -qm \"Uloz plik sshd w pliki/sshd/\" && find pliki/sshd -type f"
+    },
+    {
+      "prompt": "Uruchom skrypt w trybie SYMULACJI (-n) na serwerze dla etapów konta i ssh — nie powinien nic zmieniać, tylko wypisać planowane akcje.",
+      "hint": "`rsync` repo na serwer, `sudo infra/instaluj.sh -n konta ssh`.",
+      "solution": "rsync -a ~/infra/sklep01/ anna@203.0.113.50:infra/\nssh -t anna@203.0.113.50 'sudo infra/instaluj.sh -n konta ssh'"
+    },
+    {
+      "prompt": "Uruchom skrypt naprawdę dla etapów konta i ssh. Przy pierwszym uruchomieniu może coś zmienić (jeśli stan się różni), przy drugim — „bez zmian”.",
+      "hint": "Dwa uruchomienia pod rząd.",
+      "solution": "ssh -t anna@203.0.113.50 'sudo infra/instaluj.sh konta ssh | tail -3'\necho \"=== drugie uruchomienie:\"\nssh -t anna@203.0.113.50 'sudo infra/instaluj.sh konta ssh | tail -1'"
+    },
+    {
+      "prompt": "Pokaż idempotentność dopisywania do pliku: sprawdź, ile razy wpis FQDN występuje w /etc/hosts po wielokrotnym uruchomieniu etapu konta (powinien być raz).",
+      "hint": "`grep -c FQDN /etc/hosts`.",
+      "solution": "ssh anna@203.0.113.50 'sudo infra/instaluj.sh konta >/dev/null; sudo infra/instaluj.sh konta >/dev/null; grep -c \"sklep01.firma.example\" /etc/hosts'"
+    },
+    {
+      "prompt": "Dodaj do skryptu etap `etap_usluga`: wgraj jednostkę sklep.service, a przy zmianie zweryfikuj (`systemd-analyze verify`), przeładuj systemd i zrestartuj usługę, jeśli jest JAR.",
+      "hint": "`wgraj sklep.service ... 644 && { verify; daemon-reload; restart }`.",
+      "solution": "cd ~/infra/sklep01\ncat >> instaluj.sh <<'EOF'\netap_usluga() {\n    echo \"== usluga\"\n    if wgraj sklep.service /etc/systemd/system/sklep.service 644; then\n        uruchom systemd-analyze verify /etc/systemd/system/sklep.service\n        uruchom systemctl daemon-reload\n        uruchom systemctl enable sklep\n        [[ -L /opt/sklep/sklep.jar ]] && uruchom systemctl restart sklep || true\n    fi\n}\nEOF\nbash -n instaluj.sh && echo \"OK\""
+    },
+    {
+      "prompt": "Dodaj etap `etap_nginx`: wgraj konfigurację Nginx, a przy zmianie sprawdź `nginx -t` i przeładuj. Przetestuj zmianę jednego pliku: zmień limit w pliku źródłowym i uruchom tylko etap nginx.",
+      "hint": "`wgraj nginx/sklep ... && { nginx -t; reload }`.",
+      "solution": "cd ~/infra/sklep01\ncat >> instaluj.sh <<'EOF'\netap_nginx() {\n    echo \"== nginx\"\n    if wgraj nginx/sklep /etc/nginx/sites-available/sklep 644; then\n        uruchom nginx -t && uruchom systemctl reload nginx\n    fi\n}\nEOF\ninstall -D pliki/nginx-sklep.conf pliki/nginx/sklep 2>/dev/null || true\nbash -n instaluj.sh\nsed -i 's/client_max_body_size 20m/client_max_body_size 50m/' pliki/nginx/sklep 2>/dev/null || true\nrsync -a ~/infra/sklep01/ anna@203.0.113.50:infra/\nssh -t anna@203.0.113.50 'sudo infra/instaluj.sh nginx | tail -3'"
+    },
+    {
+      "prompt": "Zademonstruj wykrywanie dryfu: zmień ręcznie coś na serwerze (np. limit w /etc/nginx/sites-available/sklep), a potem uruchom skrypt z -n dla etapu nginx — powinien pokazać, że plik się różni.",
+      "hint": "Edycja na serwerze; `instaluj.sh -n nginx`.",
+      "solution": "ssh anna@203.0.113.50 'sudo sed -i \"s/client_max_body_size [0-9]*m/client_max_body_size 99m/\" /etc/nginx/sites-available/sklep'\nssh -t anna@203.0.113.50 'sudo infra/instaluj.sh -n nginx'"
+    },
+    {
+      "prompt": "Przywróć stan z repozytorium: uruchom etap nginx naprawdę (skrypt nadpisze ręczną zmianę wersją z repozytorium i przeładuje Nginx). Sprawdź limit po naprawie.",
+      "hint": "`instaluj.sh nginx`; `grep client_max_body_size`.",
+      "solution": "ssh -t anna@203.0.113.50 'sudo infra/instaluj.sh nginx | tail -2; grep client_max_body_size /etc/nginx/sites-available/sklep'"
+    },
+    {
+      "prompt": "Odtwórz pułapkę skryptu bez strażników: napisz mały skrypt dopisujący wpis do pliku testowego bez sprawdzenia i uruchom go trzy razy. Policz duplikaty.",
+      "hint": "`echo \"wpis\" >> plik` w pętli; `grep -c`.",
+      "solution": "ssh anna@203.0.113.50 'f=/tmp/dryf-test; : > $f; for i in 1 2 3; do echo \"host sklep 127.0.0.1\" >> $f; done; echo \"bez straznika: $(grep -c \"host sklep\" $f) wpisy\"; rm $f'"
+    },
+    {
+      "prompt": "Pokaż poprawną wersję: to samo dopisywanie ze strażnikiem (grep -qxF) uruchomione trzy razy daje jeden wpis.",
+      "hint": "`grep -qxF \"wpis\" plik || echo \"wpis\" >> plik`.",
+      "solution": "ssh anna@203.0.113.50 'f=/tmp/dryf-test; : > $f; for i in 1 2 3; do grep -qxF \"host sklep 127.0.0.1\" $f || echo \"host sklep 127.0.0.1\" >> $f; done; echo \"ze straznikiem: $(grep -c \"host sklep\" $f) wpis\"; rm $f'"
+    },
+    {
+      "prompt": "Przetestuj skrypt na „świeżej” maszynie testowej (srv-test): wgraj repo i uruchom pełny skrypt dwa razy. Drugie uruchomienie musi zakończyć się „bez zmian”.",
+      "hint": "`rsync` na srv-test; dwa uruchomienia.",
+      "solution": "rsync -a ~/infra/sklep01/ anna@192.168.56.20:infra/\nssh -t anna@192.168.56.20 'sudo infra/instaluj.sh | tail -1'\necho \"=== drugie uruchomienie (oczekiwane: bez zmian):\"\nssh -t anna@192.168.56.20 'sudo infra/instaluj.sh | tail -1'"
+    },
+    {
+      "prompt": "Zatwierdź skrypt i zaktualizuj README repozytorium: dodaj sekcję „Odtworzenie serwera” (utwórz maszynę, rsync repo, uruchom instaluj.sh, odtwórz bazę z kopii).",
+      "hint": "`git add instaluj.sh`; dopisz do README.",
+      "solution": "cd ~/infra/sklep01\ncat >> README.md <<'EOF'\n\n## Odtworzenie serwera\n1. Utworz maszyne Ubuntu 24.04, dodaj klucz anny dla konta poczatkowego.\n2. rsync -a ~/infra/sklep01/ anna@NOWY_ADRES:infra/\n3. ssh -t anna@NOWY_ADRES sudo infra/instaluj.sh   (idempotentnie; mozna powtarzac)\n4. Odtworz baze: patrz pliki/odtwarzanie.md (najnowszy zrzut z kopie.firma.example).\n5. Zweryfikuj: curl https://sklep.firma.example/actuator/health (lokalnie), ss -tlnp.\nEOF\ngit add instaluj.sh README.md && git commit -qm \"Etap 8: idempotentny skrypt instaluj.sh\" && git log --oneline -1"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co zamienia etap 8 projektu w jeden skrypt?",
+      "options": {
+        "A": "Tylko konfigurację Nginx",
+        "B": "Tylko kopie zapasowe",
+        "C": "Tylko instalację Javy",
+        "D": "Całą ręczną procedurę instalacji i konfiguracji serwera"
+      },
+      "correct": "D",
+      "explanation": "instaluj.sh odtwarza serwer od nowa."
+    },
+    {
+      "question": "Czym jest idempotentność skryptu?",
+      "options": {
+        "A": "Skrypt działa tylko raz",
+        "B": "Skrypt restartuje serwer",
+        "C": "Wielokrotne uruchomienie daje ten sam stan co jednokrotne, bez psucia poprawnego stanu",
+        "D": "Skrypt usuwa dane"
+      },
+      "correct": "C",
+      "explanation": "Każdy krok sprawdza stan przed zmianą."
+    },
+    {
+      "question": "Co jest celem skryptu instalacyjnego?",
+      "options": {
+        "A": "Monitorowanie",
+        "B": "Przyspieszenie aplikacji",
+        "C": "Zastąpienie kopii zapasowych",
+        "D": "Szybkie, powtarzalne odtworzenie serwera (awaria, środowisko testowe, drugi serwer)"
+      },
+      "correct": "D",
+      "explanation": "Nowy serwer w kilkanaście minut."
+    },
+    {
+      "question": "Co zawiera repozytorium infrastruktury obok instaluj.sh?",
+      "options": {
+        "A": "Katalog pliki/ z kopiami konfiguracji, zmienne.conf i README",
+        "B": "Kopie bazy",
+        "C": "Klucze prywatne",
+        "D": "Hasła produkcyjne"
+      },
+      "correct": "A",
+      "explanation": "Sekrety nie są wersjonowane."
+    },
+    {
+      "question": "Po co jest plik zmienne.conf?",
+      "options": {
+        "A": "Przechowuje parametry (domena, adres, wersje) wczytywane przez skrypt",
+        "B": "Kod aplikacji",
+        "C": "Hasła",
+        "D": "Logi"
+      },
+      "correct": "A",
+      "explanation": "source ./zmienne.conf na początku skryptu."
+    },
+    {
+      "question": "Co robi funkcja wgraj w skrypcie?",
+      "options": {
+        "A": "Tworzy konto",
+        "B": "Porównuje plik źródłowy z docelowym (cmp -s) i instaluje tylko, gdy się różni",
+        "C": "Usuwa plik",
+        "D": "Zawsze kopiuje plik"
+      },
+      "correct": "B",
+      "explanation": "Zwraca 0 przy zmianie, co wyzwala przeładowanie."
+    },
+    {
+      "question": "Dlaczego wgraj zwraca informację o zmianie?",
+      "options": {
+        "A": "Żeby przeładować usługę tylko wtedy, gdy jej konfiguracja faktycznie się zmieniła",
+        "B": "Żeby liczyć pliki",
+        "C": "Bez powodu",
+        "D": "Żeby logować"
+      },
+      "correct": "A",
+      "explanation": "Niepotrzebne restarty to przerwy w działaniu."
+    },
+    {
+      "question": "Jak strażnik tworzy konto tylko raz?",
+      "options": {
+        "A": "id NAZWA &>/dev/null && return 0 (useradd tylko, gdy konta nie ma)",
+        "B": "adduser --force",
+        "C": "useradd -f",
+        "D": "useradd zawsze"
+      },
+      "correct": "A",
+      "explanation": "Drugie uruchomienie nie zgłosi błędu „user already exists”."
+    },
+    {
+      "question": "Jak idempotentnie dopisać linię do pliku?",
+      "options": {
+        "A": "grep -qxF \"linia\" plik || echo \"linia\" >> plik",
+        "B": "cat linia >> plik",
+        "C": "sed -i a linia",
+        "D": "echo \"linia\" >> plik"
+      },
+      "correct": "A",
+      "explanation": "-qxF dopasowuje całą linię dosłownie."
+    },
+    {
+      "question": "Co robi tryb symulacji (-n) w skrypcie?",
+      "options": {
+        "A": "Restartuje serwer",
+        "B": "Wypisuje planowane akcje bez ich wykonywania",
+        "C": "Przyspiesza skrypt",
+        "D": "Usuwa pliki"
+      },
+      "correct": "B",
+      "explanation": "Funkcja uruchom sprawdza SYMULACJA."
+    },
+    {
+      "question": "Do czego służy trap ... ERR w skrypcie?",
+      "options": {
+        "A": "Wypisuje numer linii i polecenie przy błędzie (ułatwia diagnozę)",
+        "B": "Restartuje skrypt",
+        "C": "Ignoruje błędy",
+        "D": "Loguje sukces"
+      },
+      "correct": "A",
+      "explanation": "Razem z set -e zatrzymuje skrypt przy błędzie."
+    },
+    {
+      "question": "Co robi set -euo pipefail w skrypcie instalacyjnym?",
+      "options": {
+        "A": "Ignoruje błędy",
+        "B": "Włącza debug",
+        "C": "Przerywa przy błędzie, nieustawionej zmiennej i błędzie potoku",
+        "D": "Ustawia locale"
+      },
+      "correct": "C",
+      "explanation": "Zapobiega kontynuacji w stanie pośrednim."
+    },
+    {
+      "question": "Jak skrypt zapisuje dziennik swojego działania?",
+      "options": {
+        "A": "echo do pliku",
+        "B": "exec > >(tee -a /var/log/instaluj-sklep01.log) 2>&1",
+        "C": "journalctl --write",
+        "D": "systemd-cat"
+      },
+      "correct": "B",
+      "explanation": "Przekierowuje całe wyjście do pliku i na ekran."
+    },
+    {
+      "question": "Dlaczego etap przeładowuje usługę dopiero po walidacji (sshd -t, nginx -t)?",
+      "options": {
+        "A": "Żeby było szybciej",
+        "B": "Bez powodu",
+        "C": "Bo walidacja jest wymagana przez systemd",
+        "D": "Błędna konfiguracja nie powinna zepsuć działającej usługi"
+      },
+      "correct": "D",
+      "explanation": "Błąd przerywa skrypt przed reloadem."
+    },
+    {
+      "question": "Co jest objawem skryptu bez strażników przy drugim uruchomieniu?",
+      "options": {
+        "A": "Serwer się restartuje",
+        "B": "Błąd „user already exists” lub zduplikowane wpisy w plikach",
+        "C": "Skrypt działa szybciej",
+        "D": "Nic się nie dzieje"
+      },
+      "correct": "B",
+      "explanation": "Każdy krok musi sprawdzać stan."
+    },
+    {
+      "question": "Co dzieje się bez set -e, gdy useradd zawiedzie w połowie skryptu?",
+      "options": {
+        "A": "Skrypt się zatrzymuje",
+        "B": "Skrypt jedzie dalej i może zduplikować kolejne wpisy",
+        "C": "Serwer się wyłącza",
+        "D": "Nic"
+      },
+      "correct": "B",
+      "explanation": "Dlatego potrzebne są strażniki, nie tylko set -e."
+    },
+    {
+      "question": "Jak sprawdzić składnię skryptu bez uruchamiania?",
+      "options": {
+        "A": "sh -x",
+        "B": "bash -n instaluj.sh",
+        "C": "shellcheck tylko",
+        "D": "bash --check"
+      },
+      "correct": "B",
+      "explanation": "Dodatkowo shellcheck wykrywa typowe błędy."
+    },
+    {
+      "question": "Co robi shellcheck?",
+      "options": {
+        "A": "Uruchamia skrypt",
+        "B": "Formatuje kod",
+        "C": "Analizuje skrypt i wskazuje typowe błędy i ryzykowne konstrukcje",
+        "D": "Usuwa błędy automatycznie"
+      },
+      "correct": "C",
+      "explanation": "-x analizuje też dołączane pliki (source)."
+    },
+    {
+      "question": "Jak uruchomić skrypt zdalnie z laptopa?",
+      "options": {
+        "A": "git push na serwer",
+        "B": "scp i ręczne wykonanie każdego polecenia",
+        "C": "rsync repo na serwer, potem ssh -t anna@serwer sudo infra/instaluj.sh",
+        "D": "docker run"
+      },
+      "correct": "C",
+      "explanation": "rsync synchronizuje pliki, ssh uruchamia skrypt."
+    },
+    {
+      "question": "Jak wykryć ręczny dryf konfiguracji serwera?",
+      "options": {
+        "A": "Porównać ręcznie wszystko",
+        "B": "Uruchomić skrypt z -n — pokaże, które pliki różnią się od repozytorium",
+        "C": "Zrestartować serwer",
+        "D": "Usunąć pliki"
+      },
+      "correct": "B",
+      "explanation": "Symulacja nie zmienia nic, tylko raportuje."
+    },
+    {
+      "question": "Co zrobi etap nginx po wykryciu ręcznej zmiany na serwerze?",
+      "options": {
+        "A": "Usunie Nginx",
+        "B": "Zostawi zmianę",
+        "C": "Nadpisze plik wersją z repozytorium, zweryfikuje i przeładuje Nginx",
+        "D": "Zduplikuje konfigurację"
+      },
+      "correct": "C",
+      "explanation": "Repozytorium jest źródłem prawdy."
+    },
+    {
+      "question": "Jak uruchomić tylko wybrany etap skryptu?",
+      "options": {
+        "A": "Usunąć inne funkcje",
+        "B": "Nie da się",
+        "C": "Zakomentować inne etapy",
+        "D": "Podać jego nazwę jako argument, np. instaluj.sh nginx"
+      },
+      "correct": "D",
+      "explanation": "Bez argumentów wykonuje domyślny zestaw etapów."
+    },
+    {
+      "question": "Co jest zaletą podziału skryptu na etapy-funkcje?",
+      "options": {
+        "A": "Wymóg bash",
+        "B": "Szybsze działanie",
+        "C": "Mniej pamięci",
+        "D": "Można uruchomić pojedynczy etap i łatwiej czytać/utrzymywać skrypt"
+      },
+      "correct": "D",
+      "explanation": "np. etap_ssh, etap_nginx, etap_usluga."
+    },
+    {
+      "question": "Dlaczego sekretów nie trzyma się w repozytorium instalacyjnym?",
+      "options": {
+        "A": "Repozytorium bywa współdzielone i wersjonowane; skrypt generuje sekrety, jeśli ich brak",
+        "B": "Bo zajmują miejsce",
+        "C": "Bo Git ich nie obsługuje",
+        "D": "Bez powodu"
+      },
+      "correct": "A",
+      "explanation": "Hasło powstaje losowo na serwerze."
+    },
+    {
+      "question": "Jak skrypt sprawdza, czy rola w bazie już istnieje?",
+      "options": {
+        "A": "cat /etc/passwd",
+        "B": "psql --role sklep",
+        "C": "CREATE ROLE zawsze",
+        "D": "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='sklep'\" | grep -q 1"
+      },
+      "correct": "D",
+      "explanation": "Tworzy rolę tylko, gdy jej nie ma."
+    },
+    {
+      "question": "Co jest dowodem idempotentności przy teście na świeżej maszynie?",
+      "options": {
+        "A": "Skrypt nie zgłasza błędów",
+        "B": "Pierwsze uruchomienie działa",
+        "C": "Drugie uruchomienie z rzędu kończy się „bez zmian”",
+        "D": "Serwer się restartuje"
+      },
+      "correct": "C",
+      "explanation": "Powtarzalny wynik niezależnie od liczby uruchomień."
+    },
+    {
+      "question": "Co powinno znaleźć się w README obok skryptu?",
+      "options": {
+        "A": "Hasła",
+        "B": "Kopie bazy",
+        "C": "Logi",
+        "D": "Procedura odtworzenia serwera krok po kroku"
+      },
+      "correct": "D",
+      "explanation": "Utwórz maszynę, rsync, instaluj.sh, odtwórz bazę."
+    },
+    {
+      "question": "Czym jest Ansible w kontekście tej lekcji?",
+      "options": {
+        "A": "Narzędziem zarządzania konfiguracją robiącym to samo deklaratywnie, przez SSH, bez agenta",
+        "B": "Zaporą",
+        "C": "Serwerem WWW",
+        "D": "Bazą danych"
+      },
+      "correct": "A",
+      "explanation": "Moduły Ansible są idempotentne z definicji."
+    },
+    {
+      "question": "Kiedy warto przejść ze skryptu bash na Ansible?",
+      "options": {
+        "A": "Zawsze",
+        "B": "Przy kilku serwerach, zespole i wielu środowiskach",
+        "C": "Przy jednym serwerze",
+        "D": "Nigdy"
+      },
+      "correct": "B",
+      "explanation": "Dla jednego serwera skrypt wystarcza i uczy zasad."
+    },
+    {
+      "question": "Co odpowiada funkcji wgraj w Ansible?",
+      "options": {
+        "A": "Moduł setup",
+        "B": "Moduł ping",
+        "C": "Moduł debug",
+        "D": "Moduł template/copy z notify (reload przy zmianie)"
+      },
+      "correct": "D",
+      "explanation": "Ansible sam wykrywa zmianę i powiadamia handler."
+    },
+    {
+      "question": "Co jest najdokładniejszym opisem konfiguracji serwera?",
+      "options": {
+        "A": "Pamięć administratora",
+        "B": "Zrzuty ekranu",
+        "C": "Sam skrypt instalacyjny (i pliki w repozytorium)",
+        "D": "Historia powłoki"
+      },
+      "correct": "C",
+      "explanation": "Kod jest jednoznaczny i wersjonowany."
+    },
+    {
+      "question": "Co robi funkcja uruchom w trybie symulacji?",
+      "options": {
+        "A": "Wypisuje „[symulacja] POLECENIE” zamiast je wykonać",
+        "B": "Wykonuje polecenie z opóźnieniem",
+        "C": "Loguje do pliku",
+        "D": "Nic"
+      },
+      "correct": "A",
+      "explanation": "Bez -n wykonuje polecenie normalnie."
+    },
+    {
+      "question": "Jak skrypt obsługuje opcję -n?",
+      "options": {
+        "A": "Przez zmienną w zmienne.conf",
+        "B": "Nie obsługuje",
+        "C": "getopts ustawia SYMULACJA=1, a funkcja uruchom to sprawdza",
+        "D": "Przez plik"
+      },
+      "correct": "C",
+      "explanation": "shift $((OPTIND-1)) przesuwa argumenty."
+    },
+    {
+      "question": "Co daje install -D -o -g -m w skrypcie?",
+      "options": {
+        "A": "Tworzy katalogi po drodze, kopiuje plik i ustawia właściciela oraz prawa w jednym poleceniu",
+        "B": "Instaluje pakiet",
+        "C": "Montuje katalog",
+        "D": "Usuwa plik"
+      },
+      "correct": "A",
+      "explanation": "-D tworzy brakujące katalogi docelowe."
+    },
+    {
+      "question": "Dlaczego etap przeładowuje usługę tylko przy zmianie pliku?",
+      "options": {
+        "A": "Bez powodu",
+        "B": "Bo reload jest wolny",
+        "C": "Niepotrzebny restart to przerwa w działaniu usługi",
+        "D": "Bo systemd tego wymaga"
+      },
+      "correct": "C",
+      "explanation": "wgraj zwraca informację o zmianie."
+    },
+    {
+      "question": "Jak przetestować skrypt bezpiecznie przed użyciem na produkcji?",
+      "options": {
+        "A": "Od razu na produkcji",
+        "B": "Tylko przeczytać",
+        "C": "Uruchomić jako root bez testów",
+        "D": "Uruchomić na świeżej maszynie testowej (np. srv-test) dwa razy"
+      },
+      "correct": "D",
+      "explanation": "Drugie uruchomienie musi nic nie zmienić."
+    },
+    {
+      "question": "Co oznacza PODSUMOWANIE „bez zmian” po uruchomieniu skryptu?",
+      "options": {
+        "A": "Skrypt się nie uruchomił",
+        "B": "Serwer był już w pożądanym stanie — skrypt niczego nie zmienił",
+        "C": "Serwer został wyczyszczony",
+        "D": "Wystąpił błąd"
+      },
+      "correct": "B",
+      "explanation": "Dowód idempotentności."
+    },
+    {
+      "question": "Co zrobić, gdy skrypt przerwie się w połowie (idempotentny)?",
+      "options": {
+        "A": "Zignorować",
+        "B": "Odtworzyć serwer od zera",
+        "C": "Uruchomić go ponownie — dokończy brakujące kroki, nie psując gotowych",
+        "D": "Cofnąć wszystko ręcznie"
+      },
+      "correct": "C",
+      "explanation": "To zaleta idempotentności."
+    },
+    {
+      "question": "Jak skrypt radzi sobie z wpisem w /etc/hosts przy wielu uruchomieniach?",
+      "options": {
+        "A": "Ignoruje /etc/hosts",
+        "B": "Dopisuje za każdym razem",
+        "C": "Usuwa plik",
+        "D": "linia_w_pliku dopisuje go tylko, gdy go nie ma (jeden wpis)"
+      },
+      "correct": "D",
+      "explanation": "grep -qxF chroni przed duplikatami."
+    },
+    {
+      "question": "Co jest zaletą rsync przy wgrywaniu repozytorium na serwer?",
+      "options": {
+        "A": "Kompresuje bazę",
+        "B": "Przesyła tylko zmienione pliki i zachowuje strukturę katalogów",
+        "C": "Tworzy kopie",
+        "D": "Restartuje usługi"
+      },
+      "correct": "B",
+      "explanation": "Szybsze niż kopiowanie wszystkiego za każdym razem."
+    },
+    {
+      "question": "Dlaczego skrypt instalacyjny dobrze uczy administracji?",
+      "options": {
+        "A": "Bez powodu",
+        "B": "Bo zastępuje dokumentację",
+        "C": "Wymusza myślenie o idempotentności, walidacji, kolejności kroków i sekretach",
+        "D": "Bo jest szybki"
+      },
+      "correct": "C",
+      "explanation": "Te same zasady stosują narzędzia jak Ansible."
+    },
+    {
+      "question": "Co jest źródłem prawdy o konfiguracji po wdrożeniu skryptu?",
+      "options": {
+        "A": "Repozytorium infrastruktury (pliki/ i instaluj.sh)",
+        "B": "Logi",
+        "C": "Stan serwera po ręcznych zmianach",
+        "D": "Pamięć administratora"
+      },
+      "correct": "A",
+      "explanation": "Zmiany robi się w repozytorium, nie na serwerze."
+    },
+    {
+      "question": "Jak skrypt wykrywa, że plik docelowy nie istnieje jeszcze na serwerze?",
+      "options": {
+        "A": "Pyta użytkownika",
+        "B": "[[ -f $cel ]] w funkcji wgraj — brak pliku oznacza zmianę (instalację)",
+        "C": "Zawsze instaluje",
+        "D": "Pomija"
+      },
+      "correct": "B",
+      "explanation": "Na świeżej maszynie wszystkie pliki są „zmienione”."
+    },
+    {
+      "question": "Co jest typowym objawem skryptu „spisanej historii poleceń”?",
+      "options": {
+        "A": "Działa na świeżej maszynie, ale przy powtórzeniu duplikuje wpisy lub przerywa się",
+        "B": "Wymaga Ansible",
+        "C": "Jest wolny",
+        "D": "Działa zawsze poprawnie"
+      },
+      "correct": "A",
+      "explanation": "Brak sprawdzania stanu przed zmianą."
+    },
+    {
+      "question": "Jak naprawić plik z już zduplikowanymi wpisami?",
+      "options": {
+        "A": "Zignorować",
+        "B": "Usunąć duplikaty (np. awk '!seen[$0]++') i dodać strażnik do skryptu",
+        "C": "Usunąć cały plik",
+        "D": "Zostawić"
+      },
+      "correct": "B",
+      "explanation": "Strażnik zapobiega powtórzeniu problemu."
+    },
+    {
+      "question": "Co jest zaletą uruchomienia tylko jednego etapu po zmianie konfiguracji?",
+      "options": {
+        "A": "Szybkie wdrożenie zmiany bez dotykania reszty serwera",
+        "B": "Wymóg systemd",
+        "C": "Mniej pamięci",
+        "D": "Lepszy audyt"
+      },
+      "correct": "A",
+      "explanation": "Np. instaluj.sh nginx po zmianie konfiguracji Nginx."
+    },
+    {
+      "question": "Co jest warunkiem przejścia do lekcji 9 (lista kontrolna)?",
+      "options": {
+        "A": "Konto root",
+        "B": "Działający, idempotentny skrypt odtwarzający serwer",
+        "C": "Brak zapory",
+        "D": "Wyłączona baza"
+      },
+      "correct": "B",
+      "explanation": "Lista kontrolna sprawdza gotowość całego serwera."
+    },
+    {
+      "question": "Dlaczego skrypt przechowuje pliki konfiguracyjne w pliki/, a nie generuje ich w locie?",
+      "options": {
+        "A": "Bez powodu",
+        "B": "Łatwiej je przeglądać, wersjonować w Git i porównywać ze stanem serwera",
+        "C": "Bo bash nie umie ich tworzyć",
+        "D": "Bo są za duże"
+      },
+      "correct": "B",
+      "explanation": "wgraj porównuje plik z repozytorium z plikiem na serwerze."
+    },
+    {
+      "question": "Co robi systemctl daemon-reload w etapie usługi?",
+      "options": {
+        "A": "Wczytuje zmienioną jednostkę systemd przed restartem",
+        "B": "Przeładowuje Nginx",
+        "C": "Usuwa jednostkę",
+        "D": "Restartuje serwer"
+      },
+      "correct": "A",
+      "explanation": "Potrzebne po zmianie pliku .service."
+    },
+    {
+      "question": "Jak skrypt unika restartu aplikacji, gdy nie ma jeszcze JAR-a?",
+      "options": {
+        "A": "Zawsze restartuje",
+        "B": "Pyta użytkownika",
+        "C": "Sprawdza [[ -L /opt/sklep/sklep.jar ]] przed restartem",
+        "D": "Pomija etap"
+      },
+      "correct": "C",
+      "explanation": "Na świeżej maszynie aplikacja startuje po pierwszym wdrożeniu."
+    },
+    {
+      "question": "Co jest celem całego etapu 8?",
+      "options": {
+        "A": "Zrobić kopię",
+        "B": "Zabezpieczyć SSH",
+        "C": "Uruchomić aplikację",
+        "D": "Zamienić ręczną konfigurację w idempotentny, wersjonowany skrypt odtwarzający serwer"
+      },
+      "correct": "D",
+      "explanation": "Serwer staje się odtwarzalny jednym poleceniem."
+    },
+    {
+      "question": "Dlaczego warto uruchomić skrypt z -n na działającym serwerze produkcyjnym?",
+      "options": {
+        "A": "Zrestartuje usługi",
+        "B": "Przyspieszy serwer",
+        "C": "Pokaże dryf (różnice względem repozytorium) bez wprowadzania zmian",
+        "D": "Zrobi kopię"
+      },
+      "correct": "C",
+      "explanation": "Symulacja jest bezpieczna."
+    },
+    {
+      "question": "Co oznacza, że skrypt jest „źródłem prawdy” o serwerze?",
+      "options": {
+        "A": "Skrypt zawiera hasła",
+        "B": "Skrypt zastępuje monitoring",
+        "C": "Stan serwera ma wynikać ze skryptu i repozytorium, a nie z ręcznych zmian",
+        "D": "Skrypt jest tajny"
+      },
+      "correct": "C",
+      "explanation": "Ręczne zmiany to dryf do naprawy."
+    },
+    {
+      "question": "Jak skrypt obsługuje wiele etapów podanych jako argumenty?",
+      "options": {
+        "A": "Uruchamia wszystkie zawsze",
+        "B": "Tylko pierwszy",
+        "C": "Losowo",
+        "D": "Pętla for po nazwach etapów wywołuje funkcje etap_NAZWA"
+      },
+      "correct": "D",
+      "explanation": "Bez argumentów używa domyślnego zestawu."
+    },
+    {
+      "question": "Co jest dobrą praktyką po napisaniu skryptu, a przed użyciem?",
+      "options": {
+        "A": "Od razu na produkcji",
+        "B": "Tylko przeczytanie",
+        "C": "Uruchomienie jako root bez testów",
+        "D": "bash -n, shellcheck, uruchomienie z -n, test na świeżej maszynie dwa razy"
+      },
+      "correct": "D",
+      "explanation": "Weryfikacja chroni przed uszkodzeniem serwera."
+    },
+    {
+      "question": "Czym różni się skrypt idempotentny od zwykłego skryptu instalacyjnego?",
+      "options": {
+        "A": "Zwykły jest bezpieczniejszy",
+        "B": "Idempotentny sprawdza stan przed każdą zmianą i można go bezpiecznie powtarzać",
+        "C": "Idempotentny jest wolniejszy",
+        "D": "Niczym"
+      },
+      "correct": "B",
+      "explanation": "Powtarzalność to kluczowa cecha."
+    },
+    {
+      "question": "Co jest najprostszym sposobem na dryf konfiguracji na wielu serwerach?",
+      "options": {
+        "A": "Regularne uruchamianie skryptu/Ansible, który wyrównuje stan do repozytorium",
+        "B": "Ręczne sprawdzanie każdego serwera",
+        "C": "Ignorowanie",
+        "D": "Restart serwerów"
+      },
+      "correct": "A",
+      "explanation": "Automatyzacja utrzymuje spójność."
+    },
+    {
+      "question": "Dlaczego skrypt wczytuje parametry ze zmienne.conf, a nie wpisuje je na stałe?",
+      "options": {
+        "A": "Bo bash tego wymaga",
+        "B": "Żeby ukryć hasła",
+        "C": "Bez powodu",
+        "D": "Ten sam skrypt obsłuży inny serwer/środowisko po zmianie zmiennych"
+      },
+      "correct": "D",
+      "explanation": "np. inny ADRES i FQDN dla serwera testowego."
+    },
+    {
+      "question": "Co jest zaletą logowania działania skryptu do pliku?",
+      "options": {
+        "A": "Przyspiesza skrypt",
+        "B": "Szyfruje dane",
+        "C": "Można później sprawdzić, co i kiedy skrypt zmienił",
+        "D": "Zastępuje monitoring"
+      },
+      "correct": "C",
+      "explanation": "/var/log/instaluj-sklep01.log."
+    },
+    {
+      "question": "Co jest zaletą uruchamiania skryptu przez SSH z laptopa zamiast ręcznego logowania?",
+      "options": {
+        "A": "Szybszy procesor",
+        "B": "Mniej pamięci na serwerze",
+        "C": "Brak potrzeby klucza",
+        "D": "Powtarzalność i brak pominiętych kroków — cała procedura w jednym poleceniu"
+      },
+      "correct": "D",
+      "explanation": "rsync repo + ssh sudo instaluj.sh."
+    }
+  ]
 }
