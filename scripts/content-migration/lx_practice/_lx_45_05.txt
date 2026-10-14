@@ -1,0 +1,959 @@
+#EX
+// 1
+P: Na `srv-docker` pokaż, że plik zapisany w warstwie zapisu kontenera znika po `docker rm`: zapisz `/plik.txt` w kontenerze `tymczasowy`, usuń go i sprawdź plik w nowym kontenerze.
+H: `docker run --name tymczasowy alpine:3.20 sh -c 'echo dane > /plik.txt'`.
+S:
+docker run --name tymczasowy alpine:3.20 sh -c 'echo dane > /plik.txt'
+docker rm tymczasowy > /dev/null
+docker run --rm alpine:3.20 cat /plik.txt
+#EX
+// 2
+P: Utwórz wolumen `notatki`, dopisz do niego w dwóch kolejnych kontenerach po jednej linii i odczytaj całość trzecim kontenerem.
+H: `docker volume create`, `-v notatki:/dane`.
+S:
+docker volume create notatki > /dev/null
+for i in 1 2; do docker run --rm -v notatki:/dane alpine:3.20 sh -c "echo 'zapis $i' >> /dane/log.txt"; done
+docker run --rm -v notatki:/dane alpine:3.20 cat /dane/log.txt
+#EX
+// 3
+P: Odczytaj, gdzie na gospodarzu leżą dane wolumenu `notatki`, jaki ma sterownik i datę utworzenia. Wypisz pliki z poziomu gospodarza.
+H: `docker volume inspect`, `sudo ls -l .../_data`.
+S:
+docker volume inspect -f '{{.Name}} {{.Driver}} {{.CreatedAt}} {{.Mountpoint}}' notatki
+sudo ls -l "$(docker volume inspect -f '{{.Mountpoint}}' notatki)"
+#EX
+// 4
+P: Utwórz katalog `~/wymiana`, zapisz do niego plik z kontenera (bind mount) i sprawdź właściciela pliku w postaci liczbowej. Spróbuj go usunąć bez `sudo`.
+H: `ls -ln`; proces w kontenerze działa jako root (UID 0).
+S:
+mkdir -p ~/wymiana
+docker run --rm -v ~/wymiana:/wyj alpine:3.20 sh -c 'date -I > /wyj/data.txt; mkdir -p /wyj/podkatalog; touch /wyj/podkatalog/x'
+ls -ln ~/wymiana ~/wymiana/podkatalog
+rm -rf ~/wymiana/podkatalog 2>&1 | head -1
+#EX
+// 5
+P: Powtórz zapis do `~/wymiana`, uruchamiając kontener z UID i GID Twojego konta. Sprawdź właściciela nowego pliku i posprzątaj stare pliki roota.
+H: `--user "$(id -u):$(id -g)"`.
+S:
+docker run --rm --user "$(id -u):$(id -g)" -v ~/wymiana:/wyj alpine:3.20 sh -c 'id; date -I > /wyj/data-anna.txt'
+ls -ln ~/wymiana
+sudo rm -rf ~/wymiana/podkatalog ~/wymiana/data.txt
+#EX
+// 6
+P: Zamontuj plik konfiguracyjny tylko do odczytu i sprawdź, że kontener nie może go zmienić. Użyj składni `--mount`.
+H: `--mount type=bind,src=...,dst=...,readonly`.
+S:
+echo "tryb=produkcja" > ~/wymiana/app.conf
+docker run --rm --mount type=bind,src="$HOME/wymiana/app.conf",dst=/etc/app.conf,readonly alpine:3.20 \
+  sh -c 'cat /etc/app.conf; echo zmiana >> /etc/app.conf'
+#EX
+// 7
+P: Uruchom kontener z `tmpfs` na `/tmp` o rozmiarze 64 MB, zapisz plik 100 MB i sprawdź, co się stanie. Wypisz rodzaj systemu plików `/tmp`.
+H: `--tmpfs /tmp:size=64m`, `dd if=/dev/zero of=/tmp/duzy bs=1M count=100`, `df -h /tmp`.
+S:
+docker run --rm --tmpfs /tmp:size=64m alpine:3.20 sh -c 'df -h /tmp; dd if=/dev/zero of=/tmp/duzy bs=1M count=100 2>&1 | tail -1; ls -lh /tmp/duzy'
+#EX
+// 8
+P: Sprawdź, które katalogi obrazów `postgres:16`, `nginx:1.27` i `sklep:1.4.2` mają instrukcję `VOLUME` (tworzą wolumeny anonimowe).
+H: `docker image inspect -f '{{json .Config.Volumes}}'`.
+S:
+for img in postgres:16 nginx:1.27 sklep:1.4.2; do printf '%-14s %s\n' "$img" "$(docker image inspect -f '{{json .Config.Volumes}}' $img)"; done
+#EX
+// 9
+P: Uruchom `pg-test` (postgres:16) bez podawania wolumenu i sprawdź, jaki wolumen dostał kontener. Ile wolumenów anonimowych jest w systemie?
+H: `docker inspect -f '{{range .Mounts}}{{.Type}} {{.Name}} -> {{.Destination}}{{println}}{{end}}'`.
+S:
+docker run -d --name pg-test -e POSTGRES_PASSWORD=test postgres:16 > /dev/null
+docker inspect -f '{{range .Mounts}}{{.Type}} {{.Name}} -> {{.Destination}}{{println}}{{end}}' pg-test
+docker volume ls --format '{{.Name}}' | grep -cE '^[0-9a-f]{64}$'
+#EX
+// 10
+P: Odtwórz pułapkę: utwórz w `pg-test` tabelę `produkty` z trzema wierszami, usuń kontener (bez `-v`) i uruchom nowy o tej samej nazwie. Sprawdź tabelę i listę osieroconych wolumenów.
+H: `docker exec pg-test psql -U postgres -c "..."`; `docker volume ls -f dangling=true`.
+S:
+sleep 5
+docker exec pg-test psql -U postgres -qc "create table produkty(id int, nazwa text); insert into produkty values (1,'laptop'),(2,'mysz'),(3,'monitor');"
+docker exec pg-test psql -U postgres -Atc 'select count(*) from produkty'
+docker rm -f pg-test > /dev/null
+docker run -d --name pg-test -e POSTGRES_PASSWORD=test postgres:16 > /dev/null; sleep 5
+docker exec pg-test psql -U postgres -Atc 'select count(*) from produkty'
+docker volume ls -f dangling=true --format '{{.Name}} {{.CreatedAt}}' 2>/dev/null || docker volume ls -f dangling=true
+#EX
+// 11
+P: Znajdź osierocony wolumen z danymi (sprawdź zawartość każdego wolumenu `dangling` pod kątem pliku `PG_VERSION`) i przenieś dane do wolumenu nazwanego `pgdata-test`.
+H: Kontener pomocniczy `alpine` z oboma wolumenami: `cp -a /z/. /do/`.
+S:
+docker rm -f pg-test > /dev/null
+for v in $(docker volume ls -qf dangling=true); do
+  docker run --rm -v "$v":/z:ro alpine:3.20 test -f /z/PG_VERSION && echo "$v"
+done | head -1 > /tmp/stary-wolumen
+docker volume create pgdata-test > /dev/null
+docker run --rm -v "$(cat /tmp/stary-wolumen)":/z:ro -v pgdata-test:/do alpine:3.20 cp -a /z/. /do/
+docker run --rm -v pgdata-test:/d alpine:3.20 ls /d | head -5
+#EX
+// 12
+P: Uruchom `pg-test` z wolumenem `pgdata-test`, sprawdź tabelę, a potem odtwórz kontener z inną opcją (port 5440) i sprawdź, że dane zostały.
+H: `-v pgdata-test:/var/lib/postgresql/data`.
+S:
+docker run -d --name pg-test -e POSTGRES_PASSWORD=test -v pgdata-test:/var/lib/postgresql/data postgres:16 > /dev/null; sleep 5
+docker exec pg-test psql -U postgres -Atc 'select count(*) from produkty'
+docker rm -f pg-test > /dev/null
+docker run -d --name pg-test -e POSTGRES_PASSWORD=test -p 127.0.0.1:5440:5432 -v pgdata-test:/var/lib/postgresql/data postgres:16 > /dev/null; sleep 5
+docker exec pg-test psql -U postgres -Atc 'select count(*) from produkty'
+#EX
+// 13
+P: Pokaż różnicę między `docker rm` i `docker rm -v`: utwórz kontener z wolumenem anonimowym i z wolumenem nazwanym, usuń go z `-v` i sprawdź, który wolumen przetrwał.
+H: `docker run --name rmv -v nazwany-test:/a -v /b alpine:3.20 true`.
+S:
+docker run --name rmv -v nazwany-test:/a -v /b alpine:3.20 true
+docker inspect -f '{{range .Mounts}}{{.Name}} -> {{.Destination}}{{println}}{{end}}' rmv | tee /tmp/rmv-mounts
+docker rm -v rmv > /dev/null
+for v in $(awk '{print $1}' /tmp/rmv-mounts); do docker volume inspect "$v" > /dev/null 2>&1 && echo "zostal: $v" || echo "usuniety: $v"; done
+docker volume rm nazwany-test > /dev/null
+#EX
+// 14
+P: Zrób kopię zapasową wolumenu `notatki` do archiwum `~/kopie/notatki-DATA.tgz` kontenerem pomocniczym (wolumen tylko do odczytu) i wypisz zawartość archiwum.
+H: `docker run --rm -v notatki:/dane:ro -v ~/kopie:/kopia alpine tar czf ...`.
+S:
+mkdir -p ~/kopie
+docker run --rm -v notatki:/dane:ro -v ~/kopie:/kopia alpine:3.20 tar czf "/kopia/notatki-$(date +%F).tgz" -C /dane .
+tar tzvf ~/kopie/notatki-$(date +%F).tgz
+#EX
+// 15
+P: Odtwórz kopię do nowego wolumenu `notatki-przywrocone` i porównaj zawartość z oryginałem.
+H: `tar xzf` w kontenerze pomocniczym; porównanie `diff` dwóch wyników `cat`.
+S:
+docker volume create notatki-przywrocone > /dev/null
+docker run --rm -v notatki-przywrocone:/dane -v ~/kopie:/kopia:ro alpine:3.20 tar xzf "/kopia/notatki-$(date +%F).tgz" -C /dane
+diff <(docker run --rm -v notatki:/d alpine:3.20 cat /d/log.txt) <(docker run --rm -v notatki-przywrocone:/d alpine:3.20 cat /d/log.txt) && echo "identyczne"
+#EX
+// 16
+P: Zrób poprawną kopię bazy z kontenera `pg-test` — zrzut `pg_dump` w formacie custom — zapisany na gospodarzu. Dlaczego to lepsze niż archiwum katalogu danych?
+H: `docker exec pg-test pg_dump -U postgres -Fc postgres > plik.dump`.
+S:
+docker exec pg-test pg_dump -U postgres -Fc postgres > ~/kopie/pg-test-$(date +%F).dump
+ls -lh ~/kopie/pg-test-$(date +%F).dump
+docker exec -i pg-test pg_restore -l < ~/kopie/pg-test-$(date +%F).dump | grep TABLE
+#EX
+// 17
+P: Odtwórz zrzut do nowej bazy `przywrocona` w tym samym kontenerze i sprawdź liczbę wierszy.
+H: `createdb`, `pg_restore -d` z wejściem z pliku.
+S:
+docker exec pg-test createdb -U postgres przywrocona
+docker exec -i pg-test pg_restore -U postgres -d przywrocona < ~/kopie/pg-test-$(date +%F).dump
+docker exec pg-test psql -U postgres -Atc 'select count(*) from produkty' przywrocona
+#EX
+// 18
+P: Na laptopie z Docker Desktop utwórz wolumen `m2` i zbuduj projekt `~/projekty/sklep` kontenerem Mavena z pamięcią podręczną w wolumenie. Zmierz czas pierwszego i drugiego budowania.
+H: `docker run --rm -v "$PWD":/app -v m2:/root/.m2 -w /app maven:3.9-eclipse-temurin-21 mvn -q package -DskipTests`.
+S:
+docker volume create m2 > /dev/null
+cd ~/projekty/sklep
+for i in 1 2; do
+  /usr/bin/time -f "budowanie $i: %e s" docker run --rm -v "$PWD":/app -v m2:/root/.m2 -w /app maven:3.9-eclipse-temurin-21 mvn -q -B package -DskipTests
+done
+#EX
+// 19
+P: Zbuduj ten sam projekt z kopii na dysku Windows (`/mnt/c/Users/anna/IdeaProjects/sklep`) w trybie offline (`-o`) i porównaj czas z budowaniem z `~/projekty/sklep`.
+H: Ten sam wolumen `m2`; `mvn -o`.
+S:
+for d in /mnt/c/Users/anna/IdeaProjects/sklep ~/projekty/sklep; do
+  cd "$d" && /usr/bin/time -f "$d: %e s" docker run --rm -v "$PWD":/app -v m2:/root/.m2 -w /app maven:3.9-eclipse-temurin-21 mvn -q -o -B package -DskipTests
+done
+#EX
+// 20
+P: Zmierz wydajność samego systemu plików: utwórz 2000 małych plików w kontenerze w katalogu zamontowanym z `/mnt/c`, z `~` i w wolumenie nazwanym.
+H: `docker run --rm -v ŹRÓDŁO:/t alpine sh -c 'time sh -c "for i in \$(seq 2000); do echo \$i > /t/f\$i; done"'`.
+S:
+mkdir -p /mnt/c/Users/anna/Downloads/test-io ~/lab/test-io
+docker volume create test-io > /dev/null
+for src in /mnt/c/Users/anna/Downloads/test-io "$HOME/lab/test-io" test-io; do
+  echo "== $src"
+  docker run --rm -v "$src":/t alpine:3.20 sh -c 'time sh -c "for i in \$(seq 2000); do echo \$i > /t/f\$i; done"' 2>&1 | grep real
+done
+rm -rf /mnt/c/Users/anna/Downloads/test-io ~/lab/test-io; docker volume rm test-io > /dev/null
+#EX
+// 21
+P: Sprawdź wielkość pamięci podręcznej Mavena w wolumenie `m2` i całkowite zużycie miejsca przez wolumeny w Docker Desktop.
+H: `docker run --rm -v m2:/m2 alpine du -sh /m2/repository`, `docker system df -v`.
+S:
+docker run --rm -v m2:/m2 alpine:3.20 du -sh /m2/repository
+docker system df -v | sed -n '/VOLUME NAME/,/^$/p' | head -15
+#EX
+// 22
+P: Pokaż brak powiadomień `inotify` dla bind mounta z dysku Windows: obserwuj katalog w kontenerze (`inotifyd` z busybox), a w PowerShellu zmień plik. Porównaj z katalogiem w `~`.
+H: `docker run --rm -v DIR:/w busybox:1.36 inotifyd - /w`.
+S:
+mkdir -p /mnt/c/Users/anna/Downloads/obs ~/lab/obs
+docker run -d --name obs-c -v /mnt/c/Users/anna/Downloads/obs:/w busybox:1.36 inotifyd - /w > /dev/null
+docker run -d --name obs-l -v ~/lab/obs:/w busybox:1.36 inotifyd - /w > /dev/null
+# w PowerShellu: Set-Content C:\Users\anna\Downloads\obs\a.txt "z Windows"
+echo "z WSL" > ~/lab/obs/a.txt
+sleep 2; echo "obs-c:"; docker logs obs-c; echo "obs-l:"; docker logs obs-l
+docker rm -f obs-c obs-l > /dev/null
+#EX
+// 23
+P: Uruchom aplikację `sklep` z wolumenem nazwanym `sklep-zalaczniki` na katalog przesyłanych plików `/var/lib/sklep/upload` i sprawdź, czy proces (zwykły użytkownik z obrazu) może do niego pisać.
+H: Docker kopiuje do nowego, pustego wolumenu zawartość i prawa katalogu z obrazu; `docker exec sklep-v id`, `touch`.
+S:
+docker run -d --name sklep-v -v sklep-zalaczniki:/var/lib/sklep/upload sklep:1.4.2 > /dev/null; sleep 3
+docker exec sklep-v id
+docker exec sklep-v sh -c 'ls -ld /var/lib/sklep/upload; touch /var/lib/sklep/upload/test && echo "zapis OK"'
+#EX
+// 24
+P: Ten sam katalog zamontuj jako bind mount z `~/sklep-upload` (należącego do anny) i sprawdź zapis. Napraw problem, ustawiając właściciela katalogu na UID procesu z obrazu.
+H: UID odczytasz z `docker exec ... id -u`; `sudo chown UID:GID ~/sklep-upload`.
+S:
+mkdir -p ~/sklep-upload
+docker run --rm -v ~/sklep-upload:/var/lib/sklep/upload --entrypoint sh sklep:1.4.2 -c 'id -u; touch /var/lib/sklep/upload/test' 2>&1 | tail -2
+U=$(docker run --rm --entrypoint id sklep:1.4.2 -u); G=$(docker run --rm --entrypoint id sklep:1.4.2 -g)
+sudo chown "$U:$G" ~/sklep-upload
+docker run --rm -v ~/sklep-upload:/var/lib/sklep/upload --entrypoint sh sklep:1.4.2 -c 'touch /var/lib/sklep/upload/test && echo "zapis OK"'
+ls -ln ~/sklep-upload
+#EX
+// 25
+P: Uruchom kontener z systemem plików tylko do odczytu (`--read-only`) i katalogiem tymczasowym w `tmpfs`. Sprawdź, gdzie da się zapisać.
+H: `--read-only --tmpfs /tmp`.
+S:
+docker run --rm --read-only --tmpfs /tmp:size=16m alpine:3.20 sh -c 'touch /plik 2>&1; touch /tmp/plik && echo "zapis w /tmp OK"'
+#EX
+// 26
+P: Wypisz wszystkie wolumeny z informacją, czy są używane przez jakikolwiek kontener (dangling), i rozmiarem każdego.
+H: `docker volume ls -f dangling=true`; rozmiary: `docker system df -v`.
+S:
+echo "nieuzywane:"; docker volume ls -qf dangling=true
+echo "rozmiary:";  docker system df -v --format '{{range .Volumes}}{{.Name}} {{.Size}} linki={{.Links}}{{println}}{{end}}' 2>/dev/null || docker system df -v | sed -n '/VOLUME NAME/,/^$/p'
+#EX
+// 27
+P: Przed `docker volume prune` sprawdź zawartość każdego nieużywanego wolumenu (pierwsze pliki) i zapisz listę do `~/kopie/wolumeny-przed-prune.txt`.
+H: Pętla po `docker volume ls -qf dangling=true` z kontenerem `alpine ls`.
+S:
+for v in $(docker volume ls -qf dangling=true); do
+  echo "== $v"; docker run --rm -v "$v":/v:ro alpine:3.20 sh -c 'ls -A /v | head -5'
+done | tee ~/kopie/wolumeny-przed-prune.txt
+#EX
+// 28
+P: Usuń nieużywane wolumeny anonimowe. Sprawdź, czy domyślne `docker volume prune` usuwa też nieużywane wolumeny nazwane, i użyj opcji, która je obejmuje, tylko świadomie.
+H: Od Dockera 23 `prune` domyślnie usuwa tylko anonimowe; `-a` — także nazwane.
+S:
+docker volume prune -f
+docker volume ls --format '{{.Name}}'
+# tylko swiadomie (usuwa tez nieuzywane nazwane, np. notatki-przywrocone):
+docker volume prune -a -f --filter label!=zachowaj
+#EX
+// 29
+P: Oznacz wolumen `pgdata-test` etykietą `zachowaj=tak`, aby chronić go przed `prune` z filtrem, i wypisz wolumeny z tą etykietą.
+H: Etykietę nadaje się przy tworzeniu: `docker volume create --label zachowaj=tak NAZWA`; istniejącego wolumenu nie da się oznaczyć — trzeba skopiować dane.
+S:
+docker volume create --label zachowaj=tak pgdata-zachowaj > /dev/null
+docker run --rm -v pgdata-test:/z:ro -v pgdata-zachowaj:/do alpine:3.20 cp -a /z/. /do/
+docker volume ls -f label=zachowaj=tak
+#EX
+// 30
+P: Posprzątaj po lekcji: usuń kontenery `pg-test`, `sklep-v`, wolumeny testowe (`notatki`, `notatki-przywrocone`, `pgdata-test`, `pgdata-zachowaj`, `sklep-zalaczniki`) i katalogi `~/wymiana`, `~/sklep-upload`. Zostaw `m2`.
+H: `docker rm -f`, `docker volume rm`, `sudo rm -rf` (pliki roota).
+S:
+docker rm -f pg-test sklep-v > /dev/null 2>&1
+docker volume rm notatki notatki-przywrocone pgdata-test pgdata-zachowaj sklep-zalaczniki 2>&1
+sudo rm -rf ~/wymiana ~/sklep-upload
+docker volume ls --format '{{.Name}}'
+#Q
+Q: Co dzieje się z danymi w warstwie zapisu kontenera po docker rm?
++ Są usuwane razem z kontenerem
+- Trafiają do wolumenu
+- Trafiają do obrazu
+- Zostają w /tmp gospodarza
+E: Trwałe dane muszą być poza kontenerem.
+#Q
+Q: Jakie trzy mechanizmy montowania danych oferuje Docker?
++ Wolumeny nazwane, bind mount i tmpfs
+- NFS, SMB i FTP
+- overlay, ext4 i xfs
+- Tylko wolumeny
+E: Każdy ma inne zastosowanie.
+#Q
+Q: Jak utworzyć wolumen nazwany pgdata?
++ docker volume create pgdata
+- docker create volume pgdata
+- mkdir /var/lib/docker/pgdata
+- docker run --volume-create pgdata
+E: Wolumen powstaje też automatycznie przy -v pgdata:/ścieżka.
+#Q
+Q: Gdzie na gospodarzu z Docker Engine leżą dane wolumenu pgdata?
++ /var/lib/docker/volumes/pgdata/_data
+- /var/lib/pgdata
+- /home/anna/pgdata
+- /etc/docker/volumes
+E: docker volume inspect pokazuje Mountpoint.
+#Q
+Q: Gdzie leżą dane wolumenów w Docker Desktop na Windows?
++ W dysku docker_data.vhdx maszyny WSL2
+- W C:\Users\anna\Docker
+- W ~/projekty
+- W rejestrze
+E: Dostęp z Windows bezpośrednio do nich nie jest przewidziany.
+#Q
+Q: Czym jest bind mount?
++ Zamontowaniem konkretnego katalogu lub pliku gospodarza w kontenerze
+- Wolumenem zarządzanym przez Dockera
+- Systemem plików w pamięci
+- Warstwą obrazu
+E: Np. -v "$PWD":/app.
+#Q
+Q: Czym jest tmpfs w kontenerze?
++ Systemem plików w pamięci RAM — dane znikają po zatrzymaniu kontenera
+- Katalogiem /tmp gospodarza
+- Wolumenem nazwanym
+- Warstwą zapisu
+E: Np. --tmpfs /tmp:size=64m.
+#Q
+Q: Co oznacza :ro przy montowaniu?
++ Tylko do odczytu
+- Root only
+- Remove on exit
+- Read once
+E: Kontener nie może zmienić zawartości.
+#Q
+Q: Jak zapisać montowanie tylko do odczytu w składni --mount?
++ --mount type=bind,src=...,dst=...,readonly
+- --mount ro=true
+- --mount type=ro
+- --mount readonly src
+E: --mount jest bardziej czytelna niż -v.
+#Q
+Q: Czym jest wolumen anonimowy?
++ Wolumenem z losową nazwą, tworzonym m.in. dla katalogów z instrukcją VOLUME w obrazie
+- Wolumenem bez danych
+- Wolumenem tylko do odczytu
+- Wolumenem sieciowym
+E: Łatwo go zgubić po odtworzeniu kontenera.
+#Q
+Q: Które obrazy z lekcji mają instrukcję VOLUME?
++ postgres (katalog /var/lib/postgresql/data)
+- nginx (katalog /etc/nginx)
+- alpine (katalog /)
+- busybox (katalog /bin)
+E: docker image inspect -f '{{json .Config.Volumes}}' to pokaże.
+#Q
+Q: Co stanie się z danymi bazy po odtworzeniu kontenera postgres bez wolumenu nazwanego?
++ Nowy kontener dostanie nowy, pusty wolumen anonimowy — dane zostaną w osieroconym wolumenie
+- Dane zostaną automatycznie podłączone
+- Dane zostaną skopiowane do obrazu
+- Kontener się nie uruchomi
+E: W lekcji tabela produkty „zniknęła”.
+#Q
+Q: Jak wypisać wolumeny niepodłączone do żadnego kontenera?
++ docker volume ls -f dangling=true
+- docker volume ls --orphan
+- docker volume prune --dry-run
+- docker ps -v
+E: Przed usunięciem warto sprawdzić ich zawartość.
+#Q
+Q: Jak przenieść dane z osieroconego wolumenu do nazwanego?
++ Kontenerem pomocniczym z oboma wolumenami: cp -a /z/. /do/
+- docker volume rename
+- docker volume move
+- mv w /var/lib/docker bez zatrzymania
+E: Opcja -a zachowuje prawa i właścicieli.
+#Q
+Q: Co robi docker rm -v?
++ Usuwa kontener razem z jego wolumenami anonimowymi
+- Usuwa kontener i wszystkie wolumeny nazwane
+- Usuwa tylko wolumeny
+- Pokazuje szczegóły usunięcia
+E: Wolumeny nazwane zostają.
+#Q
+Q: Co dzieje się z wolumenem nazwanym po docker rm -v kontenera?
++ Zostaje
+- Jest usuwany
+- Jest archiwizowany
+- Jest odłączany i czyszczony
+E: Wolumen nazwany usuwa się docker volume rm.
+#Q
+Q: Co robi docker volume prune w nowych wersjach Dockera (23+)?
++ Usuwa nieużywane wolumeny anonimowe
+- Usuwa wszystkie wolumeny
+- Usuwa tylko nazwane
+- Kompresuje wolumeny
+E: -a obejmuje też nieużywane wolumeny nazwane.
+#Q
+Q: Co zrobić przed docker volume prune?
++ Sprawdzić zawartość nieużywanych wolumenów — mogą zawierać zgubione dane
+- Nic
+- Zatrzymać wszystkie kontenery
+- Usunąć obrazy
+E: prune jest nieodwracalne.
+#Q
+Q: Jak chronić wolumen przed prune z filtrem?
++ Nadać mu etykietę przy tworzeniu i użyć filtra label!=... w prune
+- Nadać mu nazwę z prefiksem _
+- Zamontować go :ro
+- Nie da się
+E: Etykiety ustawia się przy docker volume create --label.
+#Q
+Q: Jak zrobić kopię wolumenu do archiwum?
++ docker run --rm -v WOLUMEN:/dane:ro -v ~/kopie:/kopia alpine tar czf /kopia/plik.tgz -C /dane .
+- docker volume backup
+- docker save WOLUMEN
+- cp -r /var/lib/docker/volumes ~/kopie w czasie pracy bazy
+E: Kontener pomocniczy ma dostęp do wolumenu i katalogu gospodarza.
+#Q
+Q: Dlaczego dla bazy danych lepszą kopią jest pg_dump niż archiwum katalogu danych?
++ Zrzut jest spójny niezależnie od pracy bazy i przenośny między wersjami
+- Bo tar nie obsługuje plików bazy
+- Bo pg_dump jest szybszy zawsze
+- Bo archiwum zajmuje 0 bajtów
+E: Kopiowanie plików działającej bazy może dać niespójną kopię.
+#Q
+Q: Jak wykonać zrzut bazy z kontenera na dysk gospodarza?
++ docker exec KONTENER pg_dump -U postgres -Fc BAZA > plik.dump
+- docker cp KONTENER:/baza plik.dump
+- docker save KONTENER
+- docker logs KONTENER > plik.dump
+E: Przekierowanie działa w powłoce gospodarza.
+#Q
+Q: Jak odtworzyć zrzut w kontenerze?
++ docker exec -i KONTENER pg_restore -U postgres -d BAZA < plik.dump
+- docker load < plik.dump
+- docker cp plik.dump KONTENER:/var/lib/postgresql/data
+- docker restart KONTENER
+E: -i przekazuje standardowe wejście do kontenera.
+#Q
+Q: Jak wypisać zawartość zrzutu w formacie custom bez odtwarzania?
++ pg_restore -l plik.dump
+- cat plik.dump
+- tar tzf plik.dump
+- psql -l plik.dump
+E: Wypisuje spis obiektów.
+#Q
+Q: Jakie prawa i właściciela ma plik utworzony przez proces root w bind mouncie?
++ UID 0 — na gospodarzu plik należy do roota
+- Właściciela katalogu
+- Użytkownika anna
+- nobody
+E: Zwykły użytkownik nie usunie go bez sudo (jeśli nie ma praw do katalogu).
+#Q
+Q: Jak uruchomić kontener, by tworzył pliki z UID Twojego konta?
++ --user "$(id -u):$(id -g)"
+- --uid anna
+- --owner anna
+- --chown
+E: W kontenerze może nie być użytkownika o tym UID — to nie przeszkadza.
+#Q
+Q: Dlaczego w bind mountach liczy się UID, a nie nazwa użytkownika?
++ Kontener i gospodarz mają osobne pliki /etc/passwd — wspólne są tylko liczbowe identyfikatory w systemie plików
+- Bo Docker usuwa nazwy
+- Bo ext4 nie zapisuje UID
+- Bo nazwy są szyfrowane
+E: Ta sama nazwa może mieć inny UID w kontenerze.
+#Q
+Q: Proces w kontenerze ma UID 10001, katalog gospodarza należy do anny (1000) z prawami 755. Co się stanie przy zapisie?
++ Permission denied
+- Zapis się uda
+- Docker zmieni właściciela
+- Plik trafi do warstwy zapisu
+E: Rozwiązanie: chown katalogu na 10001 lub --user.
+#Q
+Q: Co Docker robi przy pierwszym podłączeniu pustego wolumenu nazwanego do katalogu, który w obrazie ma zawartość?
++ Kopiuje do wolumenu zawartość i prawa katalogu z obrazu
+- Nic
+- Usuwa zawartość obrazu
+- Zgłasza błąd
+E: Dla bind mountów tego nie robi — katalog gospodarza przykrywa zawartość obrazu.
+#Q
+Q: Co widzi kontener w katalogu, na który zamontowano pusty katalog gospodarza (bind mount)?
++ Pusty katalog — zawartość z obrazu jest przykryta
+- Zawartość z obrazu
+- Połączenie obu
+- Błąd montowania
+E: To częsta przyczyna „zniknięcia” plików konfiguracyjnych obrazu.
+#Q
+Q: Gdzie w WSL2 trzymać katalogi montowane do kontenerów?
++ W systemie plików Linuksa (~/projekty w dystrybucji)
+- Na /mnt/c
+- Na pendrive
+- W C:\Program Files
+E: Dostęp do /mnt/c przez 9P jest wielokrotnie wolniejszy.
+#Q
+Q: Ile wolniejsze może być budowanie z bind mounta na /mnt/c w porównaniu z ~?
++ Kilka do kilkunastu razy
+- Tak samo szybkie
+- Dwa razy szybsze
+- Minimalnie wolniejsze, około 1%
+E: W lekcji 1 min 52 s wobec 15 s.
+#Q
+Q: Jaki rodzaj montowania jest najszybszy w Docker Desktop?
++ Wolumen nazwany
+- Bind mount z /mnt/c
+- Bind mount z \\wsl.localhost z PowerShella
+- Montowanie przez SMB
+E: Dane leżą w ext4 maszyny WSL2.
+#Q
+Q: Dlaczego pamięć podręczną Mavena trzyma się w wolumenie m2?
++ Zależności nie są pobierane przy każdym buildzie, a dostęp jest szybki
+- Bo Maven nie działa bez wolumenu
+- Bo ~/.m2 jest w obrazie
+- Bo wolumen jest szyfrowany
+E: -v m2:/root/.m2.
+#Q
+Q: Co robi opcja -o w Mavenie?
++ Tryb offline — korzysta tylko z lokalnego repozytorium
+- Wypisuje wynik do pliku
+- Optymalizuje kompilację
+- Pomija testy
+E: Przy pomiarach eliminuje wpływ sieci.
+#Q
+Q: Dlaczego automatyczne przeładowanie w kontenerze nie działa przy kodzie z /mnt/c edytowanym w Windows?
++ Zmiany z Windows nie generują zdarzeń inotify w Linuksie
+- Bo Spring DevTools nie działa w Dockerze
+- Bo /mnt/c jest tylko do odczytu
+- Bo kontener nie ma Javy
+E: Kod trzymaj w ~ i edytuj przez VS Code/IntelliJ z WSL.
+#Q
+Q: Jakie narzędzie z busybox obserwuje zdarzenia inotify?
++ inotifyd
+- watch
+- tail -f
+- lsof
+E: inotifyd - KATALOG wypisuje zdarzenia na standardowe wyjście.
+#Q
+Q: Co robi opcja --read-only w docker run?
++ Montuje system plików kontenera tylko do odczytu
+- Montuje wolumeny tylko do odczytu
+- Blokuje sieć
+- Blokuje logi
+E: Zapis możliwy tylko w wolumenach i tmpfs.
+#Q
+Q: Do czego łączy się --read-only z --tmpfs /tmp?
++ Kontener nie może zmienić swojego systemu plików, ale ma miejsce na pliki tymczasowe
+- Do przyspieszenia zapisu bazy
+- Do zachowania danych po restarcie
+- Do montowania /tmp gospodarza
+E: Utrudnia to utrwalenie zmian przez atakującego.
+#Q
+Q: Co się stanie przy zapisie 100 MB do tmpfs o rozmiarze 64 MB?
++ Zapis zakończy się błędem No space left on device
+- Plik zostanie skompresowany
+- Dane trafią na dysk
+- Kontener się zrestartuje
+E: Limit size= chroni pamięć gospodarza.
+#Q
+Q: Gdzie montować sekrety (hasła, klucze) w kontenerze?
++ Jako pliki tylko do odczytu (np. /run/secrets/...)
+- Jako zmienne w Dockerfile
+- W warstwie obrazu
+- W /tmp
+E: Zmienne widać w docker inspect.
+#Q
+Q: Gdzie montować konfigurację Nginx z repozytorium?
++ Bind mount pliku z repozytorium, tylko do odczytu
+- Wolumen anonimowy
+- tmpfs
+- Warstwa zapisu
+E: Zmiany przechodzą przez repozytorium.
+#Q
+Q: Jak sprawdzić montowania działającego kontenera?
++ docker inspect -f '{{range .Mounts}}...{{end}}' KONTENER
+- docker volume ls
+- mount na gospodarzu
+- docker ps -m
+E: Pole Type mówi, czy to volume, bind czy tmpfs.
+#Q
+Q: Co pokazuje docker system df -v w sekcji wolumenów?
++ Nazwy wolumenów, liczbę podłączonych kontenerów i rozmiar
+- Tylko liczbę wolumenów
+- Zawartość wolumenów
+- Montowania gospodarza
+E: LINKS 0 oznacza wolumen nieużywany.
+#Q
+Q: Jak policzyć rozmiar danych w wolumenie?
++ docker run --rm -v WOLUMEN:/v alpine du -sh /v
+- docker volume size
+- ls -l wolumenu
+- docker inspect --size
+E: Alternatywnie docker system df -v.
+#Q
+Q: Co jest ryzykiem bezpośredniej edycji plików w /var/lib/docker/volumes przez root?
++ Można uszkodzić dane działającej usługi i złamać prawa plików
+- Brak ryzyka
+- Docker usuwa wolumen
+- Zmiany są niewidoczne
+E: Lepiej używać kontenera pomocniczego lub narzędzi aplikacji.
+#Q
+Q: Dlaczego wolumeny nazwane mają czytelne nazwy, np. pgdata, sklep-zalaczniki?
++ Żeby było jasne, do czego służą, i łatwo je było podłączyć po odtworzeniu kontenera
+- Bo Docker tego wymaga
+- Bo nazwy przyspieszają dostęp
+- Bo tylko nazwane można kopiować
+E: Losowe nazwy anonimowych wolumenów łatwo pomylić.
+#Q
+Q: Kontener aplikacji zapisuje logi do pliku w warstwie zapisu. Jaki problem?
++ Logi znikają z kontenerem, a warstwa zapisu rośnie i jest wolniejsza
+- Logi są szyfrowane
+- Logi trafiają do obrazu
+- Brak problemu
+E: Logi wypisuj na stdout lub montuj katalog/wolumen.
+#Q
+Q: Czym różni się docker stop od docker rm pod względem danych w warstwie zapisu?
++ stop zachowuje warstwę zapisu, rm ją usuwa
+- Oba usuwają
+- Oba zachowują
+- stop usuwa, rm zachowuje
+E: Po docker start dane są nadal dostępne.
+#Q
+Q: W lekcji kopia wolumenu pgdata miała 9,1 MB. Dlaczego kopia przez tar działającej bazy jest ryzykowna?
++ Pliki mogą się zmieniać w trakcie archiwizacji — kopia może być niespójna
+- tar nie obsługuje dużych plików
+- Plik będzie pusty
+- Kopia jest szyfrowana
+E: Bezpieczniej: zatrzymać bazę lub użyć pg_dump.
+#Q
+Q: Jak bezpiecznie skopiować katalog danych bazy przez tar?
++ Zatrzymać kontener bazy przed kopią (lub użyć pg_basebackup/pg_dump)
+- Skopiować w czasie dużego ruchu
+- Usunąć kontener przed kopią
+- Użyć --read-only
+E: Zatrzymana baza ma spójne pliki.
+#Q
+Q: Gdzie trafiają zmiany w katalogu /var/lib/postgresql/data, jeśli zamontowano wolumen nazwany?
++ Do wolumenu nazwanego
+- Do warstwy zapisu
+- Do obrazu
+- Do /tmp
+E: Montowanie przykrywa katalog w kontenerze.
+#Q
+Q: Jak w Compose zadeklarować wolumen nazwany pgdata dla usługi db?
++ W sekcji volumes usługi: - pgdata:/var/lib/postgresql/data oraz w sekcji volumes na najwyższym poziomie
+- Tylko w Dockerfile
+- W pliku .env
+- W /etc/docker/daemon.json
+E: Compose nadaje mu nazwę z prefiksem projektu, np. sklep-stack_pgdata.
+#Q
+Q: Jaką nazwę dostanie wolumen pgdata w projekcie Compose sklep-stack?
++ sklep-stack_pgdata
+- pgdata
+- sklep-stack-pgdata-1
+- losową
+E: Prefiks to nazwa projektu.
+#Q
+Q: Co robi docker compose down -v?
++ Usuwa kontenery, sieci i wolumeny zadeklarowane w projekcie
+- Usuwa tylko kontenery
+- Zatrzymuje bez usuwania
+- Usuwa obrazy
+E: Z -v uważaj — usuwa dane bazy.
+#Q
+Q: Jakie dane w kontenerze sklep powinny trafić do wolumenu?
++ Przesłane przez użytkowników załączniki (katalog upload)
+- Plik JAR aplikacji
+- JRE
+- Pliki tymczasowe
+E: JAR i JRE są w obrazie.
+#Q
+Q: Dlaczego zapis do pustego wolumenu sklep-zalaczniki działał od razu, a do bind mounta ~/sklep-upload nie?
++ Wolumen dostał prawa katalogu z obrazu, a bind mount zachował właściciela z gospodarza (anna)
+- Bind mounty są zawsze tylko do odczytu
+- Wolumeny ignorują prawa
+- Proces działał jako root tylko z wolumenem
+E: Naprawa: chown katalogu na UID z obrazu.
+#Q
+Q: Jak odczytać UID procesu z obrazu bez uruchamiania aplikacji?
++ docker run --rm --entrypoint id OBRAZ -u
+- docker image inspect -f '{{.Uid}}'
+- docker history OBRAZ
+- cat /etc/passwd na gospodarzu
+E: --entrypoint nadpisuje punkt wejścia.
+#Q
+Q: Co oznacza wynik Links 0 przy wolumenie w docker system df -v?
++ Wolumen nie jest podłączony do żadnego kontenera
+- Wolumen jest pusty
+- Wolumen ma błąd
+- Wolumen jest tylko do odczytu
+E: Taki wolumen może usunąć prune.
+#Q
+Q: Dlaczego wolumen anonimowy jest „łatwo gubiony”?
++ Ma losową nazwę i nie jest podłączany ponownie przy odtworzeniu kontenera
+- Jest usuwany po minucie
+- Nie ma danych
+- Jest w pamięci
+E: Nowy kontener dostaje nowy wolumen anonimowy.
+#Q
+Q: Co należy zrobić w Dockerfile aplikacji, która ma katalog danych?
++ Udokumentować go (np. VOLUME lub README) i w uruchomieniu podać wolumen nazwany
+- Zapisać dane w obrazie
+- Zapisać dane w /tmp
+- Nic
+E: Instrukcja VOLUME sama tworzy tylko wolumen anonimowy.
+#Q
+Q: Co pokazuje `docker volume inspect -f '{{.Mountpoint}}' notatki`?
++ Ścieżkę katalogu z danymi wolumenu na gospodarzu
+- Ścieżkę w kontenerze
+- Rozmiar wolumenu
+- Listę kontenerów
+E: Na Docker Engine to /var/lib/docker/volumes/notatki/_data.
+#Q
+Q: Czy zwykły użytkownik w grupie docker może czytać /var/lib/docker/volumes bez sudo?
++ Nie — katalog należy do roota; dostęp przez kontener pomocniczy
+- Tak, zawsze
+- Tylko dla wolumenów nazwanych
+- Tylko w Docker Desktop
+E: Przez Dockera i tak ma praktycznie uprawnienia roota.
+#Q
+Q: Jaki sterownik ma domyślnie wolumen nazwany?
++ local
+- nfs
+- overlay2
+- tmpfs
+E: Inne sterowniki pozwalają np. montować NFS.
+#Q
+Q: Jak zamontować udział NFS jako wolumen Dockera?
++ docker volume create --driver local --opt type=nfs --opt o=addr=...,rw --opt device=:/ścieżka NAZWA
+- docker nfs mount
+- -v nfs://serwer/ścieżka
+- Nie da się
+E: Sterownik local obsługuje opcje mount.
+#Q
+Q: Kontener pg-dev był uruchomiony bez wolumenu i usunięty. Czy dane da się odzyskać?
++ Często tak — z osieroconego wolumenu anonimowego, jeśli nie wykonano prune
+- Nigdy
+- Tylko z kopii obrazu
+- Tylko z logów
+E: docker volume ls -f dangling=true.
+#Q
+Q: Czym jest PG_VERSION w katalogu danych PostgreSQL?
++ Plikiem z numerem wersji głównej klastra — znak, że katalog zawiera dane bazy
+- Plikiem konfiguracji
+- Logiem
+- Kopią bazy
+E: W ćwiczeniu posłużył do znalezienia właściwego wolumenu.
+#Q
+Q: Co zrobić z kontenerem bazy przed przeniesieniem danych z osieroconego wolumenu?
++ Zatrzymać/usunąć kontener, który używałby docelowego wolumenu
+- Nic
+- Zrestartować Docker
+- Uruchomić prune
+E: Kopiowanie do wolumenu używanego przez działającą bazę może ją uszkodzić.
+#Q
+Q: Dlaczego w ćwiczeniu źródłowy wolumen montowano :ro?
++ Żeby przy kopiowaniu przypadkiem nie zmienić oryginalnych danych
+- Bo tak jest szybciej
+- Bo cp tego wymaga
+- Bo wolumen anonimowy nie może być rw
+E: Dobra praktyka przy kopiach.
+#Q
+Q: Co oznacza size=64m w --tmpfs /tmp:size=64m?
++ Maksymalny rozmiar systemu plików tmpfs
+- Rozmiar bloku
+- Ilość RAM kontenera
+- Rozmiar pliku wymiany
+E: Bez limitu tmpfs może zająć sporo pamięci.
+#Q
+Q: Kiedy wybrać bind mount zamiast wolumenu?
++ Gdy potrzebujesz konkretnego katalogu gospodarza: kod projektu, konfiguracja z repozytorium
+- Dla danych bazy produkcyjnej
+- Dla danych tymczasowych
+- Nigdy
+E: Dla danych usług lepsze są wolumeny.
+#Q
+Q: Kiedy wybrać tmpfs?
++ Dla danych tymczasowych lub wrażliwych, które nie powinny trafić na dysk
+- Dla bazy danych
+- Dla kodu projektu
+- Dla logów do archiwum
+E: Dane znikają po zatrzymaniu kontenera.
+#Q
+Q: Co jest wynikiem ls -ln dla pliku utworzonego przez kontener z --user 1000:1000?
++ Właściciel 1000, grupa 1000
+- Właściciel 0
+- Właściciel 10001
+- Właściciel 65534
+E: Plik należy do anny na gospodarzu.
+#Q
+Q: Co oznacza przykryty katalog przy bind moucie na /etc/nginx/conf.d?
++ Pliki z obrazu w tym katalogu są niewidoczne — widać zawartość katalogu gospodarza
+- Pliki są scalane
+- Pliki są usuwane z obrazu
+- Montowanie się nie udaje
+E: Montuj pojedynczy plik, jeśli chcesz zachować resztę.
+#Q
+Q: Jak w Compose zamontować pojedynczy plik konfiguracji tylko do odczytu?
++ - ./nginx/sklep.conf:/etc/nginx/conf.d/sklep.conf:ro
+- - sklep.conf
+- - ./nginx:ro
+- volumes: readonly
+E: Ścieżki względne są liczone od katalogu compose.yaml.
+#Q
+Q: Co jest celem pomiaru z 2000 małymi plikami w ćwiczeniu?
++ Porównanie wydajności /mnt/c, ~ i wolumenu nazwanego przy operacjach na wielu plikach
+- Test pamięci RAM
+- Test sieci
+- Test CPU
+E: Budowanie projektów to właśnie wiele małych plików.
+#Q
+Q: Która lokalizacja wypadnie najgorzej w pomiarze 2000 plików w Docker Desktop?
++ /mnt/c (dysk Windows)
+- Wolumen nazwany
+- ~ w Ubuntu
+- tmpfs
+E: Każda operacja przechodzi przez 9P.
+#Q
+Q: Jak usunąć katalog z plikami roota utworzonymi przez kontener w ~?
++ sudo rm -rf KATALOG (lub kontenerem z montowaniem tego katalogu)
+- rm -rf bez sudo zawsze
+- docker volume rm
+- chmod 777 i rm
+E: Lepiej zapobiegać: --user przy uruchomieniu.
+#Q
+Q: Jakie polecenie usunęło w ćwiczeniu tylko nieużywane wolumeny anonimowe?
++ docker volume prune -f
+- docker volume prune -a -f
+- docker system prune -a
+- docker volume rm $(docker volume ls -q)
+E: -a obejmuje także nazwane.
+#Q
+Q: Co jest ryzykiem docker volume rm $(docker volume ls -q)?
++ Próba usunięcia wszystkich wolumenów — nieużywane zostaną usunięte, w tym z danymi
+- Brak ryzyka
+- Usuwa tylko anonimowe
+- Usuwa obrazy
+E: Używane wolumeny nie zostaną usunięte, ale reszta tak.
+#Q
+Q: Jakie są typowe nazwy wolumenów dla aplikacji Java z bazą?
++ pgdata, sklep-zalaczniki, m2
+- vol1, vol2
+- tmp, data
+- Nazwy losowe
+E: Czytelne nazwy ułatwiają administrację.
+#Q
+Q: Czy można zmienić nazwę wolumenu w Dockerze?
++ Nie bezpośrednio — tworzy się nowy i kopiuje dane
+- Tak, docker volume rename
+- Tak, mv w /var/lib/docker
+- Tak, docker volume tag
+E: Dlatego dobrze nazwać wolumen od początku.
+#Q
+Q: Co jest efektem montowania -v ~/projekty/sklep:/app w kontenerze Mavena?
++ Kontener buduje kod z katalogu gospodarza, a wyniki (target/) pojawiają się w tym katalogu
+- Kod jest kopiowany do obrazu
+- Kod jest tylko do odczytu
+- target/ ginie po zakończeniu kontenera
+E: Bind mount to wspólny katalog.
+#Q
+Q: Dlaczego pliki w target/ po budowaniu w kontenerze mogą należeć do roota?
++ Maven w kontenerze działał jako root (UID 0)
+- Bo Maven zawsze tak robi
+- Bo bind mount zmienia właściciela
+- Bo WSL to wymusza
+E: Rozwiązanie: --user "$(id -u):$(id -g)" i odpowiedni HOME dla ~/.m2.
+#Q
+Q: Jaki jest problem z --user przy wolumenie m2 zamontowanym w /root/.m2?
++ Użytkownik bez praw do /root może nie mieć dostępu — trzeba zamontować m2 w katalogu z prawami i ustawić -Dmaven.repo.local
+- Brak problemu
+- Maven nie obsługuje --user
+- Wolumeny nie działają z --user
+E: Np. -v m2:/m2 -Dmaven.repo.local=/m2/repository.
+#Q
+Q: Co zawiera wolumen m2 po kilku buildach?
++ Lokalne repozytorium zależności Mavena (repository)
+- Plik JAR aplikacji
+- Kod źródłowy
+- Logi kontenera
+E: W lekcji ok. 412 MB.
+#Q
+Q: Czy wolumen nazwany można zamontować w kilku kontenerach naraz?
++ Tak — ale aplikacje muszą uważać na równoczesny zapis
+- Nie
+- Tylko w trybie ro
+- Tylko w Compose
+E: Np. kontener pomocniczy do kopii z :ro.
+#Q
+Q: Czy dwie bazy PostgreSQL mogą używać tego samego wolumenu danych jednocześnie?
++ Nie — to uszkodzi dane; każda instancja potrzebuje własnego katalogu
+- Tak, bez problemu
+- Tak, jeśli mają różne porty
+- Tak, w trybie ro
+E: PostgreSQL blokuje katalog plikiem postmaster.pid.
+#Q
+Q: Jakie polecenie w ćwiczeniu sprawdziło, że dane po przywróceniu są identyczne?
++ diff dwóch wyników cat z obu wolumenów
+- docker volume compare
+- md5sum obrazu
+- docker diff
+E: diff bez różnic i komunikat „identyczne”.
+#Q
+Q: Co jest pierwszym krokiem planowania danych kontenerów?
++ Ustalić katalogi, w których kontener zapisuje trwałe dane
+- Usunąć stare wolumeny
+- Włączyć --read-only
+- Zmienić obraz bazowy
+E: Pomaga dokumentacja obrazu i instrukcje VOLUME.
+#Q
+Q: Co jest wynikiem `docker run --rm alpine cat /plik.txt` po usunięciu kontenera, który utworzył plik?
++ cat: can't open '/plik.txt': No such file or directory
+- dane
+- Pusty wynik
+- Permission denied
+E: Każdy kontener startuje z czystym obrazem.
+#Q
+Q: Jakie są skutki uboczne dużej ilości zapisów do warstwy zapisu kontenera?
++ Wolniejsze działanie (copy-up w overlayfs) i rosnące zużycie dysku w /var/lib/docker
+- Szybsze działanie
+- Automatyczne kopie
+- Brak skutków
+E: Intensywny zapis kieruj do wolumenów.
+#Q
+Q: Gdzie powinny trafić logi aplikacji w kontenerze w typowej konfiguracji?
++ Na standardowe wyjście (docker logs) lub do wolumenu/katalogu, jeśli muszą być plikami
+- Do warstwy zapisu
+- Do obrazu
+- Do /proc
+E: Sterownik logów Dockera zarządza ich rotacją.
+#Q
+Q: Czym jest „osierocony” wolumen?
++ Wolumenem, którego nie używa żaden kontener (dangling)
+- Wolumenem bez nazwy, ale używanym
+- Wolumenem tylko do odczytu
+- Uszkodzonym wolumenem
+E: Często zawiera dane po odtworzonym kontenerze.
+#Q
+Q: Jak przywrócić archiwum tgz do nowego wolumenu?
++ docker run --rm -v NOWY:/dane -v ~/kopie:/kopia:ro alpine tar xzf /kopia/plik.tgz -C /dane
+- docker volume import plik.tgz
+- docker load < plik.tgz
+- tar xzf plik.tgz -C /var/lib/docker
+E: Wolumen docelowy montowany do zapisu, kopie tylko do odczytu.
+#Q
+Q: Która składnia montowania jest bardziej jawna i odporna na pomyłki?
++ --mount type=...,src=...,dst=...
+- -v src:dst
+- --volume-from
+- --bind
+E: Przy -v literówka w ścieżce gospodarza tworzy pusty katalog.
+#Q
+Q: Co się stanie przy -v /nieistniejacy/katalog:/app (Docker Engine)?
++ Docker utworzy pusty katalog na gospodarzu (jako root) i go zamontuje
+- Błąd montowania zawsze
+- Kontener użyje wolumenu nazwanego
+- Katalog zostanie pominięty
+E: --mount type=bind w takiej sytuacji zgłosi błąd.
+#Q
+Q: Co zawiera katalog _data wolumenu?
++ Właściwe pliki wolumenu widoczne w kontenerze
+- Metadane Dockera
+- Logi
+- Warstwy obrazu
+E: Ścieżka: /var/lib/docker/volumes/NAZWA/_data.
+#Q
+Q: Dlaczego kopie zapasowe zapisuje się z datą w nazwie pliku?
++ Żeby przechowywać wiele wersji i łatwo wybrać właściwą do odtworzenia
+- Bo tar tego wymaga
+- Bo Docker tak nazywa wolumeny
+- Bo inaczej plik jest pusty
+E: date +%F daje RRRR-MM-DD.
+#Q
+Q: Czym różni się volume od bind w polu Type w docker inspect?
++ volume — wolumen zarządzany przez Dockera, bind — katalog gospodarza
+- Niczym
+- volume jest tylko do odczytu
+- bind jest w pamięci
+E: Trzeci typ to tmpfs.
