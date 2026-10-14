@@ -1,0 +1,596 @@
+#EX
+P: Zbierz w PowerShellu podstawowe informacje potrzebne przy diagnozie problemów z WSL: wersję WSL i jądra, listę dystrybucji z wersjami i zawartość `%UserProfile%\.wslconfig` (jeśli istnieje).
+H: `wsl --version`, `wsl -l -v`, `Test-Path`, `Get-Content`.
+S:
+$env:WSL_UTF8 = 1
+wsl --version
+wsl -l -v
+if (Test-Path $env:USERPROFILE\.wslconfig) { Get-Content $env:USERPROFILE\.wslconfig } else { "brak .wslconfig - ustawienia domyslne" }
+#EX
+P: W WSL sprawdź adres IPv4 interfejsu `eth0` i bramę domyślną. Zapisz adres do pliku `~/lab/adres-wsl.txt`.
+H: `ip -4 -br addr show eth0`, `ip route show default`.
+S:
+mkdir -p ~/lab
+ip -4 -br addr show eth0 | tee ~/lab/adres-wsl.txt
+ip route show default
+#EX
+P: Pokaż, że w trybie NAT adres WSL zmienia się po restarcie: zapisz adres, zatrzymaj WSL i porównaj z nowym adresem.
+H: `wsl hostname -I` przed i po `wsl --shutdown`.
+S:
+$przed = (wsl hostname -I).Trim()
+wsl --shutdown
+$po = (wsl hostname -I).Trim()
+"przed: $przed  po: $po"
+#EX
+P: Uruchom w WSL prosty serwer HTTP na porcie 8080 (w tle) i sprawdź z PowerShella, że działa przez `localhost`.
+H: `python3 -m http.server 8080 &`; w Windows `curl.exe -s -o NUL -w "%{http_code}"`.
+S:
+# w WSL (panel zostaje otwarty):
+cd ~/projekty/sklep && python3 -m http.server 8080 > /tmp/http.log 2>&1 &
+# w PowerShellu:
+curl.exe -s -o NUL -w "%{http_code}`n" localhost:8080/
+#EX
+P: Sprawdź, czy ten sam serwer jest osiągalny pod adresem laptopa w sieci lokalnej (adres karty Wi-Fi). Wyjaśnij wynik w trybie NAT.
+H: `Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias Wi-Fi`, `Test-NetConnection -Port`.
+S:
+$ip = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias Wi-Fi).IPAddress
+$ip
+Test-NetConnection $ip -Port 8080 -InformationLevel Quiet
+# W NAT port nie jest wystawiony na interfejsie Wi-Fi Windows - tylko na localhost.
+#EX
+P: Ustal z WSL adres Windows w trybie NAT (brama domyślna) i porównaj go z linią `nameserver` w `/etc/resolv.conf`. Dlaczego nie warto brać adresu Windows z `resolv.conf`?
+H: `ip route show default | awk '{print $3}'`.
+S:
+ip route show default | awk '{print $3}'
+grep nameserver /etc/resolv.conf
+# przy dnsTunneling=true nameserver to 10.255.255.254 - nie jest to adres Windows
+#EX
+P: Jako administrator w trybie NAT dodaj przekierowanie portu 8080 z adresu Windows na bieżący adres WSL (`portproxy`) i regułę zapory Windows. Wypisz aktywne przekierowania.
+H: `netsh interface portproxy add v4tov4 listenport=... connectaddress=...`, `New-NetFirewallRule`.
+S:
+$wslIp = (wsl hostname -I).Trim().Split(' ')[0]
+netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=8080 connectaddress=$wslIp connectport=8080
+New-NetFirewallRule -DisplayName "sklep-8080-portproxy" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow | Out-Null
+netsh interface portproxy show v4tov4
+#EX
+P: Pokaż wadę rozwiązania z `portproxy`: po restarcie WSL przekierowanie wskazuje stary adres. Napisz w PowerShellu krótki skrypt, który aktualizuje regułę na bieżący adres.
+H: `netsh interface portproxy delete v4tov4 listenport=8080 listenaddress=0.0.0.0`, potem `add` z nowym adresem.
+S:
+wsl --shutdown
+netsh interface portproxy show v4tov4
+$wslIp = (wsl hostname -I).Trim().Split(' ')[0]
+netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=8080
+netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=8080 connectaddress=$wslIp connectport=8080
+netsh interface portproxy show v4tov4
+#EX
+P: Usuń przekierowanie `portproxy` i regułę zapory z poprzednich ćwiczeń, a potem włącz tryb mirrored w `.wslconfig` (zrób kopię pliku, sekcja `[wsl2]`).
+H: `netsh interface portproxy delete`, `Remove-NetFirewallRule`; w `.wslconfig`: `networkingMode=mirrored`.
+S:
+netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=8080
+Remove-NetFirewallRule -DisplayName "sklep-8080-portproxy"
+$cfg = "$env:USERPROFILE\.wslconfig"
+if (Test-Path $cfg) { Copy-Item $cfg "$cfg.bak" }
+if (-not (Select-String -Quiet -Path $cfg -Pattern '^\[wsl2\]' -ErrorAction SilentlyContinue)) { Add-Content $cfg "[wsl2]" }
+(Get-Content $cfg) -replace '^\[wsl2\]$', "[wsl2]`nnetworkingMode=mirrored" | Set-Content $cfg
+Get-Content $cfg
+#EX
+P: Po `wsl --shutdown` sprawdź w trybie mirrored adresy interfejsów w WSL i porównaj je z adresami Windows.
+H: `ip -4 -br addr`, `Get-NetIPAddress -AddressFamily IPv4`.
+S:
+wsl --shutdown
+wsl -e bash -c "ip -4 -br addr | grep -v '^lo'"
+Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -notlike '127.*' | Select-Object InterfaceAlias, IPAddress
+#EX
+P: Sprawdź domyślne ustawienia zapory Hyper-V dla WSL (identyfikator `{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}`), a następnie dodaj regułę dopuszczającą TCP 8080 i wypisz ją.
+H: `Get-NetFirewallHyperVVMSetting -PolicyStore ActiveStore -Name ...`, `New-NetFirewallHyperVRule`, `Get-NetFirewallHyperVRule`.
+S:
+$wsl = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
+Get-NetFirewallHyperVVMSetting -PolicyStore ActiveStore -Name $wsl
+New-NetFirewallHyperVRule -Name sklep-8080 -DisplayName "Sklep w WSL (8080)" -Direction Inbound -VMCreatorId $wsl -Protocol TCP -LocalPorts 8080 | Out-Null
+Get-NetFirewallHyperVRule -Name sklep-8080 | Select-Object Name, Direction, Action, LocalPorts
+#EX
+P: Z drugiego komputera w sieci (konto `kuba`) sprawdź, czy aplikacja na laptopie anny jest teraz osiągalna. Na koniec zatrzymaj serwer w WSL.
+H: `curl.exe -s -m 5 -o NUL -w "%{http_code}"`.
+S:
+# na komputerze kuby:
+curl.exe -s -m 5 -o NUL -w "%{http_code}`n" 192.168.1.23:8080/
+# w WSL na laptopie anny:
+pkill -f 'http.server 8080'
+#EX
+P: Sprawdź, jakiego jądra używa WSL, ile modułów jest załadowanych i czy w katalogu modułów jest moduł `vboxdrv` lub `wireguard`.
+H: `uname -r`, `lsmod`, `modinfo`, `find /lib/modules/$(uname -r) -name ...`.
+S:
+uname -r
+lsmod | tail -n +2 | wc -l
+modinfo wireguard 2>&1 | head -3
+find /lib/modules/"$(uname -r)" -name 'vboxdrv*' 2>/dev/null | grep . || echo "brak vboxdrv"
+#EX
+P: Spróbuj załadować moduł `vboxdrv` i odczytaj komunikat. Następnie sprawdź w `/proc/config.gz`, czy jądro WSL ma włączoną obsługę modułów i KVM.
+H: `sudo modprobe vboxdrv`; `zcat /proc/config.gz | grep -E '^CONFIG_(MODULES|KVM)='`.
+S:
+sudo modprobe vboxdrv
+zcat /proc/config.gz | grep -E '^CONFIG_(MODULES|KVM|KVM_INTEL)='
+#EX
+P: Ustaw limity zasobów WSL w `.wslconfig`: 8 GB pamięci, 4 procesory, swap 4 GB, `vmIdleTimeout` 120 s i `autoMemoryReclaim=gradual`. Uruchom WSL ponownie i sprawdź limity w Linuksie.
+H: `memory`, `processors`, `swap`, `vmIdleTimeout` w `[wsl2]`; `autoMemoryReclaim` w `[experimental]`. Sprawdzenie: `nproc`, `free -h`.
+S:
+@"
+[wsl2]
+networkingMode=mirrored
+memory=8GB
+processors=4
+swap=4GB
+vmIdleTimeout=120000
+
+[experimental]
+autoMemoryReclaim=gradual
+"@ | Set-Content -Encoding ascii $env:USERPROFILE\.wslconfig
+wsl --shutdown
+wsl -e bash -c "nproc; free -h | awk 'NR==2 {print \`$2} NR==3 {print \`$2}'"
+#EX
+P: Sprawdź w Windows, ile pamięci zajmuje maszyna WSL (proces `vmmemWSL` lub `vmmem`) przy działającej dystrybucji.
+H: `Get-Process vmmem*`; pole `WorkingSet64`.
+S:
+wsl -e true
+Get-Process vmmem* -ErrorAction SilentlyContinue | Select-Object Name, @{n='MB';e={[int]($_.WorkingSet64/1MB)}}
+#EX
+P: Pokaż cykl życia dystrybucji: uruchom w niej proces w tle przez `wsl -e`, zamknij wywołanie i po kilkunastu sekundach sprawdź stan dystrybucji (`wsl -l -v`). Potem uruchom `wsl --exec sleep infinity` w osobnej karcie i porównaj.
+H: Dystrybucja zatrzymuje się po zakończeniu ostatniego procesu uruchomionego przez wsl.exe.
+S:
+wsl -d Ubuntu-24.04 -e bash -c "nohup sleep 600 >/dev/null 2>&1 &"
+Start-Sleep -Seconds 20
+wsl -l -v
+Start-Process wt -ArgumentList '-p "Ubuntu-24.04" wsl.exe -d Ubuntu-24.04 --exec sleep infinity'
+Start-Sleep -Seconds 20
+wsl -l -v
+#EX
+P: Pokaż, że `inotify` nie widzi zmian zrobionych w Windows na `/mnt/c`: obserwuj katalog w WSL (`inotifywait`), a w PowerShellu zmień w nim plik. Powtórz dla zmiany zrobionej z WSL.
+H: Pakiet `inotify-tools`; `inotifywait -m -t 15 KATALOG`.
+S:
+sudo apt-get install -y -qq inotify-tools
+mkdir -p /mnt/c/Users/anna/Downloads/obserwuj
+inotifywait -m -t 15 /mnt/c/Users/anna/Downloads/obserwuj &
+# w PowerShellu (brak zdarzenia w WSL):
+Set-Content C:\Users\anna\Downloads\obserwuj\plik.txt "z Windows"
+# w WSL (zdarzenie widoczne):
+echo "z WSL" > /mnt/c/Users/anna/Downloads/obserwuj/plik2.txt
+#EX
+P: Podłącz do WSL urządzenie USB (konwerter USB–UART): wypisz urządzenia `usbipd`, udostępnij je (jako administrator), podłącz do WSL i sprawdź `/dev/ttyUSB0`. Na koniec odłącz.
+H: `usbipd list`, `usbipd bind --busid`, `usbipd attach --wsl --busid`, `usbipd detach`.
+S:
+usbipd list
+usbipd bind --busid 2-3
+usbipd attach --wsl --busid 2-3
+wsl -e ls -l /dev/ttyUSB0
+usbipd detach --busid 2-3
+#EX
+P: Przygotuj krótką notatkę diagnostyczną `~/lab/diagnoza-wsl.txt`: jądro, czy działa systemd (PID 1), tryb sieci (adres eth0), liczba CPU i pamięć — przyda się przy zgłaszaniu problemu.
+H: `ps -p 1 -o comm=`, `uname -r`, `nproc`, `free -h`.
+S:
+{
+  echo "data: $(date -Is)"
+  echo "jadro: $(uname -r)"
+  echo "PID 1: $(ps -p 1 -o comm=)"
+  echo "adresy: $(ip -4 -br addr | grep -v '^lo' | awk '{print $1"="$3}' | xargs)"
+  echo "CPU: $(nproc)  RAM: $(free -h | awk 'NR==2 {print $2}')"
+} | tee ~/lab/diagnoza-wsl.txt
+#Q
+Q: Jaki tryb sieci ma domyślnie WSL 2?
++ NAT — dystrybucja ma adres w wewnętrznej sieci
+- Bridged — adres z routera domowego
+- Mirrored
+- Brak sieci
+E: Tryb mirrored trzeba włączyć w .wslconfig.
+#Q
+Q: Co dzieje się z adresem IP dystrybucji WSL 2 w trybie NAT po restarcie WSL?
++ Zwykle się zmienia
+- Zawsze pozostaje ten sam
+- Zmienia się na adres routera
+- Znika — dystrybucja nie ma adresu
+E: Dlatego nie wpisuje się go na sztywno w konfiguracji.
+#Q
+Q: Jak w trybie NAT najprościej otworzyć z Windows aplikację z WSL na porcie 8080?
++ localhost:8080 — działa przekierowanie localhostForwarding
+- Tylko przez adres 172.x.x.x
+- Przez \\wsl.localhost:8080
+- Nie da się
+E: Przekierowanie działa dla gniazd nasłuchujących w WSL.
+#Q
+Q: Dlaczego kolega z tej samej sieci nie widzi aplikacji z WSL (tryb NAT)?
++ Port nie jest wystawiony na interfejsie sieciowym Windows
+- Aplikacja nasłuchuje tylko na IPv6
+- Router blokuje WSL
+- Kolega ma inną wersję przeglądarki
+E: Przekierowanie dotyczy tylko localhost Windows.
+#Q
+Q: W którym pliku włącza się tryb sieci mirrored?
++ %UserProfile%\.wslconfig, sekcja [wsl2]
+- /etc/wsl.conf, sekcja [network]
+- /etc/netplan/01.yaml
+- settings.json Windows Terminal
+E: .wslconfig dotyczy całej maszyny WSL 2, a nie jednej dystrybucji.
+#Q
+Q: Jaki wpis włącza tryb mirrored?
++ networkingMode=mirrored
+- network=bridge
+- mirrored=true w /etc/wsl.conf
+- localhostForwarding=false
+E: Tryb wymaga Windows 11 22H2 lub nowszego.
+#Q
+Q: Co charakteryzuje tryb mirrored?
++ WSL ma te same adresy i interfejsy co Windows, działa IPv6
+- WSL dostaje osobny adres z routera
+- WSL traci dostęp do internetu
+- WSL widzi tylko localhost
+E: Usługi stają się osiągalne z sieci po dopuszczeniu w zaporze Hyper-V.
+#Q
+Q: Która zapora filtruje ruch przychodzący do WSL w trybie mirrored?
++ Zapora Hyper-V dla maszyn wirtualnych w Windows
+- ufw w dystrybucji
+- iptables w Windows
+- Zapora routera
+E: Reguły tworzy się cmdletem New-NetFirewallHyperVRule.
+#Q
+Q: Do czego służy identyfikator {40E0AC32-46A5-438A-A0B2-2B479E8F2E90}?
++ Wskazuje WSL jako twórcę maszyny wirtualnej (VMCreatorId) w regułach zapory Hyper-V
+- To GUID dystrybucji Ubuntu
+- To numer seryjny jądra
+- To identyfikator profilu Windows Terminal
+E: Używa się go w Get-NetFirewallHyperVVMSetting i New-NetFirewallHyperVRule.
+#Q
+Q: Dlaczego `sudo ufw allow 8080` w WSL nie rozwiązuje problemu dostępu z sieci lokalnej?
++ iptables/nftables w WSL działają tylko wewnątrz maszyny, a ruch blokuje strona Windows
+- ufw nie istnieje w Ubuntu
+- ufw blokuje tylko IPv6
+- Port 8080 jest zarezerwowany
+E: W CODE_WRONG ufw był nieaktywny, a dostęp i tak nie działał.
+#Q
+Q: Co robi `netsh interface portproxy add v4tov4 listenport=8080 connectaddress=172.27.144.83 connectport=8080`?
++ Przekierowuje ruch z portu 8080 Windows na adres WSL
+- Otwiera port w zaporze
+- Zmienia adres WSL
+- Włącza tryb mirrored
+E: Dodatkowo potrzebna jest reguła zapory Windows.
+#Q
+Q: Jaka jest główna wada rozwiązania portproxy w trybie NAT?
++ Po restarcie WSL adres się zmienia i regułę trzeba aktualizować
+- Działa tylko dla UDP
+- Wymaga Linuksa na routerze
+- Spowalnia dysk
+E: Stąd skrypty aktualizujące portproxy w starszych poradnikach.
+#Q
+Q: Jak wyświetlić aktywne przekierowania portproxy?
++ netsh interface portproxy show v4tov4
+- netstat -portproxy
+- Get-NetRoute
+- wsl --ports
+E: Usuwa się je poleceniem netsh interface portproxy delete v4tov4.
+#Q
+Q: Jak w trybie NAT ustalić z WSL adres Windows?
++ Brama domyślna: ip route show default
+- Linia nameserver w /etc/resolv.conf — zawsze
+- hostname -I
+- cat /etc/hostname
+E: Przy tunelowaniu DNS nameserver to 10.255.255.254, a nie Windows.
+#Q
+Q: Jaki adres pojawia się w /etc/resolv.conf przy włączonym tunelowaniu DNS?
++ 10.255.255.254
+- 8.8.8.8
+- 127.0.0.53
+- 172.27.144.1
+E: To adres wirtualnego resolvera WSL, nie adres Windows.
+#Q
+Q: Do czego służy dnsTunneling=true?
++ Zapytania DNS z WSL są obsługiwane przez Windows, co poprawia działanie z VPN
+- Szyfruje DNS przez TLS
+- Wyłącza DNS
+- Udostępnia DNS dla sieci lokalnej
+E: W nowych wersjach jest domyślnie włączone.
+#Q
+Q: Czym ryzykuje stosowanie starych poradników o sieci WSL?
++ Mogą zalecać obejścia niepotrzebne lub szkodliwe przy trybie mirrored i tunelowaniu DNS
+- Niczym
+- Utratą licencji Windows
+- Usunięciem dystrybucji
+E: Przed zastosowaniem porady sprawdź jej datę i swoją wersję WSL.
+#Q
+Q: Kto dostarcza jądro Linuksa w WSL 2?
++ Microsoft — jądro jest budowane specjalnie dla WSL
+- Dystrybucja (np. Ubuntu) przez apt
+- Użytkownik musi je skompilować
+- Producent laptopa
+E: uname -r pokazuje np. 6.6.87.2-microsoft-standard-WSL2.
+#Q
+Q: Jak zaktualizować jądro WSL 2?
++ wsl --update
+- sudo apt upgrade linux-image-generic
+- sudo update-grub
+- Pobrać ISO Ubuntu
+E: Pakiety jądra z dystrybucji nie są w WSL używane do rozruchu.
+#Q
+Q: Co zobaczysz po `sudo modprobe vboxdrv` w WSL?
++ modprobe: FATAL: Module vboxdrv not found in directory /lib/modules/...
+- Moduł się załaduje
+- Restart WSL
+- Pytanie o hasło do BIOS
+E: Jądro WSL ma ograniczony zestaw modułów i nie obsługuje DKMS dla sterowników sprzętu.
+#Q
+Q: Jak w WSL użyć własnego jądra?
++ Wskazać plik jądra opcją kernel= w .wslconfig
+- Zainstalować jądro apt i zrestartować
+- Ustawić GRUB_DEFAULT
+- Nie da się
+E: Własne jądro trzeba samodzielnie zbudować i utrzymywać.
+#Q
+Q: Gdzie sprawdzisz konfigurację, z jaką zbudowano jądro WSL?
++ W /proc/config.gz
+- W /etc/kernel.conf
+- W /boot/grub/grub.cfg
+- W .wslconfig
+E: zcat /proc/config.gz | grep CONFIG_... pokazuje opcje.
+#Q
+Q: Kiedy zatrzymuje się dystrybucja WSL?
++ Kilkanaście sekund po zakończeniu ostatniego procesu uruchomionego przez wsl.exe
+- Nigdy
+- Tylko po restarcie Windows
+- Po 24 godzinach pracy
+E: Usługi systemd w środku nie utrzymują dystrybucji przy życiu.
+#Q
+Q: Czy działające w dystrybucji usługi systemd zapobiegają jej zatrzymaniu po zamknięciu terminala?
++ Nie — dystrybucja może się zatrzymać mimo działających usług
+- Tak, zawsze
+- Tylko usługi typu oneshot
+- Tylko usługa ssh
+E: Szczegóły i obejścia omawia lekcja o systemd w WSL.
+#Q
+Q: Co określa vmIdleTimeout w .wslconfig?
++ Czas (ms), po którym bezczynna maszyna WSL 2 się wyłącza
+- Limit czasu połączeń SSH
+- Czas zapisu logów
+- Czas startu dystrybucji
+E: W ćwiczeniu ustawiono 120000 ms, czyli 2 minuty.
+#Q
+Q: Ile pamięci RAM może domyślnie zająć maszyna WSL 2?
++ 50% pamięci Windows
+- 1 GB
+- 100%
+- 4 GB niezależnie od komputera
+E: Limit zmienia się opcją memory= w .wslconfig.
+#Q
+Q: Która opcja .wslconfig ogranicza liczbę procesorów WSL?
++ processors=
+- cpus=
+- cores=
+- nproc=
+E: Liczbę widzianych procesorów sprawdzisz w WSL poleceniem nproc.
+#Q
+Q: Co robi swap=4GB w .wslconfig?
++ Ustala rozmiar pliku wymiany maszyny WSL 2
+- Ustala rozmiar dysku .vhdx
+- Wyłącza swap
+- Ustala rozmiar /tmp
+E: swap=0 wyłącza wymianę.
+#Q
+Q: Co robi autoMemoryReclaim=gradual?
++ Stopniowo oddaje do Windows pamięć zajętą przez pamięć podręczną Linuksa
+- Ogranicza pamięć do 1 GB
+- Wyłącza page cache
+- Zwiększa swap
+E: Opcja należy do sekcji [experimental].
+#Q
+Q: Kiedy zaczynają działać zmiany w .wslconfig?
++ Po zatrzymaniu całej maszyny WSL (wsl --shutdown) i ponownym starcie
+- Natychmiast
+- Po restarcie Windows Terminal
+- Po wylogowaniu z Linuksa
+E: wsl -t NAZWA zatrzymuje tylko dystrybucję, a nie maszynę wirtualną.
+#Q
+Q: Jaki proces Windows reprezentuje pamięć zajętą przez maszynę WSL 2?
++ vmmemWSL (w starszych wersjach vmmem)
+- wslhost.exe
+- explorer.exe
+- svchost.exe
+E: Jego WorkingSet pokazuje, ile RAM zajmuje WSL.
+#Q
+Q: Jak udostępnić urządzenie USB w WSL 2?
++ usbipd-win: usbipd bind i usbipd attach --wsl
+- Urządzenia USB są widoczne automatycznie
+- Przez /mnt/usb
+- Przez wsl --mount usb
+E: Urządzenie pojawia się np. jako /dev/ttyUSB0.
+#Q
+Q: Co jest potrzebne przed pierwszym usbipd attach dla danego urządzenia?
++ usbipd bind --busid (jako administrator), aby udostępnić urządzenie
+- Restart BIOS
+- Odinstalowanie sterownika Windows na stałe
+- Instalacja jądra Linuksa z apt
+E: Stan Shared w usbipd list oznacza, że urządzenie jest udostępnione.
+#Q
+Q: Jak WSL korzysta z karty graficznej (np. CUDA)?
++ Przez sterowniki zainstalowane w Windows
+- Przez sterowniki NVIDIA instalowane w dystrybucji jak na serwerze
+- Nie korzysta wcale
+- Tylko w WSL 1
+E: Sterownik GPU instaluje się po stronie Windows.
+#Q
+Q: Czego w WSL nie ma, a co jest na serwerze lub VM?
++ GRUB, BIOS/UEFI i konsoli rozruchowej — rozruchem zarządza Windows
+- Systemu plików ext4
+- Powłoki bash
+- Menedżera pakietów
+E: Ćwiczeń z rozruchu nie da się wiarygodnie wykonać w WSL.
+#Q
+Q: Dlaczego automatyczne przeładowanie aplikacji (np. Spring DevTools) może nie działać z projektem na /mnt/c?
++ Zmiany zrobione w Windows nie generują zdarzeń inotify w WSL
+- DevTools nie działa w Linuksie
+- /mnt/c jest tylko do odczytu
+- Java nie obsługuje NTFS
+E: Rozwiązanie: projekt w ~ (ext4).
+#Q
+Q: Który program pozwala obserwować zdarzenia inotify w katalogu?
++ inotifywait z pakietu inotify-tools
+- watch
+- tail -f
+- lsof
+E: inotifywait -m wypisuje zdarzenia w trybie ciągłym.
+#Q
+Q: Czy zmiany wykonane z WSL w /mnt/c generują zdarzenia inotify?
++ Tak — widzi je jądro Linuksa, które wykonało zapis
+- Nie, nigdy
+- Tylko dla plików .java
+- Tylko w trybie mirrored
+E: Problemem są zmiany wykonane przez programy Windows.
+#Q
+Q: W którym trybie sieci adres Windows z wnętrza WSL to localhost (przy hostAddressLoopback=true)?
++ Mirrored
+- NAT
+- Bridged
+- W żadnym
+E: W NAT adres Windows to brama domyślna.
+#Q
+Q: Co jest celem reguły New-NetFirewallHyperVRule -LocalPorts 8080 -Direction Inbound?
++ Dopuszczenie ruchu przychodzącego TCP 8080 do WSL w zaporze Hyper-V
+- Blokada portu 8080 w Linuksie
+- Przekierowanie portu na localhost
+- Włączenie trybu NAT
+E: Bez niej w trybie mirrored ruch z sieci lokalnej jest blokowany.
+#Q
+Q: Który cmdlet pokazuje ustawienia zapory Hyper-V dla WSL?
++ Get-NetFirewallHyperVVMSetting
+- Get-NetFirewallProfile
+- Get-NetAdapter
+- Get-VMNetworkAdapter
+E: Parametr -Name przyjmuje identyfikator twórcy VM (VMCreatorId) WSL.
+#Q
+Q: Dlaczego wystawianie aplikacji z laptopa przez WSL to rozwiązanie „na pokaz”?
++ Laptop się wyłącza, zmienia sieci, a WSL zatrzymuje się po bezczynności — to nie jest stabilny serwer
+- Bo WSL nie obsługuje HTTP
+- Bo Java w WSL jest wolniejsza
+- Bo jest nielegalne
+E: Do stałego udostępniania usługi służy serwer lub VM.
+#Q
+Q: Gdzie wykonać test zachowania zapory, sieci i rozruchu, który ma odpowiadać serwerowi?
++ Na maszynie wirtualnej lub serwerze testowym (np. srv-test)
+- W WSL
+- W Windows Terminal
+- W kontenerze na /mnt/c
+E: WSL różni się od serwera właśnie w tych obszarach.
+#Q
+Q: Pierwszy krok diagnozy „czy to ograniczenie WSL”?
++ Ustalić wersję i tryb: wsl -l -v, uname -r, wsl --version, .wslconfig
+- Przeinstalować Windows
+- Usunąć dystrybucję
+- Wyłączyć zaporę Windows
+E: Dopiero wiedząc, z czym pracujesz, można szukać właściwej przyczyny.
+#Q
+Q: Usługa w WSL „znika” po zamknięciu terminala. Co sprawdzić najpierw?
++ Czy dystrybucja nie została zatrzymana (wsl -l -v pokazuje Stopped)
+- Czy dysk C: jest pełny
+- Czy działa Windows Update
+- Czy jest zainstalowany VS Code
+E: Zatrzymanie dystrybucji kończy też jej usługi.
+#Q
+Q: Jak sprawdzić w WSL, czy PID 1 to systemd?
++ ps -p 1 -o comm=
+- systemctl --pid
+- cat /etc/init
+- wsl --systemd
+E: Bez systemd PID 1 to init WSL.
+#Q
+Q: Jak w trybie NAT dowiedzieć się z PowerShella o bieżący adres WSL?
++ wsl hostname -I
+- ipconfig /wsl
+- Get-NetIPAddress -InterfaceAlias WSL0
+- arp -a
+E: Polecenie uruchamia hostname -I w domyślnej dystrybucji.
+#Q
+Q: Jaki kod HTTP pokaże curl.exe -w "%{http_code}", gdy nie uda się połączyć w czasie -m 5?
++ 000
+- 404
+- 500
+- 200
+E: 000 oznacza brak odpowiedzi HTTP — połączenie się nie udało.
+#Q
+Q: Który wpis w .wslconfig należy do sekcji [experimental]?
++ autoMemoryReclaim
+- memory
+- processors
+- networkingMode
+E: W nowszych wersjach WSL część opcji przeszła z [experimental] do [wsl2].
+#Q
+Q: Co robi wsl --exec sleep infinity uruchomione w osobnej karcie?
++ Utrzymuje proces uruchomiony przez wsl.exe, więc dystrybucja się nie zatrzymuje
+- Usypia Windows
+- Wyłącza WSL
+- Blokuje sieć
+E: Obejście dla usług, które mają działać bez otwartego terminala.
+#Q
+Q: Czy w WSL zadziała uruchomienie VirtualBox wewnątrz dystrybucji?
++ Nie — brak modułów jądra vboxdrv i dostępu do sprzętu
+- Tak, bez ograniczeń
+- Tak, po apt install virtualbox
+- Tylko w trybie mirrored
+E: Do takich zadań potrzebna jest maszyna z Linuksem lub VM.
+#Q
+Q: Masz laptop z 16 GB RAM i duże buildy w WSL spowalniają Windows. Co zrobić?
++ Ustawić memory= (np. 8GB) w .wslconfig i wykonać wsl --shutdown
+- Wyłączyć swap w Windows
+- Usunąć pliki z /tmp
+- Zainstalować więcej przeglądarek
+E: Limit zapobiega zabieraniu przez WSL połowy pamięci przy intensywnej pracy.
+#Q
+Q: Co pokazuje lsmod w WSL w porównaniu ze zwykłym serwerem?
++ Zwykle bardzo mało modułów — większość funkcji jest wkompilowana w jądro
+- Setki modułów sprzętowych
+- Błąd — lsmod nie działa
+- Moduły Windows
+E: Jądro WSL jest przycięte pod maszynę wirtualną Hyper-V.
+#Q
+Q: Dlaczego w trybie NAT nie wpisuje się adresu 172.x WSL na sztywno do konfiguracji narzędzi Windows?
++ Bo adres zmienia się po restarcie WSL — lepiej używać localhost
+- Bo adresy 172.x są publiczne
+- Bo Windows nie obsługuje adresów 172.x
+- Bo to adres routera
+E: localhostForwarding zapewnia stały punkt dostępu.
+#Q
+Q: Skąd wiadomo, czy port 8080 nasłuchuje na wszystkich interfejsach w WSL?
++ ss -ltn pokazuje adres 0.0.0.0:8080 lub *:8080
+- ping 8080
+- cat /etc/services
+- wsl --ports
+E: Adres 127.0.0.1:8080 oznaczałby nasłuch tylko lokalny.
+#Q
+Q: Czym różni się wsl -t Ubuntu-24.04 od wsl --shutdown?
++ -t zatrzymuje jedną dystrybucję, --shutdown całą maszynę WSL 2 ze wszystkimi dystrybucjami
+- Niczym
+- -t usuwa dystrybucję
+- --shutdown wyłącza Windows
+E: Zmiany w .wslconfig wymagają --shutdown.
+#Q
+Q: Co jest skutkiem ubocznym trybu mirrored w porównaniu z NAT?
++ Usługi WSL mogą być osiągalne z sieci, więc trzeba świadomie zarządzać zaporą
+- Brak dostępu do internetu
+- Brak localhost w Windows
+- Dystrybucja nie startuje
+E: Reguły zapory Hyper-V decydują, co jest dostępne z zewnątrz.
+#Q
+Q: Jakie polecenie usuwa regułę zapory Windows o nazwie wyświetlanej sklep-8080-portproxy?
++ Remove-NetFirewallRule -DisplayName "sklep-8080-portproxy"
+- netsh portproxy delete
+- ufw delete allow 8080
+- wsl --firewall off
+E: Reguły Hyper-V usuwa się Remove-NetFirewallHyperVRule.
+#Q
+Q: Jak wyłączyć przekierowanie portów z WSL na localhost Windows w trybie NAT?
++ localhostForwarding=false w sekcji [wsl2] pliku .wslconfig
+- appendWindowsPath=false w /etc/wsl.conf
+- networkingMode=none
+- Nie da się
+E: Domyślnie localhostForwarding jest włączone.
+#Q
+Q: Co pokaże `ip -4 -br addr` w WSL w trybie mirrored na laptopie z adresem Wi-Fi 192.168.1.23?
++ Interfejs z adresem 192.168.1.23/24 — tym samym co Windows
+- Adres 172.27.144.83/20
+- Tylko lo
+- Adres 10.255.255.254
+E: W trybie mirrored interfejsy Windows są odzwierciedlone w WSL.
