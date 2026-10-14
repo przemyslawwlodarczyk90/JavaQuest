@@ -1,0 +1,577 @@
+#EX
+// 1
+P: Na `sklep01` zobacz skalę ataków: policz nieudane próby logowania SSH w dzienniku z ostatniej doby i wypisz najczęściej atakowane nazwy użytkowników.
+H: `journalctl -u ssh --since -1d`; `grep 'Failed\|Invalid user'`.
+S:
+ssh anna@203.0.113.50 "sudo journalctl -u ssh --since -1d --no-pager | grep -cE 'Failed password|Invalid user'; echo '--- atakowane konta:'; sudo journalctl -u ssh --since -1d --no-pager | grep -oE 'Invalid user [a-z0-9_-]+' | sort | uniq -c | sort -rn | head -5"
+#EX
+// 2
+P: Utwórz grupę `ssh-uzytkownicy` i dodaj do niej konta, które mają prawo logować się przez SSH (anna, deploy).
+H: `groupadd`, `usermod -aG`.
+S:
+ssh anna@203.0.113.50 'sudo groupadd -f ssh-uzytkownicy; sudo usermod -aG ssh-uzytkownicy anna; sudo usermod -aG ssh-uzytkownicy deploy; getent group ssh-uzytkownicy'
+#EX
+// 3
+P: Sprawdź, jakie pliki leżą w `/etc/ssh/sshd_config.d/` i czy któryś ustawia `PasswordAuthentication`. Zwróć uwagę na plik cloud-init.
+H: `ls`, `grep -r PasswordAuthentication`.
+S:
+ssh anna@203.0.113.50 'ls -l /etc/ssh/sshd_config.d/; echo "---"; sudo grep -rE "PasswordAuthentication|PermitRootLogin" /etc/ssh/sshd_config.d/ /etc/ssh/sshd_config'
+#EX
+// 4
+P: Utwórz własny plik `/etc/ssh/sshd_config.d/10-sklep01.conf` z ustawieniami utwardzającymi SSH (bez roota, bez haseł, tylko grupa ssh-uzytkownicy, mniej prób) oraz blokiem Match dla deploy.
+H: Heredoc przez `sudo tee`.
+S:
+ssh anna@203.0.113.50 'sudo tee /etc/ssh/sshd_config.d/10-sklep01.conf >/dev/null <<EOF
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowGroups ssh-uzytkownicy
+MaxAuthTries 3
+LoginGraceTime 20
+X11Forwarding no
+
+Match User deploy
+    AllowTcpForwarding no
+    AllowAgentForwarding no
+EOF
+cat /etc/ssh/sshd_config.d/10-sklep01.conf'
+#EX
+// 5
+P: Usuń sprzeczny plik cloud-init, jeśli ustawia logowanie hasłem, i sprawdź składnię konfiguracji SSH.
+H: `rm 50-cloud-init.conf`; `sshd -t`.
+S:
+ssh anna@203.0.113.50 'grep -q "PasswordAuthentication yes" /etc/ssh/sshd_config.d/50-cloud-init.conf 2>/dev/null && sudo rm -f /etc/ssh/sshd_config.d/50-cloud-init.conf && echo "usunieto 50-cloud-init.conf"; sudo sshd -t && echo "skladnia OK"'
+#EX
+// 6
+P: Sprawdź EFEKTYWNĄ konfigurację SSH (po scaleniu plików) dla kluczowych opcji: logowanie roota, hasłem, grupy, liczba prób.
+H: `sshd -T | grep`.
+S:
+ssh anna@203.0.113.50 'sudo sshd -T | grep -E "^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication|allowgroups|maxauthtries|logingracetime) "'
+#EX
+// 7
+P: Sprawdź efektywną konfigurację dla konta `deploy` z bloku Match (przekierowanie portów i agenta wyłączone).
+H: `sshd -T -C user=deploy,host=ci,addr=192.0.2.15`.
+S:
+ssh anna@203.0.113.50 'sudo sshd -T -C user=deploy,host=ci,addr=192.0.2.15 | grep -E "^(allowtcpforwarding|allowagentforwarding) "'
+#EX
+// 8
+P: Przeładuj usługę SSH i PRZETESTUJ w drugiej sesji: logowanie kluczem działa, a logowanie hasłem jest odrzucane.
+H: `systemctl reload ssh`; test `-o PreferredAuthentications=password -o PubkeyAuthentication=no`.
+S:
+ssh anna@203.0.113.50 'sudo systemctl reload ssh'
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ConnectTimeout=5 anna@203.0.113.50 'echo zalogowano haslem' 2>&1 | tail -1
+ssh -i ~/.ssh/id_ed25519 anna@203.0.113.50 'echo "klucz dziala: $(hostname)"'
+#EX
+// 9
+P: Sprawdź, że logowanie roota jest zablokowane (próba powinna się nie udać), a konto spoza grupy ssh-uzytkownicy również.
+H: `ssh root@...`; ewentualnie konto testowe spoza grupy.
+S:
+ssh -o PreferredAuthentications=publickey -o ConnectTimeout=5 root@203.0.113.50 'id' 2>&1 | tail -1
+#EX
+// 10
+P: Ustaw domyślne polityki `ufw`: odrzucaj ruch przychodzący, zezwalaj na wychodzący. Jeszcze NIE włączaj zapory.
+H: `ufw default deny incoming`, `ufw default allow outgoing`.
+S:
+ssh anna@203.0.113.50 'sudo ufw default deny incoming; sudo ufw default allow outgoing'
+#EX
+// 11
+P: Dodaj reguły: ogranicz liczbę nowych połączeń SSH (`limit 22/tcp`) i zezwól na ruch Nginx (80 i 443). Wypisz reguły przed włączeniem.
+H: `ufw limit`, `ufw allow 80,443/tcp`, `ufw show added`.
+S:
+ssh anna@203.0.113.50 "sudo ufw limit 22/tcp comment 'SSH'; sudo ufw allow 80,443/tcp comment 'Nginx'; sudo ufw show added"
+#EX
+// 12
+P: Włącz zaporę (bez pytania interaktywnego) i od razu PRZETESTUJ w drugiej sesji, że SSH nadal działa.
+H: `ufw --force enable`; test `ssh ...`.
+S:
+ssh anna@203.0.113.50 'sudo ufw --force enable'
+ssh -o ConnectTimeout=5 anna@203.0.113.50 'echo "SSH po wlaczeniu ufw dziala"'
+#EX
+// 13
+P: Wypisz status zapory z numeracją reguł i w trybie szczegółowym (polityki domyślne).
+H: `ufw status numbered`, `ufw status verbose`.
+S:
+ssh anna@203.0.113.50 'sudo ufw status numbered; echo "---"; sudo ufw status verbose | head -6'
+#EX
+// 14
+P: Sprawdź z laptopa, że port 80/443 odpowiada (nawet jeśli Nginx jeszcze nie działa — port otwarty w zaporze), a port np. 5432 jest zablokowany przez zaporę.
+H: `nc -zv -w 3`; 5432 powinien dać timeout/refused.
+S:
+for p in 22 80 443 5432; do nc -zv -w 3 203.0.113.50 $p 2>&1 | tail -1; done
+#EX
+// 15
+P: Co oznacza reguła LIMIT dla portu 22? Zobacz w nftables, jak ufw realizuje ograniczanie połączeń.
+H: `ufw show raw` lub `nft list ruleset | grep -A3 limit`.
+S:
+ssh anna@203.0.113.50 'sudo nft list ruleset 2>/dev/null | grep -iE "limit|recent|ct state" | head -6 || sudo iptables -S | grep -i recent | head -4'
+#EX
+// 16
+P: Zainstaluj fail2ban i utwórz jail dla `sshd` z backendem systemd (3 próby/10 min, blokada 1 h, adresy biura w ignoreip).
+H: `apt install fail2ban`; `/etc/fail2ban/jail.d/sshd.local`.
+S:
+ssh anna@203.0.113.50 'sudo apt-get install -y -qq fail2ban >/dev/null; sudo tee /etc/fail2ban/jail.d/sshd.local >/dev/null <<EOF
+[sshd]
+enabled  = true
+backend  = systemd
+maxretry = 3
+findtime = 10m
+bantime  = 1h
+ignoreip = 127.0.0.1/8 198.51.100.0/24
+EOF
+sudo systemctl restart fail2ban; sleep 3; sudo systemctl is-active fail2ban'
+#EX
+// 17
+P: Sprawdź stan jaila sshd: liczbę wykrytych i zablokowanych adresów oraz aktualnie zbanowane.
+H: `fail2ban-client status sshd`.
+S:
+ssh anna@203.0.113.50 'sudo fail2ban-client status sshd'
+#EX
+// 18
+P: Sprawdź, że adresy biura (ignoreip) nie są blokowane, i naucz się odblokowywać adres ręcznie (`unban`).
+H: `fail2ban-client set sshd unbanip ADRES`; `fail2ban-client get sshd ignoreip`.
+S:
+ssh anna@203.0.113.50 'sudo fail2ban-client get sshd ignoreip; echo "--- przyklad odblokowania:"; sudo fail2ban-client status sshd | grep "Banned IP" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" | head -1 | xargs -r -I{} sudo fail2ban-client set sshd unbanip {}'
+#EX
+// 19
+P: Zapisz dokumentację warstw ochrony w `pliki/zabezpieczenia.md`: grupa zabezpieczeń chmury (22 tylko biuro/VPN), ufw, fail2ban, SSH. Skopiuj pliki konfiguracyjne SSH i jail do repozytorium.
+H: scp plików do `~/infra/sklep01/pliki/`.
+S:
+cd ~/infra/sklep01
+scp anna@203.0.113.50:/etc/ssh/sshd_config.d/10-sklep01.conf pliki/
+scp anna@203.0.113.50:/etc/fail2ban/jail.d/sshd.local pliki/
+cat > pliki/zabezpieczenia.md <<'EOF'
+Warstwy ochrony sklep01:
+1. grupa zabezpieczen chmury: 22 tylko 198.51.100.0/24 i VPN; 80,443 z internetu
+2. ufw: deny incoming; limit 22/tcp; allow 80,443/tcp
+3. fail2ban: jail sshd (3 bledy/10 min -> blokada 1 h), ignoreip = biuro
+4. sshd: bez roota, bez hasel, tylko grupa ssh-uzytkownicy, MaxAuthTries 3
+EOF
+git add pliki/10-sklep01.conf pliki/sshd.local pliki/zabezpieczenia.md
+git commit -qm "Etap 3: SSH, ufw, fail2ban" && echo ok
+#EX
+// 20
+P: Zweryfikuj całościowo etap 3 jednym przeglądem: efektywne ustawienia SSH, status ufw i stan fail2ban. To dowód zgodności z planem.
+H: Połącz `sshd -T`, `ufw status`, `fail2ban-client status`.
+S:
+ssh anna@203.0.113.50 'echo "== SSH:"; sudo sshd -T | grep -E "^(permitrootlogin|passwordauthentication|allowgroups) "; echo "== ufw:"; sudo ufw status | grep -E "Status|22|80"; echo "== fail2ban:"; sudo fail2ban-client status sshd | grep -E "Currently banned|Total failed"'
+#Q
+Q: Jak szybko serwer z publicznym adresem zaczyna być skanowany?
++ W ciągu minut od uruchomienia
+- Dopiero po tygodniu
+- Nigdy bez publikacji adresu
+- Tylko gdy ma otwarty port 80
+E: Automaty skanują całe zakresy adresów nieustannie.
+#Q
+Q: Jakie konta najczęściej próbują zgadywać automaty SSH?
++ root, admin, test i podobne popularne nazwy
+- Tylko istniejące konta
+- Konta z grupy sudo
+- Losowe długie nazwy
+E: Dlatego blokuje się logowanie roota i hasłami.
+#Q
+Q: Gdzie umieszcza się własne ustawienia sshd w Ubuntu 24.04?
++ W pliku /etc/ssh/sshd_config.d/10-NAZWA.conf
+- W /etc/ssh/ssh_config
+- W ~/.ssh/config
+- W /etc/default/ssh
+E: Katalog jest dołączany przez Include.
+#Q
+Q: W jakiej kolejności czytane są pliki w sshd_config.d?
++ Alfabetycznie, a dyrektywa Include stoi na początku sshd_config
+- Od końca
+- Losowo
+- Tylko ostatni plik
+E: Dlatego własny plik ma niski numer.
+#Q
+Q: Która wartość wygrywa dla większości opcji sshd, gdy pojawia się wielokrotnie?
++ Pierwsza napotkana
+- Ostatnia
+- Najwyższa liczbowo
+- Z głównego pliku zawsze
+E: Dlatego plik dołączony z niskim numerem ma pierwszeństwo.
+#Q
+Q: Co ustawia PermitRootLogin no?
++ Zakaz logowania na konto root przez SSH
+- Zakaz sudo
+- Zakaz logowania hasłem
+- Zakaz przekierowania X11
+E: root loguje się tylko lokalnie lub przez su/sudo.
+#Q
+Q: Co ustawia PasswordAuthentication no?
++ Wyłącza logowanie hasłem — zostają tylko klucze
+- Wyłącza klucze
+- Wyłącza roota
+- Wymaga hasła do sudo
+E: Chroni przed zgadywaniem haseł.
+#Q
+Q: Do czego służy AllowGroups ssh-uzytkownicy?
++ Zezwala na logowanie SSH tylko kontom z tej grupy
+- Dodaje konta do sudo
+- Tworzy grupę
+- Blokuje grupę
+E: Pozostałe konta nie zalogują się przez SSH.
+#Q
+Q: Co ogranicza MaxAuthTries 3?
++ Liczbę prób uwierzytelnienia w jednym połączeniu
+- Liczbę równoczesnych sesji
+- Liczbę kont
+- Czas logowania
+E: Po przekroczeniu połączenie jest zrywane.
+#Q
+Q: Jak sprawdzić składnię konfiguracji sshd przed przeładowaniem?
++ sshd -t
+- sshd --check
+- systemctl test ssh
+- ssh -t
+E: Błąd w konfiguracji może uniemożliwić start.
+#Q
+Q: Jak sprawdzić EFEKTYWNĄ konfigurację sshd po scaleniu plików?
++ sshd -T
+- cat sshd_config
+- sshd -t
+- systemctl show ssh
+E: Pokazuje realne wartości, nie tylko treść plików.
+#Q
+Q: Jak sprawdzić efektywne ustawienia dla konta w bloku Match?
++ sshd -T -C user=deploy,host=ci,addr=192.0.2.15
+- sshd -T deploy
+- sshd --match deploy
+- ssh -T deploy
+E: Match zależy od użytkownika, hosta i adresu.
+#Q
+Q: Jak przeładować usługę SSH po zmianie konfiguracji?
++ systemctl reload ssh
+- systemctl stop ssh
+- kill -9 sshd
+- ssh --reload
+E: reload nie zrywa istniejących sesji.
+#Q
+Q: Co jest pułapką obrazów chmurowych przy wyłączaniu haseł SSH?
++ Plik 50-cloud-init.conf w sshd_config.d z PasswordAuthentication yes, który wygrywa
+- Brak pliku sshd_config
+- Wyłączony Include
+- Zbyt silne hasło
+E: Edycja głównego pliku nie pomaga, bo dołączony jest czytany wcześniej.
+#Q
+Q: Dlaczego należy weryfikować SSH przez sshd -T, a nie przez czytanie plików?
++ Bo pokazuje realny wynik scalenia wszystkich plików i bloków Match
+- Bo pliki są zaszyfrowane
+- Bo sshd -T jest szybsze
+- Bo pliki są binarne
+E: Tak wychwytuje się sprzeczne wartości.
+#Q
+Q: Jaki jest skutek PasswordAuthentication yes w pliku cloud-init mimo no w głównym pliku?
++ Logowanie hasłem nadal działa (wartość z pliku dołączonego wygrywa)
+- Logowanie hasłem jest wyłączone
+- SSH się nie uruchomi
+- Root może się logować
+E: Trzeba usunąć lub nadpisać sprzeczny plik.
+#Q
+Q: Jaka powinna być domyślna polityka ufw dla ruchu przychodzącego?
++ deny (odrzucaj)
+- allow
+- reject z logowaniem
+- limit
+E: Przepuszcza się tylko jawnie dozwolone porty.
+#Q
+Q: Co robi ufw limit 22/tcp?
++ Ogranicza liczbę nowych połączeń SSH z jednego adresu (ochrona przed zalewem prób)
+- Blokuje port 22
+- Zezwala bez ograniczeń
+- Zamyka port po 22 połączeniach na zawsze
+E: Domyślnie blokuje adres z 6+ połączeń w 30 s.
+#Q
+Q: Jakie porty otwiera się dla Nginx?
++ 80 i 443
+- 8080
+- 5432
+- 22
+E: 80 przekierowuje na 443.
+#Q
+Q: W jakiej kolejności dodaje się reguły i włącza ufw?
++ Najpierw reguła dla SSH, potem ufw enable
+- Najpierw enable, potem reguły
+- Kolejność nie ma znaczenia
+- Najpierw allow 5432
+E: Inaczej można odciąć sobie dostęp.
+#Q
+Q: Dlaczego po ufw enable testuje się SSH w drugiej sesji?
++ Żeby upewnić się, że reguła dla 22 działa, zanim zamknie się bieżącą sesję
+- Żeby przyspieszyć zaporę
+- Żeby zapisać reguły
+- Bez powodu
+E: Błąd w regułach odciąłby dostęp.
+#Q
+Q: Jak wypisać reguły ufw z numerami?
++ ufw status numbered
+- ufw list
+- ufw show rules
+- iptables -L tylko
+E: Numery pozwalają usuwać reguły (ufw delete N).
+#Q
+Q: Co pokazuje ufw status verbose?
++ Status i domyślne polityki (incoming/outgoing) oraz reguły
+- Tylko listę portów
+- Logi
+- Procesy
+E: Potwierdza default deny incoming.
+#Q
+Q: Co realizuje regułę LIMIT ufw pod spodem?
++ Reguły nftables/iptables śledzące liczbę nowych połączeń z adresu (moduł recent/connlimit)
+- Osobny demon
+- fail2ban
+- DNS
+E: ufw to nakładka na nftables.
+#Q
+Q: Czym jest fail2ban?
++ Narzędziem blokującym adresy po kilku nieudanych próbach (np. logowania SSH)
+- Zaporą sieciową
+- Serwerem SSH
+- Menedżerem pakietów
+E: Czyta dziennik i dodaje reguły blokujące.
+#Q
+Q: Jaki backend fail2ban stosuje się w Ubuntu 24.04 z journald?
++ systemd
+- auto
+- polling
+- syslog
+E: Czyta dziennik systemd zamiast pliku logu.
+#Q
+Q: Co oznaczają maxretry=3, findtime=10m, bantime=1h w jailu?
++ 3 nieudane próby w 10 minut skutkują blokadą na 1 godzinę
+- 3 blokady dziennie
+- 10 prób co godzinę
+- Blokada na 3 minuty
+E: Parametry jaila sterują progiem i czasem blokady.
+#Q
+Q: Do czego służy ignoreip w fail2ban?
++ Lista adresów nigdy nieblokowanych (np. biuro, localhost)
+- Lista adresów do zbanowania
+- Lista portów
+- Lista kont
+E: Chroni przed zablokowaniem własnego dostępu.
+#Q
+Q: Jak sprawdzić stan jaila sshd?
++ fail2ban-client status sshd
+- systemctl status sshd
+- ufw status
+- journalctl -u fail2ban
+E: Pokazuje liczbę wykrytych i zablokowanych adresów.
+#Q
+Q: Jak ręcznie odblokować adres w fail2ban?
++ fail2ban-client set sshd unbanip ADRES
+- ufw delete deny ADRES
+- iptables -D ADRES
+- fail2ban-client unban ADRES all
+E: Przydatne, gdy zablokuje się własny adres.
+#Q
+Q: Co stanowi drugą warstwę ochrony przed samą maszyną w chmurze?
++ Grupa zabezpieczeń dostawcy (zapora w panelu chmury)
+- Hasło roota
+- Antywirus
+- Kopia zapasowa
+E: Można w niej ograniczyć 22 do adresów biura/VPN.
+#Q
+Q: Jak w grupie zabezpieczeń chmury powinno się ograniczyć port 22?
++ Tylko do adresów biura i VPN
+- Otworzyć dla 0.0.0.0/0
+- Zamknąć całkowicie
+- Przekierować na 2222
+E: 80 i 443 pozostają otwarte dla internetu.
+#Q
+Q: Czy zmiana portu SSH na 2222 jest skutecznym zabezpieczeniem?
++ Nie — zmniejsza szum w logach, ale nie chroni przed skanowaniem portów
+- Tak, to podstawowa ochrona
+- Tak, ukrywa serwer
+- Tak, blokuje automaty
+E: Chronią klucze, brak haseł i ograniczenie adresów.
+#Q
+Q: Co komplikuje zmianę portu SSH w Ubuntu 24.04?
++ sshd jest aktywowany gniazdem (ssh.socket) — trzeba przeładować jednostki gniazda i dodać regułę zapory
+- Nie da się zmienić portu
+- Wymaga restartu serwera
+- Zmienia adres IP
+E: Zapomnienie o regule zapory odcina dostęp.
+#Q
+Q: Co robi blok Match User deploy w konfiguracji sshd?
++ Stosuje dodatkowe reguły tylko dla konta deploy (np. wyłączenie przekierowań)
+- Tworzy konto deploy
+- Blokuje deploy
+- Dodaje deploy do sudo
+E: AllowTcpForwarding no i AllowAgentForwarding no.
+#Q
+Q: Dlaczego dla konta CI wyłącza się przekierowanie portów i agenta?
++ Konto techniczne ich nie potrzebuje — ograniczenie powierzchni ataku
+- Bo CI nie obsługuje SSH
+- Żeby przyspieszyć wdrożenia
+- Bez powodu
+E: Minimalne uprawnienia także dla SSH.
+#Q
+Q: Jak sprawdzić z laptopa, że port 5432 jest zablokowany przez zaporę serwera?
++ nc -zv -w 3 203.0.113.50 5432 (timeout/refused)
+- ssh serwer 5432
+- ping 5432
+- curl serwer:5432
+E: Zapora odrzuca ruch do niedozwolonych portów.
+#Q
+Q: Co oznacza odrzucenie logowania hasłem przy teście -o PubkeyAuthentication=no?
++ Logowanie hasłem jest wyłączone — zostaje tylko klucz
+- Serwer nie działa
+- Klucz jest zły
+- Błąd DNS
+E: Permission denied (publickey).
+#Q
+Q: Co jest celem ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no?
++ Wymuszenie próby logowania hasłem (test, że jest wyłączone)
+- Logowanie kluczem
+- Wyłączenie SSH
+- Zmiana portu
+E: Jeśli hasła wyłączone — Permission denied.
+#Q
+Q: Gdzie zapisuje się konfiguracje SSH i fail2ban dla odtwarzalności?
++ W repozytorium infrastruktury (~/infra/sklep01/pliki/)
+- W katalogu domowym roota
+- W /tmp
+- Nigdzie
+E: Posłużą w skrypcie instalacyjnym.
+#Q
+Q: Co jest dowodem zgodności konfiguracji SSH z planem?
++ Wynik sshd -T dla kluczowych opcji
+- Treść sshd_config
+- docker ps
+- Lista pakietów
+E: Pokazuje efektywne wartości.
+#Q
+Q: Jaki jest warunek przejścia do instalacji Javy i bazy (lekcja 4)?
++ Zabezpieczony SSH, działająca zapora i fail2ban
+- Zainstalowany Nginx
+- Certyfikat TLS
+- Działająca aplikacja
+E: Ruch administracyjny musi być zamknięty.
+#Q
+Q: Co robi ufw allow 80,443/tcp?
++ Otwiera oba porty TCP jedną regułą
+- Otwiera porty 80-443
+- Otwiera UDP
+- Otwiera tylko 80
+E: Przecinek wymienia porty.
+#Q
+Q: Dlaczego najpierw dodaje się regułę limit 22/tcp, a dopiero potem enable?
++ Żeby po włączeniu zapory SSH nie zostało odcięte
+- Żeby przyspieszyć enable
+- Bo enable usuwa reguły
+- Bez powodu
+E: Włączenie zapory bez reguły SSH zamyka dostęp.
+#Q
+Q: Jaka jest rola logingracetime 20 w sshd?
++ Ogranicza czas na uwierzytelnienie do 20 sekund
+- Czas trwania sesji
+- Czas blokady
+- Czas restartu
+E: Krótszy czas utrudnia ataki.
+#Q
+Q: Co oznacza X11Forwarding no?
++ Wyłączenie przekazywania aplikacji graficznych X11 przez SSH
+- Wyłączenie logowania
+- Wyłączenie kluczy
+- Wyłączenie portu 22
+E: Serwer produkcyjny tego nie potrzebuje.
+#Q
+Q: Jak policzyć nieudane próby logowania SSH w dzienniku?
++ journalctl -u ssh | grep -cE 'Failed password|Invalid user'
+- last -f
+- cat /etc/ssh/failed
+- ufw status
+E: Pokazuje skalę ataków.
+#Q
+Q: Co zrobić, gdy fail2ban zablokuje Twój własny adres?
++ Dodać adres do ignoreip lub użyć set sshd unbanip
+- Przeinstalować serwer
+- Wyłączyć SSH
+- Czekać do końca bantime bezczynnie
+E: Adresy biura warto mieć w ignoreip od początku.
+#Q
+Q: Dlaczego logowanie roota wyłącza się mimo braku hasła roota?
++ Nawet z kluczem root to zbyt szerokie konto; logowanie przez konto imienne + sudo daje audyt
+- Bo root nie ma klucza
+- Bo root jest wolniejszy
+- Bez powodu
+E: Działania przypisane do osoby.
+#Q
+Q: Co jest zaletą ograniczenia SSH do grupy zamiast listy użytkowników?
++ Nowe konto dodaje się przez dołączenie do grupy, bez edycji konfiguracji sshd
+- Szybsze logowanie
+- Mniej pamięci
+- Nie trzeba kluczy
+E: AllowGroups ssh-uzytkownicy.
+#Q
+Q: Co jest dobrą praktyką po każdej zmianie zapory?
++ Test połączenia w nowej sesji przed zamknięciem bieżącej
+- Restart serwera
+- Wyłączenie fail2ban
+- Logowanie jako root
+E: Chroni przed odcięciem dostępu.
+#Q
+Q: Jaki jest efekt reguły default allow outgoing w ufw?
++ Serwer może nawiązywać połączenia wychodzące (aktualizacje, DNS, rsync kopii)
+- Blokuje ruch wychodzący
+- Otwiera wszystkie porty przychodzące
+- Wyłącza zaporę
+E: Ruch przychodzący pozostaje domyślnie odrzucany.
+#Q
+Q: Co pokazuje fail2ban-client get sshd ignoreip?
++ Listę adresów wykluczonych z blokowania
+- Zablokowane adresy
+- Liczbę prób
+- Status jaila
+E: Powinny tam być adresy biura i localhost.
+#Q
+Q: Dlaczego w ignoreip umieszcza się 127.0.0.1/8?
++ Żeby nie blokować połączeń lokalnych
+- Żeby zablokować localhost
+- Żeby przyspieszyć
+- Bez powodu
+E: Lokalne usługi nie powinny być banowane.
+#Q
+Q: Co jest najważniejszym wnioskiem lekcji o SSH?
++ Weryfikuj efektywną konfigurację (sshd -T), bo pliki cloud-init mogą po cichu przywrócić hasła
+- Wystarczy edytować główny plik
+- Zmiana portu wystarcza
+- Hasła są bezpieczne
+E: Pierwsza wartość w scaleniu wygrywa.
+#Q
+Q: Jaki jest sens dokumentu zabezpieczenia.md?
++ Opisuje warstwy ochrony (chmura, ufw, fail2ban, sshd) jako dokumentacja i do audytu
+- Zawiera hasła
+- Zastępuje logi
+- Konfiguruje Nginx
+E: Pokazuje, co i gdzie chroni serwer.
+#Q
+Q: Co to jest reguła LIMIT w kontekście SSH?
++ Blokada adresu, który otwiera zbyt wiele nowych połączeń w krótkim czasie
+- Limit liczby kont
+- Limit czasu sesji
+- Limit pamięci
+E: Utrudnia ataki siłowe i zalew połączeń.
+#Q
+Q: Jak przetestować, że konto spoza grupy ssh-uzytkownicy nie zaloguje się?
++ Spróbować zalogować się takim kontem — SSH odrzuci mimo poprawnego klucza
+- Sprawdzić id
+- Sprawdzić sudo
+- Nie da się
+E: AllowGroups ogranicza logowanie do grupy.
+#Q
+Q: Co daje połączenie ufw (na maszynie) i grupy zabezpieczeń (w chmurze)?
++ Dwie niezależne warstwy — awaria lub błąd w jednej nie otwiera serwera
+- To samo, więc jedna wystarcza
+- Spowolnienie
+- Konflikt reguł
+E: Obrona w głąb.
+#Q
+Q: Jaki plik definiuje jail sshd fail2ban w tym projekcie?
++ /etc/fail2ban/jail.d/sshd.local
+- /etc/fail2ban/jail.conf
+- /etc/ssh/fail2ban.conf
+- /etc/fail2ban.d/ssh
+E: Pliki .local nadpisują domyślne jail.conf.
