@@ -5,7 +5,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Czysta logika mastery (bez Springa, bazy i zegara) - patrz MASTERY_V1_PLAN.md, sekcja 7.
+ * Czysta logika mastery (bez Springa, bazy i zegara).
  *
  * <p>Mastery NIE jest nigdzie zapisywane: to funkcja historii zaliczonych podejsc do quizu
  * ({@link #evaluate}). Kazde zaliczone podejscie jest "zdarzeniem"; odtwarzamy je chronologicznie

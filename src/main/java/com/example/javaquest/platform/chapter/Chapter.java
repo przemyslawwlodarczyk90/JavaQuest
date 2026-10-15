@@ -14,7 +14,7 @@ import jakarta.persistence.Table;
  * Odpowiada 1:1 jednemu wpisowi z {@code _00_tableOfContents/_TableOfContents.ROZDZIALY}
  * (patrz {@link ChapterSeedData} - celowo osobna, wlasna kopia tej listy, zeby nie
  * modyfikowac/importowac paczkowo-prywatnych skladowych pliku bedacego "podstawa
- * programowa" kursu - patrz EDU_PLATFORM_PLAN.md).
+ * programowa" kursu).
  */
 @Entity
 @Table(name = "chapters")

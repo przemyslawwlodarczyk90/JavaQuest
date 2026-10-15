@@ -4,7 +4,7 @@ package com.example.javaquest.platform.chapter;
  * Zamienia surowy slug lekcji z {@link ChapterSeedData} (np. "00_JavaPlatformBasics")
  * na czytelny, prowizoryczny tytul ("Java Platform Basics") do wyswietlenia w Fazie 1,
  * zanim kazda lekcja dostanie prawdziwy, redakcyjnie napisany tytul wraz z tresci
- * (Faza 2+, patrz EDU_PLATFORM_PLAN.md).
+ * (Faza 2+).
  */
 final class LessonSlugTitles {
 

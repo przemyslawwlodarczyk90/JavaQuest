@@ -99,8 +99,6 @@ a kolejne tylko powtórką po przerwie:
   | `retention-level3` | 60d | ★★★ bez powtórki → ★★ |
   | `retention-level2` | 30d | ★★ bez powtórki → ★ |
 
-- Pełny projekt, uzasadnienie wartości i scenariusze: [`MASTERY_V1_PLAN.md`](MASTERY_V1_PLAN.md).
-
 </details>
 
 ## 🚀 Szybki start
@@ -222,17 +220,6 @@ javaQuest/
 | `LessonContentFilesTest` | poprawność wszystkich plików treści lekcji |
 
 Testy czasu nigdy nie używają realnego zegara — `Clock` jest wstrzykiwany.
-
-## 🗺️ Mapa dokumentacji
-
-| Plik | Do czego |
-|---|---|
-| [`CLAUDE.md`](CLAUDE.md) | punkt wejścia — wskazuje właściwe pliki instrukcji |
-| [`MASTERY_V1_PLAN.md`](MASTERY_V1_PLAN.md) | projekt systemu mastery (analiza, algorytm, decyzje) |
-| [`STAGE2_LESSON_REDESIGN_PROMPT.md`](STAGE2_LESSON_REDESIGN_PROMPT.md) · [`WORK_PROGRESS.md`](WORK_PROGRESS.md) | standard i stan prac nad kursem Java |
-| [`JS_COURSE_STAGE_PROMPT.md`](JS_COURSE_STAGE_PROMPT.md) · [`JS_COURSE_WORK_PROGRESS.md`](JS_COURSE_WORK_PROGRESS.md) | kurs JavaScript |
-| [`LINUX_COURSE_STAGE_PROMPT.md`](LINUX_COURSE_STAGE_PROMPT.md) · [`LINUX_COURSE_WORK_PROGRESS.md`](LINUX_COURSE_WORK_PROGRESS.md) | kurs Linux |
-| [`EDU_PLATFORM_PLAN.md`](EDU_PLATFORM_PLAN.md) · [`COURSE_CONTENT_HISTORY.md`](COURSE_CONTENT_HISTORY.md) | archiwum: historia platformy i pisania kursu Java |
 
 ## 🧰 Stos technologiczny
 

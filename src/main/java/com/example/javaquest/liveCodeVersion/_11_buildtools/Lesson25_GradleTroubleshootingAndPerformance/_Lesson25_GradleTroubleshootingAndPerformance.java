@@ -8,7 +8,7 @@ public class _Lesson25_GradleTroubleshootingAndPerformance {
         System.out.println("Ta lekcja zamyka blok Gradle (Lekcje 16-22) - skupia sie na PRAKTYCE:");
         System.out.println("jak diagnozowac i naprawiac typowe problemy z Gradle 'na zywo'.");
         System.out.println("(Wszystkie polecenia './gradlew ...' sa ILUSTRACYJNE - ten wrapper nie");
-        System.out.println(" istnieje w tym repo, patrz CLAUDE.md, sekcja _11_buildtools.)");
+        System.out.println(" istnieje w tym repo.)");
 
         /*
          * ============================================================

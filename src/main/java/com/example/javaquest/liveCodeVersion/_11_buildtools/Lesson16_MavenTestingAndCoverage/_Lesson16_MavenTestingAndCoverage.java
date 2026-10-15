@@ -227,8 +227,8 @@ public class _Lesson16_MavenTestingAndCoverage {
          * ============================================================
          * Ponizszy fragment to ILUSTRACYJNY (nie realnie wywolany "mvn")
          * przyklad tego, co widac w konsoli po "mvn verify" w projekcie
-         * z testami jednostkowymi, integracyjnymi i JaCoCo - patrz
-         * CLAUDE.md, sekcja _11_buildtools, dla wyjasnienia, czemu
+         * z testami jednostkowymi, integracyjnymi i JaCoCo - to
+         * swiadoma decyzja tego rozdzialu, czemu
          * lekcje Maven nie odpalaja realnego 'mvn'.
          */
         String illustrativeOutput = """
@@ -244,7 +244,7 @@ public class _Lesson16_MavenTestingAndCoverage {
                 [INFO] BUILD SUCCESS
                 """;
         System.out.println("\n=== ILUSTRACYJNY OUTPUT 'mvn verify' ===");
-        System.out.println("(To NIE jest realny output - ten kod NIE odpala prawdziwego 'mvn', patrz CLAUDE.md.)");
+        System.out.println("(To NIE jest realny output - ten kod NIE odpala prawdziwego 'mvn'.)");
         System.out.println(illustrativeOutput);
 
         /*

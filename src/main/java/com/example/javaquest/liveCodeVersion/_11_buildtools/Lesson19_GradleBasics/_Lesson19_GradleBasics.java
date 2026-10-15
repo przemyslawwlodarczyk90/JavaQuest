@@ -264,8 +264,8 @@ public class _Lesson19_GradleBasics {
          * Tak jak w lekcjach o Mavenie (11-15) - Gradle nie ma prostego
          * API do "wbudowania" silnika w JVM tak jak Ant, a odpalanie
          * ./gradlew z wewnątrz demo byłoby kruche i wymagałoby dodania
-         * wrappera do tego repo (czego świadomie nie robimy, patrz
-         * CLAUDE.md, sekcja _11_buildtools). Dlatego GENERUJEMY realną
+         * wrappera do tego repo (czego świadomie nie robimy).
+         * Dlatego GENERUJEMY realną
          * treść plików konfiguracyjnych, zapisujemy na dysk i wyjaśniamy -
          * bez faktycznego odpalania ./gradlew.
          */

@@ -14,7 +14,7 @@ import jakarta.persistence.Table;
 /**
  * Zadanie lekcji - tresc + podpowiedz + rozwiazanie, ujawniane frontendowo osobnymi
  * przyciskami ("Podpowiedz"/"Rozwiazanie"). Odpowiedz uzytkownika NIE jest tu
- * przechowywana w Fazie 2 (brak jeszcze modelu postepu - patrz EDU_PLATFORM_PLAN.md,
+ * przechowywana w Fazie 2 (brak jeszcze modelu postepu -
  * Faza 4+).
  */
 @Entity

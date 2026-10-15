@@ -26,7 +26,7 @@ public class _Lesson08_MockitoBeanAndSpyBean {
 
         // @MockitoSpyBean NA KONKRETNEJ klasie (VisitCounter, ponizej) wymaga retransformacji
         // bajtkodu przez Byte Buddy - na JDK 25 bez tej flagi konczy sie bledem "Java 25 is not
-        // supported" (ta sama pulapka co _25_unit_testing/Lesson16 - patrz CLAUDE.md).
+        // supported" (ta sama pulapka co _25_unit_testing/Lesson16).
         System.setProperty("net.bytebuddy.experimental", "true");
 
         System.out.println("=== LEKCJA 8: @MockitoBean i @MockitoSpyBean ===");

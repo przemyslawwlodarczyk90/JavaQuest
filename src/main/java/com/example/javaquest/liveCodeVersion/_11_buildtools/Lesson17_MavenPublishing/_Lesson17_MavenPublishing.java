@@ -211,8 +211,8 @@ public class _Lesson17_MavenPublishing {
          * 🔹 ILUSTRACYJNY PRZYKLAD OUTPUTU "mvn deploy"
          * ============================================================
          * Ponizszy fragment to ILUSTRACYJNY (nie realnie wywolany "mvn")
-         * przyklad tego, co widac w konsoli po "mvn deploy" - patrz
-         * CLAUDE.md, sekcja _11_buildtools, dla wyjasnienia, czemu
+         * przyklad tego, co widac w konsoli po "mvn deploy" - to
+         * swiadoma decyzja tego rozdzialu, czemu
          * lekcje Maven nie odpalaja realnego 'mvn'.
          */
         String illustrativeOutput = """
@@ -223,7 +223,7 @@ public class _Lesson17_MavenPublishing {
                 [INFO] BUILD SUCCESS
                 """;
         System.out.println("\n=== ILUSTRACYJNY OUTPUT 'mvn deploy' ===");
-        System.out.println("(To NIE jest realny output - ten kod NIE odpala prawdziwego 'mvn', patrz CLAUDE.md.)");
+        System.out.println("(To NIE jest realny output - ten kod NIE odpala prawdziwego 'mvn'.)");
         System.out.println(illustrativeOutput);
 
         /*

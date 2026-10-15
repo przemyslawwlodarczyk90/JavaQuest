@@ -11,7 +11,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * Prawdziwy, dzialajacy punkt wejscia aplikacji JavaQuest - serwuje frontend React
  * zbudowany w katalogu "frontend/" (ktorego "npm run build" laduje wynik do
  * src/main/resources/static) oraz REST API platformy edukacyjnej
- * ({@code com.example.javaquest.platform.*}). Patrz EDU_PLATFORM_PLAN.md.
+ * ({@code com.example.javaquest.platform.*}).
  *
  * <p>UMIESZCZONA CELOWO w podpakiecie "com.example.javaquest.web", NIE w pakiecie
  * najwyzszego poziomu "com.example.javaquest" - domyslny component-scan/auto-

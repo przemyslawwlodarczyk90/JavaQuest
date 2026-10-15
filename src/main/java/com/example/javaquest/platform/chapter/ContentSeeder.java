@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 /**
  * Zasila baze danych platformy lista rozdzialow/lekcji z {@link ChapterSeedData} przy
  * kazdym starcie aplikacji (tabele tresci sa przed tym czyszczone przez ContentReset). Faza 1 - tylko
- * metadane nawigacyjne, bez tresci lekcji (patrz EDU_PLATFORM_PLAN.md).
+ * metadane nawigacyjne, bez tresci lekcji.
  *
  * <p>Celowo {@code @PostConstruct}, NIE {@code ApplicationRunner} - ApplicationRunner uruchamia
  * sie PO starcie wbudowanego serwera (Tomcat zaczyna przyjmowac polaczenia w

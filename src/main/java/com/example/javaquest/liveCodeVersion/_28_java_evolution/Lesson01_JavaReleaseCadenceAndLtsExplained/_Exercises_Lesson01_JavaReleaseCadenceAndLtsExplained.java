@@ -102,7 +102,7 @@ public class _Exercises_Lesson01_JavaReleaseCadenceAndLtsExplained {
     }
 
     static class Exercise20_AnalyzeThisCourseVersionChoiceRationale {
-        /* 🧪 Zadanie 20: Bez terminala - przeanalizuj (NA PODSTAWIE `CLAUDE.md`) UZASADNIENIE wyboru Javy 21 W tym kursie. */
+        /* 🧪 Zadanie 20: Bez terminala - przeanalizuj UZASADNIENIE wyboru Javy 21 W tym kursie. */
         public static void main(String[] args) { }
     }
 

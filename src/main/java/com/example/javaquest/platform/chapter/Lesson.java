@@ -15,7 +15,7 @@ import jakarta.persistence.UniqueConstraint;
  * Lekcja platformy edukacyjnej JavaQuest (np. "00_JavaPlatformBasics" w rozdziale
  * "_01_fundamentals"). W Fazie 1 to tylko metadane nawigacyjne (slug/tytul/kolejnosc) -
  * wlasciwa tresc (teoria/zadania/quiz) dochodzi w Fazie 2+ jako osobne encje
- * powiazane z lekcja (patrz EDU_PLATFORM_PLAN.md, sekcja 4.1).
+ * powiazane z lekcja.
  */
 @Entity
 @Table(name = "lessons", uniqueConstraints = @UniqueConstraint(columnNames = {"chapter_id", "slug"}))

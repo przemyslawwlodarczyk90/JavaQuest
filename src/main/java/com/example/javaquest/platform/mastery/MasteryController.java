@@ -15,7 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Mastery zalogowanego uzytkownika (prywatne - tylko konto z tokenu JWT). Odpowiedzi zawieraja
- * wylacznie gwiazdki i flage "warto powtorzyc" - zadnych dat ani terminow (patrz MASTERY_V1_PLAN.md).
+ * wylacznie gwiazdki i flage "warto powtorzyc" - zadnych dat ani terminow.
  * Bez {@code ?track=} - wszystkie tory naraz (frontend laduje to raz po zalogowaniu).
  */
 @RestController

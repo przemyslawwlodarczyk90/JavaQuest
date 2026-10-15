@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * JEDYNE miejsce z parametrami mastery (patrz MASTERY_V1_PLAN.md, sekcja 8). Wartosci domyslne sa
+ * JEDYNE miejsce z parametrami mastery. Wartosci domyslne sa
  * tutaj, a nadpisuje sie je w {@code javaquest-platform.properties} ({@code platform.mastery.*}).
  *
  * <ul>

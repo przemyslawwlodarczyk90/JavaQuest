@@ -53,7 +53,7 @@ class LessonContentLoader {
     // @Transactional trzyma sesje Hibernate otwarta przez CALA metode - bez tego
     // lesson.getChapter().getSlug() (LAZY) rzucalby LazyInitializationException, bo
     // sesja z lessonRepository.findAll() zamyka sie zaraz po zwroceniu wyniku (dokladnie
-    // ta sama pulapka co udokumentowana w CLAUDE.md dla _23_spring_data_jpa/Lesson09).
+    // ta sama pulapka co w _23_spring_data_jpa/Lesson09).
     //
     // Zweryfikowane empirycznie (przy 850 lekcjach x ~15-20 wierszy tresci/lekcje, pierwszy
     // realny przebieg tego loadera): BEZ okresowego entityManager.clear() sesja Hibernate

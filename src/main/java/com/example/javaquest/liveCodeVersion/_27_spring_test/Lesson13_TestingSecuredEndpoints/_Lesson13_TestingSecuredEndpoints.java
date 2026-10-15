@@ -30,7 +30,7 @@ public class _Lesson13_TestingSecuredEndpoints {
     public static void main(String[] args) {
 
         // CALY projekt domyslnie WYLACZA auto-konfiguracje Spring Security w application.properties
-        // (patrz CLAUDE.md, sekcja _24_spring_security) - musimy ja JAWNIE przywrocic PRZED
+        // - musimy ja JAWNIE przywrocic PRZED
         // uruchomieniem testow tej lekcji, inaczej @WebMvcTest w ogole nie zobaczy SecurityFilterChain.
         System.setProperty("spring.autoconfigure.exclude", "");
 

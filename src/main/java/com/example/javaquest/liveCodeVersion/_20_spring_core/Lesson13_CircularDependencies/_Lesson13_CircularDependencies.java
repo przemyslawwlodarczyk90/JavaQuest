@@ -88,7 +88,7 @@ public class _Lesson13_CircularDependencies {
     // UWAGA: rejestracja WYLACZNIE przez jawne @Bean, CELOWO bez @ComponentScan - ten plik ma
     // WIELE demo z WLASNYMI klasami @Component-podobnymi; @ComponentScan (nawet z filtrem
     // wykluczajacym @Configuration) zgarnalby TEZ klasy z INNEGO demo w tym samym pliku (sa w tym
-    // samym pakiecie!), fałszujac obserwowany wynik - patrz notatka w CLAUDE.md.
+    // samym pakiecie!), fałszujac obserwowany wynik.
     @Configuration
     static class ConstructorCycleConfig {
         @org.springframework.context.annotation.Bean

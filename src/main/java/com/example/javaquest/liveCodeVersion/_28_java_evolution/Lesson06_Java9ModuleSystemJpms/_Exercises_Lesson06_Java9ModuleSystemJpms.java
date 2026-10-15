@@ -97,7 +97,7 @@ public class _Exercises_Lesson06_Java9ModuleSystemJpms {
     }
 
     static class Exercise19_DocumentWhyThisProjectStaysOnClasspath {
-        /* 🧪 Zadanie 19: Bez terminala - podsumuj (Z `CLAUDE.md`) DECYZJE, DLACZEGO ten kurs POZOSTAJE NA classpath. */
+        /* 🧪 Zadanie 19: Bez terminala - podsumuj DECYZJE, DLACZEGO ten kurs POZOSTAJE NA classpath. */
         public static void main(String[] args) { }
     }
 

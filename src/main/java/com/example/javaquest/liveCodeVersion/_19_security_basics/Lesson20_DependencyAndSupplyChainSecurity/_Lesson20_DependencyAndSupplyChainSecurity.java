@@ -181,7 +181,7 @@ public class _Lesson20_DependencyAndSupplyChainSecurity {
         for (String lookalike : suspiciousLookalikes) {
             System.out.println("Podejrzanie podobna nazwa: '" + lookalike + "' - atakujacy LICZY na literowke/pomylke przy `mvn dependency:add`/kopiowaniu z niezaufanego zrodla (bloga/StackOverflow).");
         }
-        System.out.println("-> obrona: kopiuj wspolrzedne Maven TYLKO z Maven Central/oficjalnej dokumentacji projektu (ta sama zasada co przy weryfikacji wersji w tym kursie - patrz notatki w CLAUDE.md o BCrypt/JJWT/PMD).");
+        System.out.println("-> obrona: kopiuj wspolrzedne Maven TYLKO z Maven Central/oficjalnej dokumentacji projektu (ta sama zasada co przy weryfikacji wersji w tym kursie).");
     }
 
     private static void demonstrateDependencyConfusionConcept() {

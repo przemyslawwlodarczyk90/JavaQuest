@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Mastery lekcji wyliczane przy odczycie z historii zaliczonych podejsc ({@code quiz_attempts}) dla
  * chwili {@code now} z wstrzykiwanego {@link Clock}. Nic tu nie zapisuje do bazy - patrz
- * {@link MasteryPolicy} i MASTERY_V1_PLAN.md.
+ * {@link MasteryPolicy}.
  */
 @Service
 public class MasteryService {

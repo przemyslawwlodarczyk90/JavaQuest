@@ -121,7 +121,7 @@ public class _Lesson13_StatelessSecurity {
     // @SpringBootApplication ZNALAZLBY SASIADA jako kolejna klase @Configuration I
     // ZAREJESTROWAL JEGO WLASNY bean 'filterChain' PONOWNIE - dajac
     // BeanDefinitionOverrideException (zweryfikowane empirycznie, TA SAMA pulapka
-    // udokumentowana W CLAUDE.md DLA `_20_spring_core`/`_21_spring_boot`/`_22_spring_web`/
+    // co W `_20_spring_core`/`_21_spring_boot`/`_22_spring_web`/
     // `_23_spring_data_jpa`, TU NAPOTKANA PIERWSZY RAZ W `_24_spring_security`, bo TO
     // PIERWSZA lekcja Z 2 klasami `@SpringBootApplication` W JEDNYM pliku).
     @Configuration

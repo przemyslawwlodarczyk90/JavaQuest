@@ -2,8 +2,7 @@ package com.example.javaquest.platform.topics;
 
 /**
  * Jeden temat z zakladki "Krytyczne" - lista tematow uznanych za krytyczne/wazne dla
- * rekrutacji na Java Developera, opracowana na podstawie raportu rynkowego (patrz
- * "kytyyczne tematy.md" w katalogu glownym repo).
+ * rekrutacji na Java Developera, opracowana na podstawie raportu rynkowego.
  *
  * <p>{@code chapterSlug}/{@code lessonSlug} wskazuja lekcje kursu, ktora juz pokrywa dany
  * temat - {@code null}, jesli temat nie jest jeszcze opracowany w kursie (kandydat do

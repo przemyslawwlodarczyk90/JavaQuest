@@ -14,7 +14,7 @@ class ChapterController {
     record ChapterSummary(String slug, String title, int lessonCount) {
     }
 
-    // Etap 2 (2026-09): usunieto pole "hasContent" - z analizy (WORK_PROGRESS.md) wynikalo,
+    // Etap 2 (2026-09): usunieto pole "hasContent" - z analizy wynikalo,
     // ze jest true dla 100% z 664 lekcji (cala tresc JSON juz istnieje), wiec przestalo
     // cokolwiek roznicowac, a nic wiecej sie na nim nie opieralo (ani routing, ani testy).
     record LessonSummary(String slug, String title) {

@@ -293,8 +293,8 @@ public class _Exercises_Lesson01_WhatIsSpringSecurity {
          * bezpiecznego dodania `spring-boot-starter-security` DO
          * ISTNIEJACEJ, dzialajacej JUZ aplikacji (bez zepsucia
          * istniejacych endpointow) - wykorzystaj DOSWIADCZENIE Z
-         * naprawy regresji W TYM projekcie (patrz `application.properties`
-         * I CLAUDE.md).
+         * naprawy regresji W TYM projekcie (patrz
+         * `application.properties`).
          */
         public static void main(String[] args) { }
     }

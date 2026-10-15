@@ -65,7 +65,7 @@ public class _Exercises_Lesson03_Starters {
          * 🧪 Zadanie 7:
          * Sprawdz w `pom.xml` tego projektu, KTORE zaleznosci MAJA
          * jawna wersje (WYJATKI od zarzadzania przez BOM) - DLACZEGO
-         * (patrz notatki w CLAUDE.md o Lombok/jbcrypt/jjwt)?
+         * (Lombok/jbcrypt/jjwt)?
          */
         public static void main(String[] args) { }
     }

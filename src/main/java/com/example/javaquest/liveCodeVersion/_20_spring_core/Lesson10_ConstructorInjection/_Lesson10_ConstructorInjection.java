@@ -86,8 +86,8 @@ public class _Lesson10_ConstructorInjection {
 
     // Filtr WYKLUCZAJACY inne klasy @Configuration z tego pliku (jak MultiConstructorConfig
     // ponizej) - inaczej @ComponentScan znalazlby JE TEZ (@Configuration jest @Component!) i
-    // uruchomil ich metody @Bean, dajac DUPLIKAT beana PriceCalculator (patrz notatka w CLAUDE.md
-    // o tej samej pulapce w Lesson07/08).
+    // uruchomil ich metody @Bean, dajac DUPLIKAT beana PriceCalculator
+    // (ta sama pulapka co w Lesson07/08).
     @Configuration
     @ComponentScan(excludeFilters = @ComponentScan.Filter(type = FilterType.ANNOTATION, classes = Configuration.class))
     static class AppConfig {

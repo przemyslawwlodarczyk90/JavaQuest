@@ -194,7 +194,7 @@ public class _Exercises_Lesson02_ArchitectureDecisionRecords {
          * 🧪 Zadanie 19:
          * Napisz ADR uzasadniajacy JEDNA z RZECZYWISTYCH decyzji z tego kursu
          * (np. "dlaczego `_11_buildtools` embeduje prawdziwego Anta zamiast
-         * tylko opisywac XML" - patrz CLAUDE.md rozdzialu) - z realistycznym
+         * tylko opisywac XML") - z realistycznym
          * kontekstem/decyzja/konsekwencjami.
          */
         public static void main(String[] args) { }
@@ -292,7 +292,7 @@ public class _Exercises_Lesson02_ArchitectureDecisionRecords {
         /*
          * 🧪 Zadanie 28:
          * Wybierz 1 REALNA decyzje architektoniczna udokumentowana w
-         * `CLAUDE.md` tego projektu (np. wybor embedowania Ant/PMD/SpotBugs
+         * lekcjach tego projektu (np. wybor embedowania Ant/PMD/SpotBugs
          * zamiast tylko opisu) i przepisz ja jako PELNY, sformalizowany ADR
          * (wszystkie sekcje + status).
          */

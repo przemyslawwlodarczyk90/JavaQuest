@@ -5,10 +5,10 @@ package com.example.javaquest.platform.content;
  * (patrz {@code TheoryView.jsx}), zeby notatka byla wizualna, nie jedna sciana tekstu.
  *
  * <p><b>Etap 2 platformy (2026-09):</b> enum rozszerzony o typy odpowiadajace obowiazkowej
- * strukturze 11 sekcji lekcji (patrz {@code STAGE2_LESSON_REDESIGN_PROMPT.md}). Stare typy
+ * strukturze 11 sekcji lekcji. Stare typy
  * ({@link #CONCEPT}, {@link #CODE_EXAMPLE}, {@link #DIAGRAM}) sa ZACHOWANE jako alias/legacy -
  * uzywaja ich WSZYSTKIE lekcje jeszcze niezmigrowane do nowego standardu (migracja przebiega
- * rozdzialami, patrz WORK_PROGRESS.md) - nie usuwac, dopoki cala tresc nie zostanie przepisana.
+ * rozdzialami) - nie usuwac, dopoki cala tresc nie zostanie przepisana.
  */
 public enum ContentBlockType {
     // --- Legacy (Faza 1) - zachowane dla lekcji jeszcze niezmigrowanych ---
@@ -54,7 +54,7 @@ public enum ContentBlockType {
      * Katalog/pelne pokrycie API - dla lekcji o "narzedziu z wieloma metodami" (String, Math,
      * Arrays, Random, LocalDate...), wymienia i krotko pokazuje WSZYSTKIE istotne w praktyce
      * metody/operatory zwiazane z omawianym zjawiskiem, nie tylko podzbior z materialu
-     * zrodlowego. Patrz STAGE2_LESSON_REDESIGN_PROMPT.md, sekcja "Pelne pokrycie API".
+     * zrodlowego.
      */
     API_REFERENCE
 }

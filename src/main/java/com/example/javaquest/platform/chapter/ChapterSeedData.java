@@ -8,7 +8,7 @@ import java.util.List;
  *
  * <p>CELOWO jest to WLASNA, oddzielna kopia, a NIE import
  * {@code com.example.javaquest._00_tableOfContents._TableOfContents.ROZDZIALY} - tamten
- * plik jest czescia "podstawy programowej" kursu (patrz EDU_PLATFORM_PLAN.md, sekcja 2)
+ * plik jest czescia "podstawy programowej" kursu
  * i platforma go nie modyfikuje. Dodatkowo {@code ROZDZIALY} i zagniezdzony rekord
  * {@code Chapter} w tamtym pliku sa pakietowo-prywatne (bez modyfikatora), wiec i tak nie
  * bylyby dostepne z tego pakietu bez zmiany widocznosci w tamtym pliku.
@@ -369,7 +369,7 @@ public final class ChapterSeedData {
 
             // Etap 4 dopisany po zamknieciu Etapu 4 "migracja rozdzialami" (_01.._31) - nowy
             // rozdzial pokrywajacy luke miedzy tym kursem a raportem rynkowym o rekrutacji
-            // (patrz "kytyyczne tematy.md" w katalogu glownym) - zakladka "Krytyczne" na
+            // - zakladka \"Krytyczne\" na
             // platformie linkuje tu dla tematow algorytmicznych, ktorych kurs wczesniej nie mial.
             new ChapterSeed("_32_algorithms_and_data_structures", "Algorytmy i struktury danych", List.of(
                     "01_BigONotation", "02_ArraysAndStrings", "03_TwoPointers", "04_SlidingWindow",
@@ -505,9 +505,8 @@ public final class ChapterSeedData {
             // materialu zrodlowego w "dodatkowe materialy/kurs js/js-course/" (14 folderow
             // 01-14, kazdy z plikami lekcja.js/cwiczenia.js/dodatkowe.js, patrz README w
             // "00-spis-tresci"). KAZDY znacznik "JS-XXX" w danym "lekcja.js" odpowiada JEDNEJ
-            // lekcji platformy (90 znacznikow lacznie = 90 lekcji w 14 rozdzialach) - TA SAMA
-            // ziarnistosc, co "JS_COURSE_STAGE_PROMPT.md" (jedyne, obowiazujace zrodlo instrukcji
-            // dla PISANIA tresci tych lekcji, patrz plik w katalogu glownym repo). Rozdzialy
+            // lekcji platformy (90 znacznikow lacznie = 90 lekcji w 14 rozdzialach).
+            // Rozdzialy
             // NA RAZIE PUSTE (bez plikow tresci JSON pod src/main/resources/content/) - TA SAMA,
             // udokumentowana konwencja "w przygotowaniu", co przy scaffoldingu _35-_41 wyzej -
             // TRESC do napisania w KOLEJNEJ turze pracy, rozdzial po rozdziale.
@@ -593,8 +592,8 @@ public final class ChapterSeedData {
             // Struktura ZAPROJEKTOWANA na podstawie notatek w "dodatkowe materialy/LinuxMistery/"
             // (klasy LN01-LN31 w src/main/java/org/example/notes - kazda notatka to temat z
             // ponumerowanymi sekcjami). Rozdzial = grupa tematycznie powiazanych notatek, lekcja =
-            // jedna sekcja lub kilka powiazanych sekcji notatki. Mapowanie lekcja -> sekcje zrodlowe
-            // jest w LINUX_COURSE_STAGE_PROMPT.md (katalog glowny repo). Pliki tresci JSON istnieja,
+            // jedna sekcja lub kilka powiazanych sekcji notatki.
+            // Pliki tresci JSON istnieja,
             // ale sa PUSTE ({"theory": [], "exercises": [], "quiz": []}) - frontend pokazuje je jako
             // "w przygotowaniu". Kurs jest CELOWO szerszy niz notatki (46 rozdzialow, 437 lekcji, 4 czesci):
             // 234 lekcje maja zrodlo w notatkach, pozostale to uzupelnienia do pelnego programu

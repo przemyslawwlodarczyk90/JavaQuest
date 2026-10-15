@@ -30,7 +30,7 @@ public class _Lesson29_BuildToolsTroubleshooting {
          * 📦 DLACZEGO TA LEKCJA JEST INNA
          * ============================================================
          * Wiekszosc bledow build tooli opisujemy SLOWNIE (Maven/Gradle
-         * nie sa embedowane w tym kursie - patrz CLAUDE.md). Ale bledy
+         * nie sa embedowane w tym kursie). Ale bledy
          * czysto JVM-owe (ClassNotFoundException, NoClassDefFoundError,
          * NoSuchMethodError, UnsupportedClassVersionError) oraz bledy
          * Anta (BuildException) MOZEMY wywolac NAPRAWDE, bo mamy pod

@@ -263,7 +263,7 @@ public class _Lesson11_MavenBasics {
          *   jak Ant - w praktyce uzywamy go z linii komend (mvn/mvnw) -
          *   ta lekcja i kolejne (12-15) generuja i wyjasniaja realne
          *   pliki pom.xml, ale nie odpalaja prawdziwego `mvn` z wewnatrz
-         *   main() (patrz CLAUDE.md w korzeniu repo, sekcja _11_buildtools).
+         *   main().
          */
 
         Files.deleteIfExists(pomPath);

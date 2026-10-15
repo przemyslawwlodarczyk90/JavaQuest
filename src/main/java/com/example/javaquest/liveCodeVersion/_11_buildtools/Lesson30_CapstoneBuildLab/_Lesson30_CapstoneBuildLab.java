@@ -19,7 +19,7 @@ import java.nio.file.Paths;
  * Ten sam mini-projekt (model/service/repository + config.properties + Gson +
  * "testy" + JAR) zbudowany w TRZECH wersjach - Ant (REALNIE wykonany w tym
  * demo), Maven i Gradle (wygenerowane jako tresc plikow, z komentarzem -
- * zgodnie ze strategia calego rozdzialu, patrz CLAUDE.md).
+ * zgodnie ze strategia calego rozdzialu).
  */
 public class _Lesson30_CapstoneBuildLab {
 

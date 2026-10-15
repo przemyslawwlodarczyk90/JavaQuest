@@ -37,8 +37,8 @@ public class _Lesson22_Java24To25LatestFeatures {
          *   `super(...)`, jesli NIE odwoluje sie DO `this`).
          * - Structured Concurrency: **NADAL preview** (JEP 505, 5. runda)
          *   - NIE zostala sfinalizowana NAWET W Javie 25 (WBREW
-         *     wczesniejszemu zalozeniu Z planu tego rozdzialu W
-         *     CLAUDE.md - PRAWDA jest ZASKAKUJACO inna: mimo 5 rund
+         *     wczesniejszemu zalozeniu Z planu tego
+         *     rozdzialu - PRAWDA jest ZASKAKUJACO inna: mimo 5 rund
          *     preview OD Javy 19, JVM ZESPOL NADAL zbiera feedback).
          *
          * 🔍 KAZDA Z tych funkcji WYMAGA `--release 24` LUB `25` -

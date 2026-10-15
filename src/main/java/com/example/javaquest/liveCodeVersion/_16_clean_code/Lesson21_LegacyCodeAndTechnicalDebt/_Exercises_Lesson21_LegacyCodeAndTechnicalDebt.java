@@ -214,7 +214,7 @@ public class _Exercises_Lesson21_LegacyCodeAndTechnicalDebt {
          * 🧪 Zadanie 20:
          * Wybierz 1 fragment kodu z dowolnej wczesniejszej lekcji kursu,
          * ktory zawiera komentarz typu "uproszczone" / "DODANE" / "celowo
-         * NIE" (patrz CLAUDE.md rozdzialow tego kursu jako inspiracja) - w
+         * NIE" (komentarze w lekcjach tego kursu jako inspiracja) - w
          * komentarzu oceń, do ktorej cwiartki kwadrantu Fowlera by pasowal.
          */
         public static void main(String[] args) { }
