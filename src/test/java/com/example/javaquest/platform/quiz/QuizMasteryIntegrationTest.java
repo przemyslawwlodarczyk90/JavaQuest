@@ -86,6 +86,10 @@ class QuizMasteryIntegrationTest {
     @Autowired
     private QuizService quizService;
     @Autowired
+    private com.example.javaquest.platform.mastery.LearningSummaryService summaryService;
+    @Autowired
+    private com.example.javaquest.platform.progress.LessonProgressRepository progressRepository;
+    @Autowired
     private QuizAttemptRepository attemptRepository;
     @Autowired
     private LessonRepository lessonRepository;
@@ -147,6 +151,13 @@ class QuizMasteryIntegrationTest {
         assertThat(first.result().passed()).isTrue();
         assertThat(first.masteryBefore()).isZero();
         assertThat(first.masteryAfter()).isEqualTo(1);
+        var user = userRepository.findByEmail(email).orElseThrow();
+        progressRepository.save(new com.example.javaquest.platform.progress.LessonProgress(user, CHAPTER, LESSON));
+        var summary = summaryService.forUser(user);
+        assertThat(summary.points()).isEqualTo(1);
+        assertThat(summary.completedLessons()).isEqualTo(1);
+        assertThat(summary.totalLessons()).isGreaterThan(437);
+        assertThat(summary.courses()).hasSize(3);
 
         clock.advance(Duration.ofHours(1));
         QuizService.AnswerResponse again = solve(email, 20);
@@ -158,6 +169,9 @@ class QuizMasteryIntegrationTest {
         assertThat(spaced.masteryBefore()).isEqualTo(1);
         assertThat(spaced.masteryAfter()).isEqualTo(2);
         assertThat(quizService.getStatus(email, CHAPTER, LESSON).mastery().stars()).isEqualTo(2);
+        assertThat(summaryService.forUser(user).points()).isEqualTo(2);
+        clock.advance(Duration.ofDays(31));
+        assertThat(summaryService.forUser(user).points()).isEqualTo(1);
     }
 
     @Test

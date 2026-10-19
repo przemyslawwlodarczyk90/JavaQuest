@@ -24,10 +24,17 @@ class MasteryController {
 
     private final MasteryService masteryService;
     private final UserRepository userRepository;
+    private final LearningSummaryService summaryService;
 
-    MasteryController(MasteryService masteryService, UserRepository userRepository) {
+    MasteryController(MasteryService masteryService, UserRepository userRepository, LearningSummaryService summaryService) {
         this.masteryService = masteryService;
         this.userRepository = userRepository;
+        this.summaryService = summaryService;
+    }
+
+    @GetMapping("/summary")
+    LearningSummaryService.Summary getSummary(Authentication authentication) {
+        return summaryService.forUser(currentUser(authentication));
     }
 
     @GetMapping

@@ -7,6 +7,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 public interface LessonRepository extends JpaRepository<Lesson, Long> {
+    interface ChapterCount {
+        String getChapterSlug();
+        long getTotal();
+    }
+
+    @Query("select l.chapter.slug as chapterSlug, count(l) as total from Lesson l group by l.chapter.slug")
+    List<ChapterCount> countByChapter();
 
     List<Lesson> findByChapterSlugOrderBySortOrderAsc(String chapterSlug);
 
