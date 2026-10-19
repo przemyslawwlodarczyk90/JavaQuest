@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getLessons } from '../api'
+import { getLessons, getChapters } from '../api'
 import { useProgress } from '../useProgress'
 import MasteryStars from '../components/MasteryStars'
 
@@ -10,18 +10,28 @@ export default function LessonListPage() {
   const [status, setStatus] = useState('loading')
   const [lessons, setLessons] = useState([])
   const [error, setError] = useState('')
+  const [chapterTitle, setChapterTitle] = useState('Lekcje rozdziału')
 
   useEffect(() => {
+    let cancelled = false
     setStatus('loading')
+    setChapterTitle('Lekcje rozdziału')
+    const track = chapterSlug.startsWith('_js_') ? 'JAVASCRIPT' : chapterSlug.startsWith('_lx_') ? 'LINUX' : 'JAVA'
+    getChapters(track).then(chapters => {
+      if (!cancelled) setChapterTitle(chapters.find(chapter => chapter.slug === chapterSlug)?.title ?? 'Lekcje rozdziału')
+    }).catch(() => {})
     getLessons(chapterSlug)
       .then((data) => {
+        if (cancelled) return
         setLessons(data)
         setStatus('ok')
       })
       .catch((err) => {
+        if (cancelled) return
         setError(err.message)
         setStatus('error')
       })
+    return () => { cancelled = true }
   }, [chapterSlug])
 
   if (status === 'loading') {
@@ -43,7 +53,7 @@ export default function LessonListPage() {
       <Link to={homePath} className="back-link">
         &larr; Wszystkie rozdziały
       </Link>
-      <h2>{chapterSlug}</h2>
+      <h2>{chapterTitle}</h2>
       <p className="hint">
         Zrobione: {countInChapter(chapterSlug)} / {lessons.length} &middot; z gwiazdką:{' '}
         {countMasteredInChapter(chapterSlug)} / {lessons.length}
@@ -54,12 +64,13 @@ export default function LessonListPage() {
           return (
             <li
               key={lesson.slug}
-              className={`lesson-list__item ${isCompleted(chapterSlug, lesson.slug) ? 'lesson-list__item--done' : ''}`}
+              className={`lesson-list__item ${lesson.slug === recommendedSlug ? 'lesson-list__item--next' : ''} ${isCompleted(chapterSlug, lesson.slug) ? 'lesson-list__item--done' : ''}`}
             >
-              <Link to={`/rozdzial/${chapterSlug}/${lesson.slug}`} className="lesson-list__title">
+              <div className="lesson-list__body"><Link to={`/rozdzial/${chapterSlug}/${lesson.slug}`} className="lesson-list__title">
                 {lesson.title}
               </Link>
               {lesson.slug === recommendedSlug && <span className="lesson-list__next">Proponowana następna</span>}
+              </div>
               <MasteryStars stars={mastery.stars} reviewSuggested={mastery.reviewSuggested} />
               <input
                 type="checkbox"

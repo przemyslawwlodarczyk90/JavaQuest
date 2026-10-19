@@ -37,6 +37,15 @@ function MaterialDialog({ action, busy, error, onClose, onConfirm }) {
 }
 
 export default function LessonMaterials({ chapter, lesson }) {
+  const [expanded, setExpanded] = useState(false)
+  const drawer = useRef(null)
+  useEffect(() => {
+    if (!expanded) { drawer.current.close(); return undefined }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    drawer.current.showModal()
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [expanded])
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -103,7 +112,13 @@ export default function LessonMaterials({ chapter, lesson }) {
     })
   }
   return (
-    <section className="lesson-materials" aria-labelledby="my-materials-title">
+    <>
+    <button type="button" className="materials-trigger" aria-haspopup="dialog" aria-expanded={expanded}
+      aria-controls="materials-drawer" onClick={() => setExpanded(true)}>Moje materiały <span aria-hidden="true">↗</span></button>
+    <dialog ref={drawer} id="materials-drawer" className="materials-drawer" aria-labelledby="my-materials-title"
+      onClose={() => setExpanded(false)} onCancel={(event) => { if (busy) event.preventDefault() }}>
+    <section className="lesson-materials">
+      <button type="button" className="materials-close" onClick={() => setExpanded(false)} disabled={busy} aria-label="Zamknij moje materiały">Zamknij ×</button>
       <h3 id="my-materials-title">Moje materiały</h3>
       <p className="hint">Twoje załączniki i linki do tej lekcji widzisz tylko Ty.</p>
       {loading ? <p className="hint">Wczytywanie materiałów…</p> : <>
@@ -160,6 +175,8 @@ export default function LessonMaterials({ chapter, lesson }) {
       {error && <p role="alert" className="error">{error}</p>}
       {action && <MaterialDialog action={action} busy={busy} error={modalError} onClose={() => setAction(null)} onConfirm={confirm} />}
     </section>
+    </dialog>
+    </>
   )
 }
 

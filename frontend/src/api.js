@@ -151,6 +151,8 @@ export function getMastery(track) {
   return getJson(track ? `/api/mastery?track=${encodeURIComponent(track)}` : '/api/mastery')
 }
 
+export const getLearningSummary = () => getJson('/api/mastery/summary')
+
 export function getMasteryReviews(track) {
   return getJson(track ? `/api/mastery/reviews?track=${encodeURIComponent(track)}` : '/api/mastery/reviews')
 }

@@ -10,6 +10,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useAuth } from './useAuth'
+import { useProgress } from './useProgress'
 import './App.css'
 
 const TRACKS = [
@@ -20,7 +21,7 @@ const TRACKS = [
 
 function TrackSwitcher() {
   const location = useLocation()
-  const activePath = TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
+  const activePath = location.pathname.includes('_lx_') ? '/linux' : location.pathname.includes('_js_') ? '/js' : TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
 
   return (
     <nav className="track-switcher">
@@ -50,12 +51,14 @@ function RequireAuth() {
 
 function App() {
   const { user, logout } = useAuth()
+  const { summary } = useProgress()
 
   return (
     <main className="app">
       <header className="app-header">
         {user && (
           <div className="app-header__user">
+            <span className="global-points" title="Ważne punkty ze wszystkich kursów">★ {summary?.points ?? '—'} pkt</span>
             <span>
               {user.firstName} {user.lastName}
             </span>
@@ -65,7 +68,7 @@ function App() {
           </div>
         )}
         <Link to="/" className="app-header__link">
-          <h1>JavaQuest</h1>
+          <h1><img src="/favicon.svg" alt="" width="32" height="32" /> JavaQuest</h1>
         </Link>
         {user && (
           <>

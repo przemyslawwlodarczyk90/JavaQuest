@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { getExercises, getQuizStatus, getTheory } from '../api'
+import { getExercises, getQuizStatus, getTheory, getLessons } from '../api'
 import { useProgress } from '../useProgress'
 import TheoryView from '../components/TheoryView'
 import ExercisesView from '../components/ExercisesView'
@@ -22,6 +22,15 @@ export default function LessonDetailPage() {
   const [status, setStatus] = useState('loading')
   const [data, setData] = useState([])
   const [error, setError] = useState('')
+  const [lessons, setLessons] = useState([])
+  useEffect(() => {
+    let cancelled = false
+    setLessons([])
+    getLessons(chapterSlug).then(list => { if (!cancelled) setLessons(list) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [chapterSlug])
+  const position = lessons.findIndex(lesson => lesson.slug === lessonSlug)
+  const currentLesson = lessons[position]
 
   useEffect(() => {
     // Uwaga: bez flagi "cancelled" szybkie przelaczenie zakladki (np. klik
@@ -57,7 +66,7 @@ export default function LessonDetailPage() {
         &larr; Lista lekcji
       </Link>
       <h2 className="lesson-detail__title">
-        {lessonSlug} <MasteryStars stars={mastery.stars} reviewSuggested={mastery.reviewSuggested} />
+        {currentLesson?.title ?? lessonSlug} <MasteryStars stars={mastery.stars} reviewSuggested={mastery.reviewSuggested} />
       </h2>
 
       <label className="lesson-complete">
@@ -99,11 +108,15 @@ export default function LessonDetailPage() {
         {status === 'loading' && <p className="hint">Wczytywanie...</p>}
         {status === 'error' && <p className="error">Błąd: {error}</p>}
         {status === 'ok' && activeTab === 'theory' && <TheoryView blocks={data} />}
-        {status === 'ok' && activeTab === 'exercises' && <ExercisesView exercises={data} />}
+        {status === 'ok' && activeTab === 'exercises' && <ExercisesView key={`${chapterSlug}/${lessonSlug}`} exercises={data} />}
         {status === 'ok' && activeTab === 'quiz' && (
           <QuizView key={`${chapterSlug}/${lessonSlug}`} chapterSlug={chapterSlug} lessonSlug={lessonSlug} status={data} />
         )}
       </div>
+      <nav className="lesson-navigation" aria-label="Nawigacja lekcji">
+        {position > 0 ? <Link to={`/rozdzial/${chapterSlug}/${lessons[position - 1].slug}`}>← Poprzednia lekcja</Link> : <span />}
+        {position >= 0 && position < lessons.length - 1 && <Link to={`/rozdzial/${chapterSlug}/${lessons[position + 1].slug}`}>Następna lekcja →</Link>}
+      </nav>
       <LessonMaterials key={`${chapterSlug}/${lessonSlug}`} chapter={chapterSlug} lesson={lessonSlug} />
     </div>
   )

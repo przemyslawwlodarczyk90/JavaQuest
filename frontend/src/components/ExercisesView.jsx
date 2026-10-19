@@ -27,7 +27,10 @@ export default function ExercisesView({ exercises }) {
 
       <p className="exercise-view__prompt">{exercise.prompt}</p>
 
+      <div className="code-editor__bar"><span aria-hidden="true">&lt;/&gt;</span> Twoje rozwiązanie</div>
       <textarea
+        aria-label="Twoje rozwiązanie"
+        spellCheck={false}
         className="exercise-view__answer"
         placeholder="Twoje rozwiązanie..."
         value={answer}
