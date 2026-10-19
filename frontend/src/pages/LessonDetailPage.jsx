@@ -6,6 +6,7 @@ import TheoryView from '../components/TheoryView'
 import ExercisesView from '../components/ExercisesView'
 import QuizView from '../components/QuizView'
 import MasteryStars from '../components/MasteryStars'
+import LessonMaterials from '../components/LessonMaterials'
 
 const TABS = [
   { key: 'theory', label: 'Teoria', loader: getTheory },
@@ -103,6 +104,7 @@ export default function LessonDetailPage() {
           <QuizView key={`${chapterSlug}/${lessonSlug}`} chapterSlug={chapterSlug} lessonSlug={lessonSlug} status={data} />
         )}
       </div>
+      <LessonMaterials key={`${chapterSlug}/${lessonSlug}`} chapter={chapterSlug} lesson={lessonSlug} />
     </div>
   )
 }

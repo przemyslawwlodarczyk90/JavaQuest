@@ -44,20 +44,21 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body } = {}) {
+async function request(path, { method = 'GET', body, responseType = 'json' } = {}) {
   const headers = {}
   const token = getStoredToken()
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
-  if (body !== undefined) {
+  const multipart = body instanceof FormData
+  if (body !== undefined && !multipart) {
     headers['Content-Type'] = 'application/json'
   }
 
   const response = await fetch(path, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
   })
 
   if (!response.ok) {
@@ -73,8 +74,21 @@ async function request(path, { method = 'GET', body } = {}) {
     }
     throw new ApiError(data?.message ?? `${path} -> HTTP ${response.status}`, response.status, data?.fieldErrors ?? {})
   }
-  return response.json()
+  if (response.status === 204) return null
+  return responseType === 'blob' ? response.blob() : response.json()
 }
+
+export const getLessonMaterials = (chapter, lesson) => getJson(lessonPath(chapter, lesson, 'materials'))
+export const addLessonLink = (chapter, lesson, body) => request(lessonPath(chapter, lesson, 'links'), { method: 'POST', body })
+export const editLessonLink = (chapter, lesson, id, body) => request(lessonPath(chapter, lesson, `links/${id}`), { method: 'PUT', body })
+export const deleteLessonLink = (chapter, lesson, id) => request(lessonPath(chapter, lesson, `links/${id}`), { method: 'DELETE' })
+export const deleteLessonAttachment = (chapter, lesson, id) => request(lessonPath(chapter, lesson, `attachments/${id}`), { method: 'DELETE' })
+export function uploadLessonAttachment(chapter, lesson, file) {
+  const body = new FormData()
+  body.append('file', file)
+  return request(lessonPath(chapter, lesson, 'attachments'), { method: 'POST', body })
+}
+export const downloadLessonAttachment = (url) => request(url, { responseType: 'blob' })
 
 const getJson = (path) => request(path)
 
