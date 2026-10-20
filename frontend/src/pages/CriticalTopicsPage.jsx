@@ -152,7 +152,7 @@ export default function CriticalTopicsPage() {
 
       <h2>Tematy krytyczne</h2>
       <p className="critical-topics__intro">
-        Lista tematów uznanych za krytyczne lub bardzo ważne przy rekrutacji na Java Developera,
+        Lista tematów uznanych za krytyczne lub bardzo ważne w codziennej pracy Java Developera,
         opracowana na podstawie raportu rynkowego. Temat z linkiem jest już opracowany w kursie -
         kliknięcie przenosi do właściwej lekcji. Temat oznaczony „do opracowania” nie ma jeszcze
         odpowiednika w kursie.

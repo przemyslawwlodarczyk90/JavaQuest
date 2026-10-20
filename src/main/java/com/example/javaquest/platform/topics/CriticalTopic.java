@@ -1,11 +1,11 @@
 package com.example.javaquest.platform.topics;
 
 /**
- * Jeden temat z zakladki "Krytyczne" - lista tematow uznanych za krytyczne/wazne dla
- * rekrutacji na Java Developera, opracowana na podstawie raportu rynkowego.
+ * Jeden temat z zakladki "Krytyczne" - lista tematow uznanych za krytyczne/wazne w
+ * codziennej pracy Java Developera, opracowana na podstawie raportu rynkowego.
  *
  * <p>{@code chapterSlug}/{@code lessonSlug} wskazuja lekcje kursu, ktora juz pokrywa dany
- * temat - {@code null}, jesli temat nie jest jeszcze opracowany w kursie (kandydat do
+ * temat - {@code null}, jesli temat nie jest jeszcze opracowany w kursie (material do
  * nowego rozdzialu). Gdy {@code lessonSlug} jest {@code null}, ale {@code chapterSlug}
  * nie jest, temat odpowiada calemu rozdzialowi (frontend linkuje wtedy do listy lekcji,
  * nie do konkretnej lekcji). {@code note} to opcjonalny komentarz wyjasniajacy czesciowe

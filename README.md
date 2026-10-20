@@ -49,8 +49,8 @@ Każda lekcja to:
 - 🛠️ **Zadania** — z podpowiedzią i rozwiązaniem do odsłonięcia;
 - ❓ **Quiz** — pula zwykle **100 pytań ABCD** z wyjaśnieniem każdej odpowiedzi.
 
-Dodatkowo zakładka **„Krytyczne tematy”** zbiera zagadnienia, które najczęściej wracają na rozmowach
-rekrutacyjnych.
+Dodatkowo zakładka **„Krytyczne tematy”** zbiera zagadnienia najważniejsze w codziennej pracy
+Java Developera.
 
 ## 🧠 Jak się tu uczy
 
@@ -165,7 +165,7 @@ JWT trzymaj w `javaquest-platform-secrets.properties` — plik jest w `.gitignor
 | `GET` | `/api/mastery[?track=]` | gwiazdki wszystkich lekcji użytkownika |
 | `GET` | `/api/mastery/reviews[?track=]` | lekcje, przy których powtórka teraz coś da |
 | `GET` · `PUT` | `/api/progress` · `/api/chapters/{c}/lessons/{l}/progress` | checkbox „zrobione” |
-| `GET` | `/api/critical-topics` | krytyczne tematy rekrutacyjne |
+| `GET` | `/api/critical-topics` | krytyczne tematy Java Developera |
 
 Quiz jest odporny na typowe sztuczki: pytania i wynik liczy serwer, poprawna odpowiedź wraca dopiero
 po udzieleniu własnej, odpowiedzi nie da się zmienić, otwartego podejścia nie da się porzucić i
