@@ -1,0 +1,357 @@
+#T INTRO Test wiedzy: JVM, pamięć i Garbage Collector
+Pytania otwarte o to, co dzieje się „pod spodem” podczas działania programu: obszary pamięci JVM, ładowanie klas, kompilacja JIT, odśmiecanie, wycieki pamięci, model pamięci Javy i narzędzia diagnostyczne. Kolejność pytań jest losowana.
+
+To wiedza przydatna przy diagnozowaniu problemów produkcyjnych — przy odpowiedziach podawaj także, jak dany problem wykryć i zmierzyć.
+
+#T NOTE Zakres
+Sterta i stos, metaspace, ładowanie klas, JIT, algorytmy GC (G1, ZGC, Parallel, Serial), pokolenia obiektów, wycieki pamięci, OutOfMemoryError i StackOverflowError, referencje słabe i miękkie, Java Memory Model, narzędzia (jcmd, jstack, JFR, heap dump).
+
+#EX
+P: Jakie obszary pamięci wyróżniamy w JVM?
+H: Sterta, stosy wątków, metaspace, inne.
+S: Sterta (heap) — wspólna dla wszystkich wątków, przechowuje obiekty i tablice; zarządza nią GC.
+Stos każdego wątku (stack) — ramki wywołań metod: zmienne lokalne (wartości typów prostych i referencje), parametry, adresy powrotu.
+Metaspace (od Javy 8, zastąpiło PermGen) — metadane klas, poza stertą, w pamięci natywnej.
+Licznik programu (PC register) każdego wątku i stos metod natywnych.
+Code cache — skompilowany przez JIT kod maszynowy.
+Pamięć natywna poza stertą — bufory bezpośrednie (DirectByteBuffer), struktury wewnętrzne JVM i GC, stosy wątków.
+
+#EX
+P: Czym różni się sterta od stosu?
+H: Co tam trafia, kto zarządza, współdzielenie.
+S: Stos jest prywatny dla wątku i przechowuje ramki wywołań: zmienne lokalne typów prostych i referencje. Pamięć zwalnia się automatycznie po wyjściu z metody (LIFO), dostęp jest bardzo szybki, a rozmiar ograniczony (-Xss) — przepełnienie daje StackOverflowError.
+Sterta jest wspólna dla wszystkich wątków i przechowuje obiekty (także te tworzone wewnątrz metod). Obiekty żyją, dopóki są osiągalne, a zwalnia je GC. Rozmiar kontrolują -Xms i -Xmx; brak miejsca daje OutOfMemoryError: Java heap space.
+JIT dzięki analizie ucieczki (escape analysis) może czasem uniknąć alokacji na stercie dla obiektów nieuciekających z metody (zastępując je zmiennymi skalarnymi).
+
+#EX
+P: Jak działa ładowanie klas w JVM?
+H: Classloadery i model delegacji.
+S: Klasy są ładowane leniwie — przy pierwszym użyciu. Proces: ładowanie (odczyt bajtkodu), łączenie (weryfikacja, przygotowanie pól statycznych z wartościami domyślnymi, rozwiązywanie referencji) i inicjalizacja (wykonanie inicjalizatorów statycznych).
+Hierarchia classloaderów: bootstrap (klasy JDK z java.base), platform (pozostałe moduły platformy) i application/system (classpath i module path aplikacji). Obowiązuje model delegacji do rodzica: classloader najpierw prosi rodzica o klasę, a sam ładuje ją dopiero, gdy rodzic jej nie znajdzie — chroni to klasy podstawowe przed podmianą. Klasa jest identyfikowana parą (nazwa, classloader) — ta sama klasa wczytana przez dwa classloadery to dwie różne klasy (źródło ClassCastException w serwerach aplikacji).
+
+#EX
+P: Czym jest Garbage Collector i jak decyduje, które obiekty usunąć?
+H: Osiągalność od korzeni (GC roots).
+S: GC automatycznie odzyskuje pamięć zajmowaną przez obiekty, które nie są już osiągalne. Zaczyna od korzeni (GC roots): zmiennych lokalnych i parametrów na stosach aktywnych wątków, pól statycznych załadowanych klas, referencji JNI, monitorów. Wszystkie obiekty osiągalne z korzeni przez łańcuch referencji są „żywe”, reszta jest śmieciem — nawet jeśli obiekty odwołują się do siebie nawzajem (cykle nie są problemem, w przeciwieństwie do zliczania referencji).
+Programista nie zwalnia pamięci ręcznie; System.gc() jest tylko sugestią. Może jednak doprowadzić do wycieku, trzymając niepotrzebne referencje.
+
+#EX
+P: Czym jest hipoteza pokoleniowa i jak wykorzystują ją kolektory?
+H: Większość obiektów umiera młodo.
+S: Hipoteza pokoleniowa mówi, że większość obiektów żyje bardzo krótko (tymczasowe obiekty w metodach), a obiekty, które przetrwały dłużej, zwykle żyją długo. Kolektory pokoleniowe dzielą stertę na młode pokolenie (Eden i dwa obszary Survivor) i stare pokolenie.
+Nowe obiekty trafiają do Eden; częste i szybkie zbiórki młodego pokolenia (minor GC) kopiują żywe obiekty do Survivor, a po przetrwaniu kilku zbiórek (próg wieku) promują je do starego pokolenia, odśmiecanego rzadziej. Dzięki temu GC przetwarza głównie mały obszar z dużym odsetkiem śmieci, co jest tanie. G1 i Parallel są pokoleniowe; ZGC jest pokoleniowy od Javy 21 (Generational ZGC).
+
+#EX
+P: Jakie kolektory GC oferuje nowoczesna JVM i czym się różnią?
+H: Serial, Parallel, G1, ZGC, Shenandoah.
+S: Serial — jednowątkowy, dla małych stert i środowisk z jednym procesorem.
+Parallel — wielowątkowy, nastawiony na przepustowość (throughput), z dłuższymi pauzami; dobry do przetwarzania wsadowego.
+G1 (domyślny od Javy 9) — dzieli stertę na regiony, zbiera najpierw te z największą ilością śmieci, celuje w zadany czas pauzy (-XX:MaxGCPauseMillis, domyślnie 200 ms); dobry kompromis dla większości aplikacji.
+ZGC i Shenandoah — kolektory o bardzo krótkich pauzach (poniżej milisekundy, niezależnie od rozmiaru sterty), wykonujące większość pracy współbieżnie z aplikacją; dla dużych stert i aplikacji wrażliwych na opóźnienia. Kosztem jest nieco większe zużycie CPU i pamięci.
+Wybiera się flagami -XX:+UseG1GC, -XX:+UseZGC itd.
+
+#EX
+P: Czym jest pauza „stop-the-world”?
+H: Wstrzymanie wątków aplikacji.
+S: Pauza stop-the-world to moment, w którym JVM wstrzymuje wszystkie wątki aplikacji (w bezpiecznych punktach — safepoints), aby wykonać operację wymagającą spójnego widoku pamięci: część pracy GC, deoptymalizację, zrzut wątków. W tym czasie aplikacja nie obsługuje żądań, co wydłuża czasy odpowiedzi (opóźnienia ogonowe, percentyle p99).
+Nowoczesne kolektory (G1 częściowo, ZGC i Shenandoah prawie całkowicie) wykonują znakowanie i przenoszenie obiektów współbieżnie, ograniczając pauzy do minimum. Długość pauz monitoruje się w logach GC (-Xlog:gc) i JFR.
+
+#EX
+P: Czy w Javie mogą występować wycieki pamięci, skoro jest Garbage Collector?
+H: Obiekty osiągalne, ale niepotrzebne.
+S: Tak. GC usuwa tylko obiekty nieosiągalne, a wyciek w Javie to obiekty nadal osiągalne, choć program już ich nie potrzebuje. Typowe przyczyny:
+- kolekcje statyczne lub długożyjące (cache bez limitu i wygasania), do których tylko się dodaje;
+- niewyrejestrowani słuchacze zdarzeń i wywołania zwrotne;
+- ThreadLocal w pulach wątków bez remove() (wątek żyje długo);
+- klucze mutowalne w HashMap, które „giną”;
+- klasy wewnętrzne i lambdy trzymające referencję do obiektu zewnętrznego;
+- niezamknięte zasoby (strumienie, połączenia);
+- wycieki classloaderów przy ponownym wdrażaniu aplikacji.
+Objawy: rosnące zużycie starego pokolenia po każdym pełnym GC, częste GC i w końcu OutOfMemoryError.
+
+#EX
+P: Jak zdiagnozować wyciek pamięci w aplikacji Java?
+H: Heap dump, analiza dominatorów.
+S: Kroki:
+1. Monitorować zużycie sterty w czasie (metryki, JFR, logi GC) — wyciek to rosnąca linia bazowa po pełnych GC.
+2. Wykonać zrzut sterty (heap dump): jcmd <pid> GC.heap_dump plik.hprof, albo automatycznie przy OOM flagą -XX:+HeapDumpOnOutOfMemoryError.
+3. Przeanalizować go w Eclipse MAT lub VisualVM: histogram klas, największe obiekty i drzewo dominatorów, ścieżki do korzeni GC (kto trzyma referencję), raport podejrzanych wycieków.
+4. Porównać dwa zrzuty wykonane w odstępie czasu, by zobaczyć, co rośnie.
+Pomocny jest też JFR (zdarzenia Old Object Sample) i jcmd GC.class_histogram do szybkiego porównania liczby obiektów.
+
+#EX
+P: Jakie rodzaje OutOfMemoryError mogą wystąpić?
+H: Komunikat po dwukropku mówi, której pamięci zabrakło.
+S: - Java heap space — zabrakło miejsca na stercie (za mały -Xmx, wyciek, zbyt duże dane wczytane naraz).
+- GC overhead limit exceeded — JVM spędza prawie cały czas na GC, odzyskując niewiele pamięci (zwykle objaw wycieku).
+- Metaspace — zbyt dużo metadanych klas (wycieki classloaderów, dynamiczne generowanie klas).
+- Direct buffer memory — wyczerpana pamięć buforów bezpośrednich (NIO, Netty).
+- unable to create native thread — system nie pozwala utworzyć kolejnego wątku (limity systemowe, za dużo wątków).
+- Requested array size exceeds VM limit — próba utworzenia zbyt dużej tablicy.
+Każdy wymaga innej diagnozy, dlatego zawsze czyta się pełny komunikat.
+
+#EX
+P: Kiedy występuje StackOverflowError i jak go naprawić?
+H: Głęboka rekurencja.
+S: StackOverflowError występuje, gdy stos wątku się zapełni — najczęściej przez nieskończoną lub bardzo głęboką rekurencję (brak warunku stopu, wzajemne wywołania metod, cykliczne toString/equals/hashCode w encjach z relacjami dwukierunkowymi, serializacja JSON grafu z cyklem).
+Naprawa: poprawić warunek stopu, zamienić rekurencję na iterację (z jawnym stosem, np. ArrayDeque), przerwać cykle w toString i serializacji (@JsonIgnore, @ToString.Exclude). Zwiększenie rozmiaru stosu (-Xss) pomaga tylko przy uzasadnionej, skończonej głębokości. Java nie optymalizuje rekurencji ogonowej.
+
+#EX
+P: Czym jest metaspace i czym różni się od dawnego PermGen?
+H: Pamięć natywna, metadane klas.
+S: Metaspace (od Javy 8) przechowuje metadane klas: struktury klas, metod, stałe, adnotacje. W przeciwieństwie do PermGen (Java 7 i wcześniej), który był częścią sterty o stałym, często za małym rozmiarze (OOM: PermGen space przy ponownym wdrażaniu aplikacji), metaspace znajduje się w pamięci natywnej i domyślnie może rosnąć bez sztywnego limitu (ogranicza go -XX:MaxMetaspaceSize).
+Napisy z puli i pola statyczne przeniesiono na stertę. Problemy z metaspace to zwykle wycieki classloaderów albo nadmierne generowanie klas (proxy, skrypty).
+
+#EX
+P: Jakie są najważniejsze flagi JVM dotyczące pamięci?
+H: -Xms, -Xmx, -Xss, kontenery.
+S: -Xms — początkowy rozmiar sterty; -Xmx — maksymalny rozmiar sterty (często ustawia się je równe w produkcji, by uniknąć zmian rozmiaru).
+-Xss — rozmiar stosu wątku.
+-XX:MaxMetaspaceSize — limit metaspace.
+-XX:MaxDirectMemorySize — limit buforów bezpośrednich.
+-XX:+UseG1GC / UseZGC — wybór kolektora; -XX:MaxGCPauseMillis — cel pauzy G1.
+W kontenerach: JVM rozpoznaje limity cgroups, a -XX:MaxRAMPercentage (np. 75) ustawia stertę jako procent pamięci kontenera — lepsze niż stałe -Xmx przy zmiennych limitach.
+Diagnostyka: -XX:+HeapDumpOnOutOfMemoryError, -Xlog:gc*, -XX:+ExitOnOutOfMemoryError.
+
+#EX
+P: Czym jest Java Memory Model (JMM) i relacja happens-before?
+H: Widoczność i porządkowanie operacji między wątkami.
+S: Java Memory Model określa, kiedy zapis wykonany przez jeden wątek jest gwarantowanie widoczny dla innego. Bez synchronizacji kompilator, JIT i procesor mogą zmieniać kolejność operacji i buforować wartości, więc wątek może nie zobaczyć zmian lub zobaczyć je w innej kolejności.
+Relacja happens-before daje gwarancje: jeśli A happens-before B, to efekty A są widoczne w B. Powstaje m.in. przez: zwolnienie i późniejsze założenie tego samego monitora (synchronized, Lock), zapis i późniejszy odczyt pola volatile, Thread.start (wszystko przed start jest widoczne w nowym wątku), zakończenie wątku i join, zapis pól final w konstruktorze, operacje klas z java.util.concurrent.
+
+#EX
+P: Co gwarantuje volatile, a czego nie gwarantuje?
+H: Widoczność tak, atomowość operacji złożonych nie.
+S: Zapis do pola volatile jest natychmiast widoczny dla wątków, które je potem odczytają (happens-before), a operacje przed zapisem volatile nie zostaną przeniesione za niego. Odczyt i zapis volatile long/double są atomowe.
+volatile nie zapewnia atomowości operacji złożonych: count++ to odczyt, dodanie i zapis — dwa wątki mogą zgubić aktualizację. Do liczników służą AtomicInteger/LongAdder, a do sekcji z kilkoma operacjami — synchronized lub Lock. Typowe zastosowania volatile: flagi zatrzymania wątków, bezpieczna publikacja niemutowalnego obiektu, double-checked locking.
+
+#EX
+P: Czym są referencje silne, miękkie, słabe i fantomowe?
+H: java.lang.ref i zachowanie GC.
+S: Silna (zwykła zmienna) — obiekt nie zostanie usunięty, dopóki referencja istnieje.
+Miękka (SoftReference) — GC usuwa obiekt dopiero przy braku pamięci; dawniej używana do cache wrażliwego na pamięć.
+Słaba (WeakReference) — obiekt może zostać usunięty przy najbliższym GC, jeśli nie ma do niego silnych referencji; podstawa WeakHashMap i kanonicznych map.
+Fantomowa (PhantomReference) — get() zawsze zwraca null; służy do wykrycia, że obiekt został usunięty, i wykonania sprzątania (podstawa klasy Cleaner, zastępującej finalize).
+Referencje można powiązać z ReferenceQueue, aby dowiadywać się o ich wyczyszczeniu.
+
+#EX
+P: Jak działa kompilator JIT i co to jest deoptymalizacja?
+H: Optymalizacje spekulacyjne.
+S: JIT (C1, C2 w HotSpot) kompiluje często wykonywane metody do kodu maszynowego, stosując optymalizacje oparte na profilu działania: inlining małych metod, eliminację martwego kodu i zbędnych sprawdzeń, analizę ucieczki (alokacja skalarna, usuwanie zbędnych blokad), rozwijanie pętli, wywołania monomorficzne zamiast wirtualnych.
+Wiele optymalizacji jest spekulacyjnych — np. założenie, że interfejs ma jedną implementację. Gdy założenie przestanie być prawdziwe (załadowano nową klasę, pojawił się nowy typ), JVM wykonuje deoptymalizację: wraca do interpretera i kompiluje kod ponownie. Dlatego wydajność bywa nieliniowa, a benchmarki wymagają rozgrzewki (JMH).
+
+#EX
+P: Czym jest analiza ucieczki (escape analysis)?
+H: Czy obiekt opuszcza metodę?
+S: Analiza ucieczki to optymalizacja JIT sprawdzająca, czy referencja do obiektu „ucieka” poza metodę lub wątek (zwracana, przypisywana do pola, przekazywana dalej). Jeśli nie ucieka, JIT może:
+- zastąpić obiekt jego polami w rejestrach/na stosie (scalar replacement), unikając alokacji na stercie i pracy GC;
+- usunąć niepotrzebną synchronizację na obiekcie widocznym tylko w jednym wątku (lock elision).
+Dzięki temu krótkotrwałe obiekty pomocnicze (np. iteratory, małe rekordy w pętli) często nie kosztują alokacji. Działa tylko po kompilacji JIT i dla wystarczająco prostego kodu.
+
+#EX
+P: Jakie narzędzia JDK służą do diagnozowania działającej JVM?
+H: jcmd, jstack, jmap, jstat, JFR, JConsole.
+S: jcmd — uniwersalne narzędzie: zrzut wątków (Thread.print), zrzut sterty (GC.heap_dump), histogram klas, właściwości, uruchamianie nagrań JFR, flagi VM.
+jstack — zrzut stosów wszystkich wątków (zakleszczenia, zawieszenia).
+jmap — zrzut i histogram sterty (dziś częściej jcmd).
+jstat — statystyki GC i kompilacji na żywo.
+Java Flight Recorder (JFR) i JDK Mission Control — niskonarzutowe profilowanie produkcyjne: CPU, alokacje, blokady, I/O, GC.
+JConsole i VisualVM — graficzne monitorowanie przez JMX.
+W kontenerach często używa się też async-profiler i metryk wystawianych przez Micrometer/Actuator.
+
+#EX
+P: Jak zdiagnozować zakleszczenie w działającej aplikacji?
+H: Zrzut wątków.
+S: Należy wykonać zrzut wątków (thread dump) poleceniem jstack <pid>, jcmd <pid> Thread.print, przez VisualVM/JConsole albo sygnałem kill -3 (wynik trafia na standardowe wyjście). JVM automatycznie wykrywa zakleszczenia na monitorach i blokadach z java.util.concurrent i wypisuje sekcję „Found one Java-level deadlock” z wątkami i blokadami, które się nawzajem blokują.
+Warto wykonać kilka zrzutów w odstępach kilku sekund — wątki stale w stanie BLOCKED na tych samych blokadach wskazują problem. Naprawa: ustalona kolejność zakładania blokad, tryLock z limitem czasu, ograniczenie zakresu sekcji krytycznych.
+
+#EX
+P: Co to jest Java Flight Recorder i dlaczego nadaje się do produkcji?
+H: Niski narzut.
+S: Java Flight Recorder (JFR) to wbudowany w JVM mechanizm zbierania zdarzeń o działaniu aplikacji i JVM: próbki CPU, alokacje, zdarzenia GC, blokady i oczekiwania, I/O, wyjątki, kompilacja JIT, zdarzenia własne aplikacji. Jest zaprojektowany z myślą o bardzo niskim narzucie (zwykle około 1%), więc można go włączyć na produkcji, także ciągle (tryb „zawsze włączony” z buforem cyklicznym).
+Uruchamia się flagą -XX:StartFlightRecording lub poleceniem jcmd JFR.start, a nagrania analizuje w JDK Mission Control. Od Javy 11 jest darmowy w OpenJDK, a od Javy 14 udostępnia strumieniowanie zdarzeń (JFR Event Streaming).
+
+#EX
+P: Czym różnią się błędy OutOfMemoryError i StackOverflowError od zwykłych wyjątków?
+H: Error kontra Exception.
+S: Oba są podklasami Error, a nie Exception — oznaczają poważne problemy środowiska wykonawczego, z których aplikacja zwykle nie powinna próbować się podnosić przez catch. Po OutOfMemoryError stan aplikacji może być niespójny (np. niepełne struktury danych, wątki zakończone w połowie pracy).
+Dobra praktyka produkcyjna: włączyć -XX:+HeapDumpOnOutOfMemoryError do diagnozy i -XX:+ExitOnOutOfMemoryError (lub CrashOnOutOfMemoryError), aby proces się zakończył i został ponownie uruchomiony przez orkiestrator, zamiast działać w uszkodzonym stanie. StackOverflowError bywa bezpieczniejszy do obsłużenia lokalnie, ale zwykle wskazuje na błąd w kodzie.
+
+#EX
+P: Jak działa String deduplication w G1 i czym różni się od puli napisów?
+H: Współdzielenie tablic znaków.
+S: Deduplikacja napisów (-XX:+UseStringDeduplication, dostępna dla G1 i od Javy 18 także dla innych kolektorów) działa w tle podczas GC: wykrywa obiekty String o tej samej treści i sprawia, że wskazują tę samą wewnętrzną tablicę bajtów. Obiekty String pozostają różne (== nadal daje false), ale oszczędza się pamięć zajmowaną przez duplikaty treści — przydatne, gdy aplikacja trzyma wiele identycznych napisów (np. z parsowania danych).
+Pula napisów (intern) działa inaczej: współdzieli same obiekty String i wymaga jawnego wywołania intern() lub literałów.
+
+#EX
+P: Czym są Compact Strings z Javy 9?
+H: LATIN-1 kontra UTF-16.
+S: Od Javy 9 String przechowuje znaki w tablicy byte[] zamiast char[], z polem coder określającym kodowanie: LATIN-1 (1 bajt na znak), gdy wszystkie znaki mieszczą się w zakresie 0–255, albo UTF-16 (2 bajty) w przeciwnym razie. Ponieważ większość napisów w aplikacjach to znaki ASCII/Latin-1, zużycie pamięci na napisy spada mniej więcej o połowę, co zmniejsza też presję na GC.
+Mechanizm jest niewidoczny dla programisty. Napisy z polskimi znakami (ą, ę, ł) używają UTF-16.
+
+#EX
+P: Co to jest Escape Analysis, TLAB i dlaczego alokacja obiektów w Javie jest tania?
+H: Thread-Local Allocation Buffer.
+S: Każdy wątek dostaje w młodym pokoleniu własny bufor alokacji (TLAB). Alokacja nowego obiektu to zwykle tylko przesunięcie wskaźnika w tym buforze i wypełnienie nagłówka — bez synchronizacji między wątkami, co jest bardzo szybkie (często szybsze niż malloc w C).
+Zwolnienie krótkotrwałych obiektów jest prawie darmowe, bo kolektor młodego pokolenia kopiuje tylko obiekty żywe, a martwe po prostu porzuca. Dodatkowo analiza ucieczki może całkowicie wyeliminować alokację. Dlatego w Javie nie warto ręcznie tworzyć pul obiektów dla zwykłych, małych obiektów — tylko dla kosztownych zasobów (połączenia, wątki, bufory bezpośrednie).
+
+#EX
+P: Jak JVM działa w kontenerach (Docker, Kubernetes)?
+H: Limity cgroups, dobór sterty i wątków.
+S: Nowoczesne JVM (od Javy 10, poprawki w 8u191) rozpoznają limity pamięci i CPU z cgroups i na ich podstawie dobierają domyślny rozmiar sterty (domyślnie 25% pamięci kontenera) oraz liczbę wątków GC i ForkJoinPool. Zaleca się ustawić -XX:MaxRAMPercentage (np. 75%), zostawiając zapas na pamięć poza stertą: metaspace, stosy wątków, bufory bezpośrednie, code cache.
+Częsty problem: kontener zabity przez OOM Killer (kod 137), mimo że sterta ma wolne miejsce — bo łączne zużycie pamięci procesu przekroczyło limit. Pomaga monitorowanie pamięci natywnej (-XX:NativeMemoryTracking=summary, jcmd VM.native_memory).
+
+#EX
+P: Czym jest code cache i co się dzieje, gdy się zapełni?
+H: Skompilowany kod JIT.
+S: Code cache to obszar pamięci natywnej przechowujący kod maszynowy wygenerowany przez kompilator JIT (oraz kod pomocniczy JVM). Od Javy 9 jest podzielony na segmenty (kod nie-metod, profilowany, nieprofilowany). Rozmiar kontroluje -XX:ReservedCodeCacheSize.
+Gdy się zapełni, JVM zgłasza ostrzeżenie „CodeCache is full. Compiler has been disabled” i przestaje kompilować nowe metody — aplikacja nadal działa, ale nowe gorące ścieżki są tylko interpretowane, co powoduje spadek wydajności. Zdarza się w dużych aplikacjach z wieloma klasami lub dynamicznie generowanym kodem; rozwiązaniem jest zwiększenie rozmiaru.
+
+#EX
+P: Jak zmierzyć poprawnie wydajność fragmentu kodu Java?
+H: JMH, rozgrzewka, eliminacja martwego kodu.
+S: Ręczne pomiary System.nanoTime w pętli są zawodne: JIT kompiluje kod w trakcie (rozgrzewka), może usunąć obliczenia, których wynik nie jest używany (eliminacja martwego kodu), składać stałe, a GC i inne procesy wprowadzają szum.
+Do mikrobenchmarków używa się JMH (Java Microbenchmark Harness): zapewnia rozgrzewkę, wiele iteracji i forków JVM, zapobiega eliminacji martwego kodu (Blackhole, zwracanie wyników) i raportuje statystyki z niepewnością. Dla całych aplikacji mierzy się metryki pod realistycznym obciążeniem (testy wydajnościowe, profilery jak JFR czy async-profiler), patrząc na percentyle opóźnień, a nie tylko średnie.
+
+#EX
+P: Czym jest finalizacja i dlaczego została wycofana?
+H: finalize(), Cleaner.
+S: Metoda finalize() miała być wywoływana przez GC przed usunięciem obiektu, aby zwolnić zasoby. Problemy: brak gwarancji, kiedy i czy w ogóle się wykona; spowolnienie GC (obiekty z finalize wymagają dodatkowego cyklu); możliwość „wskrzeszenia” obiektu; wyjątki w finalize są ignorowane; ryzyko bezpieczeństwa (ataki przez podklasy).
+Od Javy 9 jest przestarzała, a od Javy 18 (JEP 421) oznaczona do usunięcia. Zasoby zwalnia się jawnie (try-with-resources, close()), a jako zabezpieczenie awaryjne używa się java.lang.ref.Cleaner, opartego na referencjach fantomowych.
+
+#EX
+P: Co to jest ThreadLocal i jak może spowodować wyciek pamięci?
+H: Pule wątków.
+S: ThreadLocal przechowuje osobną wartość dla każdego wątku (np. kontekst użytkownika, formatter niebezpieczny wątkowo). Wartości są trzymane w mapie wątku (ThreadLocalMap) z kluczem będącym słabą referencją do obiektu ThreadLocal, ale wartość jest referencją silną.
+W pulach wątków (serwery aplikacji, egzekutory) wątki żyją bardzo długo, więc wartość, której nie usunięto metodą remove(), zostaje w pamięci na zawsze, a przy ponownym wdrożeniu może trzymać cały classloader aplikacji. Może też „przeciekać” kontekst między żądaniami obsługiwanymi przez ten sam wątek. Dlatego zawsze sprząta się w finally (threadLocal.remove()). Dla wątków wirtualnych zaleca się ScopedValue (preview od Javy 21).
+
+#EX
+P: Czym jest bezpieczna publikacja obiektu w kontekście wielowątkowym?
+H: Widoczność w pełni zainicjalizowanego obiektu.
+S: Bezpieczna publikacja oznacza udostępnienie obiektu innym wątkom tak, aby zobaczyły go w pełni zainicjalizowanego. Bez niej inny wątek może zobaczyć referencję do obiektu, którego pola mają jeszcze wartości domyślne (zmiana kolejności zapisów).
+Sposoby: inicjalizacja w statycznym inicjalizatorze; zapis do pola volatile lub AtomicReference; zapis do pola final w konstruktorze (gwarancja JMM dla pól final, o ile this nie ucieka z konstruktora); zapis do pola chronionego blokadą; umieszczenie w kolekcji współbieżnej. Obiekty niemutowalne z polami final są bezpieczne nawet przy publikacji przez wyścig.
+
+#EX
+P: Co oznacza, że this „ucieka” z konstruktora i dlaczego to niebezpieczne?
+H: Rejestracja słuchacza, uruchomienie wątku w konstruktorze.
+S: Ucieczka this ma miejsce, gdy konstruktor udostępnia referencję do tworzonego obiektu, zanim ten zostanie w pełni zainicjalizowany: rejestruje się jako słuchacz, przekazuje this do innego obiektu, uruchamia wątek korzystający z this, wywołuje metodę przesłanialną.
+Inny wątek lub kod może wtedy zobaczyć obiekt z niezainicjalizowanymi polami (także final — gwarancje JMM dla pól final obowiązują tylko, gdy this nie ucieka). Rozwiązanie: prywatny konstruktor i statyczna metoda fabrykująca, która najpierw tworzy obiekt, a potem go rejestruje lub uruchamia wątki.
+
+#EX
+P: Jakie są różnice między wątkami platformowymi a wirtualnymi pod względem pamięci?
+H: Stos w pamięci natywnej kontra na stercie.
+S: Wątek platformowy odpowiada wątkowi systemu operacyjnego i ma stały stos zarezerwowany w pamięci natywnej (zwykle 512 KB–1 MB), dlatego tysiące wątków zużywają gigabajty pamięci i obciążają planistę systemu.
+Wątek wirtualny (Java 21) jest obiektem zarządzanym przez JVM — jego stos jest przechowywany na stercie jako fragmenty (stack chunks), rośnie i maleje według potrzeb i zajmuje zwykle kilka kilobajtów. Gdy wątek wirtualny blokuje się na I/O, jego stos jest odmontowywany z wątku nośnego. Pozwala to tworzyć miliony wątków. Ponieważ stosy są na stercie, GC je przegląda, co ma pewien koszt.
+
+#EX
+P: Czym jest „przypinanie” (pinning) wątku wirtualnego?
+H: synchronized i metody natywne w Javie 21.
+S: Wątek wirtualny jest przypięty do wątku nośnego, gdy nie może zostać odmontowany podczas blokowania. W Javie 21 dzieje się to przy blokowaniu wewnątrz bloku synchronized i podczas wykonywania metod natywnych lub wywołań zwrotnych z kodu natywnego. Przypięty wątek blokuje wątek nośny, co przy wielu takich wątkach może wyczerpać pulę nośników i zniweczyć zalety wątków wirtualnych.
+Rozwiązania w Javie 21: zastąpienie synchronized wokół blokującego I/O przez ReentrantLock, diagnostyka flagą -Djdk.tracePinnedThreads i zdarzeniami JFR. Od Javy 24 (JEP 491) synchronized nie powoduje już przypinania.
+
+#EX
+P: Czym różnią się JVM od innych dostawców (Oracle, Temurin, Corretto, GraalVM)?
+H: Wspólna baza OpenJDK.
+S: Większość dystrybucji opiera się na kodzie OpenJDK i przechodzi testy zgodności (TCK), więc zachowują się tak samo. Różnią się licencją i warunkami wsparcia (Oracle JDK ma warunki komercyjne dla części wersji, Eclipse Temurin, Amazon Corretto, Azul Zulu, Microsoft Build of OpenJDK są darmowe), długością wsparcia LTS, dodatkami (np. dodatkowe kolektory, łatki wydajnościowe) i platformami.
+GraalVM to JDK z alternatywnym kompilatorem JIT (Graal) i możliwością kompilacji AOT do natywnego pliku wykonywalnego (Native Image) — z bardzo szybkim startem i małym zużyciem pamięci, ale z ograniczeniami dotyczącymi refleksji i dynamicznego ładowania klas.
+
+#EX
+P: Czym jest kompilacja AOT (Native Image) i kiedy ma sens?
+H: GraalVM, szybki start, ograniczenia.
+S: Kompilacja AOT (ahead-of-time) w GraalVM Native Image analizuje aplikację w czasie budowania (zamknięty świat) i tworzy natywny plik wykonywalny, który nie wymaga JVM. Zalety: start w milisekundach, mniejsze zużycie pamięci, brak rozgrzewki — idealne dla funkcji serverless, narzędzi wiersza poleceń i mikroserwisów skalowanych do zera.
+Wady: długie budowanie, ograniczenia refleksji, dynamicznych proxy i ładowania klas (wymagają konfiguracji metadanych), często niższa szczytowa przepustowość niż po rozgrzaniu JIT, trudniejsze debugowanie. Spring Boot 3 i Quarkus wspierają Native Image. Alternatywą dla szybszego startu w zwykłej JVM są CDS/AppCDS i CRaC.
+
+#EX
+P: Co to jest Class Data Sharing (CDS)?
+H: Szybszy start przez współdzielone archiwum klas.
+S: CDS zapisuje przetworzone metadane klas do archiwum, które przy kolejnych uruchomieniach JVM mapuje do pamięci zamiast ponownie parsować i weryfikować klasy. Skraca to czas startu i — przy wielu procesach JVM na jednej maszynie — zmniejsza łączne zużycie pamięci (archiwum jest współdzielone).
+Domyślne archiwum klas JDK jest włączone od Javy 12. AppCDS obejmuje też klasy aplikacji (-XX:ArchiveClassesAtExit, -XX:SharedArchiveFile). Spring Boot ułatwia tworzenie takiego archiwum. W kolejnych wersjach Javy (projekt Leyden) rozszerzono to o wcześniejsze ładowanie i linkowanie klas.
+
+#EX
+P: Jak działa nagłówek obiektu i ile pamięci zajmuje mały obiekt w Javie?
+H: Mark word, wskaźnik klasy, wyrównanie.
+S: Każdy obiekt w HotSpot ma nagłówek: mark word (8 bajtów — skrót tożsamościowy, wiek dla GC, informacje o blokadzie) i wskaźnik do klasy (4 bajty przy skompresowanych wskaźnikach). Do tego pola i wyrównanie do 8 bajtów. Pusty obiekt zajmuje więc 16 bajtów, Integer — 16 bajtów, a tablica ma dodatkowo pole długości.
+Dlatego List<Integer> z milionem elementów zajmuje wielokrotnie więcej pamięci niż int[] (obiekty Integer, referencje, nagłówki). Przy dużych danych liczbowych warto używać tablic typów prostych lub wyspecjalizowanych kolekcji. Narzędzie JOL (Java Object Layout) pokazuje dokładny układ obiektu. Projekt Lilliput (Compact Object Headers, Java 24 jako eksperyment) zmniejsza nagłówek do 8 bajtów.
+
+#EX
+P: Czym są skompresowane wskaźniki (compressed oops)?
+H: 32-bitowe referencje w 64-bitowej JVM.
+S: W 64-bitowej JVM referencje mogłyby zajmować 8 bajtów. Compressed oops (domyślnie włączone dla sterty mniejszej niż ok. 32 GB) przechowują je jako 32-bitowe przesunięcia mnożone przez 8 (wyrównanie obiektów), co pozwala zaadresować do 32 GB sterty przy 4-bajtowych referencjach. Oszczędza to pamięć i poprawia wykorzystanie pamięci podręcznej procesora.
+Konsekwencja praktyczna: przekroczenie progu ok. 32 GB (-Xmx32g) wyłącza kompresję, więc sterta 33 GB może pomieścić mniej obiektów niż 31 GB. Dlatego zaleca się albo trzymać się poniżej progu, albo przejść na znacznie większą stertę.
+
+#EX
+P: Jak interpretować logi GC i na co zwracać uwagę?
+H: Częstotliwość, długość pauz, zajętość po GC.
+S: Logi włącza się flagą -Xlog:gc* (Java 9+). Należy zwracać uwagę na:
+- długość pauz i ich rozkład (szczególnie długie pełne GC);
+- częstotliwość zbiórek młodego pokolenia (bardzo częste — duży wskaźnik alokacji);
+- zajętość starego pokolenia po pełnym GC — stale rosnąca sugeruje wyciek;
+- zdarzenia awaryjne (G1 „to-space exhausted”, pełne GC zamiast współbieżnego cyklu);
+- procent czasu spędzanego w GC (powyżej kilku procent to problem).
+Do analizy używa się narzędzi (GCeasy, JDK Mission Control, GCViewer) lub metryk w systemie monitoringu.
+
+#EX
+P: Jak zmniejszyć presję na GC w aplikacji?
+H: Mniej alokacji, mniej obiektów długożyjących.
+S: Sposoby:
+- ograniczyć niepotrzebne alokacje w gorących ścieżkach (boxing, tworzenie napisów w logach bez sprawdzenia poziomu, kopiowanie kolekcji, strumienie w ciasnych pętlach);
+- używać tablic typów prostych zamiast list obiektów dla dużych danych liczbowych;
+- przetwarzać dane strumieniowo zamiast wczytywać wszystko do pamięci;
+- ograniczać cache (limit rozmiaru, wygasanie) i rozmiar sesji;
+- dobrać rozmiar sterty i kolektor do charakterystyki aplikacji (np. ZGC dla niskich opóźnień);
+- unikać finalizacji i dużych obiektów przekraczających rozmiar regionu G1 (humongous).
+Najpierw mierzy się profilerem alokacji (JFR), a dopiero potem optymalizuje.
+
+#EX
+P: Czym są obiekty „humongous” w G1?
+H: Obiekty większe niż połowa regionu.
+S: W G1 sterta jest podzielona na regiony o stałym rozmiarze (1–32 MB). Obiekt większy niż połowa regionu (np. duża tablica) jest „humongous” — alokowany bezpośrednio w ciągłym zestawie regionów starego pokolenia. Takie alokacje są kosztowne, mogą prowadzić do fragmentacji i przedwczesnych cykli GC lub pełnego GC.
+Rozwiązania: zwiększyć rozmiar regionu (-XX:G1HeapRegionSize), unikać tworzenia ogromnych tablic i buforów (przetwarzanie strumieniowe, mniejsze porcje), ponownie używać dużych buforów.
+
+#EX
+P: Co to jest JIT warm-up i jak przyspieszyć start aplikacji Java?
+H: CDS, CRaC, AOT, leniwa inicjalizacja.
+S: Aplikacja Java po starcie najpierw działa w interpreterze, a pełną wydajność osiąga dopiero po skompilowaniu gorących metod przez JIT. Do tego dochodzi czas ładowania klas i inicjalizacji frameworka.
+Przyspieszanie: CDS/AppCDS (archiwum klas), Spring Boot z leniwą inicjalizacją beanów i ograniczeniem automatycznej konfiguracji, GraalVM Native Image (kompilacja AOT), CRaC (Coordinated Restore at Checkpoint — zapis i odtworzenie rozgrzanego procesu), rozgrzewanie aplikacji ruchem syntetycznym przed włączeniem do ruchu produkcyjnego (probe readiness).
+
+#EX
+P: Jakie informacje zawiera zrzut wątków (thread dump) i jak go czytać?
+H: Stany wątków, stosy, blokady.
+S: Zrzut wątków zawiera dla każdego wątku: nazwę, priorytet, identyfikator, stan (RUNNABLE, BLOCKED, WAITING, TIMED_WAITING), pełny stos wywołań oraz informacje o blokadach — które monitory wątek trzyma („locked”) i na które czeka („waiting to lock”, „parking to wait for”). Na końcu JVM raportuje wykryte zakleszczenia.
+Analiza: wiele wątków BLOCKED na tej samej blokadzie — wąskie gardło synchronizacji; wątki puli w WAITING — bezczynne; wątki RUNNABLE w tym samym miejscu przez kilka zrzutów — pętla lub kosztowna operacja; wątki czekające na połączenie z puli bazy danych — wyczerpana pula. Kilka zrzutów w odstępach daje lepszy obraz niż jeden.
+
+#EX
+P: Co to jest flaga -XX:+HeapDumpOnOutOfMemoryError i dlaczego warto ją włączać?
+H: Diagnoza po fakcie.
+S: Flaga powoduje automatyczny zapis zrzutu sterty (plik .hprof) w momencie wystąpienia OutOfMemoryError; ścieżkę wskazuje -XX:HeapDumpPath. Bez niej po awarii nie ma danych do analizy przyczyny, a problem trzeba odtwarzać.
+Zrzut pozwala w Eclipse MAT zobaczyć, jakie obiekty zajmowały pamięć i kto je trzymał. W produkcji trzeba zapewnić miejsce na dysku (zrzut ma rozmiar porównywalny ze stertą) i pamiętać, że zawiera dane wrażliwe (np. dane osobowe, hasła w pamięci), więc należy go chronić.
+
+#EX
+P: Dlaczego wywołanie System.gc() w kodzie jest zwykle złym pomysłem?
+H: Sugestia, pełne GC, pauzy.
+S: System.gc() to tylko prośba o odśmiecanie — JVM może ją zignorować (-XX:+DisableExplicitGC). Jeśli ją wykona, zwykle uruchamia pełne GC ze stosunkowo długą pauzą, co pogarsza czasy odpowiedzi, a nowoczesne kolektory i tak lepiej wiedzą, kiedy zbierać.
+Wywoływanie go „żeby zwolnić pamięć” nie naprawia wycieków (osiągalne obiekty i tak nie zostaną usunięte). Wyjątkowe uzasadnione przypadki to testy i narzędzia diagnostyczne. Niektóre biblioteki (RMI) wywoływały je okresowo, co kontrolują specjalne flagi.
+
+#EX
+P: Jak działa ZGC i dlaczego ma tak krótkie pauzy?
+H: Kolorowe wskaźniki i bariery odczytu.
+S: ZGC wykonuje prawie całą pracę — znakowanie i przenoszenie obiektów (kompaktowanie) — współbieżnie z wątkami aplikacji. Wykorzystuje kolorowe wskaźniki (metadane zapisane w bitach referencji) i bariery odczytu: przy każdym odczycie referencji wątek aplikacji sprawdza, czy obiekt nie został przeniesiony, i w razie potrzeby poprawia referencję.
+Dzięki temu pauzy stop-the-world ograniczają się do krótkich operacji (np. skanowania korzeni wątków) i wynoszą zwykle poniżej milisekundy, niezależnie od rozmiaru sterty (od setek MB do terabajtów). Kosztem jest dodatkowa praca CPU i bariery. Od Javy 21 dostępny jest tryb pokoleniowy (-XX:+UseZGC -XX:+ZGenerational, domyślny od Javy 23).
+
+#EX
+P: Co to jest bezpieczny punkt (safepoint) w JVM?
+H: Miejsce, w którym wątek może zostać zatrzymany.
+S: Safepoint to punkt w wykonywaniu kodu, w którym stan wątku jest dobrze określony dla JVM (wiadomo, gdzie są referencje). Operacje wymagające zatrzymania wszystkich wątków (część faz GC, deoptymalizacja, zrzut wątków, odwoływanie blokad) czekają, aż każdy wątek dojdzie do safepointu.
+Problem „time to safepoint”: jeśli wątek wykonuje długą pętlę bez safepointów (np. pętla po int skompilowana przez JIT bez punktów kontrolnych), pozostałe wątki czekają, wydłużając pauzę. Diagnozuje się to logami -Xlog:safepoint. Nowsze JVM wstawiają punkty kontrolne w pętlach (loop strip mining).
+
+#EX
+P: Czym jest pamięć poza stertą (off-heap) i kiedy się jej używa?
+H: ByteBuffer.allocateDirect, Foreign Memory API.
+S: Pamięć poza stertą to pamięć natywna nienadzorowana przez GC. W Javie przydziela się ją przez ByteBuffer.allocateDirect (bufory bezpośrednie, używane przez NIO i Netty, by uniknąć kopiowania danych przy operacjach I/O), a od Javy 22 przez Foreign Function & Memory API (MemorySegment, Arena) z kontrolowanym czasem życia.
+Zalety: duże bufory nie obciążają GC, szybsze I/O, możliwość współdzielenia z kodem natywnym. Wady: ręczne zarządzanie czasem życia, ryzyko wycieków pamięci natywnej (OOM: Direct buffer memory, zabicie kontenera), trudniejsza diagnostyka (Native Memory Tracking).
+
+#EX
+P: Jak JVM inicjalizuje klasę i kiedy wykonuje się blok static?
+H: Pierwsze aktywne użycie klasy.
+S: Klasa jest inicjalizowana przy pierwszym aktywnym użyciu: utworzeniu obiektu, wywołaniu metody statycznej, odczycie lub zapisie pola statycznego (niebędącego stałą czasu kompilacji), inicjalizacji podklasy, użyciu refleksji (Class.forName z inicjalizacją) lub gdy jest klasą główną. Wtedy wykonują się, w kolejności w pliku, inicjalizatory pól statycznych i bloki static — dokładnie raz, w sposób bezpieczny wątkowo (JVM synchronizuje inicjalizację).
+Odczyt stałej (static final z literałem) nie inicjalizuje klasy, bo kompilator wstawia wartość. Wyjątek w inicjalizatorze kończy się ExceptionInInitializerError, a kolejne użycia klasy — NoClassDefFoundError. Bezpieczeństwo wątkowe inicjalizacji wykorzystuje wzorzec leniwego singletona „holder”.
