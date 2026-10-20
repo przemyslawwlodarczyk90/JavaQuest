@@ -98,7 +98,7 @@ function validate({ theory, quiz, exercises }, src) {
     if (q.bad.length !== 3) throw new Error(`Wymagane 3 bledne opcje: ${id}`);
     if (new Set([q.good, ...q.bad]).size !== 4) throw new Error(`Powtorzone opcje: ${id}`);
     if (LETTER_REF.test(q.explanation)) throw new Error(`Odwolanie do litery opcji: ${id}`);
-    const key = q.question + '\n' + (q.code ?? '');
+    const key = q.question + '\n' + (q.code ?? '') + '\n' + q.good;
     if (seen.has(key)) throw new Error(`Powtorzone pytanie: ${id}`);
     seen.add(key);
   });
