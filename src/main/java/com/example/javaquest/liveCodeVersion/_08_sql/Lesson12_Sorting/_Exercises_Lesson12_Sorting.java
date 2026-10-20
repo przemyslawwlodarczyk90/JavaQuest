@@ -248,10 +248,10 @@ public class _Exercises_Lesson12_Sorting {
     static class Exercise22_NullAwareRankingWithBusinessMeaning {
         /*
          * 🧪 Zadanie 22:
-         * Utwórz tabelę "candidates" (id, name VARCHAR(100), interview_score INT) i
-         * wstaw 8 kandydatów, 2 z interview_score = NULL (jeszcze nieprzeprowadzona
-         * rozmowa). Zbuduj ranking z jawnym NULLS LAST ("ORDER BY interview_score
-         * DESC NULLS LAST" - kandydaci bez oceny na końcu, NIE traktowani jako
+         * Utwórz tabelę "students" (id, name VARCHAR(100), exam_score INT) i
+         * wstaw 8 studentów, 2 z exam_score = NULL (egzamin jeszcze
+         * nieoceniony). Zbuduj ranking z jawnym NULLS LAST ("ORDER BY exam_score
+         * DESC NULLS LAST" - studenci bez oceny na końcu, NIE traktowani jako
          * "najlepsi" ani "najgorsi" przez domyślne zachowanie NULL) i wypisz pełną
          * listę z komentarzem, czemu ten konkretny biznesowy przypadek wymaga
          * jawnego NULLS LAST.

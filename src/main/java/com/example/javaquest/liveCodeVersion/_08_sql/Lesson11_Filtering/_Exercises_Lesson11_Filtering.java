@@ -305,14 +305,14 @@ public class _Exercises_Lesson11_Filtering {
     static class Exercise27_ComplexBusinessRuleFilterWithAllOperators {
         /*
          * 🧪 Zadanie 27:
-         * Utwórz tabelę "job_applications" (id, candidate_name VARCHAR(100),
-         * years_experience INT, desired_salary DECIMAL(10,2), status VARCHAR(20),
-         * notes VARCHAR(200)) i wstaw 10 kandydatów z realistycznymi, zróżnicowanymi
-         * danymi (część z notes = NULL). Napisz zapytanie kwalifikujące kandydatów do
-         * rozmowy: (years_experience BETWEEN 2 AND 10) AND (desired_salary <= 12000)
+         * Utwórz tabelę "grant_applications" (id, applicant_name VARCHAR(100),
+         * team_size INT, requested_amount DECIMAL(10,2), status VARCHAR(20),
+         * notes VARCHAR(200)) i wstaw 10 wniosków z realistycznymi, zróżnicowanymi
+         * danymi (część z notes = NULL). Napisz zapytanie kwalifikujące wnioski do
+         * oceny: (team_size BETWEEN 2 AND 10) AND (requested_amount <= 12000)
          * AND (status IN ('NEW', 'REVIEWING')) AND (notes IS NULL OR notes NOT LIKE
          * '%odrzucony%') - użyj WSZYSTKICH operatorów z lekcji naraz w jednym
-         * zapytaniu i wypisz kwalifikujących się kandydatów.
+         * zapytaniu i wypisz kwalifikujące się wnioski.
          */
         public static void main(String[] args) { }
     }

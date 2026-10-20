@@ -286,7 +286,7 @@ public class _Exercises_Lesson19_ComparableVsComparator {
     static class Exercise28_ComparatorWithExternalWeights {
         /*
          * 🧪 Zadanie 28:
-         * Klasa Candidate(name, experienceYears, testScore).
+         * Klasa Player(name, experienceYears, testScore).
          * Napisz Comparator ważony: finalScore = experienceYears*0.4 + testScore*0.6,
          * sortujący malejąco po finalScore (bez dodawania pola finalScore do klasy).
          */

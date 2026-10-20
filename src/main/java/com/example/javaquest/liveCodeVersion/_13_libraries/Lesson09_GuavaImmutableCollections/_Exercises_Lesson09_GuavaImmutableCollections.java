@@ -239,7 +239,7 @@ public class _Exercises_Lesson09_GuavaImmutableCollections {
     static class Exercise24_ThreeWaySetComparisonReport {
         /*
          * 🧪 Zadanie 24:
-         * Majac 3 zbiory umiejetnosci trzech kandydatow, wygeneruj RAPORT
+         * Majac 3 zbiory umiejetnosci trzech programistow, wygeneruj RAPORT
          * (println) pokazujacy: umiejetnosci wspolne dla WSZYSTKICH trzech
          * (zlozenie kilku Sets.intersection), oraz unikalne wylacznie dla
          * kazdego z osobna (zlozenie Sets.difference).
