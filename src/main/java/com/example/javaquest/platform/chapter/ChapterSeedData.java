@@ -894,7 +894,72 @@ public final class ChapterSeedData {
                     "04_InstallingJavaAndPostgresql", "05_DeployingApplicationAsService",
                     "06_NginxReverseProxyAndTls", "07_LogsMonitoringAndBackups", "08_AutomationScript",
                     "09_FinalChecklist"
-            ), CourseTrack.LINUX)
+            ), CourseTrack.LINUX),
+
+            // ===== CZWARTY BLOK PLATFORMY: OCP JAVA SE 21 (2026-10-20) =====
+            // Przygotowanie do egzaminu Oracle Certified Professional: Java SE 21 Developer (1Z0-830).
+            // Rozdzial 00 - lekcja wprowadzajaca. Rozdzialy 01-12 - bank pytan egzaminacyjnych
+            // (autorskie pytania w formacie egzaminu, wyniki kodu sprawdzone kompilatorem), lekcja =
+            // obszar egzaminu ze sciaga regul i pula pytan losowanych po 20. Rozdzial 13 - test wiedzy
+            // Java: pytania otwarte jako zadania (podpowiedz + odpowiedz), wyswietlane w losowej kolejnosci.
+            new ChapterSeed("_ocp_00_wprowadzenie", "OCP - egzamin Java SE 21 Developer (1Z0-830)", List.of(
+                    "01_ExamOverview"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_01_typy_i_operatory", "OCP - typy danych, operatory i String", List.of(
+                    "01_PrimitivesVarAndWrappers", "02_OperatorsAndCasting", "03_StringAndStringBuilder"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_02_sterowanie", "OCP - sterowanie przepływem", List.of(
+                    "01_IfSwitchAndYield", "02_LoopsAndLabels"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_03_oop", "OCP - klasy, dziedziczenie i interfejsy", List.of(
+                    "01_ClassesConstructorsAndInitialization", "02_InheritanceAndPolymorphism",
+                    "03_InterfacesAbstractAndNestedClasses"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_04_nowoczesna_java", "OCP - rekordy, enumy, klasy sealed i pattern matching", List.of(
+                    "01_RecordsEnumsAndSealedClasses", "02_PatternMatching"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_05_wyjatki", "OCP - wyjątki", List.of(
+                    "01_ExceptionHierarchyAndHandling", "02_TryWithResources"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_06_kolekcje_i_generyki", "OCP - kolekcje i typy generyczne", List.of(
+                    "01_ListsSetsAndQueues", "02_MapsAndSequencedCollections", "03_Generics"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_07_lambdy_i_strumienie", "OCP - lambdy i Stream API", List.of(
+                    "01_FunctionalInterfacesAndLambdas", "02_StreamOperations", "03_CollectorsAndOptional"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_08_wspolbieznosc", "OCP - współbieżność", List.of(
+                    "01_ThreadsAndVirtualThreads", "02_ExecutorsAndFutures", "03_SynchronizationAndConcurrentApi"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_09_io_i_nio", "OCP - I/O, NIO.2 i serializacja", List.of(
+                    "01_IoStreamsAndSerialization", "02_Nio2PathsAndFiles"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_10_data_i_lokalizacja", "OCP - data, czas i lokalizacja", List.of(
+                    "01_DateTimeApi", "02_LocalizationAndFormatting"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_11_moduly", "OCP - moduły (JPMS) i wdrażanie", List.of(
+                    "01_ModulesAndServices"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_12_pozostale_api", "OCP - adnotacje, logowanie i pozostałe API", List.of(
+                    "01_AnnotationsLoggingAndMisc"
+            ), CourseTrack.OCP),
+
+            new ChapterSeed("_ocp_13_test_wiedzy", "Test wiedzy Java", List.of(
+                    "01_JavaCore", "02_OopAndDesign", "03_CollectionsAndGenerics", "04_StreamsAndLambdas",
+                    "05_JvmAndMemory", "06_Concurrency", "07_ExceptionsAndIo", "08_JdbcAndSql",
+                    "09_SpringAndRest", "10_TestingAndPerformance"
+            ), CourseTrack.OCP)
     );
 
     private ChapterSeedData() {

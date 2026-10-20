@@ -108,7 +108,7 @@ export default function LessonDetailPage() {
         {status === 'loading' && <p className="hint">Wczytywanie...</p>}
         {status === 'error' && <p className="error">Błąd: {error}</p>}
         {status === 'ok' && activeTab === 'theory' && <TheoryView blocks={data} />}
-        {status === 'ok' && activeTab === 'exercises' && <ExercisesView key={`${chapterSlug}/${lessonSlug}`} exercises={data} />}
+        {status === 'ok' && activeTab === 'exercises' && <ExercisesView key={`${chapterSlug}/${lessonSlug}`} exercises={data} openQuestions={chapterSlug.startsWith('_ocp_')} />}
         {status === 'ok' && activeTab === 'quiz' && (
           <QuizView key={`${chapterSlug}/${lessonSlug}`} chapterSlug={chapterSlug} lessonSlug={lessonSlug} status={data} />
         )}

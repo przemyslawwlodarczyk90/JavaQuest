@@ -38,7 +38,7 @@ export default function ChapterListPage({ track = 'JAVA' }) {
   return (
     <>
     <LearningDashboard />
-    <div className="section-heading"><h2>{({ JAVA: 'Java', JAVASCRIPT: 'JavaScript', LINUX: 'Linux' })[track] ?? track}</h2><span className="hint">{chapters.length} rozdziałów</span></div>
+    <div className="section-heading"><h2>{({ JAVA: 'Java', JAVASCRIPT: 'JavaScript', LINUX: 'Linux', OCP: 'OCP Java 21' })[track] ?? track}</h2><span className="hint">{chapters.length} rozdziałów</span></div>
     <div className="chapter-grid">
       {chapters.map((chapter, index) => (
         <Link key={chapter.slug} to={`/rozdzial/${chapter.slug}`} className="chapter-card">

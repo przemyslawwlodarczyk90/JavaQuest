@@ -46,7 +46,7 @@ class LearningSummaryServiceTest {
         assertThat(result.expiringSoon()).isEqualTo(2);
         assertThat(result.courses()).hasSize(CourseTrack.values().length);
         assertThat(result.courses()).extracting(LearningSummaryService.CourseSummary::points)
-                .containsExactly(2L, 1L, 3L);
+                .containsExactly(2L, 1L, 3L, 0L);
         verify(attempts, times(1)).findPassedAttempts(alice, 10);
         verify(lessons, never()).findAll();
         assertThat(service(now).forUser(bob).points()).isZero();

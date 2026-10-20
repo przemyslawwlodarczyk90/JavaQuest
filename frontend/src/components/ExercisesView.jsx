@@ -1,6 +1,17 @@
 import { useState } from 'react'
 
-export default function ExercisesView({ exercises }) {
+// Pytania otwarte (tor OCP): kolejnosc losowana raz na wejscie do zakladki, bez pisania kodu.
+function shuffled(items) {
+  const copy = [...items]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+export default function ExercisesView({ exercises: source, openQuestions = false }) {
+  const [exercises] = useState(() => (openQuestions ? shuffled(source) : source))
   const [index, setIndex] = useState(0)
   const [answer, setAnswer] = useState('')
   const [showHint, setShowHint] = useState(false)
@@ -22,17 +33,17 @@ export default function ExercisesView({ exercises }) {
   return (
     <div className="exercise-view">
       <div className="exercise-view__progress">
-        Zadanie {index + 1} / {exercises.length}
+        {openQuestions ? 'Pytanie' : 'Zadanie'} {index + 1} / {exercises.length}
       </div>
 
       <p className="exercise-view__prompt">{exercise.prompt}</p>
 
-      <div className="code-editor__bar"><span aria-hidden="true">&lt;/&gt;</span> Twoje rozwiązanie</div>
+      <div className="code-editor__bar"><span aria-hidden="true">&lt;/&gt;</span> {openQuestions ? 'Twoja odpowiedź' : 'Twoje rozwiązanie'}</div>
       <textarea
-        aria-label="Twoje rozwiązanie"
+        aria-label={openQuestions ? 'Twoja odpowiedź' : 'Twoje rozwiązanie'}
         spellCheck={false}
         className="exercise-view__answer"
-        placeholder="Twoje rozwiązanie..."
+        placeholder={openQuestions ? 'Twoja odpowiedź...' : 'Twoje rozwiązanie...'}
         value={answer}
         onChange={(e) => setAnswer(e.target.value)}
         rows={10}
@@ -43,7 +54,7 @@ export default function ExercisesView({ exercises }) {
           💡 Podpowiedź
         </button>
         <button type="button" onClick={() => setShowSolution(true)} disabled={showSolution}>
-          ✅ Rozwiązanie
+          ✅ {openQuestions ? 'Odpowiedź' : 'Rozwiązanie'}
         </button>
       </div>
 
@@ -54,8 +65,8 @@ export default function ExercisesView({ exercises }) {
       )}
 
       {showSolution && (
-        <div className="exercise-view__solution">
-          <strong>Przykładowe rozwiązanie:</strong>
+        <div className={`exercise-view__solution${openQuestions ? ' exercise-view__solution--prose' : ''}`}>
+          <strong>{openQuestions ? 'Odpowiedź:' : 'Przykładowe rozwiązanie:'}</strong>
           <pre>{exercise.solution}</pre>
         </div>
       )}

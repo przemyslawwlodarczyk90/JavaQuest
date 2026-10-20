@@ -1,6 +1,6 @@
 import { useProgress } from '../useProgress'
 
-const names = { JAVA: 'Java', JAVASCRIPT: 'JavaScript', LINUX: 'Linux' }
+const names = { JAVA: 'Java', JAVASCRIPT: 'JavaScript', LINUX: 'Linux', OCP: 'OCP Java 21' }
 
 export default function LearningDashboard() {
   const { summary } = useProgress()

@@ -16,7 +16,7 @@ export default function LessonListPage() {
     let cancelled = false
     setStatus('loading')
     setChapterTitle('Lekcje rozdziału')
-    const track = chapterSlug.startsWith('_js_') ? 'JAVASCRIPT' : chapterSlug.startsWith('_lx_') ? 'LINUX' : 'JAVA'
+    const track = chapterSlug.startsWith('_js_') ? 'JAVASCRIPT' : chapterSlug.startsWith('_lx_') ? 'LINUX' : chapterSlug.startsWith('_ocp_') ? 'OCP' : 'JAVA'
     getChapters(track).then(chapters => {
       if (!cancelled) setChapterTitle(chapters.find(chapter => chapter.slug === chapterSlug)?.title ?? 'Lekcje rozdziału')
     }).catch(() => {})
@@ -46,7 +46,7 @@ export default function LessonListPage() {
   // kursu), ktorej wiedza nie jest jeszcze potwierdzona quizem.
   const recommendedSlug = lessons.find((lesson) => masteryOf(chapterSlug, lesson.slug).stars === 0)?.slug
 
-  const homePath = chapterSlug.startsWith('_js_') ? '/js' : chapterSlug.startsWith('_lx_') ? '/linux' : '/'
+  const homePath = chapterSlug.startsWith('_js_') ? '/js' : chapterSlug.startsWith('_lx_') ? '/linux' : chapterSlug.startsWith('_ocp_') ? '/ocp' : '/'
 
   return (
     <div>
