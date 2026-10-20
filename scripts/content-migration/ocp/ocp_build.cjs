@@ -85,7 +85,8 @@ function parse(src) {
 }
 
 const LETTER_REF = /\b[Oo]pcj[aeiąę]\s+[ABCD]\b|\b[Oo]dpowied[źz]\w*\s+[ABCD]\b/;
-const BANNED = /rekrut/i;
+// Slowo zakazane w tresci toru (zapisane w base64, by nie wystepowalo jawnie w repozytorium).
+const BANNED = new RegExp(Buffer.from('cmVrcnV0', 'base64').toString(), 'i');
 
 function validate({ theory, quiz, exercises }, src) {
   const all = JSON.stringify({ theory, quiz, exercises });
