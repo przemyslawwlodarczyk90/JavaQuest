@@ -12,6 +12,7 @@
 //   opt-ok          kazda opcja wstawiona w miejsce ___ (albo sama jako instrukcja): poprawna sie
 //                   kompiluje, bledne nie;  opt-ce - odwrotnie
 //   Flaga "nothrows" - fragment instrukcji opakowany w main BEZ "throws Exception".
+//   Flaga "slashes" (dla out) - ukosniki wsteczne w wyniku zamieniane na / przed porownaniem.
 // Fragment bez deklaracji typu na poczatku linii jest traktowany jako cialo main(); importy
 // najczesciej uzywanych pakietow sa dodawane automatycznie (jedna linia na poczatku pliku).
 const fs = require('fs');
@@ -21,7 +22,7 @@ const { spawn } = require('child_process');
 const { parse } = require('./ocp_build.cjs');
 
 const IMPORTS = ['java.util', 'java.util.function', 'java.util.stream', 'java.util.concurrent', 'java.util.concurrent.atomic',
-  'java.util.concurrent.locks', 'java.io', 'java.nio.file', 'java.time', 'java.time.format', 'java.time.temporal', 'java.math', 'java.text']
+  'java.util.concurrent.locks', 'java.io', 'java.nio.file', 'java.nio.file.attribute', 'java.time', 'java.time.format', 'java.time.temporal', 'java.math', 'java.text']
   .map((p) => `import ${p}.*;`).join(' ');
 const UNIT = /^(import |package |module |open module |@\w|((public|abstract|final|sealed|non-sealed|strictfp|static)\s+)*(class|interface|record|enum)\s)/m;
 
@@ -90,7 +91,7 @@ function main() {
           if (idx < 0) throw new Error(`${where}: brak znacznika ${m}`);
           return idx + 1;
         });
-        checks.push({ where, mode, c, q, arg: tokens[1], markerLines });
+        checks.push({ where, mode, c, q, arg: tokens[1], markerLines, slashes: tokens.includes('slashes') });
       }
     }
   }
@@ -128,7 +129,9 @@ function main() {
       const ceInfo = () => kind === 'CE' ? ` [linie ${r[1].split(',').map((x) => +x - ch.c.offset).join(',')}: ${dec(r[2]).slice(0, 200)}]` : '';
       if (ch.mode === 'out') {
         if (kind !== 'OK') { errors.push(`${ch.where}: oczekiwano wyniku, jest ${kind} ${r[1] && kind === 'EXC' ? r[1] : ''}${ceInfo()}`); continue; }
-        const actual = norm(dec(r[1]));
+        // flaga "slashes": wyniki ze sciezkami porownywane w zapisie Unix (weryfikacja dziala tez na Windows)
+        const raw = dec(r[1]);
+        const actual = norm(ch.slashes ? raw.replace(/\\/g, '/') : raw);
         if (actual !== norm(ch.q.good)) errors.push(`${ch.where}: wynik "${actual}" != poprawna "${ch.q.good}"`);
         ch.q.bad.forEach((b) => { if (norm(b) === actual) errors.push(`${ch.where}: bledna opcja "${b}" rowna wynikowi`); });
       } else if (ch.mode === 'exc') {
