@@ -368,14 +368,14 @@ public final class ChapterSeedData {
             )),
 
             // Etap 4 dopisany po zamknieciu Etapu 4 "migracja rozdzialami" (_01.._31) - nowy
-            // rozdzial pokrywajacy luke miedzy tym kursem a raportem rynkowym o rekrutacji
+            // rozdzial pokrywajacy luke miedzy tym kursem a raportem rynkowym
             // - zakladka \"Krytyczne\" na
             // platformie linkuje tu dla tematow algorytmicznych, ktorych kurs wczesniej nie mial.
             new ChapterSeed("_32_algorithms_and_data_structures", "Algorytmy i struktury danych", List.of(
                     "01_BigONotation", "02_ArraysAndStrings", "03_TwoPointers", "04_SlidingWindow",
                     "05_HashMapPatterns", "06_StackAndQueuePatterns", "07_SortingAlgorithms",
                     "08_BinarySearch", "09_Recursion", "10_LinkedListPatterns", "11_BinaryTrees",
-                    "12_BreadthFirstSearch", "13_DepthFirstSearch", "14_InterviewStrategy",
+                    "12_BreadthFirstSearch", "13_DepthFirstSearch", "14_ProblemSolvingStrategy",
                     "15_AlgorithmsCapstone"
             )),
 
