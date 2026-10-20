@@ -25,8 +25,16 @@ const IMPORTS = ['java.util', 'java.util.function', 'java.util.stream', 'java.ut
   .map((p) => `import ${p}.*;`).join(' ');
 const UNIT = /^(import |package |module |open module |@\w|((public|abstract|final|sealed|non-sealed|strictfp|static)\s+)*(class|interface|record|enum)\s)/m;
 
+// Pelna jednostka kompilacji: ma main albo zaczyna sie deklaracja typu/importem i konczy klamra
+// w kolumnie 0. Inaczej fragment instrukcji (moze zawierac klasy/rekordy lokalne).
+function isUnit(code) {
+  const lines = code.split('\n').filter((l) => l.trim());
+  if (/static\s+void\s+main\s*\(/.test(code)) return true;
+  return UNIT.test(lines[0]) && /^\S.*}\s*$|^}\s*$/.test(lines[lines.length - 1]);
+}
+
 function makeSources(code, nothrows) {
-  if (UNIT.test(code)) {
+  if (isUnit(code)) {
     const pub = code.match(/^(?:(?:public|abstract|final|sealed|non-sealed|strictfp)\s+)*?public\s+(?:(?:abstract|final|sealed|non-sealed|strictfp)\s+)*(?:class|interface|record|enum)\s+(\w+)/m)
       || code.match(/^public\s+(?:\w+\s+)*?(?:class|interface|record|enum)\s+(\w+)/m);
     const mainIdx = code.search(/static\s+void\s+main\s*\(/);
