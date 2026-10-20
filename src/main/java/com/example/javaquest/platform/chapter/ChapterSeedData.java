@@ -959,6 +959,12 @@ public final class ChapterSeedData {
                     "01_JavaCore", "02_OopAndDesign", "03_CollectionsAndGenerics", "04_StreamsAndLambdas",
                     "05_JvmAndMemory", "06_Concurrency", "07_ExceptionsAndIo", "08_JdbcAndSql",
                     "09_SpringAndRest", "10_TestingAndPerformance"
+            ), CourseTrack.OCP),
+
+            // Cala pula toru OCP w jednej lekcji: quiz losuje z wszystkich pytan egzaminacyjnych,
+            // pytania otwarte w losowej kolejnosci (generowane przez ocp_build_all.cjs).
+            new ChapterSeed("_ocp_14_podsumowanie", "Podsumowanie - trening całościowy", List.of(
+                    "01_FinalTraining"
             ), CourseTrack.OCP)
     );
 

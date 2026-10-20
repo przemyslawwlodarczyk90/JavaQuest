@@ -27,9 +27,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Tor OCP przez API: 14 rozdzialow, 38 lekcji, bank 2026 pytan quizowych i 500 pytan otwartych
- * w rozdziale "Test wiedzy Java". Kazda lekcja z API zgadza sie z plikiem JSON, a quiz losuje
- * 20 pytan. Odrebna H2 w pamieci, bez Dockera i poczty.
+ * Tor OCP przez API: 15 rozdzialow, 39 lekcji, bank 2026 pytan quizowych i 500 pytan otwartych
+ * w rozdziale "Test wiedzy Java", a lekcja "Podsumowanie - trening" zawiera oba banki w calosci. Kazda lekcja
+ * z API zgadza sie z plikiem JSON, a quiz losuje 20 pytan. Odrebna H2 w pamieci, bez Dockera i poczty.
  */
 @SpringBootTest(classes = JavaQuestApplication.class, properties = {
         "spring.datasource.url=jdbc:h2:mem:ocp_course_api;DB_CLOSE_DELAY=-1",
@@ -42,6 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("h2")
 @AutoConfigureMockMvc(print = MockMvcPrint.NONE)
 class OcpCourseApiRegressionTest {
+    private static final String POOL = "_ocp_14_podsumowanie";
     private static final String BANNED = new String(Base64.getDecoder().decode("cmVrcnV0"), StandardCharsets.UTF_8);
 
     @Autowired MockMvc mvc;
@@ -53,24 +54,33 @@ class OcpCourseApiRegressionTest {
     void ocpTrackServesWholeBankAndKnowledgeTest() throws Exception {
         String token = login();
         JsonNode chapters = read("/api/chapters?track=OCP", token);
-        assertThat(chapters.size()).isEqualTo(14);
+        assertThat(chapters.size()).isEqualTo(15);
         assertThat(chapters.get(0).path("slug").asText()).isEqualTo("_ocp_00_wprowadzenie");
         assertThat(chapters.get(13).path("slug").asText()).isEqualTo("_ocp_13_test_wiedzy");
+        assertThat(chapters.get(14).path("slug").asText()).isEqualTo(POOL);
 
         int lessons = 0, quizQuestions = 0, openQuestions = 0;
+        JsonNode pool = null;
         for (JsonNode chapter : chapters) {
             String slug = chapter.path("slug").asText();
             for (JsonNode lesson : read("/api/chapters/" + slug + "/lessons", token)) {
                 JsonNode source = compare(slug, lesson.path("slug").asText(), token);
-                quizQuestions += source.path("quiz").size();
-                openQuestions += source.path("exercises").size();
+                if (slug.equals(POOL)) {
+                    pool = source;
+                } else {
+                    quizQuestions += source.path("quiz").size();
+                    openQuestions += source.path("exercises").size();
+                }
                 assertThat(source.toString().toLowerCase()).as(slug).doesNotContain(BANNED);
                 lessons++;
             }
         }
-        assertThat(lessons).isEqualTo(38);
+        assertThat(lessons).isEqualTo(39);
         assertThat(quizQuestions).isGreaterThanOrEqualTo(2000);
         assertThat(openQuestions).isEqualTo(500);
+        assertThat(pool).isNotNull();
+        assertThat(pool.path("quiz").size()).isEqualTo(quizQuestions);
+        assertThat(pool.path("exercises").size()).isEqualTo(openQuestions);
     }
 
     @Test
@@ -81,6 +91,15 @@ class OcpCourseApiRegressionTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode attempt = mapper.readTree(body);
         assertThat(attempt.path("questions").size()).isEqualTo(20);
+    }
+
+    @Test
+    void quizAttemptOnFinalTrainingDrawsTwentyQuestions() throws Exception {
+        String token = login();
+        String body = mvc.perform(post("/api/chapters/" + POOL + "/lessons/01_FinalTraining/quiz/attempts")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(mapper.readTree(body).path("questions").size()).isEqualTo(20);
     }
 
     private String login() throws Exception {
