@@ -81,6 +81,9 @@ public class OcpVerify {
         if (main == null) {
             return "NOMAIN";
         }
+        // kazdy przypadek startuje z tymi samymi ustawieniami domyslnymi (pytania moga je zmieniac)
+        java.util.Locale.setDefault(java.util.Locale.US);
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         PrintStream capture = new PrintStream(buffer, true, StandardCharsets.UTF_8);
         AtomicReference<Throwable> thrown = new AtomicReference<>();
