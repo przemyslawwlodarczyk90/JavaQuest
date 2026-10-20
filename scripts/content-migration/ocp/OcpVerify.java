@@ -31,6 +31,9 @@ import java.util.stream.Stream;
 public class OcpVerify {
 
     public static void main(String[] args) throws Exception {
+        // Pytania zakladaja domyslna lokalizacje en-US i strefe UTC (jak w lekcji wprowadzajacej).
+        java.util.Locale.setDefault(java.util.Locale.US);
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"));
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         PrintStream realOut = System.out;
         PrintStream sink = new PrintStream(new ByteArrayOutputStream());
