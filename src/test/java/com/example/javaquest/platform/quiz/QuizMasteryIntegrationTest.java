@@ -157,7 +157,7 @@ class QuizMasteryIntegrationTest {
         assertThat(summary.points()).isEqualTo(1);
         assertThat(summary.completedLessons()).isEqualTo(1);
         assertThat(summary.totalLessons()).isGreaterThan(437);
-        assertThat(summary.courses()).hasSize(3);
+        assertThat(summary.courses()).hasSize(4);
 
         clock.advance(Duration.ofHours(1));
         QuizService.AnswerResponse again = solve(email, 20);
