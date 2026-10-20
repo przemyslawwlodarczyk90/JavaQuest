@@ -92,7 +92,7 @@ public class OcpVerify {
             } catch (Throwable t) {
                 thrown.set(t);
             }
-        });
+        }, "main");
         System.setOut(capture);
         try {
             runner.setContextClassLoader(loader);
