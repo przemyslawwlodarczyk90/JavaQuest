@@ -22,7 +22,7 @@ const { spawn } = require('child_process');
 const { parse } = require('./ocp_build.cjs');
 
 const IMPORTS = ['java.util', 'java.util.function', 'java.util.stream', 'java.util.concurrent', 'java.util.concurrent.atomic',
-  'java.util.concurrent.locks', 'java.io', 'java.nio.file', 'java.nio.file.attribute', 'java.time', 'java.time.format', 'java.time.temporal', 'java.math', 'java.text']
+  'java.util.concurrent.locks', 'java.util.logging', 'java.io', 'java.nio.file', 'java.nio.file.attribute', 'java.time', 'java.time.format', 'java.time.temporal', 'java.math', 'java.text']
   .map((p) => `import ${p}.*;`).join(' ');
 const UNIT = /^(import |package |module |open module |@\w|((public|abstract|final|sealed|non-sealed|strictfp|static)\s+)*(class|interface|record|enum)\s)/m;
 
