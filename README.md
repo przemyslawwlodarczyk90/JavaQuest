@@ -19,21 +19,30 @@
 
 JavaQuest zaczął się jako moja osobista encyklopedia i repetytorium Javy — lekcja po lekcji, od
 zmiennych po mikroserwisy. Dziś to **pełna aplikacja webowa** (Spring Boot + React), która serwuje
-ten kurs i dwa kolejne, z kontem użytkownika, postępem i quizami ocenianymi po stronie serwera.
+ten kurs i trzy kolejne, z kontem użytkownika, postępem i quizami ocenianymi po stronie serwera.
 
 ## 📚 Kursy
 
-Przełącznik na panelu głównym — trzy równoległe tory na jednym backendzie:
+Przełącznik na panelu głównym — cztery równoległe tory na jednym backendzie:
 
 | Tor | Rozdziały | Lekcje | Pytania quizowe | Zadania | Stan |
 |---|---:|---:|---:|---:|---|
 | ☕ **Java** (domyślny) | 41 | 760 | ~68 800 | ~20 900 | ✅ kompletny |
 | 🟨 **JavaScript** | 14 | 90 | ~9 000 | ~2 700 | ✅ kompletny |
 | 🐧 **Linux** | 46 | 437 | — | — | 🚧 teoria w toku |
+| 🎓 **OCP Java 21** | 14 | 38 | 2 026 | 500 | ✅ kompletny |
 
 Kurs Javy prowadzi od podstaw języka, przez OOP, kolekcje, wielowątkowość, JDBC, Hibernate i cały
 ekosystem Springa (Boot, Data JPA, Security, testy, WebFlux, messaging, Cloud), aż po algorytmy,
-architekturę i bazy NoSQL. Każda lekcja to:
+architekturę i bazy NoSQL.
+
+Tor **OCP Java 21** przygotowuje do egzaminu Oracle Certified Professional: Java SE 21 Developer
+(1Z0-830): lekcja wprowadzająca, bank 2 026 autorskich pytań w formacie egzaminu (ściąga reguł
+w każdej lekcji, kod pytań sprawdzony kompilatorem JDK z `--release 21`) oraz „Test wiedzy Java” —
+500 pytań otwartych z całego ekosystemu (JVM, SQL i transakcje, Spring, testy), wyświetlanych
+w losowej kolejności. Źródła treści i narzędzia: `scripts/content-migration/ocp/`.
+
+Każda lekcja to:
 
 - 📖 **Teoria** — bloki w stałym standardzie: wstęp, definicje, analogie, przykłady kodu,
   „źle / dobrze”, pułapki, notatki;
