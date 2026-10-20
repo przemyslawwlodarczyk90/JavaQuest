@@ -1,0 +1,388 @@
+#T INTRO Test wiedzy: SQL, JDBC, transakcje i JPA
+Pytania otwarte o pracę z relacyjnymi bazami danych z poziomu Javy: język SQL, indeksy, transakcje i poziomy izolacji, blokady, JDBC, pule połączeń, JPA i Hibernate, transakcje w Springu oraz migracje schematu. Kolejność pytań jest losowana.
+
+Przy odpowiedziach o wydajności i spójności danych podawaj konkretne konsekwencje (jakie anomalie, ile zapytań, jakie blokady).
+
+#T NOTE Zakres
+JOIN, GROUP BY, HAVING, podzapytania, funkcje okna, indeksy i plany wykonania, normalizacja, ACID, poziomy izolacji, blokady optymistyczne i pesymistyczne, JDBC i PreparedStatement, SQL injection, HikariCP, JPA: kontekst persystencji, stany encji, lazy loading, N+1, @Transactional, Flyway/Liquibase.
+
+#EX
+P: Jakie rodzaje złączeń (JOIN) występują w SQL i czym się różnią?
+H: INNER, LEFT, RIGHT, FULL, CROSS.
+S: INNER JOIN — tylko wiersze, które mają dopasowanie w obu tabelach.
+LEFT (OUTER) JOIN — wszystkie wiersze z lewej tabeli i dopasowane z prawej; brak dopasowania daje NULL w kolumnach prawej tabeli.
+RIGHT JOIN — analogicznie dla prawej tabeli.
+FULL OUTER JOIN — wszystkie wiersze z obu tabel, z NULL tam, gdzie brak dopasowania.
+CROSS JOIN — iloczyn kartezjański (każdy z każdym).
+Self join to złączenie tabeli z samą sobą (np. pracownik i jego przełożony). Typowy błąd: warunek na kolumnie prawej tabeli w WHERE przy LEFT JOIN zamienia go w praktyce na INNER JOIN — taki warunek umieszcza się w klauzuli ON.
+
+#EX
+P: Czym różni się WHERE od HAVING?
+H: Filtrowanie przed i po grupowaniu.
+S: WHERE filtruje pojedyncze wiersze przed grupowaniem i nie może używać funkcji agregujących. HAVING filtruje grupy po wykonaniu GROUP BY i może używać agregatów, np.:
+SELECT klient_id, SUM(kwota) FROM zamowienia WHERE status = 'OPLACONE' GROUP BY klient_id HAVING SUM(kwota) > 1000;
+Dla wydajności warunki niezależne od agregatów umieszcza się w WHERE, aby ograniczyć liczbę wierszy przed kosztownym grupowaniem.
+
+#EX
+P: Jak działają wartości NULL w SQL i jakie niosą pułapki?
+H: Logika trójwartościowa.
+S: NULL oznacza wartość nieznaną lub brakującą. Porównanie z NULL (=, <>) daje UNKNOWN, a nie TRUE — dlatego warunek kolumna = NULL nigdy nie jest spełniony; poprawnie: IS NULL / IS NOT NULL. Pułapki:
+- NOT IN z podzapytaniem zawierającym NULL zwraca pusty wynik;
+- funkcje agregujące pomijają NULL (COUNT(kolumna) nie liczy NULL, COUNT(*) liczy wszystkie wiersze; AVG liczy średnią tylko z wartości niepustych);
+- unikalne indeksy w większości baz dopuszczają wiele NULL;
+- w Javie ResultSet.getInt zwraca 0 dla NULL — trzeba sprawdzić wasNull() albo użyć getObject.
+Do zastępowania NULL służą COALESCE i NULLIF.
+
+#EX
+P: Czym są funkcje okna (window functions) i do czego się przydają?
+H: OVER, PARTITION BY, ROW_NUMBER.
+S: Funkcje okna wykonują obliczenia na zbiorze wierszy powiązanych z bieżącym wierszem, nie łącząc ich w jedną grupę (w przeciwieństwie do GROUP BY wiersze pozostają). Składnia: funkcja() OVER (PARTITION BY ... ORDER BY ...).
+Przykłady: ROW_NUMBER(), RANK(), DENSE_RANK() (numeracja i ranking w grupie), LAG/LEAD (wartość z poprzedniego lub następnego wiersza), SUM() OVER (ORDER BY data) (suma narastająca), AVG() OVER (ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) (średnia krocząca).
+Zastosowanie: „najnowsze zamówienie każdego klienta” (ROW_NUMBER() = 1 w partycji klienta), rankingi, porównania okres do okresu.
+
+#EX
+P: Czym jest indeks w bazie danych i jak działa?
+H: B-drzewo, koszt zapisu.
+S: Indeks to dodatkowa struktura danych (najczęściej B+-drzewo) przechowująca posortowane wartości kolumn wraz ze wskaźnikami do wierszy. Pozwala znaleźć wiersze w czasie logarytmicznym zamiast przeglądania całej tabeli, przyspiesza też sortowanie, złączenia i wymuszanie unikalności.
+Koszty: zajmuje miejsce i spowalnia INSERT/UPDATE/DELETE (każdy indeks trzeba aktualizować). Indeksuje się kolumny używane w WHERE, JOIN i ORDER BY o dobrej selektywności. Istnieją też indeksy złożone (kolejność kolumn ma znaczenie — działa zasada najbardziej lewego prefiksu), unikalne, częściowe, pokrywające (zawierające wszystkie kolumny zapytania) i specjalne (hash, GIN, pełnotekstowe).
+
+#EX
+P: Kiedy baza nie użyje indeksu mimo jego istnienia?
+H: Funkcje na kolumnie, LIKE z %, selektywność.
+S: Typowe sytuacje:
+- funkcja lub wyrażenie na kolumnie w warunku (WHERE UPPER(email) = ..., WHERE data + 1 = ...) — chyba że istnieje indeks funkcyjny;
+- LIKE '%fraza' (wiodący symbol wieloznaczny);
+- niejawna konwersja typów (porównanie kolumny tekstowej z liczbą);
+- warunek na drugiej kolumnie indeksu złożonego bez pierwszej;
+- niska selektywność — gdy zapytanie zwraca dużą część tabeli, pełny skan bywa tańszy;
+- nieaktualne statystyki tabeli;
+- OR obejmujący kolumny bez indeksów.
+Zachowanie sprawdza się planem wykonania (EXPLAIN / EXPLAIN ANALYZE).
+
+#EX
+P: Co to jest plan wykonania zapytania i jak go analizować?
+H: EXPLAIN ANALYZE.
+S: Plan wykonania to sposób, w jaki optymalizator bazy zamierza wykonać zapytanie: kolejność dostępu do tabel, rodzaje skanów (pełny skan sekwencyjny, skan indeksu, index only scan), algorytmy złączeń (nested loop, hash join, merge join), sortowania i agregacje oraz szacowane koszty i liczby wierszy.
+EXPLAIN pokazuje plan szacowany, a EXPLAIN ANALYZE (PostgreSQL) faktycznie wykonuje zapytanie i podaje rzeczywiste czasy i liczby wierszy. Szuka się: pełnych skanów dużych tabel, dużych rozbieżności między szacowaną a rzeczywistą liczbą wierszy (nieaktualne statystyki), kosztownych sortowań na dysku, zagnieżdżonych pętli na dużych zbiorach.
+
+#EX
+P: Czym jest normalizacja bazy danych i kiedy świadomie się ją łamie?
+H: Postaci normalne, redundancja, denormalizacja.
+S: Normalizacja to projektowanie tabel tak, by ograniczyć redundancję i anomalie modyfikacji: 1NF (wartości atomowe, brak powtarzających się grup), 2NF (brak zależności od części klucza złożonego), 3NF (brak zależności przechodnich — kolumny zależą tylko od klucza). Dzięki niej dane aktualizuje się w jednym miejscu.
+Denormalizację stosuje się świadomie dla wydajności odczytu: kolumny wyliczone (suma zamówienia), duplikowanie danych, by uniknąć kosztownych złączeń, tabele raportowe, widoki zmaterializowane, przechowywanie historycznych wartości (cena w momencie zakupu — to wręcz wymóg biznesowy). Kosztem jest konieczność utrzymania spójności kopii.
+
+#EX
+P: Czym są klucz główny, klucz obcy i ograniczenia integralności?
+H: PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, NOT NULL.
+S: Klucz główny jednoznacznie identyfikuje wiersz (unikalny, niepusty); może być naturalny (np. numer ISBN) lub sztuczny (sekwencja, UUID). Klucz obcy wskazuje klucz w innej tabeli i wymusza integralność referencyjną (nie można wstawić zamówienia dla nieistniejącego klienta), z akcjami ON DELETE/UPDATE (CASCADE, SET NULL, RESTRICT).
+Inne ograniczenia: UNIQUE, NOT NULL, CHECK (np. ilosc > 0), DEFAULT. Ograniczenia w bazie są ostatnią linią obrony spójności danych — działają niezależnie od błędów w aplikacji i przy wielu aplikacjach korzystających z jednej bazy.
+
+#EX
+P: Co oznacza ACID w kontekście transakcji?
+H: Cztery właściwości.
+S: Atomowość (Atomicity) — transakcja wykonuje się w całości albo wcale (ROLLBACK cofa wszystkie zmiany).
+Spójność (Consistency) — transakcja przeprowadza bazę z jednego poprawnego stanu do innego, zachowując ograniczenia integralności.
+Izolacja (Isolation) — współbieżne transakcje nie widzą swoich niezatwierdzonych zmian; stopień izolacji określa poziom izolacji.
+Trwałość (Durability) — po zatwierdzeniu (COMMIT) zmiany przetrwają awarię (dziennik zapisu z wyprzedzeniem — WAL).
+
+#EX
+P: Jakie są poziomy izolacji transakcji i jakie anomalie dopuszczają?
+H: Dirty read, non-repeatable read, phantom read.
+S: READ UNCOMMITTED — dopuszcza brudny odczyt (odczyt niezatwierdzonych zmian innej transakcji).
+READ COMMITTED (domyślny w PostgreSQL, Oracle, SQL Server) — brak brudnych odczytów, ale możliwy niepowtarzalny odczyt (ten sam wiersz odczytany dwukrotnie ma inne wartości).
+REPEATABLE READ (domyślny w MySQL InnoDB) — powtórne odczyty dają te same wartości; w standardzie możliwe są fantomy (nowe wiersze spełniające warunek), choć implementacje MVCC często je eliminują.
+SERIALIZABLE — wynik jak przy wykonaniu sekwencyjnym; najsilniejszy, ale najdroższy (więcej konfliktów i ponowień).
+Dodatkowo istnieje anomalia utraconej aktualizacji (lost update), której zapobiega się blokadami lub wersjonowaniem.
+
+#EX
+P: Czym jest anomalia utraconej aktualizacji (lost update) i jak jej zapobiegać?
+H: Odczyt–modyfikacja–zapis w dwóch transakcjach.
+S: Dwie transakcje odczytują tę samą wartość (np. stan magazynu 10), każda oblicza nową (10 - 2 i 10 - 3) i zapisuje — druga nadpisuje zmianę pierwszej, wynik 7 zamiast 5. Typowe w aplikacjach, które czytają encję, zmieniają ją w pamięci i zapisują.
+Zapobieganie:
+- aktualizacja atomowa w SQL: UPDATE produkty SET stan = stan - 2 WHERE id = ? AND stan >= 2;
+- blokada optymistyczna (kolumna wersji, @Version w JPA) — konflikt wykrywany przy zapisie;
+- blokada pesymistyczna (SELECT ... FOR UPDATE);
+- wyższy poziom izolacji (zależnie od bazy).
+
+#EX
+P: Czym różni się blokowanie optymistyczne od pesymistycznego?
+H: Wersja kontra SELECT FOR UPDATE.
+S: Blokowanie pesymistyczne zakłada konflikty: przy odczycie zakłada się blokadę (SELECT ... FOR UPDATE, w JPA LockModeType.PESSIMISTIC_WRITE), więc inne transakcje czekają. Gwarantuje brak konfliktu kosztem przepustowości i ryzyka zakleszczeń; stosuje się przy częstych konfliktach i krótkich transakcjach.
+Blokowanie optymistyczne zakłada, że konflikty są rzadkie: wiersz ma kolumnę wersji, a UPDATE zawiera warunek WHERE wersja = ?; jeśli nic nie zaktualizowano, ktoś zmienił dane w międzyczasie (w JPA @Version i OptimisticLockException). Nie blokuje odczytów, dobrze się skaluje i działa także dla „długich konwersacji” (formularz edytowany przez użytkownika), ale wymaga obsługi konfliktu (ponowienie lub komunikat).
+
+#EX
+P: Czym jest SQL injection i jak się przed nim chronić w Javie?
+H: PreparedStatement i parametry.
+S: SQL injection to atak polegający na wstrzyknięciu fragmentu SQL przez dane od użytkownika sklejane z zapytaniem, np. login ' OR '1'='1 w "SELECT * FROM users WHERE login = '" + login + "'" — pozwala ominąć uwierzytelnienie, odczytać lub usunąć dane.
+Ochrona: zapytania parametryzowane — PreparedStatement z placeholderami (?) i setString, parametry nazwane w JPA/JPQL (:login), Spring Data, jOOQ. Parametry są przesyłane osobno od treści zapytania i nigdy nie interpretowane jako SQL. Nazw kolumn i kierunku sortowania nie da się parametryzować — trzeba je walidować listą dozwolonych wartości. Dodatkowo: konto bazy z minimalnymi uprawnieniami.
+
+#EX
+P: Czym różni się Statement od PreparedStatement?
+H: Bezpieczeństwo i wydajność.
+S: Statement wykonuje zapytanie zbudowane jako gotowy napis — podatne na SQL injection i za każdym razem parsowane przez bazę.
+PreparedStatement zawiera zapytanie z parametrami (?), które ustawia się metodami setX — parametry są bezpiecznie przesyłane osobno (ochrona przed SQL injection), poprawnie konwertowane (daty, liczby, NULL), a zapytanie może być prekompilowane i ponownie wykorzystane przez bazę i sterownik (pamięć podręczna planów), co przyspiesza wielokrotne wykonania. Obsługuje też przetwarzanie wsadowe (addBatch/executeBatch). W praktyce zawsze używa się PreparedStatement.
+
+#EX
+P: Jak wygląda podstawowy przepływ pracy z JDBC?
+H: DataSource, Connection, PreparedStatement, ResultSet, zamykanie.
+S: 1. Pobranie połączenia z DataSource (zwykle z pulą, np. HikariCP) — DriverManager tylko w prostych programach.
+2. Utworzenie PreparedStatement z zapytaniem i ustawienie parametrów.
+3. executeQuery (SELECT → ResultSet) albo executeUpdate (INSERT/UPDATE/DELETE → liczba zmienionych wierszy).
+4. Iteracja po ResultSet (next(), getString, getLong...).
+5. Zamknięcie zasobów — w try-with-resources (ResultSet, Statement, Connection; zamknięcie połączenia z puli zwraca je do puli).
+Transakcje: setAutoCommit(false), commit(), rollback() w razie wyjątku. W praktyce Spring JdbcTemplate lub JdbcClient usuwa większość tego kodu.
+
+#EX
+P: Czym jest pula połączeń i dlaczego jest potrzebna?
+H: HikariCP, koszt otwarcia połączenia.
+S: Otwarcie połączenia z bazą jest kosztowne (sieć, uwierzytelnienie, alokacja zasobów po stronie bazy — w PostgreSQL osobny proces). Pula połączeń (HikariCP — domyślna w Spring Boot) utrzymuje gotowe połączenia i wypożycza je wątkom; close() zwraca połączenie do puli.
+Konfiguracja: maksymalny rozmiar (zbyt duży przeciąża bazę — często wystarcza kilkanaście–kilkadziesiąt połączeń), czas oczekiwania na połączenie (connectionTimeout), maksymalny czas życia, wykrywanie wycieków (leakDetectionThreshold). Objaw problemu: wątki czekające na połączenie i błędy timeout przy wyczerpanej puli — zwykle przez długie transakcje lub niezwrócone połączenia.
+
+#EX
+P: Czym są operacje wsadowe (batch) w JDBC i JPA?
+H: addBatch, executeBatch, hibernate.jdbc.batch_size.
+S: Operacje wsadowe grupują wiele instrukcji (np. tysiące INSERT) i wysyłają je do bazy w jednym lub kilku żądaniach zamiast osobno, co drastycznie zmniejsza liczbę wymian sieciowych.
+W JDBC: dla PreparedStatement ustawia się parametry, wywołuje addBatch() wielokrotnie i executeBatch(), najlepiej w transakcji i porcjami (np. po 500–1000). W Hibernate: hibernate.jdbc.batch_size, order_inserts/order_updates, a przy dużych importach okresowe flush() i clear() kontekstu persystencji, by nie zapełnić pamięci. Uwaga: generowanie identyfikatorów IDENTITY uniemożliwia wsadowe INSERT w Hibernate — lepsze są sekwencje.
+
+#EX
+P: Czym jest JPA i jaki ma związek z Hibernate?
+H: Specyfikacja kontra implementacja.
+S: JPA (Jakarta Persistence API) to specyfikacja mapowania obiektowo-relacyjnego (ORM) w Javie: adnotacje (@Entity, @Id, @OneToMany), EntityManager, JPQL, Criteria API, cykl życia encji. Hibernate to najpopularniejsza implementacja JPA (inne: EclipseLink), oferująca też własne rozszerzenia (np. @BatchSize, filtry, typy).
+Spring Data JPA to kolejna warstwa nad JPA — generuje repozytoria z interfejsów. ORM zmniejsza ilość kodu SQL i mapowania, ale wymaga zrozumienia generowanych zapytań, aby uniknąć problemów wydajnościowych.
+
+#EX
+P: Czym jest kontekst persystencji (persistence context) i jakie daje gwarancje?
+H: Pamięć podręczna pierwszego poziomu, dirty checking.
+S: Kontekst persystencji to zbiór zarządzanych encji powiązanych z EntityManagerem (w Springu zwykle jednym na transakcję). Zapewnia:
+- tożsamość — w jego obrębie dany wiersz reprezentuje dokładnie jeden obiekt (find dwukrotnie zwraca ten sam obiekt);
+- pamięć podręczną pierwszego poziomu — ponowny find nie wysyła zapytania;
+- automatyczne wykrywanie zmian (dirty checking) — zmiany zarządzanych encji są zapisywane przy flush/commit bez jawnego save;
+- odroczony zapis — instrukcje SQL wysyłane są przy flush, z kolejnością i grupowaniem.
+Kontekst trzymający bardzo wiele encji zużywa pamięć i spowalnia dirty checking — przy dużych operacjach używa się clear().
+
+#EX
+P: Jakie stany może mieć encja JPA?
+H: New, managed, detached, removed.
+S: Nowa (transient/new) — utworzona przez new, nieznana kontekstowi, bez wiersza w bazie.
+Zarządzana (managed) — w kontekście persystencji (po persist, find, zapytaniu lub merge); zmiany są automatycznie śledzone i zapisywane.
+Odłączona (detached) — miała reprezentację w kontekście, ale kontekst został zamknięty lub wyczyszczony; zmiany nie są śledzone — trzeba je scalić przez merge (które zwraca nowy, zarządzany obiekt).
+Usunięta (removed) — oznaczona przez remove do usunięcia przy flush.
+Częsty błąd: modyfikacja encji odłączonej (np. po zakończeniu transakcji) w oczekiwaniu, że zmiana zapisze się automatycznie.
+
+#EX
+P: Czym jest problem N+1 zapytań i jak go rozwiązać?
+H: Leniwe ładowanie w pętli.
+S: Problem N+1 występuje, gdy jedno zapytanie pobiera N encji, a potem dla każdej z nich wykonywane jest osobne zapytanie o powiązane dane (np. pętla po zamówieniach odwołująca się do leniwie ładowanych pozycji) — razem N+1 zapytań, co przy dużym N zabija wydajność.
+Rozwiązania:
+- JOIN FETCH w JPQL (SELECT z FROM Zamowienie z JOIN FETCH z.pozycje);
+- @EntityGraph w repozytoriach Spring Data;
+- ładowanie wsadowe (@BatchSize, hibernate.default_batch_fetch_size) — jedno zapytanie IN dla wielu encji;
+- projekcje DTO z jednym zapytaniem zawierającym potrzebne dane.
+Wykrywa się go przez logowanie SQL, statystyki Hibernate lub testy liczące zapytania.
+
+#EX
+P: Czym różni się ładowanie leniwe (LAZY) od zachłannego (EAGER)?
+H: Domyślne ustawienia relacji, LazyInitializationException.
+S: EAGER ładuje powiązane encje od razu razem z encją główną, LAZY — dopiero przy pierwszym dostępie (Hibernate wstawia proxy lub opakowanie kolekcji). Domyślnie @ManyToOne i @OneToOne są EAGER, a @OneToMany i @ManyToMany — LAZY.
+Zaleca się ustawiać wszystkie relacje jako LAZY (także @ManyToOne) i pobierać dane jawnie, gdy są potrzebne (JOIN FETCH, EntityGraph) — EAGER powoduje ukryte zapytania, problem N+1 i pobieranie zbędnych danych. Dostęp do leniwej relacji po zamknięciu kontekstu persystencji kończy się LazyInitializationException.
+
+#EX
+P: Skąd bierze się LazyInitializationException i jak ją poprawnie rozwiązać?
+H: Dostęp poza transakcją.
+S: Wyjątek występuje, gdy kod próbuje odczytać leniwą relację encji odłączonej — kontekst persystencji (sesja) został już zamknięty, np. po wyjściu z metody @Transactional, w kontrolerze albo podczas serializacji encji do JSON.
+Poprawne rozwiązania: pobrać potrzebne dane w transakcji (JOIN FETCH, @EntityGraph), mapować encje na DTO wewnątrz warstwy serwisowej w transakcji, używać projekcji. Złe rozwiązania: przełączanie relacji na EAGER, włączanie hibernate.enable_lazy_load_no_trans, poleganie na Open Session In View (spring.jpa.open-in-view, domyślnie włączone w Spring Boot z ostrzeżeniem), które trzyma połączenie przez całe żądanie i ukrywa problem N+1.
+
+#EX
+P: Czym jest Open Session In View i dlaczego bywa uznawane za antywzorzec?
+H: spring.jpa.open-in-view.
+S: Open Session In View (OSIV) utrzymuje otwarty kontekst persystencji (i często połączenie z bazą) przez całe żądanie HTTP, także w warstwie widoku i serializacji, dzięki czemu leniwe relacje można ładować poza transakcją bez LazyInitializationException. W Spring Boot jest domyślnie włączone (z ostrzeżeniem w logach).
+Wady: połączenie z bazą jest trzymane dłużej (mniejsza przepustowość puli), zapytania wykonywane są poza kontrolą warstwy serwisowej i transakcji (w trybie autocommit), łatwo nie zauważyć problemu N+1, mieszają się odpowiedzialności warstw. Zaleca się wyłączenie (spring.jpa.open-in-view=false) i jawne pobieranie danych.
+
+#EX
+P: Co robi adnotacja @Transactional w Springu i jak działa?
+H: Proxy, granica transakcji, rollback.
+S: @Transactional deklaratywnie określa granice transakcji: Spring tworzy proxy wokół beana, które przed wywołaniem metody rozpoczyna transakcję (lub dołącza do istniejącej), a po jej zakończeniu zatwierdza ją, albo wycofuje przy wyjątku.
+Domyślnie rollback następuje dla wyjątków niekontrolowanych (RuntimeException) i Error, a nie dla kontrolowanych — zmienia się to atrybutami rollbackFor/noRollbackFor. Inne atrybuty: propagation, isolation, timeout, readOnly. Ograniczenia wynikające z proxy: wywołanie metody z tej samej klasy (self-invocation) omija transakcję, a metody prywatne nie są obsługiwane.
+
+#EX
+P: Jakie są rodzaje propagacji transakcji w Springu?
+H: REQUIRED, REQUIRES_NEW, NESTED i inne.
+S: REQUIRED (domyślna) — dołącz do istniejącej transakcji lub utwórz nową.
+REQUIRES_NEW — zawsze nowa, niezależna transakcja; bieżąca jest zawieszana (np. zapis logu audytu, który ma przetrwać wycofanie głównej transakcji).
+NESTED — zagnieżdżona przez punkt zapisu (savepoint) w tej samej transakcji fizycznej; jej wycofanie nie wycofuje zewnętrznej.
+SUPPORTS — użyj transakcji, jeśli istnieje, inaczej działaj bez niej.
+MANDATORY — wymaga istniejącej transakcji (inaczej wyjątek).
+NOT_SUPPORTED — zawiesza transakcję i działa bez niej.
+NEVER — rzuca wyjątek, jeśli transakcja istnieje.
+
+#EX
+P: Dlaczego wywołanie metody @Transactional z tej samej klasy nie tworzy transakcji?
+H: Self-invocation i proxy.
+S: Spring realizuje @Transactional przez proxy opakowujące bean. Wywołanie z zewnątrz trafia do proxy, które zarządza transakcją. Wywołanie this.metoda() wewnątrz tego samego obiektu omija proxy i idzie bezpośrednio do oryginalnej metody — adnotacja (także REQUIRES_NEW, @Async, @Cacheable) nie zadziała.
+Rozwiązania: przenieść metodę do osobnego beana (najczystsze), wstrzyknąć proxy samego siebie (@Lazy self-injection), użyć TransactionTemplate do programowego zarządzania transakcją, albo trybu AspectJ z tkaniem kodu.
+
+#EX
+P: Co daje @Transactional(readOnly = true)?
+H: Optymalizacje Hibernate i bazy.
+S: readOnly = true sygnalizuje transakcję tylko do odczytu. Efekty:
+- Hibernate ustawia tryb flush na MANUAL i pomija dirty checking (oszczędność CPU i pamięci przy wielu encjach);
+- sterownik i baza mogą zastosować optymalizacje (np. połączenie w trybie tylko do odczytu, kierowanie zapytań do repliki przy odpowiedniej konfiguracji);
+- dokumentuje intencję metody.
+Nie gwarantuje w każdej bazie, że zapis zostanie zablokowany. Częsta praktyka: @Transactional(readOnly = true) na poziomie klasy serwisu i @Transactional na metodach zapisujących.
+
+#EX
+P: Dlaczego długie transakcje są problemem?
+H: Blokady, połączenia, MVCC.
+S: Długo trwające transakcje:
+- trzymają blokady wierszy, blokując inne transakcje (spadek przepustowości, zakleszczenia, timeouty);
+- zajmują połączenie z puli przez cały czas — przy wielu takich transakcjach pula się wyczerpuje;
+- w bazach MVCC (PostgreSQL) uniemożliwiają usuwanie starych wersji wierszy (rozrost tabel, spowolnienie);
+- zwiększają ryzyko konfliktów przy blokowaniu optymistycznym.
+Dlatego w transakcji nie wykonuje się wywołań zewnętrznych usług (HTTP), wysyłki e-maili ani czekania na użytkownika; dzieli się duże przetwarzanie na porcje, a efekty uboczne wykonuje po zatwierdzeniu (np. @TransactionalEventListener(phase = AFTER_COMMIT)).
+
+#EX
+P: Jak zapewnić spójność między zapisem do bazy a wysłaniem komunikatu do kolejki?
+H: Transactional outbox.
+S: Zapis do bazy i wysłanie komunikatu do brokera (Kafka, RabbitMQ) to dwie różne operacje bez wspólnej transakcji: jeśli komunikat wyślemy przed commitem, a transakcja się wycofa — wyślemy fałszywe zdarzenie; jeśli po commicie i aplikacja padnie — zdarzenie zginie.
+Wzorzec transakcyjnej skrzynki nadawczej (transactional outbox): zdarzenie zapisuje się do tabeli outbox w tej samej transakcji co zmiany biznesowe, a osobny proces (poller albo Change Data Capture, np. Debezium) odczytuje je i publikuje do brokera, oznaczając jako wysłane. Gwarantuje to dostarczenie co najmniej raz, więc odbiorcy muszą być idempotentni.
+
+#EX
+P: Jak poprawnie zaimplementować equals i hashCode w encji JPA?
+H: Identyfikator generowany przez bazę, proxy.
+S: Problem: encje z identyfikatorem nadawanym przez bazę nie mają go przed persist, więc equals/hashCode oparte na id zmieniłyby się po zapisie (encja „zginie” w HashSet). Equals oparte na wszystkich polach jest błędne (encja to tożsamość, a nie wartość; dodatkowo leniwe relacje).
+Typowe rozwiązania:
+- klucz naturalny lub biznesowy (np. unikalny numer), jeśli istnieje i jest niezmienny;
+- identyfikator nadawany w aplikacji (UUID przy tworzeniu obiektu);
+- equals po id tylko dla id != null, z hashCode stałym dla klasy (getClass().hashCode()).
+Należy porównywać klasy z uwzględnieniem proxy Hibernate (Hibernate.getClass lub instanceof) i nie używać rekordów jako encji.
+
+#EX
+P: Czym różni się persist od merge w JPA?
+H: Nowa encja kontra scalenie odłączonej.
+S: persist(encja) czyni nową encję zarządzaną — ten sam obiekt trafia do kontekstu persystencji, a INSERT zostanie wykonany przy flush. Dla encji odłączonej rzuca wyjątek.
+merge(encja) kopiuje stan przekazanego obiektu (zwykle odłączonego) do zarządzanej instancji — wczytanej z bazy lub nowej — i zwraca tę zarządzaną instancję. Przekazany obiekt pozostaje odłączony. Typowy błąd: dalsza praca na argumencie zamiast na wyniku merge.
+Spring Data save() wywołuje persist dla nowych encji (id == null lub wersja == null), a merge dla pozostałych, co przy ręcznie nadawanych identyfikatorach może powodować zbędny SELECT.
+
+#EX
+P: Do czego służą kaskady (cascade) i orphanRemoval w JPA?
+H: Propagacja operacji na powiązane encje.
+S: cascade określa, które operacje (PERSIST, MERGE, REMOVE, REFRESH, DETACH, ALL) mają być przenoszone z encji nadrzędnej na powiązane. Przykład: zamówienie z cascade = ALL na pozycjach — zapisanie zamówienia zapisuje pozycje.
+orphanRemoval = true usuwa encję podrzędną, gdy zostanie usunięta z kolekcji rodzica (staje się „sierotą”). Kaskady stosuje się w relacjach kompozycji (części należą do całości, np. agregat DDD), a nie dla niezależnych encji — kaskadowe REMOVE z @ManyToMany lub @ManyToOne może usunąć dane używane przez inne encje.
+
+#EX
+P: Czym jest relacja dwukierunkowa w JPA i która strona jest właścicielem?
+H: mappedBy, synchronizacja obu stron.
+S: W relacji dwukierunkowej obie encje mają referencje do siebie (Zamowienie ma listę Pozycji, a Pozycja ma zamowienie). Właścicielem jest strona, która zarządza kluczem obcym — zwykle @ManyToOne (Pozycja.zamowienie); druga strona ma mappedBy i jest tylko odwzorowaniem. Zmiany zapisuje się według strony właściciela: dodanie pozycji tylko do listy zamówienia bez ustawienia pozycja.setZamowienie nie zapisze powiązania.
+Dlatego dodaje się metody pomocnicze synchronizujące obie strony (dodajPozycje ustawia obie referencje). Trzeba też uważać na cykle w toString, equals i serializacji JSON.
+
+#EX
+P: Czym różni się JPQL od natywnego SQL i kiedy używać którego?
+H: Encje kontra tabele.
+S: JPQL operuje na encjach i ich polach (SELECT z FROM Zamowienie z WHERE z.klient.miasto = :miasto), jest niezależny od bazy, integruje się z kontekstem persystencji i zwraca encje lub projekcje. Dostępne też Criteria API do budowania zapytań dynamicznych w kodzie.
+Natywny SQL (@Query(nativeQuery = true), createNativeQuery) pozwala użyć specyficznych funkcji bazy (funkcje okna w starszych wersjach Hibernate, typy JSON, CTE rekurencyjne, wskazówki dla optymalizatora) i zoptymalizować trudne zapytania raportowe. Wady natywnego: zależność od dialektu, ręczne mapowanie wyników, ominięcie części mechanizmów ORM. Do złożonych zapytań raportowych popularny jest też jOOQ.
+
+#EX
+P: Jak zrealizować stronicowanie wyników i jakie są jego pułapki?
+H: LIMIT/OFFSET kontra keyset.
+S: Klasycznie: LIMIT/OFFSET (w Spring Data Pageable i Page). Wymaga stabilnego sortowania (np. po unikalnym id) — inaczej strony mogą się powtarzać lub pomijać wiersze. Pułapki:
+- duży OFFSET jest kosztowny — baza musi odczytać i pominąć wszystkie wcześniejsze wiersze;
+- Page wykonuje dodatkowe zapytanie COUNT, kosztowne przy dużych tabelach (alternatywa: Slice);
+- JOIN FETCH kolekcji z paginacją powoduje stronicowanie w pamięci (ostrzeżenie Hibernate HHH90003004).
+Dla dużych zbiorów lepsza jest paginacja kursorowa (keyset): WHERE id > :ostatnieId ORDER BY id LIMIT 50 — stały koszt niezależnie od pozycji, stabilna przy zmianach danych.
+
+#EX
+P: Czym są narzędzia do migracji schematu (Flyway, Liquibase) i dlaczego są potrzebne?
+H: Wersjonowanie bazy razem z kodem.
+S: Narzędzia migracji wersjonują zmiany schematu bazy (i danych referencyjnych) jako ponumerowane skrypty (Flyway: V1__init.sql, V2__dodaj_kolumne.sql) lub zestawy zmian (Liquibase: changelog w XML/YAML/SQL). Przy starcie aplikacji lub w procesie CI/CD wykonują brakujące migracje i zapisują historię w tabeli metadanych.
+Zalety: powtarzalność środowisk (dev, test, produkcja), przegląd zmian w repozytorium, brak ręcznych zmian w bazie. Zastępują hibernate.ddl-auto=update, które nie nadaje się do produkcji (nie usuwa kolumn, nie migruje danych, bywa nieprzewidywalne). Dobre praktyki: migracje niezmienne po wdrożeniu, zmiany wstecznie zgodne (rozszerz–przenieś–zawęź) dla wdrożeń bez przestojów.
+
+#EX
+P: Jak przeprowadzić zmianę schematu bazy bez przestoju aplikacji?
+H: Expand–migrate–contract.
+S: Przy wdrożeniach bez przestoju (rolling update) przez pewien czas działają jednocześnie stara i nowa wersja aplikacji, więc schemat musi być zgodny z obiema. Stosuje się wzorzec rozszerz–przenieś–zawęź:
+1. Rozszerzenie: dodanie nowej kolumny lub tabeli (nullable, bez usuwania starej).
+2. Wdrożenie aplikacji zapisującej do obu miejsc i migracja istniejących danych (porcjami, by nie blokować tabel).
+3. Przełączenie odczytów na nowe miejsce.
+4. Zawężenie: usunięcie starej kolumny dopiero, gdy żadna wersja aplikacji jej nie używa.
+Należy unikać operacji blokujących duże tabele (np. dodawanie indeksu bez CONCURRENTLY w PostgreSQL).
+
+#EX
+P: Czym różni się DELETE, TRUNCATE i DROP?
+H: Wiersze, cała zawartość, cała tabela.
+S: DELETE usuwa wybrane wiersze (z WHERE lub wszystkie), wiersz po wierszu, z wyzwalaczami i zapisem w dzienniku — może zostać wycofany w transakcji i działa wolniej dla dużych tabel.
+TRUNCATE szybko usuwa całą zawartość tabeli (zwalnia strony danych), zwykle bez wyzwalaczy dla wierszy, resetuje liczniki tożsamości; w wielu bazach jest operacją DDL (w PostgreSQL można ją wycofać w transakcji, w Oracle i MySQL — nie).
+DROP usuwa całą tabelę wraz z definicją, indeksami i uprawnieniami.
+
+#EX
+P: Czym jest zakleszczenie w bazie danych i jak go unikać?
+H: Kolejność blokowania wierszy.
+S: Zakleszczenie w bazie występuje, gdy dwie transakcje trzymają blokady na różnych wierszach i każda czeka na wiersz zablokowany przez drugą (np. przelew A→B i B→A jednocześnie). Baza wykrywa cykl i przerywa jedną z transakcji błędem (deadlock detected), który aplikacja powinna obsłużyć ponowieniem.
+Unikanie: blokowanie i aktualizowanie wierszy w stałej kolejności (np. rosnąco po id), krótkie transakcje, odpowiednie indeksy (by blokować mniej wierszy), unikanie eskalacji blokad, SELECT ... FOR UPDATE od razu zamiast odczytu i późniejszej aktualizacji.
+
+#EX
+P: Czym jest MVCC (Multi-Version Concurrency Control)?
+H: Wersje wierszy zamiast blokad odczytu.
+S: MVCC to mechanizm współbieżności stosowany m.in. w PostgreSQL, Oracle i MySQL InnoDB: zamiast blokować wiersze przy odczycie, baza przechowuje wiele wersji wiersza. Każda transakcja widzi spójną migawkę danych z określonego momentu (początku instrukcji lub transakcji, zależnie od poziomu izolacji). Odczyty nie blokują zapisów, a zapisy nie blokują odczytów.
+Koszty: przechowywanie starych wersji i konieczność ich sprzątania (VACUUM w PostgreSQL, undo log w InnoDB), a długie transakcje opóźniają to sprzątanie. Konflikty zapis–zapis nadal wymagają blokad lub wykrywania konfliktów.
+
+#EX
+P: Jak działa generowanie identyfikatorów w JPA i która strategia jest najlepsza?
+H: IDENTITY, SEQUENCE, UUID.
+S: Strategie @GeneratedValue:
+- IDENTITY — kolumna autoinkrementowana; id znane dopiero po INSERT, więc Hibernate musi wykonać INSERT od razu przy persist i nie może grupować wstawień (brak batch inserts);
+- SEQUENCE — sekwencja bazy z alokacją pul identyfikatorów (allocationSize, optymalizator pooled) — wydajna i pozwala na batch; zalecana dla baz obsługujących sekwencje (PostgreSQL, Oracle);
+- TABLE — emulacja sekwencji w tabeli, wolna, nie zalecana;
+- UUID — identyfikator generowany w aplikacji (znany przed zapisem, dobry w systemach rozproszonych); losowe UUID v4 słabo współpracują z indeksami B-drzewa, lepsze są UUID uporządkowane czasowo (v7).
+
+#EX
+P: Czym jest pamięć podręczna drugiego poziomu w Hibernate i kiedy ją stosować?
+H: Współdzielona między sesjami.
+S: Pamięć podręczna pierwszego poziomu to kontekst persystencji (jedna transakcja). Pamięć podręczna drugiego poziomu jest współdzielona przez wszystkie sesje w aplikacji (dostawcy: Ehcache, Caffeine, Infinispan, Hazelcast) i przechowuje stan encji po identyfikatorze; opcjonalnie istnieje też cache zapytań.
+Stosuje się ją dla danych często czytanych i rzadko zmienianych (słowniki, konfiguracja, katalog produktów). Trudności: unieważnianie przy zmianach spoza Hibernate (inne aplikacje, natywny SQL), spójność w klastrze (cache rozproszony), dobór strategii współbieżności (READ_ONLY, READ_WRITE). Często prostsze jest cachowanie na poziomie serwisów (Spring @Cacheable).
+
+#EX
+P: Jak zaprojektować zapytanie zwracające „pierwsze N rekordów w każdej grupie”?
+H: Funkcja okna ROW_NUMBER.
+S: Klasyczne rozwiązanie wykorzystuje funkcję okna w podzapytaniu lub CTE:
+WITH ranking AS (
+  SELECT z.*, ROW_NUMBER() OVER (PARTITION BY klient_id ORDER BY data DESC) AS nr
+  FROM zamowienia z
+)
+SELECT * FROM ranking WHERE nr <= 3;
+PARTITION BY dzieli dane na grupy (klientów), ORDER BY ustala kolejność w grupie, a filtr na numerze wybiera N pierwszych. Przy remisach można użyć RANK lub DENSE_RANK. W PostgreSQL alternatywą jest LATERAL JOIN z LIMIT, a dla N = 1 także DISTINCT ON.
+
+#EX
+P: Czym są CTE (Common Table Expressions) i zapytania rekurencyjne?
+H: WITH, WITH RECURSIVE.
+S: CTE (WITH nazwa AS (zapytanie)) to nazwane podzapytanie zdefiniowane przed główną instrukcją — poprawia czytelność złożonych zapytań, pozwala użyć tego samego wyniku kilka razy.
+WITH RECURSIVE umożliwia zapytania rekurencyjne: część początkowa (np. korzeń drzewa) połączona przez UNION ALL z częścią odwołującą się do samego CTE — stosuje się je do struktur hierarchicznych (drzewo kategorii, struktura organizacyjna, zestawienie materiałów). Trzeba zadbać o warunek stopu, by uniknąć nieskończonej rekurencji przy cyklach.
+
+#EX
+P: Kiedy wybrać bazę NoSQL zamiast relacyjnej?
+H: Model danych, skalowanie, spójność.
+S: Bazy relacyjne są dobrym domyślnym wyborem: transakcje ACID, elastyczne zapytania SQL, integralność danych, dojrzałe narzędzia. NoSQL rozważa się, gdy:
+- model danych naturalnie pasuje do innej struktury: dokumenty (MongoDB — zagnieżdżone, zmienne struktury), klucz–wartość (Redis — cache, sesje, liczniki), szeroko-kolumnowe (Cassandra — ogromne wolumeny zapisów, szeregi czasowe), grafowe (Neo4j — relacje i przechodzenie grafu);
+- wymagane jest skalowanie poziome na skalę trudną dla jednej bazy relacyjnej;
+- akceptowalna jest spójność ostateczna.
+Koszty: słabsze transakcje (zależnie od bazy), dane zdenormalizowane i trudniejsze zapytania ad hoc. Wiele systemów łączy oba podejścia.
+
+#EX
+P: Jak testować kod dostępu do bazy danych?
+H: Testcontainers, @DataJpaTest.
+S: Testy z bazą w pamięci (H2) są szybkie, ale różnią się od produkcyjnej bazy (dialekt, funkcje, zachowanie blokad), więc mogą przepuścić błędy. Zalecane są testy integracyjne z prawdziwą bazą w kontenerze (Testcontainers: PostgreSQLContainer) uruchamianą automatycznie w testach; w Spring Boot 3.1+ wspiera to adnotacja @ServiceConnection.
+@DataJpaTest uruchamia tylko warstwę JPA (repozytoria) z transakcją wycofywaną po każdym teście. Warto testować: zapytania własne, mapowania, ograniczenia bazy, migracje (Flyway uruchamiany w teście) i liczbę wykonywanych zapytań (wykrywanie N+1).
+
+#EX
+P: Czym różnią się projekcje w Spring Data od pobierania całych encji?
+H: Interfejsy, rekordy DTO, wydajność.
+S: Projekcje pobierają tylko potrzebne kolumny zamiast całych encji:
+- interfejsowe: interfejs z getterami (List<PodsumowanieZamowienia> findByKlientId(...)) — Spring generuje SELECT tylko dla potrzebnych pól (projekcje zamknięte);
+- klasowe/rekordy DTO: SELECT new pl.app.ZamowienieDto(z.id, z.wartosc) FROM ... lub rekord jako typ zwracany;
+- dynamiczne: typ projekcji przekazany jako parametr.
+Zalety: mniej danych przesyłanych z bazy, brak kosztów kontekstu persystencji i dirty checkingu, brak problemów z leniwym ładowaniem. Encje pobiera się, gdy mają być modyfikowane.
+
+#EX
+P: Jak bezpiecznie wykonać masową aktualizację wielu wierszy w JPA?
+H: @Modifying, kontekst persystencji.
+S: Zamiast wczytywać tysiące encji i zmieniać je w pętli (dużo pamięci i osobnych UPDATE), używa się zapytania aktualizującego: @Modifying @Query("UPDATE Produkt p SET p.cena = p.cena * 1.1 WHERE p.kategoria = :k") w Spring Data albo createQuery(...).executeUpdate().
+Pułapka: takie zapytanie działa bezpośrednio na bazie z pominięciem kontekstu persystencji — encje już wczytane w tej transakcji mają nieaktualny stan. Należy wyczyścić kontekst (@Modifying(clearAutomatically = true), flushAutomatically = true) lub wykonywać takie operacje w osobnej transakcji. Masowe aktualizacje nie zwiększają automatycznie kolumny @Version.
