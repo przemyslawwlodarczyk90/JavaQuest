@@ -25,6 +25,8 @@ export type TicketPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type Ticket = { id: number; title: string; description: string; status: TicketStatus; priority: TicketPriority;
   assignee: string | null; createdAt: string; tags: string[] };
 `);
+fs.mkdirSync(path.join(work, 'src', 'data'));
+fs.writeFileSync(path.join(work, 'src', 'data', 'tickets.ts'), "import type { Ticket } from '../types';\nexport const tickets: Ticket[] = [];\n");
 fs.writeFileSync(path.join(work, 'src', 'env.d.ts'), "declare module '*.svg' { const src: string; export default src; }\ndeclare module '*.css';\ndeclare module '*.module.css' { const classes: Record<string, string>; export default classes; }\n");
 
 const map = [];
