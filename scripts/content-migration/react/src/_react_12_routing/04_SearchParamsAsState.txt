@@ -1,0 +1,172 @@
+#T INTRO Rozgrzewka i problem: filtry giną po odświeżeniu
+Rozgrzewka: Dlaczego parametr trasy to zawsze tekst? Jak zbudować ścieżkę z parametrem w jednym miejscu? Które informacje należą do adresu, a które do stanu?
+
+Problem: Piotr ustawia w tabeli filtr „Otwarte”, wyszukuje „api”, sortuje po priorytecie i przechodzi na stronę 3. Chce wysłać Annie dokładnie ten widok — ale adres to `/tickets`, bo filtry są w `useState`. Po odświeżeniu też wszystko wraca do ustawień domyślnych, a „Wstecz” po wejściu w ticket gubi stronę 3. Filtry, wyszukiwanie, sortowanie i strona należą do **parametrów zapytania** adresu: `/tickets?status=OPEN&q=api&sort=priority:desc&page=3`.
+
+#T DEFINITION useSearchParams: adres jako źródło prawdy
+`const [searchParams, setSearchParams] = useSearchParams()` daje obiekt `URLSearchParams` aktualnego adresu i funkcję jego zmiany. Zmiana parametrów zmienia adres i renderuje komponent z nowymi wartościami — działa jak stan, ale:
+- przetrwa odświeżenie i da się skopiować,
+- „Wstecz/Dalej” przywraca poprzednie filtry,
+- komponent nie ma własnej kopii — **adres jest jedynym źródłem prawdy** (żadnego `useState` dla filtrów).
+
+Wartości są tekstami, mogą być nieobecne albo błędne (ktoś zmieni adres ręcznie) — parsujesz je z wartościami domyślnymi i walidacją, tak jak parametry ścieżki.
+
+#T CODE_JSX Filtry tabeli w adresie (JSX)
+```
+// useTicketFiltersFromUrl.js
+import { useSearchParams } from 'react-router';
+
+const STATUSES = ['OPEN', 'IN_PROGRESS', 'CLOSED'];
+const SORTS = ['createdAt:desc', 'createdAt:asc', 'priority:desc', 'title:asc'];
+
+export function useTicketFiltersFromUrl() {
+  const [params, setParams] = useSearchParams();
+
+  const status = STATUSES.includes(params.get('status')) ? params.get('status') : null;
+  const q = params.get('q') ?? '';
+  const sort = SORTS.includes(params.get('sort')) ? params.get('sort') : 'createdAt:desc';
+  const pageRaw = Number(params.get('page'));
+  const page = Number.isInteger(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+
+  function update(changes, { resetPage = true } = {}) {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [key, value] of Object.entries(changes)) {
+        if (value === null || value === '' || value === undefined) next.delete(key);
+        else next.set(key, String(value));
+      }
+      if (resetPage && !('page' in changes)) next.delete('page');
+      return next;
+    }, { replace: true });
+  }
+
+  return { status, q, sort, page, update };
+}
+```
+
+#T CODE_TSX Filtry tabeli w adresie (TSX)
+Parsowanie zwraca typy domeny (`TicketStatus | null`, `SortOption`), więc reszta aplikacji nie widzi surowych tekstów z adresu. Funkcje-strażnicy typów (`value is ...`) zawężają `string | null` do unii.
+```
+// useTicketFiltersFromUrl.ts
+import { useSearchParams } from 'react-router';
+import type { TicketStatus } from '../types';
+
+const STATUSES = ['OPEN', 'IN_PROGRESS', 'CLOSED'] as const;
+const SORTS = ['createdAt:desc', 'createdAt:asc', 'priority:desc', 'title:asc'] as const;
+export type SortOption = (typeof SORTS)[number];
+
+const isStatus = (v: string | null): v is TicketStatus => STATUSES.includes(v as TicketStatus);
+const isSort = (v: string | null): v is SortOption => SORTS.includes(v as SortOption);
+
+type Changes = Partial<{ status: TicketStatus | null; q: string; sort: SortOption; page: number }>;
+
+export function useTicketFiltersFromUrl() {
+  const [params, setParams] = useSearchParams();
+
+  const rawStatus = params.get('status');
+  const status = isStatus(rawStatus) ? rawStatus : null;
+  const q = params.get('q') ?? '';
+  const rawSort = params.get('sort');
+  const sort: SortOption = isSort(rawSort) ? rawSort : 'createdAt:desc';
+  const pageRaw = Number(params.get('page'));
+  const page = Number.isInteger(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+
+  function update(changes: Changes, { resetPage = true }: { resetPage?: boolean } = {}) {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [key, value] of Object.entries(changes)) {
+        if (value === null || value === '' || value === undefined) next.delete(key);
+        else next.set(key, String(value));
+      }
+      if (resetPage && !('page' in changes)) next.delete('page');
+      return next;
+    }, { replace: true });
+  }
+
+  return { status, q, sort, page, update };
+}
+```
+
+#T NOTE JSX ↔ TSX — strażnicy typów dla danych z adresu
+Funkcja `isStatus(v): v is TicketStatus` to **strażnik typu** (type guard): po `if (isStatus(raw))` TypeScript wie, że `raw` jest `TicketStatus`. Dzięki temu jedno sprawdzenie w czasie działania (czy tekst jest na liście) daje jednocześnie poprawny typ — bez rzutowania. W JSX logika jest identyczna (`STATUSES.includes(...)`), tylko bez zawężenia typu. Typ `Changes` w TSX pilnuje, że `update({ page: '3' })` (tekst zamiast liczby) albo `update({ stauts: 'OPEN' })` (literówka) są błędami.
+
+#T DEFINITION replace czy push
+Każda zmiana parametrów może dodać wpis do historii (`push`) albo zastąpić bieżący (`replace`):
+- **push** dla zmian, do których użytkownik chce wracać „Wstecz”: zmiana strony, przejście do innego widoku,
+- **replace** dla zmian częstych i drobnych: każdy znak w wyszukiwarce, przełączenie sortowania — inaczej „Wstecz” cofałby literę po literze.
+
+W przykładzie użyto `replace: true` dla filtrów; zmianę strony możesz wywołać bez `replace`, jeśli chcesz, by „Wstecz” wracał do poprzedniej strony listy.
+
+#T CODE_BASIC Wyszukiwarka z adresem i opóźnieniem
+Pole tekstowe ma lokalny stan (natychmiastowa reakcja na pisanie), a do adresu trafia wartość po 300 ms przerwy. Adres pozostaje źródłem prawdy dla zapytania do API.
+```
+import { useEffect, useState } from 'react';
+
+export function UrlSearchInput({ value, onCommit }: { value: string; onCommit: (q: string) => void }) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    if (draft === value) return;
+    const id = setTimeout(() => onCommit(draft), 300);
+    return () => clearTimeout(id);
+  }, [draft, value, onCommit]);
+
+  return <input type="search" aria-label="Szukaj ticketów" value={draft} onChange={(e) => setDraft(e.target.value)} />;
+}
+
+// <UrlSearchInput key={filters.q} value={filters.q} onCommit={(q) => filters.update({ q })} />
+// key resetuje szkic, gdy adres zmieni się z zewnątrz (np. „Wstecz”)
+```
+
+#T CODE_PRACTICAL Zapytanie do API z parametrów adresu
+Filtry z adresu trafiają do klucza zapytania TanStack Query — zmiana adresu = nowe zapytanie, powrót „Wstecz” = dane z cache.
+```
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useTicketFiltersFromUrl } from './useTicketFiltersFromUrl';
+import type { TicketStatus } from '../types';
+
+declare function fetchTicketPage(params: Record<string, string>, signal: AbortSignal): Promise<{ items: { id: number; title: string }[]; total: number }>;
+
+export function TicketsFromUrl() {
+  const filters = useTicketFiltersFromUrl();
+  const apiParams: Record<string, string> = { sort: filters.sort, page: String(filters.page) };
+  if (filters.status) apiParams.status = filters.status;
+  if (filters.q) apiParams.q = filters.q;
+
+  const query = useQuery({
+    queryKey: ['tickets', 'list', apiParams],
+    queryFn: ({ signal }) => fetchTicketPage(apiParams, signal),
+    placeholderData: keepPreviousData,
+  });
+
+  return (
+    <section>
+      <select aria-label="Status" value={filters.status ?? ''} onChange={(e) => filters.update({ status: (e.target.value || null) as TicketStatus | null })}>
+        <option value="">Wszystkie</option>
+        <option value="OPEN">Otwarte</option>
+        <option value="CLOSED">Zamknięte</option>
+      </select>
+      <p>Wyników: {query.data?.total ?? '…'}</p>
+      <button type="button" disabled={filters.page <= 1} onClick={() => filters.update({ page: filters.page - 1 }, { resetPage: false })}>Poprzednia</button>
+      <button type="button" onClick={() => filters.update({ page: filters.page + 1 }, { resetPage: false })}>Następna</button>
+    </section>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: filtry DevDesk w adresie
+1. Utwórz `useTicketFiltersFromUrl` i usuń `useState` dla statusu, wyszukiwania, sortowania i strony z ekranu ticketów.
+2. Podłącz pasek narzędzi: zakładki statusów, `UrlSearchInput`, wybór sortowania, pager — wszystkie wywołują `update`.
+3. Klucz zapytania TanStack Query buduj z wartości z adresu.
+4. Ustaw filtry, skopiuj adres, otwórz w nowej karcie — identyczny widok.
+5. Wejdź w ticket z listy i naciśnij „Wstecz” — wracasz do tej samej strony i filtrów, a dane pojawiają się od razu (cache).
+6. Wpisz ręcznie w adres `?status=BLEBLE&page=-3` — aplikacja używa wartości domyślnych zamiast się psuć.
+7. Zdecyduj o historii: wyszukiwanie z `replace`, zmiana strony z `push` — sprawdź zachowanie „Wstecz”.
+
+#T PITFALL Kopia parametrów w stanie
+`const [status, setStatus] = useState(params.get('status'))` — po kliknięciu „Wstecz” adres się zmieni, a stan nie (wartość startowa jest użyta raz). Teraz masz dwie prawdy i rozjazd między adresem a ekranem. Wartości z adresu czytasz przy każdym renderze bezpośrednio z `searchParams` — wyjątkiem jest tymczasowy szkic pola tekstowego, resetowany `key` przy zmianie adresu.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Stan widoku, który ma przetrwać odświeżenie i dać się udostępnić (filtry, wyszukiwanie, sortowanie, strona), trzymasz w parametrach zapytania adresu przez `useSearchParams`. Adres jest jedynym źródłem prawdy: wartości parsujesz z domyślnymi i walidacją przy każdym renderze, zmieniasz funkcją aktualizującą, a dla częstych zmian używasz `replace`. Klucz zapytania danych budujesz z parametrów adresu. W TSX strażnicy typów (`v is T`) zamieniają teksty z adresu na typy domeny bez rzutowania.
+
+Kryterium akceptacji: adres `/tickets?status=OPEN&q=api&sort=priority:desc&page=3` odtwarza dokładnie ten widok w nowej karcie, „Wstecz” po wejściu w ticket przywraca filtry i stronę, błędne wartości w adresie nie psują aplikacji, a w ekranie ticketów nie ma `useState` dla filtrów.
