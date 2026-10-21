@@ -1,0 +1,133 @@
+#T INTRO Rozgrzewka i problem: licznik, który zawsze pokazuje 1
+Rozgrzewka: Co oznacza pusta tablica zależności? Dlaczego zapis motywu jest w efekcie, a nie w handlerze? Po co leniwa inicjalizacja `useState`?
+
+Problem: DevDesk dostaje automatyczne odświeżanie — co 10 sekund „sprawdzamy nowe tickety” i pokazujemy „Ostatnie sprawdzenie: 3 razy”. Licznik rośnie do 1 i staje. W innym miejscu wyszukiwanie w efekcie zawsze używa pierwszego wpisanego tekstu. Oba błędy mają tę samą przyczynę: **nieaktualne domknięcie** (stale closure) i źle zadeklarowane zależności.
+
+#T DEFINITION Efekt widzi wartości z renderu, w którym powstał
+Funkcja efektu jest tworzona przy każdym renderze i „zamyka w sobie” (domknięcie z toru JavaScript) wartości props i stanu z tego konkretnego renderu. Jeśli efekt uruchomi się tylko raz (`[]`), a w środku timera używasz `count`, to zawsze będzie `count` z pierwszego renderu — 0. React nie „podmieni” wartości w już działającym kodzie.
+
+Dlatego reguła jest prosta: **każda wartość z komponentu użyta w efekcie musi być w tablicy zależności**. Pilnuje tego reguła ESLint `react-hooks/exhaustive-deps`.
+
+#T CODE_JSX Nieaktualne domknięcie w timerze (JSX)
+`count` w funkcji interwału to zawsze 0 z pierwszego renderu — licznik ustawia 0 + 1 w kółko.
+```
+// AutoRefresh.jsx — BŁĄD
+import { useEffect, useState } from 'react';
+
+export function AutoRefresh() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCount(count + 1); // count zamrożony na 0
+    }, 10_000);
+    return () => clearInterval(id);
+  }, []); // ESLint: React Hook useEffect has a missing dependency: 'count'
+
+  return <p>Ostatnie sprawdzenie: {count} razy</p>;
+}
+```
+
+#T CODE_TSX Naprawa: aktualizacja funkcyjna (TSX)
+Forma `setCount((c) => c + 1)` nie potrzebuje `count` z domknięcia — dostaje aktualną wartość od Reacta. Efekt nie zależy od `count`, więc `[]` jest teraz poprawne.
+```
+// AutoRefresh.tsx
+import { useEffect, useState } from 'react';
+
+export function AutoRefresh({ intervalMs = 10_000 }: { intervalMs?: number }) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCount((c) => c + 1);
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+
+  return <p>Ostatnie sprawdzenie: {count} razy</p>;
+}
+```
+
+#T NOTE JSX ↔ TSX — zależności to sprawa lintera, nie kompilatora
+TypeScript nie sprawdza tablicy zależności — oba przykłady kompilują się bez błędu. Brakującą zależność wykrywa ESLint (`react-hooks/exhaustive-deps`) w obu wersjach. W TSX widać za to dokładnie, czym jest wartość w zależnościach: jeśli zależność ma typ obiektu albo funkcji, to sygnał ostrzegawczy (patrz niżej). `setInterval` w przeglądarce zwraca liczbę (`number`), więc w TSX `const id: number` — w środowisku Node typ byłby inny, dlatego nie dopisujemy go ręcznie.
+
+#T DEFINITION Jak usuwać zależności — nie przez kłamstwo
+Gdy efekt uruchamia się za często, **nie usuwaj** wartości z tablicy, wyciszając linter — to tworzy błąd nieaktualnego domknięcia. Zamiast tego zmień kod tak, by zależność nie była potrzebna:
+1. **Aktualizacja funkcyjna** — `setX((prev) => ...)` zamiast odczytu `x`.
+2. **Przeniesienie obiektu lub funkcji do środka efektu** — jeśli są używane tylko w efekcie.
+3. **Przeniesienie poza komponent** — stałe i funkcje niezależne od props/stanu nie są zależnościami.
+4. **Zależność od wartości prostych zamiast obiektów** — `[options.pageSize]` zamiast `[options]`.
+5. **Reducer** — `dispatch` jest stabilny i nie musi być w zależnościach; logika „jak zaktualizować” idzie do reducera.
+6. **`useEffectEvent`** — dla logiki, która ma czytać najnowsze wartości, ale nie wywoływać ponownego uruchomienia efektu (lekcja 6).
+
+#T CODE_WRONG Obiekt tworzony w renderze jako zależność
+`filters` to nowy obiekt przy każdym renderze, więc efekt uruchamia się po każdym renderze — przy zapisie, który zmienia stan, kończy się pętlą renderów.
+```
+function TicketsSync({ status, query }) {
+  const filters = { status, query };
+  useEffect(() => {
+    localStorage.setItem('filters', JSON.stringify(filters));
+  }, [filters]); // nowy obiekt = zawsze „zmieniony”
+}
+```
+
+#T CODE_RIGHT Zależności od wartości prostych
+```
+function TicketsSync({ status, query }) {
+  useEffect(() => {
+    localStorage.setItem('filters', JSON.stringify({ status, query }));
+  }, [status, query]);
+}
+```
+
+#T CODE_BASIC Skrót klawiszowy z aktualną funkcją
+Handler używa `onCreate` z props — więc `onCreate` jest zależnością i efekt podepnie nasłuchiwanie na nowo, gdy rodzic przekaże nową funkcję.
+```
+import { useEffect } from 'react';
+
+export function useNewTicketShortcut(onCreate: () => void) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'n' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        onCreate();
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onCreate]);
+}
+```
+
+#T CODE_PRACTICAL Debounce wyszukiwania z poprawnymi zależnościami
+Wartość wyszukiwania „opóźniona” o 300 ms. Każda zmiana `value` kasuje poprzedni timer w sprzątaniu.
+```
+import { useEffect, useState } from 'react';
+
+export function useDebouncedValue<T>(value: T, delayMs = 300): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(id);
+  }, [value, delayMs]);
+
+  return debounced;
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: odświeżanie i skróty w DevDesk
+1. Dodaj `AutoRefresh` w wersji z błędem i obserwuj licznik — zatrzymuje się na 1. Przeczytaj ostrzeżenie ESLint.
+2. Napraw przez aktualizację funkcyjną; sprawdź, że licznik rośnie co 10 s.
+3. Dodaj `useNewTicketShortcut(() => setDialogOpen(true))` w `Main` — Ctrl+N (Cmd+N) otwiera modal nowego ticketu.
+4. Zauważ, że lambda w argumencie jest nowa przy każdym renderze, więc nasłuchiwanie jest podpinane na nowo po każdym renderze `Main`. To poprawne, choć niepotrzebne — w lekcji 6 rozwiążesz to `useEffectEvent`.
+5. Dodaj `useDebouncedValue` do wyszukiwarki: pole aktualizuje się natychmiast, a filtrowanie używa wartości opóźnionej.
+6. Uruchom `npm run lint` i popraw wszystkie ostrzeżenia `exhaustive-deps` w projekcie — bez komentarzy wyciszających.
+
+#T PITFALL Wyciszanie lintera
+`// eslint-disable-next-line react-hooks/exhaustive-deps` to prawie zawsze ukryty błąd nieaktualnego domknięcia, który ujawni się później i w trudnym do odtworzenia scenariuszu. Jeśli efekt „nie powinien” reagować na jakąś wartość — to znak, że ta logika nie należy do efektu (handler) albo potrzebuje `useEffectEvent`.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Efekt widzi wartości z renderu, w którym powstał, więc każda użyta w nim wartość z komponentu musi być w zależnościach — pilnuje tego ESLint `exhaustive-deps`. Zbędne zależności usuwasz, zmieniając kod: aktualizacja funkcyjna, przeniesienie obiektów do efektu lub poza komponent, zależności od wartości prostych, reducer. Obiekty i funkcje tworzone w renderze jako zależności uruchamiają efekt po każdym renderze. TypeScript nie sprawdza zależności.
+
+Kryterium akceptacji: licznik automatycznego odświeżania rośnie poprawnie, Ctrl+N otwiera formularz nowego ticketu, wyszukiwanie działa z opóźnieniem 300 ms, a `npm run lint` nie zgłasza ostrzeżeń o zależnościach.

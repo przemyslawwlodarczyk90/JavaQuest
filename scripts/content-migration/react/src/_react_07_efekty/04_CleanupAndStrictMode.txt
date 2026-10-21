@@ -1,0 +1,169 @@
+#T INTRO Rozgrzewka i problem: nasłuchiwanie, które się mnoży
+Rozgrzewka: Dlaczego timer z `count + 1` zatrzymał się na 1? Jak usunąć zależność od stanu z efektu bez wyciszania lintera? Czym grozi obiekt utworzony w renderze w tablicy zależności?
+
+Problem: w DevDesk po kilkukrotnym otwarciu i zamknięciu panelu „Na żywo” każde nowe zdarzenie pojawia się na liście trzy razy, a w konsoli widać błąd „Can't perform a React state update on a component that hasn't mounted yet” albo po prostu rosnące zużycie pamięci. Panel podpina nasłuchiwanie przy montowaniu i nigdy go nie odpina. Ta lekcja uczy **sprzątania** efektów i wyjaśnia, dlaczego StrictMode montuje komponenty dwa razy.
+
+#T DEFINITION Funkcja sprzątająca
+Funkcja zwrócona z efektu to **sprzątanie** (cleanup). React wywołuje ją:
+1. przed ponownym uruchomieniem efektu (gdy zmieniły się zależności) — sprząta poprzednią wersję synchronizacji,
+2. przy odmontowaniu komponentu.
+
+Zasada symetrii: sprzątanie odwraca to, co zrobił setup. `addEventListener` ↔ `removeEventListener`, `setInterval` ↔ `clearInterval`, `subscribe` ↔ `unsubscribe`, `connect` ↔ `disconnect`, utworzenie obiektu biblioteki ↔ `destroy`, rozpoczęcie zapytania ↔ zignorowanie lub przerwanie jego wyniku.
+
+#T CODE_JSX Panel zdarzeń na żywo z sprzątaniem (JSX)
+Symulowane źródło zdarzeń z metodą `subscribe`, która zwraca funkcję wypisującą — typowe API bibliotek.
+```
+// LiveFeed.jsx
+import { useEffect, useState } from 'react';
+
+const feed = {
+  listeners: new Set(),
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  },
+  emit(event) {
+    this.listeners.forEach((l) => l(event));
+  },
+};
+setInterval(() => feed.emit({ id: Date.now(), text: 'Nowy komentarz w #42' }), 5000);
+
+export function LiveFeed() {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    const unsubscribe = feed.subscribe((event) => {
+      setEvents((prev) => [event, ...prev].slice(0, 10));
+    });
+    return unsubscribe; // sprzątanie: wypisz się przy odmontowaniu
+  }, []);
+
+  return <ul>{events.map((e) => <li key={e.id}>{e.text}</li>)}</ul>;
+}
+```
+
+#T CODE_TSX Panel zdarzeń na żywo z sprzątaniem (TSX)
+Typ zdarzenia i typ funkcji nasłuchującej opisują kontrakt źródła. `subscribe` zwraca `() => void` — idealnie pasuje jako funkcja sprzątająca.
+```
+// LiveFeed.tsx
+import { useEffect, useState } from 'react';
+
+type LiveEvent = { id: number; text: string };
+type Listener = (event: LiveEvent) => void;
+
+const feed = {
+  listeners: new Set<Listener>(),
+  subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  },
+  emit(event: LiveEvent) {
+    this.listeners.forEach((l) => l(event));
+  },
+};
+setInterval(() => feed.emit({ id: Date.now(), text: 'Nowy komentarz w #42' }), 5000);
+
+export function LiveFeed() {
+  const [events, setEvents] = useState<LiveEvent[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = feed.subscribe((event) => {
+      setEvents((prev) => [event, ...prev].slice(0, 10));
+    });
+    return unsubscribe;
+  }, []);
+
+  return <ul>{events.map((e) => <li key={e.id}>{e.text}</li>)}</ul>;
+}
+```
+
+#T NOTE JSX ↔ TSX — sprzątanie i typ zwracany
+W TSX zwróć uwagę na `return () => { this.listeners.delete(listener); }` z klamrami: `Set.delete` zwraca `boolean`, a funkcja sprzątająca efektu powinna zwracać `void` — z klamrami wynik jest odrzucany. React zignorowałby `boolean`, ale typy biblioteki mogłyby nie przepuścić takiej funkcji jako `() => void`, a jawny zapis lepiej wyraża intencję. W JSX tego rozróżnienia nie widać — zwrócenie `boolean` z funkcji sprzątającej po prostu działa.
+
+#T DEFINITION Dlaczego StrictMode montuje dwa razy
+W trybie deweloperskim `<StrictMode>` po pierwszym montowaniu komponentu **od razu go odmontowuje i montuje ponownie** (setup → cleanup → setup). Symuluje w ten sposób sytuację, która w prawdziwej aplikacji zdarza się regularnie: użytkownik wychodzi z ekranu i wraca, zakładka jest ukrywana i pokazywana, React przy renderowaniu współbieżnym odrzuca i powtarza pracę.
+
+Jeśli efekt nie ma poprawnego sprzątania, podwójne montowanie ujawnia błąd od razu: dwa nasłuchiwania, dwa połączenia, dwa interwały. Z poprawnym sprzątaniem użytkownik nie widzi różnicy. Odpowiedź na „mój efekt uruchamia się dwa razy” to nie „wyłącz StrictMode”, tylko „napisz sprzątanie”.
+
+#T VISUAL_EXAMPLE StrictMode a efekt bez sprzątania
+bez sprzątania:   setup (listener #1) → [StrictMode] → setup (listener #2)   → każde zdarzenie ×2 ✘
+ze sprzątaniem:   setup (listener #1) → cleanup (usuń #1) → setup (listener #2) → każde zdarzenie ×1 ✔
+w produkcji:      setup (listener #1)                                          → każde zdarzenie ×1
+
+#T CODE_WRONG Nasłuchiwanie bez sprzątania
+```
+useEffect(() => {
+  window.addEventListener('resize', handleResize);
+}, []);
+```
+
+#T CODE_RIGHT Symetryczne sprzątanie
+```
+useEffect(() => {
+  window.addEventListener('resize', handleResize);
+  return () => window.removeEventListener('resize', handleResize);
+}, []);
+```
+
+#T DEFINITION Sprzątanie a wyniki asynchroniczne
+Asynchroniczna operacja (np. `fetch`, `setTimeout`) może zakończyć się po odmontowaniu komponentu albo po zmianie zależności. Sprzątanie powinno sprawić, że jej wynik zostanie **zignorowany** (flaga) lub operacja zostanie **przerwana** (`AbortController`, `clearTimeout`). Szczegółowo zajmiesz się tym przy pobieraniu danych w rozdziale 10; poniżej najprostszy wzorzec z flagą.
+
+#T CODE_BASIC Flaga ignorowania przestarzałego wyniku
+```
+import { useEffect, useState } from 'react';
+
+declare function loadComments(ticketId: number): Promise<string[]>;
+
+export function Comments({ ticketId }: { ticketId: number }) {
+  const [comments, setComments] = useState<string[]>([]);
+
+  useEffect(() => {
+    let ignore = false;
+    loadComments(ticketId).then((list) => {
+      if (!ignore) setComments(list); // wynik dla starego ticketId jest pomijany
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [ticketId]);
+
+  return <ul>{comments.map((c) => <li key={c}>{c}</li>)}</ul>;
+}
+```
+
+#T CODE_PRACTICAL Hook nasłuchujący zdarzeń okna
+```
+import { useEffect, useState } from 'react';
+
+export function useOnlineStatus() {
+  const [online, setOnline] = useState(() => navigator.onLine);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
+
+  return online;
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: panel „Na żywo” bez wycieków
+1. Dodaj `LiveFeed` w wersji bez `return unsubscribe` i panel, który można pokazać/ukryć.
+2. Przy włączonym StrictMode zobacz, że każde zdarzenie pojawia się dwa razy; pokaż i ukryj panel kilka razy — zdarzeń jest coraz więcej.
+3. Dodaj sprzątanie — każde zdarzenie pojawia się raz, niezależnie od liczby otwarć panelu.
+4. Dodaj `useOnlineStatus` i pokaż w nagłówku plakietkę „Offline” (sprawdź w DevTools: Network → Offline).
+5. W komponencie komentarzy dodaj flagę `ignore` i przełączaj szybko tickety przy sztucznie opóźnionym `loadComments` (np. losowe 0–2 s) — komentarze zawsze pasują do wybranego ticketu.
+6. Przejrzyj wszystkie efekty w DevDesk: każdy, który coś podpina, uruchamia lub tworzy, ma symetryczne sprzątanie.
+
+#T PITFALL Sprzątanie z inną funkcją
+`window.addEventListener('keydown', (e) => handle(e))` i w sprzątaniu `window.removeEventListener('keydown', (e) => handle(e))` — to dwie **różne** funkcje (różne referencje), więc usunięcie nic nie usuwa. Zapisz funkcję w zmiennej wewnątrz efektu i użyj tej samej zmiennej w obu wywołaniach.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Funkcja zwrócona z efektu sprząta poprzednią synchronizację — przed ponownym uruchomieniem efektu i przy odmontowaniu. Sprzątanie jest symetryczne do setupu (ta sama referencja funkcji przy `remove`). StrictMode w trybie deweloperskim montuje, odmontowuje i montuje ponownie, żeby wykryć brak sprzątania. Wyniki asynchroniczne po sprzątaniu ignorujesz flagą lub przerywasz. W TSX funkcja sprzątająca ma zwracać `void`.
+
+Kryterium akceptacji: panel „Na żywo” pokazuje każde zdarzenie dokładnie raz niezależnie od liczby otwarć i StrictMode, nagłówek pokazuje stan „Offline”, a komentarze zawsze należą do aktualnie wybranego ticketu.

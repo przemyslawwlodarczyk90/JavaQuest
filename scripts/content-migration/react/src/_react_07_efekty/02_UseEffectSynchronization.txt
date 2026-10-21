@@ -1,0 +1,149 @@
+#T INTRO Rozgrzewka i problem: motyw znika po odświeżeniu
+Rozgrzewka: Co dzieje się w fazie render, a co w fazie commit? Kiedy uruchamiają się efekty? Gdzie umieszczasz obliczenie liczby otwartych ticketów?
+
+Problem: przełącznik motywu i preferencje DevDesk działają, ale po odświeżeniu strony wszystko wraca do ustawień domyślnych. Stan React żyje tylko w pamięci karty przeglądarki. Trzeba zsynchronizować go z **localStorage** — systemem zewnętrznym wobec Reacta. To idealne, podręcznikowe zastosowanie `useEffect`.
+
+#T DEFINITION useEffect
+`useEffect(setup, dependencies)`:
+- **setup** — funkcja wykonująca synchronizację; może zwrócić funkcję sprzątającą,
+- **dependencies** — tablica wartości z komponentu (props, stan, wartości wyliczane, funkcje), od których zależy efekt.
+
+Zachowanie zależnie od tablicy zależności:
+- `[a, b]` — efekt po montowaniu i po każdej zmianie `a` lub `b` (porównanie `Object.is`),
+- `[]` — tylko po montowaniu (i sprzątanie przy odmontowaniu),
+- brak tablicy — po **każdym** renderze (rzadko potrzebne).
+
+#T CODE_JSX Zapamiętywanie motywu (JSX)
+Odczyt z localStorage w leniwej inicjalizacji stanu (raz, przy montowaniu), zapis w efekcie (po każdej zmianie).
+```
+// useTheme.js
+import { useEffect, useState } from 'react';
+
+function readTheme() {
+  const saved = localStorage.getItem('devdesk-theme');
+  if (saved === 'light' || saved === 'dark') return saved;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+export function useTheme() {
+  const [theme, setTheme] = useState(readTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme; // synchronizacja z DOM poza Reactem
+    localStorage.setItem('devdesk-theme', theme);   // synchronizacja z localStorage
+  }, [theme]);
+
+  const toggle = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  return { theme, toggle };
+}
+```
+
+#T CODE_TSX Zapamiętywanie motywu (TSX)
+`readTheme` zwraca `Theme` — wartość z localStorage jest sprawdzana, zanim trafi do stanu, więc TypeScript nie potrzebuje rzutowania.
+```
+// useTheme.ts
+import { useEffect, useState } from 'react';
+
+export type Theme = 'light' | 'dark';
+
+function readTheme(): Theme {
+  const saved = localStorage.getItem('devdesk-theme');
+  if (saved === 'light' || saved === 'dark') return saved;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+export function useTheme() {
+  const [theme, setTheme] = useState<Theme>(readTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('devdesk-theme', theme);
+  }, [theme]);
+
+  const toggle = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
+  return { theme, toggle };
+}
+```
+
+#T NOTE JSX ↔ TSX — dane z localStorage
+`localStorage.getItem` w TSX zwraca `string | null`. Porównania `saved === 'light' || saved === 'dark'` zawężają typ do `Theme` — to sprawdzenie w czasie działania, które jednocześnie zadowala kompilator. W JSX łatwo napisać `useState(localStorage.getItem('devdesk-theme') ?? 'light')` i przyjąć do stanu dowolny śmieć zapisany przez starą wersję aplikacji. Zwróć uwagę na `useState(readTheme)` — przekazanie **funkcji** (bez nawiasów) sprawia, że odczyt z localStorage odbywa się tylko raz, przy montowaniu.
+
+#T DEFINITION Dlaczego zapis w efekcie, a nie w handlerze?
+Zapis motywu mógłby być w handlerze `toggle`. Efekt jest lepszy, gdy stan może zmienić się z **wielu miejsc** (przełącznik, panel ustawień, skrót klawiszowy, reset ustawień) — efekt synchronizuje wynik niezależnie od tego, kto go zmienił. Zasada: jeśli „X ma zawsze odpowiadać stanowi Y” — efekt; jeśli „po kliknięciu wyślij Z” — handler.
+
+#T CODE_BASIC Synchronizacja z biblioteką spoza Reacta
+Typowy wzorzec: efekt tworzy obiekt zewnętrznej biblioteki przy montowaniu i niszczy przy odmontowaniu, a drugi efekt aktualizuje go po zmianie danych.
+```
+import { useEffect, useRef } from 'react';
+
+type ChartLike = { update: (data: number[]) => void; destroy: () => void };
+declare function createChart(el: HTMLCanvasElement): ChartLike;
+
+export function TicketsChart({ data }: { data: number[] }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const chartRef = useRef<ChartLike | null>(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const chart = createChart(canvasRef.current);
+    chartRef.current = chart;
+    return () => chart.destroy();
+  }, []);
+
+  useEffect(() => {
+    chartRef.current?.update(data);
+  }, [data]);
+
+  return <canvas ref={canvasRef} width={400} height={200} />;
+}
+```
+
+#T CODE_PRACTICAL Uniwersalny hook stanu zapisywanego w localStorage
+Walidacja przez funkcję `parse` — wartość spoza dozwolonych wraca do domyślnej.
+```
+import { useEffect, useState } from 'react';
+
+export function usePersistentState<T>(key: string, fallback: T, parse: (raw: unknown) => T | null) {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : parse(JSON.parse(raw)) ?? fallback;
+    } catch {
+      return fallback;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(value));
+  }, [key, value]);
+
+  return [value, setValue] as const;
+}
+
+// const [density, setDensity] = usePersistentState('density', 'comfortable',
+//   (raw) => (raw === 'compact' || raw === 'comfortable' ? raw : null));
+```
+
+#T STEP_BY_STEP Budujemy razem: ustawienia przetrwają odświeżenie
+1. Zastąp `ThemeToggle` z rozdziału 03 hookiem `useTheme`; usuń ręczne ustawianie `dataset.theme` z handlera.
+2. Przełącz motyw i odśwież stronę — motyw zostaje.
+3. W DevTools (Application → Local Storage) wpisz ręcznie `devdesk-theme = "niebieski"` i odśwież — aplikacja wraca do motywu systemowego zamiast się psuć.
+4. W `PrefsProvider` zastąp `useState` hookiem `usePersistentState` z walidacją — preferencje gęstości i formatu daty przetrwają odświeżenie.
+5. Dodaj w panelu ustawień przycisk „Przywróć domyślne” — efekt zapisze domyślne wartości bez dodatkowego kodu.
+6. Sprawdź, ile razy wykonuje się zapis: dodaj `console.log` w efekcie i zmień motyw — jeden zapis na zmianę (plus ewentualne podwójne uruchomienie przy montowaniu w StrictMode).
+
+#T PITFALL Odczyt localStorage przy każdym renderze
+`const [theme, setTheme] = useState(localStorage.getItem('theme'))` — wyrażenie w nawiasach jest **wykonywane przy każdym renderze** (choć wynik jest używany tylko raz). Przy kosztownych odczytach (duże JSON-y) to marnowanie czasu. Przekaż funkcję: `useState(() => localStorage.getItem('theme'))` albo `useState(readTheme)`.
+
+#T WHEN_TO_USE Kiedy useEffect jest właściwym narzędziem
+- synchronizacja z DOM poza drzewem Reacta (`document.title`, atrybuty na `<html>`, focus po zmianie danych),
+- zapis do localStorage/sessionStorage, odczyt z nich przy zmianie klucza,
+- subskrypcje (zdarzenia okna, WebSocket, EventSource, `matchMedia`),
+- timery (`setInterval` odświeżający dane),
+- integracja z bibliotekami spoza Reacta (mapy, wykresy, edytory),
+- pobieranie danych (z zastrzeżeniami — rozdział 10).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useEffect(setup, deps)` synchronizuje komponent z systemem zewnętrznym po każdym renderze, w którym zmieniły się zależności. Stan zapisywany w localStorage: odczyt w leniwej inicjalizacji `useState(() => ...)` z walidacją, zapis w efekcie zależnym od wartości. Efekt jest lepszy od handlera, gdy wartość może zmienić się z wielu miejsc. W TSX `getItem` zwraca `string | null`, więc walidacja jest wymuszona.
+
+Kryterium akceptacji: motyw, gęstość tabeli i format daty przetrwają odświeżenie strony, uszkodzona wartość w localStorage nie psuje aplikacji, a „Przywróć domyślne” zapisuje domyślne ustawienia.
