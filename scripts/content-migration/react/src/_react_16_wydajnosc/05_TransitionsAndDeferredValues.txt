@@ -1,0 +1,158 @@
+#T INTRO Rozgrzewka i problem: pisanie zacina się przy dużej tabeli
+Rozgrzewka: Co robi `lazy` i gdzie umieszczasz granicę `Suspense`? Dlaczego nie dzielisz kodu na drobne kawałki? Czym jest priorytet przejścia z rozdziału 15?
+
+Problem: tabela DevDesk z 5000 ticketami filtruje się przy każdym znaku w wyszukiwarce. Nawet po memoizacji render przefiltrowanej tabeli trwa 80–150 ms na słabszym laptopie — więc każdy znak pojawia się w polu z opóźnieniem, a szybkie pisanie gubi litery. W rozdziale 15 poznałeś mechanizm priorytetów; teraz użyjesz go praktycznie: **`useTransition`** i **`useDeferredValue`** pozwalają oznaczyć kosztowną aktualizację jako niepilną, żeby pole tekstowe zawsze reagowało natychmiast.
+
+#T DEFINITION useTransition i useDeferredValue
+- **`const [isPending, startTransition] = useTransition()`** — `startTransition(() => setFilter(v))` oznacza aktualizację jako niepilną: React najpierw wyrenderuje pilne zmiany (pole tekstowe), a kosztowny render zrobi w tle, przerywając go przy kolejnym znaku. `isPending` jest `true`, gdy przejście czeka — możesz przyciemnić tabelę. Używasz, gdy **masz dostęp do settera** wywołującego kosztowną zmianę.
+- **`const deferred = useDeferredValue(value)`** — zwraca „opóźnioną” kopię wartości: przy zmianie `value` React najpierw renderuje z **poprzednią** wartością `deferred` (szybko), a potem w tle — z nową. Używasz, gdy **dostajesz wartość z zewnątrz** (props, stan rodzica) i nie kontrolujesz settera. `value !== deferred` oznacza, że trwa odświeżanie.
+
+Oba mechanizmy nie przyspieszają renderu — sprawiają, że ciężki render **nie blokuje** interakcji.
+
+#T CODE_JSX Filtr z useDeferredValue (JSX)
+Pole korzysta z `query` (pilne), a lista z `deferredQuery` (niepilne). `memo` na liście jest kluczowe: dzięki niemu render z niezmienioną `deferredQuery` jest natychmiastowy.
+```
+// TicketSearch.jsx
+import { memo, useDeferredValue, useState } from 'react';
+
+const FilteredTable = memo(function FilteredTable({ tickets, query }) {
+  const q = query.trim().toLowerCase();
+  const rows = q ? tickets.filter((t) => t.title.toLowerCase().includes(q)) : tickets;
+  return (
+    <table>
+      <tbody>{rows.map((t) => <tr key={t.id}><td>{t.id}</td><td>{t.title}</td></tr>)}</tbody>
+    </table>
+  );
+});
+
+export function TicketSearch({ tickets }) {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const stale = query !== deferredQuery;
+
+  return (
+    <section>
+      <input aria-label="Szukaj ticketów" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <div style={{ opacity: stale ? 0.6 : 1, transition: 'opacity .2s' }} aria-busy={stale}>
+        <FilteredTable tickets={tickets} query={deferredQuery} />
+      </div>
+    </section>
+  );
+}
+```
+
+#T CODE_TSX Filtr z useTransition (TSX)
+Wersja z przejściem: dwa stany — `input` (pilny) i `filter` (niepilny, ustawiany w `startTransition`). Typ `isPending` to `boolean`.
+```
+// TicketSearch.tsx
+import { memo, useState, useTransition } from 'react';
+import type { Ticket } from '../types';
+
+const FilteredTable = memo(function FilteredTable({ tickets, query }: { tickets: readonly Ticket[]; query: string }) {
+  const q = query.trim().toLowerCase();
+  const rows = q ? tickets.filter((t) => t.title.toLowerCase().includes(q)) : tickets;
+  return (
+    <table>
+      <tbody>{rows.map((t) => <tr key={t.id}><td>{t.id}</td><td>{t.title}</td></tr>)}</tbody>
+    </table>
+  );
+});
+
+export function TicketSearch({ tickets }: { tickets: readonly Ticket[] }) {
+  const [input, setInput] = useState('');
+  const [filter, setFilter] = useState('');
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <section>
+      <input
+        aria-label="Szukaj ticketów"
+        value={input}
+        onChange={(e) => {
+          setInput(e.target.value);
+          startTransition(() => setFilter(e.target.value));
+        }}
+      />
+      <div style={{ opacity: isPending ? 0.6 : 1, transition: 'opacity .2s' }} aria-busy={isPending}>
+        <FilteredTable tickets={tickets} query={filter} />
+      </div>
+    </section>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — dwa narzędzia, ten sam efekt
+W obu wersjach różnica między `useDeferredValue` a `useTransition` jest architektoniczna, nie językowa: przejście wymaga dostępu do settera (dwa stany), wartość odroczona działa na gotowej wartości (np. z props albo adresu URL). W TSX `useDeferredValue<T>` zachowuje typ wartości, a `startTransition` przyjmuje funkcję bez argumentów zwracającą `void` (albo obietnicę — przejścia asynchroniczne w React 19, rozdział 17). Uwaga wspólna dla obu wersji: bez `memo` (lub React Compiler) komponent listy renderowałby się także przy pilnym renderze ze starą wartością, więc zysk byłby mniejszy.
+
+#T DEFINITION Przejścia a Suspense i nawigacja
+Przejścia mają drugie ważne zastosowanie: gdy aktualizacja w `startTransition` powoduje zawieszenie (`Suspense` — ładowanie leniwego komponentu lub danych), React **zostawia na ekranie poprzedni widok** zamiast pokazywać fallback. Dlatego przełączanie zakładek z leniwie ładowaną treścią w przejściu nie „miga” skeletonem. Nawigacja React Router jest domyślnie realizowana jako przejście.
+
+#T CODE_BASIC Zakładki bez migania fallbacku
+```
+import { lazy, Suspense, useState, useTransition } from 'react';
+
+const ActivityTab = lazy(() => import('./ActivityTab'));
+const HistoryTab = lazy(() => import('./HistoryTab'));
+
+type TabId = 'details' | 'activity' | 'history';
+
+export function TicketTabs({ description }: { description: string }) {
+  const [tab, setTab] = useState<TabId>('details');
+  const [isPending, startTransition] = useTransition();
+
+  const select = (next: TabId) => startTransition(() => setTab(next));
+
+  return (
+    <div className={isPending ? 'tabs tabs--pending' : 'tabs'}>
+      <button type="button" onClick={() => select('details')}>Szczegóły</button>
+      <button type="button" onClick={() => select('activity')}>Aktywność</button>
+      <button type="button" onClick={() => select('history')}>Historia</button>
+      <Suspense fallback={<p>Wczytywanie…</p>}>
+        {tab === 'details' && <p>{description}</p>}
+        {tab === 'activity' && <ActivityTab />}
+        {tab === 'history' && <HistoryTab />}
+      </Suspense>
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Wartość z adresu URL odroczona dla ciężkiego wykresu
+Filtry w adresie (rozdział 12) zmieniają się szybko przy klikaniu; wykres renderuje się z wartością odroczoną, więc klikanie w filtry pozostaje płynne.
+```
+import { memo, useDeferredValue } from 'react';
+import { useSearchParams } from 'react-router';
+
+const HeavyChart = memo(function HeavyChart({ range }: { range: string }) {
+  const start = performance.now();
+  while (performance.now() - start < 120) { /* symulacja kosztownego wykresu */ }
+  return <figure aria-label={`Wykres: ${range}`}>Wykres dla zakresu {range}</figure>;
+});
+
+export function ReportsChart() {
+  const [params] = useSearchParams();
+  const range = params.get('range') ?? '30d';
+  const deferredRange = useDeferredValue(range);
+  return (
+    <div aria-busy={range !== deferredRange} className={range !== deferredRange ? 'is-refreshing' : undefined}>
+      <HeavyChart range={deferredRange} />
+    </div>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: płynne wyszukiwanie przy 5000 ticketach
+1. Wygeneruj 5000 ticketów i podłącz filtr bezpośrednio do pola (bez przejścia); w DevTools ustaw spowolnienie CPU ×4 i pisz szybko — zapisz odczucia i czasy w Profilerze.
+2. Dodaj `useDeferredValue` z `memo` na tabeli — pole reaguje natychmiast, tabela dogania po chwili, przyciemniona w trakcie.
+3. Przepisz na wariant z `useTransition` i porównaj kod obu wersji; wybierz jedną dla DevDesk i uzasadnij w komentarzu.
+4. Przełącz zakładki ticketu z leniwie ładowaną treścią w przejściu — zamiast fallbacku zostaje poprzednia zakładka z oznaczeniem `tabs--pending`.
+5. Dodaj odroczoną wartość dla wykresu na ekranie raportów (filtry zakresu w adresie).
+6. Nagraj Profiler: w commitach pilnych renderuje się tylko pole tekstowe, a tabela w osobnych, przerywanych renderach.
+
+#T PITFALL Przejście jako zamiennik debounce
+`startTransition` nie zmniejsza liczby renderów ani żądań sieciowych — każdy znak nadal uruchamia (przerywalny) render. Jeśli filtr wysyła zapytanie do API, nadal potrzebujesz opóźnienia (debounce, rozdział 07) albo klucza zapytania z wartością odroczoną. Przejścia rozwiązują problem blokowania interakcji przez **render**, a debounce — problem **zbyt wielu operacji**.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useTransition` oznacza aktualizację jako niepilną (`startTransition(() => setX(...))`) i daje `isPending`; `useDeferredValue` daje opóźnioną kopię wartości z zewnątrz. Pilne zmiany (pole tekstowe) renderują się od razu, a kosztowny render dzieje się w tle i jest przerywany przy kolejnej interakcji — pod warunkiem, że ciężki komponent jest memoizowany. Przejścia zostawiają stary widok zamiast fallbacku `Suspense`. Nie zastępują debounce dla żądań sieciowych.
+
+Kryterium akceptacji: przy 5000 ticketach i spowolnionym CPU pisanie w wyszukiwarce jest płynne (Profiler: pilne commity dotyczą tylko pola), tabela jest przyciemniona podczas odświeżania, a przełączanie zakładek z leniwą treścią nie pokazuje fallbacku.

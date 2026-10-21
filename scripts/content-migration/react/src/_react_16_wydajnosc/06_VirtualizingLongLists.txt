@@ -1,0 +1,181 @@
+#T INTRO Rozgrzewka i problem: 10 000 wierszy w DOM
+Rozgrzewka: Czym różni się `useTransition` od `useDeferredValue`? Dlaczego bez `memo` przejście daje mniejszy zysk? Czy przejście zastępuje debounce?
+
+Problem: panel „Aktywność” z rozdziału 10 doładowuje kolejne zdarzenia przy przewijaniu — po godzinie pracy ma 10 000 wierszy. Nawet jeśli nic się nie renderuje, przeglądarka trzyma 10 000 węzłów DOM: przewijanie zaczyna się zacinać, zużycie pamięci rośnie, a każda zmiana stylu (np. przełączenie motywu) liczy układ dla wszystkich elementów. Memoizacja tu nie pomoże — problemem jest **liczba węzłów DOM**. Rozwiązaniem jest **wirtualizacja**: renderowanie tylko tych wierszy, które są widoczne (plus mały zapas).
+
+#T DEFINITION Wirtualizacja (windowing)
+Lista wirtualna:
+1. ma kontener przewijania o stałej wysokości,
+2. wewnątrz — element „rozpychacz” o wysokości **całej** listy (np. 10 000 × 40 px), żeby pasek przewijania działał jak dla pełnej listy,
+3. na podstawie pozycji przewinięcia wylicza, które indeksy są widoczne (np. 120–140), i renderuje tylko je, pozycjonując absolutnie (`transform: translateY(...)`) w odpowiednich miejscach,
+4. przy przewijaniu podmienia renderowane elementy.
+
+W DOM jest stale kilkadziesiąt węzłów zamiast tysięcy. Biblioteka **TanStack Virtual** (`@tanstack/react-virtual`) robi to bez narzucania wyglądu (headless, rozdział 09): hook `useVirtualizer` zwraca listę elementów do wyrenderowania z ich pozycjami.
+
+#T CODE_JSX Lista aktywności z TanStack Virtual (JSX)
+```
+// VirtualActivityList.jsx
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useRef } from 'react';
+
+export function VirtualActivityList({ items }) {
+  const parentRef = useRef(null);
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 44,   // przewidywana wysokość wiersza w px
+    overscan: 8,              // zapas wierszy poza widokiem (płynniejsze przewijanie)
+  });
+
+  return (
+    <div ref={parentRef} className="activity-scroll" style={{ height: 480, overflow: 'auto' }}>
+      <ul style={{ height: virtualizer.getTotalSize(), position: 'relative', margin: 0, padding: 0 }}>
+        {virtualizer.getVirtualItems().map((row) => {
+          const item = items[row.index];
+          return (
+            <li
+              key={item.id}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: row.size, transform: `translateY(${row.start}px)` }}
+            >
+              {item.text}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Lista aktywności z TanStack Virtual (TSX)
+Generyki hooka typują element przewijania (`HTMLDivElement`) i element listy; `row` ma pola `index`, `start`, `size`, `key`.
+```
+// VirtualActivityList.tsx
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useRef } from 'react';
+
+type ActivityItem = { id: number; text: string };
+
+export function VirtualActivityList({ items }: { items: readonly ActivityItem[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLLIElement>({
+    count: items.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 44,
+    overscan: 8,
+  });
+
+  return (
+    <div ref={parentRef} className="activity-scroll" style={{ height: 480, overflow: 'auto' }}>
+      <ul style={{ height: virtualizer.getTotalSize(), position: 'relative', margin: 0, padding: 0 }}>
+        {virtualizer.getVirtualItems().map((row) => {
+          const item = items[row.index];
+          return (
+            <li
+              key={item.id}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: row.size, transform: `translateY(${row.start}px)` }}
+            >
+              {item.text}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — headless hook z generykami
+`useVirtualizer<TScrollElement, TItemElement>` to kolejny przykład biblioteki headless, w której TSX dodaje kontrolę typów elementów: ref przekazany jako element przewijania musi pasować do pierwszego generyka, a `measureElement` (dla wierszy o zmiennej wysokości, niżej) — do drugiego. Indeks `row.index` jest liczbą, a `items[row.index]` w TSX ma typ elementu (przy włączonej opcji `noUncheckedIndexedAccess` byłby `ActivityItem | undefined`, co wymusza obsługę brzegów). Sam mechanizm wirtualizacji działa identycznie w JSX.
+
+#T DEFINITION Zmienna wysokość wierszy
+Gdy wiersze mają różną wysokość (zdarzenie z długim komentarzem), `estimateSize` jest tylko przybliżeniem. Ref callback `measureElement` przekazany na element wiersza (z atrybutem `data-index`) pozwala bibliotece zmierzyć rzeczywistą wysokość po renderze i poprawić pozycje. Pozycjonowanie przez `transform` zamiast `top` jest szybsze (nie wywołuje przeliczenia układu).
+
+#T CODE_BASIC Wiersze o zmiennej wysokości
+```
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useRef } from 'react';
+
+type Comment = { id: number; author: string; text: string };
+
+export function VirtualComments({ comments }: { comments: readonly Comment[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
+    count: comments.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80,
+  });
+
+  return (
+    <div ref={parentRef} style={{ height: 520, overflow: 'auto' }}>
+      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualizer.getVirtualItems().map((row) => (
+          <article
+            key={row.key}
+            data-index={row.index}
+            ref={virtualizer.measureElement}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${row.start}px)` }}
+          >
+            <strong>{comments[row.index].author}</strong>
+            <p>{comments[row.index].text}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Wirtualizacja z doładowaniem kolejnych stron
+Połączenie z `useInfiniteQuery` (rozdział 10): gdy ostatni renderowany wiersz zbliża się do końca załadowanych danych, pobierz następną stronę.
+```
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useEffect, useRef } from 'react';
+
+type Item = { id: number; text: string };
+
+export function InfiniteVirtualList({ items, hasNextPage, isFetchingNextPage, fetchNextPage }: {
+  items: readonly Item[]; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => void;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: hasNextPage ? items.length + 1 : items.length, // dodatkowy wiersz „ładowanie…”
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 44,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
+  const lastIndex = virtualItems.at(-1)?.index ?? 0;
+
+  useEffect(() => {
+    if (lastIndex >= items.length - 1 && hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [lastIndex, items.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  return (
+    <div ref={parentRef} style={{ height: 480, overflow: 'auto' }}>
+      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+        {virtualItems.map((row) => (
+          <div key={row.key} style={{ position: 'absolute', top: 0, width: '100%', height: row.size, transform: `translateY(${row.start}px)` }}>
+            {row.index < items.length ? items[row.index].text : 'Wczytywanie…'}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: wirtualna lista aktywności
+1. Wygeneruj w MSW 10 000 zdarzeń aktywności i wyświetl je zwykłą listą — w DevTools (Elements) policz węzły, a w Performance nagraj przewijanie.
+2. Zainstaluj `@tanstack/react-virtual` i przepisz listę na `VirtualActivityList` — w DOM jest kilkadziesiąt elementów `li`, przewijanie jest płynne.
+3. Dodaj zdarzenia o różnej długości tekstu i przejdź na `measureElement`.
+4. Połącz z `useInfiniteQuery` (strony po 100 zdarzeń) według wzoru `InfiniteVirtualList`.
+5. Sprawdź dostępność: dodaj `role="feed"` lub zachowaj semantykę listy, a przy nawigacji klawiaturą upewnij się, że fokusowany element nie znika z DOM podczas przewijania (biblioteka renderuje zapas `overscan`; przy przechodzeniu Tab między wierszami użyj `virtualizer.scrollToIndex`).
+6. Zastanów się nad tabelą ticketów: czy przy paginacji serwerowej (12–50 wierszy) wirtualizacja jest potrzebna? Zapisz decyzję.
+
+#T PITFALL Wirtualizacja tam, gdzie wystarczy paginacja
+Wirtualizacja komplikuje kod (stała wysokość kontenera, pozycjonowanie, pomiary), utrudnia wyszukiwanie na stronie (Ctrl+F nie znajdzie niewyrenderowanych wierszy), drukowanie i dostępność. Dla tabel, które ludzie przeglądają wyrywkowo z filtrami, paginacja serwerowa (rozdział 10) jest prostsza i zwykle lepsza. Wirtualizuj długie strumienie (logi, aktywność, czaty) i tabele, w których użytkownik naprawdę przewija tysiące wierszy.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Problem bardzo długich list to liczba węzłów DOM, nie liczba renderów — memoizacja go nie rozwiąże. Wirtualizacja renderuje tylko widoczne wiersze (z zapasem) w kontenerze przewijania z „rozpychaczem” o pełnej wysokości. TanStack Virtual (`useVirtualizer`) to headless hook zwracający elementy do wyrenderowania z pozycjami; `measureElement` obsługuje zmienną wysokość, a połączenie z `useInfiniteQuery` — doładowywanie. Wirtualizuj strumienie i naprawdę długie listy; dla tabel z filtrami wybieraj paginację. W TSX generyki hooka typują elementy przewijania i wierszy.
+
+Kryterium akceptacji: lista 10 000 zdarzeń aktywności ma w DOM kilkadziesiąt węzłów i płynne przewijanie (zmierzone w Performance), obsługuje zmienną wysokość i doładowywanie stron, a decyzja „wirtualizacja czy paginacja” dla tabeli ticketów jest uzasadniona w komentarzu.

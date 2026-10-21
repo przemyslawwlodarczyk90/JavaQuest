@@ -1,0 +1,136 @@
+#T INTRO Rozgrzewka i problem: użytkownik pobiera kod, którego nie użyje
+Rozgrzewka: Co robi React Compiler i kiedy pomija komponent? Kiedy ręczna memoizacja nadal ma sens? Dlaczego mierzysz na buildzie produkcyjnym?
+
+Problem: po `npm run build` główny plik JavaScript DevDesk waży kilkaset kilobajtów: tabela, formularze, ale też ekran raportów z biblioteką wykresów, edytor opisu, panel administracji i Storybook-owe pomocniki. Agent, który tylko obsługuje tickety, pobiera i parsuje kod raportów przy każdym wejściu. Rozwiązaniem jest **dzielenie kodu** (code splitting): ekrany i ciężkie komponenty ładowane dopiero wtedy, gdy są potrzebne — przez `lazy` i `Suspense`.
+
+#T DEFINITION lazy i Suspense
+- **`lazy(() => import('./ReportsPage'))`** tworzy komponent, którego kod jest pobierany przy pierwszym renderze. Funkcja zwraca dynamiczny `import()` — Vite tworzy dla tego modułu **osobny plik (chunk)**. Moduł musi mieć eksport domyślny z komponentem (albo mapujesz eksport nazwany: `.then((m) => ({ default: m.ReportsPage }))`).
+- **`<Suspense fallback={...}>`** wyświetla `fallback`, dopóki komponenty w jego wnętrzu „czekają” (ładowanie kodu, a w React 19 także dane przez `use` — rozdział 17). Gdy wszystko jest gotowe, pokazuje treść.
+
+`lazy` wywołujesz na poziomie modułu (nie w komponencie — inaczej przy każdym renderze powstałby nowy komponent i stan by się resetował).
+
+#T CODE_JSX Ekrany ładowane na żądanie (JSX)
+```
+// router.jsx
+import { lazy, Suspense } from 'react';
+import { createBrowserRouter } from 'react-router';
+import { AppLayout } from './AppLayout';
+import { TicketsPage } from './pages/TicketsPage'; // główny ekran — w pakiecie startowym
+
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+
+function PageFallback() {
+  return <div className="page-skeleton" aria-busy="true" aria-label="Wczytywanie ekranu" />;
+}
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <AppLayout />,
+    children: [
+      { path: 'tickets', element: <TicketsPage /> },
+      { path: 'reports', element: <Suspense fallback={<PageFallback />}><ReportsPage /></Suspense> },
+      { path: 'admin', element: <Suspense fallback={<PageFallback />}><AdminPage /></Suspense> },
+    ],
+  },
+]);
+```
+
+#T CODE_TSX Ekrany ładowane na żądanie (TSX)
+TypeScript sprawdza, że moduł ładowany przez `import()` ma właściwy eksport, a komponent z `lazy` zachowuje typ props oryginału.
+```
+// router.tsx
+import { lazy, Suspense } from 'react';
+import { createBrowserRouter } from 'react-router';
+import { AppLayout } from './AppLayout';
+import { TicketsPage } from './pages/TicketsPage';
+
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })));
+
+function PageFallback() {
+  return <div className="page-skeleton" aria-busy="true" aria-label="Wczytywanie ekranu" />;
+}
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <AppLayout />,
+    children: [
+      { path: 'tickets', element: <TicketsPage /> },
+      { path: 'reports', element: <Suspense fallback={<PageFallback />}><ReportsPage /></Suspense> },
+      { path: 'admin', element: <Suspense fallback={<PageFallback />}><AdminPage /></Suspense> },
+    ],
+  },
+]);
+```
+
+#T NOTE JSX ↔ TSX — typ modułu w dynamicznym imporcie
+W TSX `import('./pages/AdminPage')` ma typ modułu, więc literówka w nazwie eksportu (`m.AdmnPage`) albo brak eksportu domyślnego dla `lazy(() => import(...))` jest błędem kompilacji. Komponent zwrócony przez `lazy` ma typ `LazyExoticComponent` z props oryginału — przekazanie złych props jest sprawdzane jak dla zwykłego komponentu. W JSX te błędy pojawią się dopiero przy pierwszym wejściu na ekran (błąd ładowania w konsoli albo pusty ekran) — łatwo je przeoczyć, jeśli ekran jest rzadko odwiedzany.
+
+#T DEFINITION Lazy w routerze: route.lazy
+React Router ma własny mechanizm leniwego ładowania tras: właściwość `lazy` w obiekcie trasy zwraca obietnicę z polami trasy (`Component`, `loader`, `action`, `ErrorBoundary`). Router pobiera kod trasy **równolegle z danymi** loadera i nie potrzebuje osobnego `Suspense`. To zwykle lepsze rozwiązanie dla całych ekranów; `React.lazy` + `Suspense` sprawdza się dla ciężkich komponentów wewnątrz ekranu (edytor, wykres, mapa).
+
+#T CODE_BASIC Trasa z route.lazy
+```
+import { createBrowserRouter } from 'react-router';
+
+export const router = createBrowserRouter([
+  {
+    path: '/reports',
+    lazy: async () => {
+      const mod = await import('./pages/ReportsPage');
+      return { Component: mod.default, loader: mod.reportsLoader };
+    },
+  },
+]);
+```
+
+#T CODE_PRACTICAL Ciężki komponent ładowany po interakcji i wstępne pobieranie
+Edytor opisu z dużą biblioteką ładuje się dopiero po kliknięciu „Edytuj”. Wstępne pobieranie (`preload`) przy najechaniu na przycisk sprawia, że po kliknięciu kod zwykle już jest.
+```
+import { lazy, Suspense, useState } from 'react';
+
+const loadEditor = () => import('./RichEditor');
+const RichEditor = lazy(loadEditor);
+
+export function DescriptionSection({ text }: { text: string }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <section>
+      {editing ? (
+        <Suspense fallback={<p aria-busy="true">Wczytywanie edytora…</p>}>
+          <RichEditor value={text} onChange={() => {}} />
+        </Suspense>
+      ) : (
+        <>
+          <p>{text}</p>
+          <button type="button" onMouseEnter={() => void loadEditor()} onFocus={() => void loadEditor()} onClick={() => setEditing(true)}>
+            Edytuj
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+```
+
+#T DEFINITION Granica Suspense: gdzie umieścić fallback
+Jedna granica `Suspense` wysoko (wokół całej aplikacji) oznacza, że ładowanie dowolnego leniwego kawałka zastępuje **cały ekran** spinnerem. Granice bliżej leniwego komponentu dają lepsze doświadczenie: nagłówek i menu zostają, a placeholder pojawia się tylko w miejscu ładowanej części. Przy przejściach (`startTransition`, nawigacja routera) React może też **zostawić stary ekran** zamiast pokazywać fallback — co zwykle jest lepsze dla użytkownika. Błąd ładowania chunka (np. po wdrożeniu nowej wersji) łapie granica błędu (rozdział 19) — warto pokazać „Odśwież stronę, dostępna jest nowa wersja”.
+
+#T STEP_BY_STEP Budujemy razem: dzielenie kodu DevDesk
+1. Zbuduj aplikację (`npm run build`) i zanotuj rozmiar plików JS w katalogu `dist/assets` (Vite wypisuje je w terminalu z rozmiarem po kompresji gzip).
+2. Przenieś ekrany „Raporty”, „Administracja” i „Ustawienia” na leniwe ładowanie (`route.lazy` w routerze albo `React.lazy` + `Suspense`).
+3. Zbuduj ponownie — pojawiają się osobne pliki dla ekranów, a plik startowy jest mniejszy; zanotuj różnicę.
+4. W zakładce Network przeglądarki sprawdź, że plik ekranu raportów pobiera się dopiero przy wejściu na `/reports`.
+5. Zrób edytor opisu ładowany po kliknięciu „Edytuj” z wstępnym pobieraniem przy najechaniu i fokusie.
+6. Ustaw fallback blisko leniwego elementu (skeleton strony w obszarze treści, nie na całą aplikację) i sprawdź na wolnej sieci (Slow 4G).
+
+#T PITFALL Dzielenie wszystkiego na drobne kawałki
+Leniwe ładowanie każdego małego komponentu (przycisk, plakietka) tworzy dziesiątki małych żądań i „kaskadę” ładowania — komponent A ładuje się, renderuje B, które dopiero wtedy zaczyna się ładować. Dziel na granicach, które mają sens: ekrany (trasy), ciężkie i rzadko używane funkcje (edytor, wykresy, eksport PDF, panel administracji). Główną ścieżkę użytkownika zostaw w pakiecie startowym.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`lazy(() => import(...))` tworzy komponent ładowany przy pierwszym renderze (osobny chunk), a `<Suspense fallback>` pokazuje zastępczy widok podczas ładowania. Dla całych ekranów React Router oferuje `route.lazy` (kod i dane ładowane równolegle), a dla ciężkich komponentów — `React.lazy` z granicą `Suspense` blisko komponentu i wstępnym pobieraniem przy najechaniu lub fokusie. Dziel kod na sensownych granicach, nie na drobne kawałki. W TSX dynamiczny import ma typ modułu, więc błędy eksportu wykrywasz przy kompilacji.
+
+Kryterium akceptacji: ekrany raportów, administracji i ustawień ładują się dopiero przy wejściu (osobne pliki widoczne w buildzie i w Network), plik startowy jest mniejszy niż przed zmianą (zanotowane rozmiary), a edytor opisu ładuje się po kliknięciu z wstępnym pobieraniem.
