@@ -1,0 +1,133 @@
+#T INTRO Rozgrzewka i problem: skąd te 900 kilobajtów?
+Rozgrzewka: Kiedy wirtualizacja jest lepsza od paginacji? Dlaczego problemem długiej listy jest liczba węzłów DOM? Jak `lazy` tworzy osobny plik?
+
+Problem: po podzieleniu kodu na ekrany plik startowy DevDesk nadal jest duży. Nie wiesz, co go wypełnia: Twój kod, React, a może biblioteka dat, której używasz w jednym miejscu, albo cała biblioteka ikon zaimportowana dla trzech ikonek? Bez narzędzia to zgadywanie. Ta lekcja: **analiza pakietu** (bundle) — wizualizacja, co zajmuje miejsce — oraz techniki zmniejszania: tree shaking, lżejsze zależności, dzielenie bibliotek dostawców.
+
+#T DEFINITION Co trafia do pakietu i jak to zmierzyć
+Narzędzie budowania (Vite) łączy Twój kod i zależności w pliki JS. Do pakietu trafia każdy moduł, do którego prowadzi łańcuch importów z punktu wejścia — także wtedy, gdy używasz małej części biblioteki, jeśli biblioteka nie pozwala na **tree shaking** (usunięcie nieużywanego kodu).
+
+Mierzysz:
+- **rozmiar po kompresji** (gzip/brotli) — tyle pobiera przeglądarka; Vite wypisuje go w terminalu po `npm run build`,
+- **rozmiar przed kompresją** — tyle JavaScriptu przeglądarka musi sparsować i wykonać (ważne na słabszych telefonach),
+- **wizualizację** — mapę prostokątów (treemap), w której wielkość pola odpowiada rozmiarowi modułu: narzędzia takie jak `rollup-plugin-visualizer` (działa jako wtyczka Vite) albo `vite-bundle-visualizer` (bez zmian w konfiguracji).
+
+#T STEP_BY_STEP Wizualizacja pakietu DevDesk
+1. Uruchom bez instalacji: `npx vite-bundle-visualizer` — otworzy się raport z mapą pakietu w przeglądarce.
+2. Alternatywnie dodaj wtyczkę `rollup-plugin-visualizer` w `vite.config` (np. z opcją generowania pliku `stats.html` przy buildzie) — raport tworzy się przy każdym `npm run build`.
+3. Najedź na największe prostokąty: zobaczysz, które moduły i biblioteki zajmują miejsce w każdym pliku.
+4. Zanotuj trzy największe zależności i to, w ilu miejscach kodu są używane.
+5. Sprawdź, które biblioteki trafiają do pliku startowego, choć są używane tylko na jednym ekranie (kandydaci do przeniesienia za `lazy`).
+
+#T DEFINITION Tree shaking i jak go nie zepsuć
+Tree shaking działa na **modułach ES** (`import`/`export`): narzędzie widzi, które eksporty są używane, i pomija resztę. Psują go:
+- biblioteki w formacie CommonJS (`require`) — trafiają do pakietu w całości,
+- import całej przestrzeni nazw i dynamiczny dostęp (`import * as icons from '…'; icons[name]`),
+- moduły z efektami ubocznymi przy imporcie (biblioteka bez `"sideEffects": false` w `package.json` musi zostać zachowana, bo „coś może robić” przy załadowaniu),
+- importy przez „beczki” (`index.ts` reeksportujący wszystko) w starszych narzędziach.
+
+Dobre praktyki: importy nazwane (`import { format } from 'date-fns'`), biblioteki w wersji ESM (`lodash-es` zamiast `lodash`), ikony importowane pojedynczo.
+
+#T CODE_JSX Import, który ciągnie całą bibliotekę (JSX)
+```
+// ŹLE (koncepcyjnie): cała biblioteka narzędzi i wszystkie ikony
+// import _ from 'lodash';
+// import * as Icons from 'some-icon-library';
+// const sorted = _.sortBy(tickets, 'createdAt');
+// const Icon = Icons[iconName];
+
+// DOBRZE: tylko potrzebne funkcje i ikony, natywne API zamiast biblioteki
+export function sortByCreated(tickets) {
+  return tickets.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+const dateFormat = new Intl.DateTimeFormat('pl-PL', { dateStyle: 'medium', timeStyle: 'short' });
+export const formatDate = (iso) => dateFormat.format(new Date(iso)); // zamiast biblioteki do dat dla prostego formatowania
+
+const relative = new Intl.RelativeTimeFormat('pl-PL', { numeric: 'auto' });
+export const daysAgo = (iso) => relative.format(-Math.round((Date.now() - Date.parse(iso)) / 86_400_000), 'day');
+```
+
+#T CODE_TSX Mapa ikon zamiast dynamicznego dostępu (TSX)
+Zamiast importu całej biblioteki ikon i wyboru po nazwie — jawna mapa kilku ikon. Typ klucza pilnuje, żeby nie użyć ikony spoza mapy.
+```
+// StatusIcon.tsx
+import type { TicketStatus } from '../types';
+
+// każda ikona to mały komponent SVG (lub pojedynczy import z biblioteki ikon)
+function CircleIcon() { return <svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="currentColor" /></svg>; }
+function ClockIcon() { return <svg width="12" height="12" aria-hidden="true"><path d="M6 1v5l3 2" stroke="currentColor" fill="none" /></svg>; }
+function CheckIcon() { return <svg width="12" height="12" aria-hidden="true"><path d="M1 6l3 3 7-7" stroke="currentColor" fill="none" /></svg>; }
+
+const ICONS: Record<TicketStatus, () => React.JSX.Element> = {
+  OPEN: CircleIcon,
+  IN_PROGRESS: ClockIcon,
+  CLOSED: CheckIcon,
+};
+
+export function StatusIcon({ status }: { status: TicketStatus }) {
+  const Icon = ICONS[status];
+  return <Icon />;
+}
+```
+
+#T NOTE JSX ↔ TSX — typy nie trafiają do pakietu
+Typy TypeScript i `import type` są usuwane przy budowaniu — nie zwiększają pakietu ani o bajt. Dlatego w TSX warto importować typy przez `import type { ... }`: narzędzie od razu wie, że moduł nie jest potrzebny w czasie działania (przy opcji `verbatimModuleSyntax` to wręcz wymagane). Paczki `@types/...` to zależności deweloperskie i również nie trafiają do przeglądarki. Rozmiar pakietu w wersji JSX i TSX tej samej aplikacji jest praktycznie identyczny.
+
+#T DEFINITION Dzielenie bibliotek dostawców (vendor chunks)
+Oprócz podziału na ekrany (`lazy`) narzędzie budowania dzieli kod automatycznie: moduły wspólne dla kilku leniwych ekranów trafiają do wspólnych plików. Możesz też ręcznie wydzielić duże, rzadko zmieniane biblioteki (React, router, biblioteka danych) do osobnego pliku — po wdrożeniu nowej wersji aplikacji przeglądarka pobierze ponownie tylko zmieniony kod aplikacji, a plik bibliotek zostanie w pamięci podręcznej (nazwy plików zawierają skrót zawartości). Konfiguracja zależy od wersji narzędzia (opcje podziału wyjścia w `build` konfiguracji Vite) — zacznij od domyślnych ustawień i zmieniaj tylko na podstawie analizy.
+
+#T CODE_BASIC Budżet rozmiaru w CI
+Prosty skrypt sprawdzający, że plik startowy nie przekroczył budżetu — zatrzyma pull request, który przypadkiem doda ciężką bibliotekę.
+```
+// scripts/check-bundle-size.ts (uruchamiany po npm run build, np. przez tsx lub node --experimental-strip-types)
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
+
+const BUDGET_KB = 180;
+const dir = 'dist/assets';
+const entries = readdirSync(dir).filter((f) => /^index-.*\.js$/.test(f));
+
+for (const file of entries) {
+  const path = join(dir, file);
+  const gzKb = gzipSync(readFileSync(path)).length / 1024;
+  console.log(`${file}: ${(statSync(path).size / 1024).toFixed(0)} KB, gzip ${gzKb.toFixed(0)} KB`);
+  if (gzKb > BUDGET_KB) {
+    console.error(`Przekroczony budżet ${BUDGET_KB} KB (gzip) dla ${file}`);
+    process.exitCode = 1;
+  }
+}
+```
+
+#T CODE_PRACTICAL Ciężka biblioteka tylko tam, gdzie potrzebna
+Biblioteka do eksportu PDF ładowana dynamicznie w handlerze — nie trafia do żadnego pakietu ekranu, dopóki użytkownik nie kliknie „Eksportuj PDF”.
+```
+type Ticket = { id: number; title: string };
+
+export async function exportTicketsPdf(tickets: readonly Ticket[]) {
+  const { buildPdf } = await import('./pdf/buildPdf'); // osobny plik, pobierany przy pierwszym użyciu
+  const blob = await buildPdf(tickets);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'tickety.pdf';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: odchudzanie pakietu DevDesk
+1. Wygeneruj raport wizualizacji i zapisz rozmiary plików (przed).
+2. Zastąp biblioteki używane do prostych rzeczy natywnymi API: formatowanie dat — `Intl.DateTimeFormat` i `Intl.RelativeTimeFormat`, sortowanie i grupowanie — metody tablic, kopie obiektów — `structuredClone`.
+3. Zamień importy przestrzeni nazw ikon na pojedyncze importy lub mapę ikon.
+4. Przenieś ciężkie biblioteki używane w jednym miejscu (wykresy, PDF, edytor) za dynamiczny `import()`.
+5. Dodaj skrypt budżetu rozmiaru i uruchom go po buildzie.
+6. Wygeneruj raport ponownie i porównaj rozmiar pliku startowego po kompresji — zapisz wynik w README projektu.
+
+#T PITFALL Optymalizacja bajtów zamiast czasu
+Zmniejszenie pakietu o 3 KB, które kosztuje dzień pracy i komplikuje kod, rzadko ma znaczenie. Patrz na największe pozycje w raporcie (zwykle jedna-dwie biblioteki odpowiadają za większość) i na to, co jest w **pliku startowym** (blokuje pierwsze wyświetlenie). Kod leniwych ekranów pobierany w tle jest mniej krytyczny. Mierz efekt w prawdziwych wskaźnikach (następna lekcja), nie tylko w kilobajtach.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Analiza pakietu (np. `vite-bundle-visualizer`, `rollup-plugin-visualizer`) pokazuje, które moduły zajmują miejsce; liczy się rozmiar po kompresji (pobieranie) i przed nią (parsowanie). Tree shaking wymaga modułów ES, importów nazwanych i bibliotek bez efektów ubocznych przy imporcie. Proste rzeczy zastępuj natywnymi API (`Intl`, metody tablic), ciężkie biblioteki ładuj dynamicznie tam, gdzie są potrzebne, a budżet rozmiaru pilnuj w CI. Typy i `import type` nie zwiększają pakietu.
+
+Kryterium akceptacji: masz raport pakietu przed i po zmianach, plik startowy DevDesk jest mniejszy (zapisane rozmiary po kompresji), ciężkie biblioteki są ładowane dynamicznie, a skrypt budżetu kończy się błędem po przekroczeniu limitu.
