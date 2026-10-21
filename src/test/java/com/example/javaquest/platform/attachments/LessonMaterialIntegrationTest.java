@@ -53,6 +53,50 @@ class LessonMaterialIntegrationTest {
     @Autowired LessonMaterialRepository materials;
     @Autowired LessonMaterialService service;
     @Autowired PlatformTransactionManager transactions;
+    @Autowired org.springframework.context.ApplicationContext context;
+    @Autowired com.example.javaquest.platform.chapter.LessonRepository lessons;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Test void materialsSurviveTheStartupContentRefresh() throws Exception {
+        String alice = login(), bob = login();
+        var lesson = lessons.findByChapterSlugAndSlug("_01_fundamentals", "00_JavaPlatformBasics").orElseThrow();
+        Long lessonId = lesson.getId();
+        long lessonCount = lessons.count();
+        byte[] bytes = "notatki po restarcie".getBytes(StandardCharsets.UTF_8);
+        JsonNode link = read(mvc.perform(post(BASE + "/links").header("Authorization", auth(alice))
+                .contentType(MediaType.APPLICATION_JSON).content(body("Trwały link", "https://example.org/restart")))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode attachment = read(mvc.perform(multipart(BASE + "/attachments")
+                .file(new MockMultipartFile("file", "notatki.txt", "text/plain", bytes))
+                .header("Authorization", auth(alice))).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+
+        // The same initialization sequence as on a subsequent application startup.
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(context.getBean("contentReset"), "reset");
+        jdbc.update("update lessons set title = ? where id = ?", "Stary tytuł", lessonId);
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(context.getBean("contentSeeder"), "seed");
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(context.getBean("contentBootstrap"), "init");
+
+        var restored = lessons.findByChapterSlugAndSlug("_01_fundamentals", "00_JavaPlatformBasics").orElseThrow();
+        assertThat(restored.getId()).isEqualTo(lessonId);
+        assertThat(restored.getTitle()).isEqualTo(lesson.getTitle());
+        assertThat(lessons.count()).isEqualTo(lessonCount);
+        mvc.perform(get(BASE + "/materials").header("Authorization", auth(alice)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2));
+        mvc.perform(get(attachment.path("url").asText()).header("Authorization", auth(alice)))
+                .andExpect(status().isOk()).andExpect(content().bytes(bytes));
+        mvc.perform(get(attachment.path("url").asText()).header("Authorization", auth(bob)))
+                .andExpect(status().isNotFound());
+        mvc.perform(get(BASE + "/theory").header("Authorization", auth(alice)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].type").exists());
+        mvc.perform(put(BASE + "/links/" + link.path("id").asText()).header("Authorization", auth(alice))
+                .contentType(MediaType.APPLICATION_JSON).content(body("Po restarcie", "https://example.org/updated")))
+                .andExpect(status().isOk());
+        mvc.perform(delete(BASE + "/attachments/" + attachment.path("id").asText())
+                .header("Authorization", auth(alice))).andExpect(status().isNoContent());
+        mvc.perform(delete(BASE + "/links/" + link.path("id").asText())
+                .header("Authorization", auth(alice))).andExpect(status().isNoContent());
+    }
 
     String login() throws Exception {
         String email="materials-"+UUID.randomUUID()+"@example.invalid";

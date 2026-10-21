@@ -53,6 +53,11 @@ public class Lesson {
         return id;
     }
 
+    void synchronize(String title, int sortOrder) {
+        this.title = title;
+        this.sortOrder = sortOrder;
+    }
+
     public Chapter getChapter() {
         return chapter;
     }

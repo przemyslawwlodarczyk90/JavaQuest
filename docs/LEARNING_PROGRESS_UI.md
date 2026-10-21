@@ -25,6 +25,15 @@ sekcje są rozwijane; na małych ekranach panel zajmuje pełną szerokość.
 Natywny dialog zapewnia obsługę klawiatury, blokowanie tła i powrót fokusu.
 Potwierdzenia edycji i usuwania zachowują istniejącą obsługę.
 
+Przy starcie `ContentReset` odtwarza wyłącznie teorię, zadania i pytania.
+`ContentSeeder` aktualizuje metadane rozdziałów i lekcji po slugach oraz
+dodaje brakujące wpisy. Identyfikatory istniejących lekcji pozostają stałe:
+`lesson_materials.lesson_id` jest kluczem obcym i nie wolno usuwać tych lekcji
+podczas odświeżania treści. Istniejące materiały nie wymagają migracji.
+Test `LessonMaterialIntegrationTest.materialsSurviveTheStartupContentRefresh`
+sprawdza zapis pliku i linku przed ponownym przejściem całej inicjalizacji treści,
+zachowanie identyfikatorów, pobieranie pliku oraz prywatność po odświeżeniu.
+
 Weryfikacja: `LearningSummaryServiceTest`, istniejące `MasteryPolicyTest`,
 `MasteryServiceTest`, rozszerzony `QuizMasteryIntegrationTest`, frontendowe
 `npm run build`, `npm run lint`, `npm run test:api`. Podgląd responsywny

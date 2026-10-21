@@ -52,6 +52,12 @@ public class Chapter {
         return id;
     }
 
+    void synchronize(String title, int sortOrder, CourseTrack track) {
+        this.title = title;
+        this.sortOrder = sortOrder;
+        this.track = track;
+    }
+
     public String getSlug() {
         return slug;
     }
