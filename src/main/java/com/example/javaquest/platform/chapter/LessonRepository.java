@@ -26,4 +26,7 @@ public interface LessonRepository extends JpaRepository<Lesson, Long> {
     // LazyInitializationException (sesja, ktora go inicjalizowala, juz nie istnieje).
     @Query("select l from Lesson l join fetch l.chapter")
     List<Lesson> findAllWithChapter();
+
+    @Query("select count(m) from LessonMaterial m where m.lesson = :lesson")
+    long countMaterials(Lesson lesson);
 }

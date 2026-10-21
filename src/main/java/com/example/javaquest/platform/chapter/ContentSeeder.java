@@ -59,5 +59,28 @@ class ContentSeeder {
                 lessonRepository.save(lesson);
             }
         }
+        removeLessonsDroppedFromReactPlan(chapters, lessons);
+    }
+
+    // Tor REACT jest w budowie i jego plan sie zmienia: lekcje i rozdzialy usuniete z ChapterSeedData
+    // nie zostaja w bazie jako puste pozycje (o ile uzytkownik nie dodal do nich materialow).
+    private void removeLessonsDroppedFromReactPlan(java.util.Map<String, Chapter> chapters,
+                                                   java.util.Map<java.util.List<String>, Lesson> lessons) {
+        var seeded = new java.util.HashSet<java.util.List<String>>();
+        var seededChapters = new java.util.HashSet<String>();
+        for (ChapterSeedData.ChapterSeed seed : ChapterSeedData.CHAPTERS) {
+            seededChapters.add(seed.slug());
+            for (String lessonSlug : seed.lessonSlugs()) seeded.add(java.util.List.of(seed.slug(), lessonSlug));
+        }
+        var keptChapters = new java.util.HashSet<String>();
+        lessons.forEach((key, lesson) -> {
+            if (lesson.getChapter().getTrack() != CourseTrack.REACT || seeded.contains(key)) return;
+            if (lessonRepository.countMaterials(lesson) > 0) keptChapters.add(key.get(0));
+            else lessonRepository.delete(lesson);
+        });
+        chapters.values().stream()
+                .filter(c -> c.getTrack() == CourseTrack.REACT && !seededChapters.contains(c.getSlug())
+                        && !keptChapters.contains(c.getSlug()))
+                .forEach(chapterRepository::delete);
     }
 }

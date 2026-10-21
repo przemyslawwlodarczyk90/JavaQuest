@@ -29,7 +29,7 @@ Przełącznik na panelu głównym — pięć równoległych torów na jednym bac
 |---|---:|---:|---:|---:|---|
 | ☕ **Java** (domyślny) | 41 | 760 | ~68 800 | ~20 900 | ✅ kompletny |
 | 🟨 **JavaScript** | 14 | 90 | ~9 000 | ~2 700 | ✅ kompletny |
-| ⚛️ **React** | 11 | 63 | — | — | 🚧 zarys, lekcje w przygotowaniu |
+| ⚛️ **React** | 24 | 174 | — | — | 🚧 zarys, lekcje w przygotowaniu |
 | 🐧 **Linux** | 46 | 437 | — | — | 🚧 teoria w toku |
 | 🎓 **OCP Java 21** | 14 | 38 | 2 026 | 500 | ✅ kompletny |
 

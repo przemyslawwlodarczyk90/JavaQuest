@@ -55,7 +55,7 @@ class ReactCourseApiRegressionTest {
         String token = mapper.readTree(login).path("token").asText();
 
         JsonNode chapters = read("/api/chapters?track=REACT", token);
-        assertThat(chapters.size()).isEqualTo(11);
+        assertThat(chapters.size()).isEqualTo(24);
         assertThat(chapters.get(0).path("slug").asText()).isEqualTo("_react_00_wprowadzenie");
         int lessons = 0;
         for (JsonNode chapter : chapters) {
@@ -68,7 +68,7 @@ class ReactCourseApiRegressionTest {
             assertThat(chapter.path("lessonCount").asInt()).isEqualTo(list.size());
             lessons += list.size();
         }
-        assertThat(lessons).isEqualTo(63);
+        assertThat(lessons).isEqualTo(174);
     }
 
     private JsonNode read(String url, String token) throws Exception {

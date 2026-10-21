@@ -589,63 +589,148 @@ public final class ChapterSeedData {
             ), CourseTrack.JAVASCRIPT),
 
             // ===== TOR REACT (2026-10-21) =====
-            // Kurs po torze JavaScript: jeden rozwijany projekt (DevDesk - panel ticketow), lekcja =
-            // funkcja dodawana do aplikacji, rozdzialy 01-09 koncza sie lekcja Boss (zadanie w innej
-            // domenie z mniejsza liczba podpowiedzi), rozdzial 10 - projekt koncowy.
-            // Pliki tresci JSON sa PUSTE - frontend pokazuje lekcje jako "w przygotowaniu".
+            // Kurs po torze JavaScript, prowadzony dwutorowo: kazda lekcja praktyczna w wersji .jsx i .tsx
+            // z omowieniem roznic (rozdzial 01 - wprowadzenie do TypeScript). Jeden rozwijany projekt
+            // (DevDesk - panel ticketow), rozdzialy koncza sie lekcja Boss. Struktura generowana z
+            // scripts/content-migration/react/react_plan.cjs (react_scaffold.cjs).
             new ChapterSeed("_react_00_wprowadzenie", "React - wprowadzenie i środowisko", List.of(
-                    "01_CourseAndDevDeskProject", "02_EnvironmentNodeAndVite", "03_TypeScriptMinimumForReact",
-                    "04_ToolingEslintPrettierDevtools"
+                    "01_CourseAndDevDeskProject", "02_HowReactWorksDeclarativeUi",
+                    "03_ReactHistoryAndEcosystemMap", "04_EnvironmentNodeAndVite",
+                    "05_ProjectAnatomyAndBuildPipeline", "06_ToolingEslintPrettierDevtools"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_01_komponenty", "React - fundamenty komponentów", List.of(
-                    "01_AppShellAndFirstComponent", "02_JsxAndDynamicData", "03_PropsAndTyping",
-                    "04_ListsAndKeys", "05_CompositionAndChildren", "06_BossUserDashboard"
+            new ChapterSeed("_react_01_typescript_wprowadzenie", "React - wprowadzenie do TypeScript", List.of(
+                    "01_WhatIsTypeScriptAndWhy", "02_BasicTypesAndInference",
+                    "03_ObjectTypesInterfacesAndOptional", "04_UnionsLiteralsAndNarrowing",
+                    "05_FunctionsGenericsAndUtilityTypes", "06_JsxVsTsxHowWeWillLearn"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_02_state_i_tabela", "React - interakcja, state i tabela", List.of(
-                    "01_EventsAndUseState", "02_ControlledSearchInput", "03_DerivedDataFiltering",
-                    "04_SortableColumns", "05_LocalPagination", "06_BossProductCatalog"
+            new ChapterSeed("_react_02_komponenty", "React - komponenty i JSX", List.of(
+                    "01_AppShellAndFirstComponent", "02_JsxInDepth", "03_ConditionalRendering",
+                    "04_PropsBasics", "05_PropsVariantsAndBadges", "06_ListsAndKeys",
+                    "07_CompositionAndChildren", "08_PureComponentsAndRenderRules", "09_BossUserDashboard"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_03_formularze", "React - formularze i walidacja", List.of(
-                    "01_FirstControlledForm", "02_SelectCheckboxTextarea", "03_ValidationAndErrors",
-                    "04_SubmitAndReset", "05_EditFormAndStateReset", "06_BossRegistrationForm"
+            new ChapterSeed("_react_03_stylowanie", "React - stylowanie komponentów", List.of(
+                    "01_CssInReactBasics", "02_CssModules", "03_DesignTokensAndTheming", "04_TailwindCss",
+                    "05_CssInJsOverview", "06_ComponentLibrariesOverview", "07_BossStyleGuidePage"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_04_architektura_stanu", "React - architektura stanu", List.of(
-                    "01_LiftingStateUp", "02_SingleSourceOfTruth", "03_UseReducer",
-                    "04_ContextForPreferences", "05_CustomHooks", "06_BossBulkOrderActions"
+            new ChapterSeed("_react_04_state_i_tabela", "React - interakcja, state i tabela", List.of(
+                    "01_EventsInReact", "02_UseStateBasics", "03_StateAsSnapshotAndBatching",
+                    "04_UpdatingObjectsAndArrays", "05_ControlledSearchInput", "06_DerivedDataFiltering",
+                    "07_SortableColumns", "08_LocalPagination", "09_BossProductCatalog"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_05_wzorce_ui", "React - wzorce interfejsu i efekty", List.of(
-                    "01_TabsComponent", "02_PortalAndModal", "03_RefsAndFocus", "04_ToastAndUndo",
-                    "05_EffectsSyncWithExternalSystems", "06_BossAccessibleProfileModal"
+            new ChapterSeed("_react_05_formularze", "React - formularze i walidacja", List.of(
+                    "01_FirstControlledForm", "02_SelectCheckboxRadioTextarea",
+                    "03_UncontrolledInputsAndFormData", "04_ValidationAndErrors", "05_SubmitAndReset",
+                    "06_EditFormAndStateReset", "07_ReactHookForm", "08_SchemaValidationWithZod",
+                    "09_FormActionsReact19", "10_BossRegistrationForm"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_06_api", "React - dane z API i stan serwera", List.of(
-                    "01_MockApiWithMsw", "02_FetchingData", "03_LoadingErrorEmptyStates",
-                    "04_CleanupAndRaceConditions", "05_CrudMutations", "06_TanStackQuery", "07_BossBooksCrud"
+            new ChapterSeed("_react_06_architektura_stanu", "React - architektura stanu", List.of(
+                    "01_ThinkingInReact", "02_LiftingStateUp", "03_SingleSourceOfTruth",
+                    "04_PreservingAndResettingState", "05_UseReducer", "06_ContextForPreferences",
+                    "07_ContextWithReducerAtScale", "08_CustomHooks", "09_BossBulkOrderActions"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_07_routing", "React - routing i URL jako stan", List.of(
-                    "01_RouterBasics", "02_LayoutAndNestedRoutes", "03_RouteParams",
-                    "04_SearchParamsAsState", "05_NotFoundAndRouteErrors", "06_BossProductRoutes"
+            new ChapterSeed("_react_07_efekty", "React - efekty i cykl życia", List.of(
+                    "01_ComponentLifecycleMentalModel", "02_UseEffectSynchronization",
+                    "03_DependenciesAndStaleClosures", "04_CleanupAndStrictMode",
+                    "05_YouMightNotNeedAnEffect", "06_UseEffectEventAndUseLayoutEffect",
+                    "07_UseSyncExternalStore", "08_BossEffectRefactor"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_08_testy", "React - testowanie zachowania", List.of(
-                    "01_VitestBasics", "02_ReactTestingLibrary", "03_UserEventInteractions",
-                    "04_AsyncTestsWithMsw", "05_PlaywrightE2e", "06_BossTestUnknownComponent"
+            new ChapterSeed("_react_08_refs_i_wzorce_ui", "React - refs, DOM i wzorce interfejsu", List.of(
+                    "01_RefsBasics", "02_RefsToDomElements", "03_UseImperativeHandle", "04_TabsComponent",
+                    "05_PortalAndModal", "06_FocusManagementAndKeyboard", "07_ToastAndUndo",
+                    "08_DropdownsPopoversAndTooltips", "09_BossAccessibleProfileModal"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_09_wydajnosc", "React - wydajność i współczesny React", List.of(
-                    "01_RenderModelAndProfiler", "02_Memoization", "03_LazyAndSuspense",
-                    "04_TransitionsAndDeferredValues", "05_BossFindTheBottleneck"
+            new ChapterSeed("_react_09_wzorce_komponentow", "React - zaawansowane wzorce komponentów", List.of(
+                    "01_CompoundComponents", "02_RenderPropsAndHocs", "03_ControlledAndUncontrolledApis",
+                    "04_PolymorphicComponents", "05_HeadlessComponentsAndHooks",
+                    "06_BossDesignSystemComponents"
             ), CourseTrack.REACT),
 
-            new ChapterSeed("_react_10_produkcja", "React - produkcja i projekt końcowy", List.of(
-                    "01_ProjectArchitecture", "02_ErrorBoundaries", "03_AccessibilityPass",
-                    "04_BuildAndDeployment", "05_CapstoneIssueAdmin"
+            new ChapterSeed("_react_10_api", "React - dane z API i stan serwera", List.of(
+                    "01_HttpAndRestRefresher", "02_MockApiWithMsw", "03_FetchingData",
+                    "04_LoadingErrorEmptyStates", "05_CleanupAndRaceConditions", "06_CrudMutations",
+                    "07_ApiClientLayerAndErrors", "08_TanStackQueryBasics", "09_TanStackQueryMutations",
+                    "10_PaginationAndInfiniteQueries", "11_BossBooksCrud"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_11_backend_spring", "React - integracja z backendem Spring Boot", List.of(
+                    "01_RestContractWithSpringBoot", "02_AuthenticationJwtAndSessions",
+                    "03_ProtectedRoutesAndRoles", "04_FileUploadAndDownload", "05_RealTimeWebSocketsAndSse",
+                    "06_OpenApiGeneratedClient", "07_BossFullStackFeature"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_12_routing", "React - routing i URL jako stan", List.of(
+                    "01_RouterBasics", "02_LayoutAndNestedRoutes", "03_RouteParams", "04_SearchParamsAsState",
+                    "05_DataLoadersAndActions", "06_NavigationStatesAndPendingUi",
+                    "07_NotFoundAndRouteErrors", "08_BossProductRoutes"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_13_stan_globalny", "React - biblioteki stanu globalnego", List.of(
+                    "01_WhenGlobalStateLibrary", "02_Zustand", "03_ReduxToolkitBasics",
+                    "04_ReduxAsyncAndRtkQuery", "05_JotaiAndAtomicState", "06_BossCartStore"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_14_testy", "React - testowanie", List.of(
+                    "01_TestingStrategy", "02_VitestBasics", "03_ReactTestingLibrary",
+                    "04_UserEventInteractions", "05_TestingHooksAndContext", "06_AsyncTestsWithMsw",
+                    "07_PlaywrightE2e", "08_VisualAndAccessibilityTests", "09_BossTestUnknownComponent"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_15_react_od_srodka", "React - jak React działa w środku", List.of(
+                    "01_ElementsAndVirtualDom", "02_Reconciliation", "03_FiberArchitecture",
+                    "04_RenderAndCommitPhases", "05_BatchingSchedulingAndLanes", "06_HooksUnderTheHood",
+                    "07_BuildMiniReact"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_16_wydajnosc", "React - wydajność", List.of(
+                    "01_RenderModelAndProfiler", "02_Memoization", "03_ReactCompiler", "04_LazyAndSuspense",
+                    "05_TransitionsAndDeferredValues", "06_VirtualizingLongLists",
+                    "07_BundleAnalysisAndCodeSplitting", "08_WebVitalsAndAssets", "09_BossFindTheBottleneck"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_17_react_19", "React - nowoczesny React 19", List.of(
+                    "01_UseHookAndPromises", "02_SuspenseForData", "03_UseOptimistic",
+                    "04_ActionsAndTransitions", "05_DocumentMetadataAndResources",
+                    "06_ActivityAndViewTransitions", "07_ServerComponentsConcept"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_18_frameworki", "React - frameworki i renderowanie na serwerze", List.of(
+                    "01_RenderingStrategies", "02_HydrationAndItsErrors", "03_NextJsAppRouterBasics",
+                    "04_NextJsServerActionsAndCaching", "05_ReactRouterFrameworkMode", "06_ChoosingAFramework"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_19_jakosc", "React - dostępność, bezpieczeństwo i jakość", List.of(
+                    "01_AccessibilityFundamentals", "02_AriaPatternsAndScreenReaders",
+                    "03_AccessibilityPassDevDesk", "04_Internationalization", "05_SecurityInReact",
+                    "06_ErrorBoundariesAndMonitoring", "07_StorybookAndComponentDocs"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_20_animacje_i_ux", "React - animacje i bogaty UX", List.of(
+                    "01_CssTransitionsAndAnimations", "02_MotionLibrary", "03_DragAndDrop",
+                    "04_ChartsAndDataViz", "05_BossKanbanBoard"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_21_produkcja", "React - produkcja i projekt końcowy", List.of(
+                    "01_ProjectArchitecture", "02_EnvVariablesAndConfig", "03_BuildAndDeployment",
+                    "04_DockerNginxAndSpringStatic", "05_CiCdGithubActions", "06_PwaAndOffline",
+                    "07_MigratingJsProjectToTs", "08_CapstoneIssueAdmin"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_22_legacy_i_platformy", "React - kod legacy i inne platformy", List.of(
+                    "01_ClassComponentsAndLifecycleMethods", "02_MigratingClassesToHooks",
+                    "03_ReactNativeOverview", "04_DesktopAppsElectronAndTauri"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_23_podsumowanie", "React - podsumowanie: trening całościowy", List.of(
+                    "01_FinalTraining"
             ), CourseTrack.REACT),
 
             // ===== TRZECI BLOK PLATFORMY: KURS LINUX (2026-09-26) =====
