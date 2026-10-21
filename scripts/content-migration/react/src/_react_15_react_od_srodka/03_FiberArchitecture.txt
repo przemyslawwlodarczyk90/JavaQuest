@@ -1,0 +1,172 @@
+#T INTRO Rozgrzewka i problem: dlaczego React może przerwać renderowanie?
+Rozgrzewka: Jakie są dwie heurystyki rekoncyliacji? Co się dzieje, gdy element na tej samej pozycji zmieni typ? Dlaczego klucz nie może być losowy?
+
+Problem: w React 18+ możesz oznaczyć aktualizację jako „niepilną” (`useTransition`, rozdział 16) — wtedy wpisywanie tekstu pozostaje płynne, nawet jeśli tabela z tysiącami wierszy renderuje się długo. Jak to możliwe, skoro JavaScript w przeglądarce jest jednowątkowy? Odpowiedzią jest **architektura Fiber** (od React 16): renderowanie podzielone na małe jednostki pracy, które można wstrzymać, wznowić, porzucić i powtórzyć.
+
+#T DEFINITION Fiber: jednostka pracy i miejsce stanu
+**Fiber** to wewnętrzny obiekt Reacta odpowiadający jednemu elementowi w drzewie (komponentowi, tagowi HTML, fragmentowi). Fiber przechowuje m.in.:
+- `type` i `key` — co reprezentuje,
+- `pendingProps` / `memoizedProps` — nowe i ostatnio użyte props,
+- `memoizedState` — **stan komponentu** (dla komponentów funkcyjnych: lista hooków),
+- `stateNode` — powiązany węzeł DOM (dla tagów HTML),
+- `child`, `sibling`, `return` — wskaźniki tworzące drzewo jako listę powiązaną (dziecko, rodzeństwo, rodzic),
+- `flags` — co trzeba zrobić w commicie (wstawić, zaktualizować, usunąć węzeł, uruchomić efekt),
+- `lanes` — priorytet oczekującej pracy (lekcja 5).
+
+Fibery są **trwałe**: istnieją przez całe życie komponentu na danej pozycji. Elementy (z JSX) powstają przy każdym renderze i służą tylko do porównania.
+
+#T VISUAL_EXAMPLE Drzewo fiberów jako lista powiązana
+            Fiber(App)
+               │ child
+               ▼
+            Fiber(Header) ──sibling──► Fiber(Main) ──sibling──► Fiber(Footer)
+                                          │ child
+                                          ▼
+                                       Fiber(TicketTable)
+                                          │ child
+                                          ▼
+                       Fiber(TicketRow 41) ──sibling──► Fiber(TicketRow 42)
+                       (return → TicketTable)
+
+Dzięki wskaźnikom `child/sibling/return` React może przechodzić drzewo **pętlą** (bez rekurencji na stosie wywołań) i w dowolnym momencie zapamiętać, na którym fiberze skończył — a potem wrócić.
+
+#T DEFINITION Dwa drzewa: current i work-in-progress
+React utrzymuje dwa drzewa fiberów:
+- **current** — to, co jest aktualnie na ekranie,
+- **work-in-progress (WIP)** — budowane w trakcie renderu na podstawie current i nowych elementów.
+
+Render pracuje wyłącznie na WIP i niczego nie zmienia na ekranie — dlatego można go **przerwać** (np. gdy przyjdzie pilniejsza aktualizacja) i zacząć od nowa. Gdy WIP jest gotowe, React w fazie **commit** nanosi zmiany na DOM i zamienia drzewa miejscami (WIP staje się current). Technika ta przypomina podwójne buforowanie w grafice.
+
+To wyjaśnia wymaganie **czystości renderu** z rozdziału 02: skoro render może zostać wykonany kilka razy albo porzucony, nie może mieć efektów ubocznych.
+
+#T CODE_JSX Obserwacja: render bez commitu (JSX)
+`useTransition` (rozdział 16) pozwala zobaczyć porzucony render: szybkie pisanie przerywa wolne renderowanie listy, a licznik renderów rośnie bardziej niż liczba widocznych zmian.
+```
+// InterruptDemo.jsx
+import { useState, useTransition } from 'react';
+
+let renderCount = 0;
+
+function SlowList({ query }) {
+  renderCount += 1; // tylko do obserwacji — w prawdziwym kodzie nie zmieniaj zmiennych w renderze
+  const start = performance.now();
+  while (performance.now() - start < 150) { /* sztuczne spowolnienie */ }
+  return <p>Wyniki dla „{query}” (render nr {renderCount})</p>;
+}
+
+export function InterruptDemo() {
+  const [text, setText] = useState('');
+  const [query, setQuery] = useState('');
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <div>
+      <input aria-label="Szukaj" value={text} onChange={(e) => {
+        setText(e.target.value);                       // pilne — pole reaguje od razu
+        startTransition(() => setQuery(e.target.value)); // niepilne — można przerwać
+      }} />
+      {isPending && <small>Liczenie…</small>}
+      <SlowList query={query} />
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Obserwacja: render bez commitu (TSX)
+```
+// InterruptDemo.tsx
+import { useState, useTransition } from 'react';
+
+let renderCount = 0;
+
+function SlowList({ query }: { query: string }) {
+  renderCount += 1;
+  const start = performance.now();
+  while (performance.now() - start < 150) { /* sztuczne spowolnienie */ }
+  return <p>Wyniki dla „{query}” (render nr {renderCount})</p>;
+}
+
+export function InterruptDemo() {
+  const [text, setText] = useState('');
+  const [query, setQuery] = useState('');
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <div>
+      <input aria-label="Szukaj" value={text} onChange={(e) => {
+        setText(e.target.value);
+        startTransition(() => setQuery(e.target.value));
+      }} />
+      {isPending && <small>Liczenie…</small>}
+      <SlowList query={query} />
+    </div>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — wewnętrzne struktury nie są publicznym API
+Fibery to szczegół implementacji Reacta — nie mają publicznych typów w `@types/react` i mogą się zmieniać między wersjami. W żadnej wersji (JSX ani TSX) nie odwołuj się do nich w kodzie aplikacji (np. przez `_reactFiber…` na węźle DOM). Z tej lekcji bierzesz model mentalny, a narzędziem do oglądania fiberów są React DevTools. Przykład z celowym licznikiem w renderze łamie zasadę czystości — wyłącznie do obserwacji.
+
+#T DEFINITION Pętla pracy i oddawanie sterowania
+Render to pętla: weź następny fiber, wykonaj jego pracę (wywołaj komponent, porównaj dzieci, utwórz fibery dla nowych elementów), przejdź do dziecka, a gdy go nie ma — do rodzeństwa lub w górę. W trybie współbieżnym React co kilka milisekund sprawdza, czy nie powinien **oddać sterowania** przeglądarce (żeby obsłużyła kliknięcie, wpisanie znaku, animację). Jeśli tak — zapamiętuje bieżący fiber i wraca później. Jeśli w międzyczasie przyszła pilniejsza aktualizacja — porzuca rozpoczęte WIP i zaczyna od nowa z nowym stanem.
+
+Faza commit jest natomiast **synchroniczna i nieprzerywalna** — zmiany DOM muszą trafić na ekran naraz, żeby użytkownik nie zobaczył połowy aktualizacji.
+
+#T CODE_BASIC Wizualizacja przejścia po drzewie (uproszczony model)
+Uproszczony model pętli pracy na fiberach — bez Reacta, żeby zrozumieć kolejność odwiedzin i możliwość przerwania.
+```
+// walk.ts
+type FiberNode = { name: string; child?: FiberNode; sibling?: FiberNode; parent?: FiberNode };
+
+export function* walk(root: FiberNode): Generator<string> {
+  let node: FiberNode | undefined = root;
+  while (node) {
+    yield `beginWork ${node.name}`;     // praca na wejściu do węzła
+    if (node.child) { node = node.child; continue; }
+    while (node) {
+      yield `completeWork ${node.name}`; // praca przy wyjściu z węzła
+      if (node === root) return;
+      if (node.sibling) { node = node.sibling; break; }
+      node = node.parent;
+    }
+  }
+}
+
+// generator można zatrzymać po dowolnym kroku (oddanie sterowania) i wznowić później
+```
+
+#T CODE_PRACTICAL Drzewo testowe dla generatora
+```
+import { walk } from './walk';
+
+type FiberNode = { name: string; child?: FiberNode; sibling?: FiberNode; parent?: FiberNode };
+
+const app: FiberNode = { name: 'App' };
+const header: FiberNode = { name: 'Header', parent: app };
+const main: FiberNode = { name: 'Main', parent: app };
+const table: FiberNode = { name: 'TicketTable', parent: main };
+app.child = header;
+header.sibling = main;
+main.child = table;
+
+const steps = walk(app);
+console.log(steps.next().value); // beginWork App
+console.log(steps.next().value); // beginWork Header
+// … przerwa: przeglądarka obsługuje wpisany znak …
+console.log([...steps]);          // reszta pracy: completeWork Header, beginWork Main, beginWork TicketTable, …
+```
+
+#T STEP_BY_STEP Budujemy razem: Fiber w praktyce
+1. Zbuduj `InterruptDemo` i pisz szybko w polu — pole reaguje od razu, a numer renderu `SlowList` rośnie skokami (część renderów porzucona albo połączona).
+2. Usuń `startTransition` (ustawiaj `query` bezpośrednio) i porównaj: pole zaczyna „zacinać się” przy każdym znaku, bo każdy render jest pilny i nieprzerywalny.
+3. Uruchom generator `walk` na drzewie DevDesk (App → Header, Main → TicketTable → wiersze) i zapisz kolejność kroków.
+4. W React DevTools włącz „Highlight updates” i porównaj, co jest renderowane przy wpisywaniu w wersji z i bez transition.
+5. Zanotuj odpowiedź na pytanie: dlaczego render musi być czysty, a commit może zmieniać DOM?
+
+#T PITFALL Efekty uboczne w renderze a renderowanie współbieżne
+Kod, który „działał” w React 17 mimo efektów ubocznych w renderze (np. wysłanie zdarzenia analitycznego w ciele komponentu), w trybie współbieżnym zachowuje się losowo: przy porzuconym renderze zdarzenie wysyła się, choć użytkownik nigdy nie zobaczył tego ekranu; przy powtórzonym — dwa razy. StrictMode w trybie deweloperskim celowo to ujawnia (rozdział 00 i 07).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Fiber to trwały wewnętrzny obiekt Reacta dla każdego elementu drzewa: przechowuje props, stan (listę hooków), węzeł DOM, flagi pracy i priorytet; fibery tworzą drzewo jako listę powiązaną (`child/sibling/return`). Render buduje drzewo work-in-progress na podstawie current — można go przerwać, wznowić lub porzucić, bo nie dotyka ekranu. Commit jest synchroniczny i nanosi zmiany na DOM, po czym drzewa zamieniają się rolami. Stąd wymóg czystości renderu. Fibery nie są publicznym API — oglądasz je w DevTools.
+
+Kryterium akceptacji: potrafisz pokazać w `InterruptDemo` różnicę między pilną a niepilną aktualizacją i wyjaśnić ją przez przerywalne renderowanie Fiber, a w modelu `walk` — kolejność przechodzenia drzewa i możliwość wstrzymania pracy.
