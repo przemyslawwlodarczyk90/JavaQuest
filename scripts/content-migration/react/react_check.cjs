@@ -59,6 +59,22 @@ for (const file of files) {
     else if (line.startsWith('```')) code = [];
   }
 }
+// Import wzgledny do pliku nazwanego w innej lekcji tego samego rozdzialu (np. './ticketsReducer' z lekcji
+// o reducerze uzyty w lekcji o kontekscie) - kopiujemy ten plik do katalogu lekcji, ktora go importuje.
+const named = new Map(); // `${rozdzial}/${nazwa bez rozszerzenia}` -> sciezka (pozniejsza lekcja nadpisuje wczesniejsza)
+for (const s of map) {
+  const m = s.name.match(/^(L\d+)\/([A-Za-z]\w*)\.(tsx?|jsx?)$/);
+  if (m) named.set(`${path.dirname(s.file)}/${m[2]}`, path.join(work, 'src', s.name));
+}
+for (const s of map) {
+  const lessonDir = path.join(work, 'src', s.name.split('/')[0]);
+  const text = fs.readFileSync(path.join(work, 'src', s.name), 'utf8');
+  for (const [, mod] of text.matchAll(/from '\.\/([A-Za-z]\w*)'/g)) {
+    if (fs.readdirSync(lessonDir).some((f) => f.replace(/\.(tsx?|jsx?)$/, '') === mod)) continue;
+    const source = named.get(`${path.dirname(s.file)}/${mod}`);
+    if (source) fs.copyFileSync(source, path.join(lessonDir, path.basename(source)));
+  }
+}
 fs.writeFileSync(path.join(work, 'tsconfig.json'), JSON.stringify({
   compilerOptions: { target: 'ES2023', lib: ['ES2023', 'DOM', 'DOM.Iterable'], module: 'ESNext', moduleResolution: 'bundler',
     jsx: 'react-jsx', strict: true, noEmit: true, skipLibCheck: true, allowJs: true, checkJs: false,

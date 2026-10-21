@@ -1,0 +1,152 @@
+#T INTRO Rozgrzewka i problem: prop przekazywany przez pięć poziomów
+Rozgrzewka: Co to jest akcja w reducerze i jak ją nazywać? Dlaczego reducer nie może wywołać `Date.now()`? Kiedy wybierasz `useReducer` zamiast `useState`?
+
+Problem: DevDesk dostaje preferencje użytkownika: format daty (względny „2 dni temu” albo pełny), gęstość tabeli (zwykła/kompaktowa) i login zalogowanej osoby. Te dane są potrzebne głęboko: w `TicketRow`, `DateCell`, `CommentItem`, `AssigneeAvatar`. Przekazywanie ich przez `App → Main → Panel → TicketTable → TicketRow → DateCell` to **prop drilling** — komponenty pośrednie dostają props tylko po to, żeby oddać je dalej. Rozwiązaniem jest **Context**.
+
+#T DEFINITION Context
+Context pozwala udostępnić wartość całemu poddrzewu komponentów bez przekazywania jej przez props:
+1. `const PrefsContext = createContext(wartośćDomyślna)` — tworzysz kontekst (na poziomie modułu),
+2. `<PrefsContext value={prefs}>...</PrefsContext>` — dostarczasz wartość poddrzewu (w React 19 sam kontekst jest providerem; w starszym kodzie zobaczysz `<PrefsContext.Provider value={...}>`),
+3. `const prefs = useContext(PrefsContext)` — dowolny komponent w poddrzewie odczytuje najbliższą dostarczoną wartość.
+
+Gdy wartość providera się zmieni, wszystkie komponenty odczytujące ten kontekst renderują się ponownie.
+
+#T VISUAL_EXAMPLE Prop drilling a Context
+prop drilling:
+App(prefs) → Main(prefs) → Panel(prefs) → TicketTable(prefs) → TicketRow(prefs) → DateCell(prefs)
+             ↑ pośrednicy nie używają prefs, tylko go przekazują
+
+Context:
+App ── <PrefsContext value={prefs}>
+         └── Main → Panel → TicketTable → TicketRow → DateCell: useContext(PrefsContext) ✔
+
+#T CODE_JSX Kontekst preferencji (JSX)
+Własny hook `usePrefs` ukrywa szczegóły i sprawdza, czy komponent jest wewnątrz providera.
+```
+// PrefsContext.jsx
+import { createContext, useContext, useState } from 'react';
+
+const PrefsContext = createContext(null);
+
+export function PrefsProvider({ children }) {
+  const [prefs, setPrefs] = useState({ login: 'anna', dateFormat: 'relative', density: 'comfortable' });
+
+  function updatePrefs(changes) {
+    setPrefs((prev) => ({ ...prev, ...changes }));
+  }
+
+  return <PrefsContext value={{ prefs, updatePrefs }}>{children}</PrefsContext>;
+}
+
+export function usePrefs() {
+  const ctx = useContext(PrefsContext);
+  if (!ctx) throw new Error('usePrefs musi być użyty wewnątrz <PrefsProvider>');
+  return ctx;
+}
+```
+
+#T CODE_TSX Kontekst preferencji (TSX)
+`createContext<PrefsContextValue | null>(null)` — wartość domyślna `null` oznacza „brak providera”, a hook zawęża typ, rzucając błąd. Dzięki temu komponenty dostają zawsze pełną wartość bez sprawdzania `null`.
+```
+// PrefsContext.tsx
+import { createContext, useContext, useState, type ReactNode } from 'react';
+
+export type Prefs = {
+  login: string;
+  dateFormat: 'relative' | 'full';
+  density: 'comfortable' | 'compact';
+};
+
+type PrefsContextValue = {
+  prefs: Prefs;
+  updatePrefs: (changes: Partial<Prefs>) => void;
+};
+
+const PrefsContext = createContext<PrefsContextValue | null>(null);
+
+export function PrefsProvider({ children }: { children: ReactNode }) {
+  const [prefs, setPrefs] = useState<Prefs>({ login: 'anna', dateFormat: 'relative', density: 'comfortable' });
+
+  function updatePrefs(changes: Partial<Prefs>) {
+    setPrefs((prev) => ({ ...prev, ...changes }));
+  }
+
+  return <PrefsContext value={{ prefs, updatePrefs }}>{children}</PrefsContext>;
+}
+
+export function usePrefs(): PrefsContextValue {
+  const ctx = useContext(PrefsContext);
+  if (!ctx) throw new Error('usePrefs musi być użyty wewnątrz <PrefsProvider>');
+  return ctx;
+}
+```
+
+#T NOTE JSX ↔ TSX — typowanie kontekstu
+Kontekst jest miejscem, gdzie w JSX najłatwiej o błędy: `useContext` może zwrócić `null` (brak providera), domyślną wartość albo obiekt o innym kształcie, a komponenty czytające kontekst są daleko od miejsca, gdzie wartość powstaje. W TSX typ `PrefsContextValue` łączy oba końce: `updatePrefs({ density: 'tiny' })` jest błędem, a `prefs.dateFormt` (literówka) — również. Wzorzec `createContext<T | null>(null)` + hook rzucający błąd jest standardem w obu wersjach; w TSX dodatkowo usuwa `null` z typu zwracanego przez hook.
+
+#T CODE_BASIC Komponent głęboko w drzewie czyta preferencje
+```
+import { usePrefs } from './PrefsContext';
+
+function relative(iso: string): string {
+  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  return days === 0 ? 'dzisiaj' : days === 1 ? 'wczoraj' : `${days} dni temu`;
+}
+
+export function DateCell({ iso }: { iso: string }) {
+  const { prefs } = usePrefs();
+  const text = prefs.dateFormat === 'relative' ? relative(iso) : new Date(iso).toLocaleString('pl-PL');
+  return <time dateTime={iso}>{text}</time>;
+}
+```
+
+#T CODE_PRACTICAL Panel ustawień zmieniający kontekst
+```
+import { usePrefs } from './PrefsContext';
+
+export function SettingsPanel() {
+  const { prefs, updatePrefs } = usePrefs();
+  return (
+    <fieldset>
+      <legend>Preferencje</legend>
+      <label>
+        <input
+          type="checkbox"
+          checked={prefs.density === 'compact'}
+          onChange={(e) => updatePrefs({ density: e.target.checked ? 'compact' : 'comfortable' })}
+        />
+        Tabela kompaktowa
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={prefs.dateFormat === 'relative'}
+          onChange={(e) => updatePrefs({ dateFormat: e.target.checked ? 'relative' : 'full' })}
+        />
+        Daty względne („2 dni temu”)
+      </label>
+    </fieldset>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: preferencje w DevDesk
+1. Utwórz `PrefsContext` z providerem i hookiem `usePrefs`.
+2. Opakuj aplikację w `main.jsx` (lub w `App`): `<PrefsProvider><App /></PrefsProvider>`.
+3. Utwórz `DateCell` i użyj go w kolumnie „Utworzono” tabeli oraz w liście komentarzy.
+4. W `TicketRow` odczytaj `density` i dodaj klasę `row--compact` przy trybie kompaktowym.
+5. Dodaj `SettingsPanel` w panelu bocznym — przełączniki od razu zmieniają tabelę i daty w całej aplikacji.
+6. Ekran „Mój dzień” niech bierze login z `usePrefs()` zamiast z props.
+7. Wyrenderuj na próbę `DateCell` poza providerem (np. w osobnym drzewie) — zobacz czytelny błąd z hooka.
+8. Usuń z komponentów pośrednich props `prefs`, które wcześniej były tylko przekazywane dalej.
+
+#T PITFALL Context jako globalny worek na wszystko
+Context nie jest zamiennikiem każdego stanu. Wrzucenie do jednego kontekstu ticketów, filtrów, zaznaczenia i preferencji sprawia, że każda zmiana (np. wpisany znak w wyszukiwarce) renderuje ponownie wszystkie komponenty czytające kontekst — także te, które potrzebują tylko loginu. Context jest dobry dla danych **rzadko zmiennych i potrzebnych w wielu miejscach**: zalogowany użytkownik, motyw, język, preferencje. Stan ekranu trzymaj blisko ekranu.
+
+#T WHEN_TO_USE Zanim sięgniesz po Context
+Najpierw sprawdź prostsze rozwiązania: czy da się przekazać props przez 1–2 poziomy (to nie jest problem)? Czy komponenty pośrednie mogą przyjąć gotowy JSX przez `children` zamiast danych (kompozycja z rozdziału 02 często eliminuje drilling)? Context wybierz, gdy dane są potrzebne w wielu, odległych miejscach drzewa. Dla stanu globalnego, który zmienia się często, rozważ bibliotekę stanu (rozdział 13).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Context udostępnia wartość poddrzewu bez prop drillingu: `createContext`, provider (`<Ctx value={...}>`) i `useContext`. Standardowy wzorzec: provider z własnym stanem + hook `useX` sprawdzający, czy jest provider. Zmiana wartości renderuje wszystkich czytelników kontekstu, więc umieszczaj w nim dane rzadko zmienne. W TSX `createContext<T | null>(null)` i hook rzucający błąd dają w komponentach pełny, niezerowy typ.
+
+Kryterium akceptacji: preferencje (format daty, gęstość tabeli, login) są dostępne w każdym komponencie przez `usePrefs()`, panel ustawień zmienia wygląd całej aplikacji, a komponenty pośrednie nie przekazują już props z preferencjami.

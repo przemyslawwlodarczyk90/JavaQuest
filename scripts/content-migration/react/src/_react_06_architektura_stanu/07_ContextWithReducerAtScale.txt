@@ -1,0 +1,146 @@
+#T INTRO Rozgrzewka i problem: dispatch przekazywany przez całe drzewo
+Rozgrzewka: Czym jest prop drilling? Dlaczego hook `usePrefs` rzuca błąd poza providerem? Jakich danych nie wkładać do kontekstu?
+
+Problem: reducer ticketów działa w `Main`, ale `dispatch` i stan trzeba przekazywać do tabeli, karty szczegółów, paska akcji, formularza komentarzy i modala. Połączenie **Context + reducer** to wbudowany w React sposób na zarządzanie stanem fragmentu aplikacji: reducer trzyma logikę, a kontekst udostępnia stan i `dispatch` każdemu komponentowi, który ich potrzebuje.
+
+#T DEFINITION Dwa konteksty: stan i dispatch
+Wzorzec z oficjalnej dokumentacji:
+1. reducer i `useReducer` w komponencie-providerze,
+2. **dwa osobne konteksty**: jeden dla stanu (`TicketsContext`), drugi dla `dispatch` (`TicketsDispatchContext`),
+3. dwa hooki: `useTickets()` i `useTicketsDispatch()`.
+
+Po co dwa? `dispatch` jest stabilny — nigdy się nie zmienia. Komponenty, które tylko wysyłają akcje (przycisk „Zamknij”), czytają wyłącznie kontekst `dispatch` i nie renderują się ponownie przy każdej zmianie listy ticketów.
+
+#T CODE_JSX Provider ticketów (JSX)
+```
+// TicketsContext.jsx
+import { createContext, useContext, useReducer } from 'react';
+import { ticketsReducer } from './ticketsReducer';
+import { tickets as initialTickets } from '../data/tickets';
+
+const TicketsContext = createContext(null);
+const TicketsDispatchContext = createContext(null);
+
+export function TicketsProvider({ children }) {
+  const [state, dispatch] = useReducer(ticketsReducer, { tickets: initialTickets, selectedId: null });
+  return (
+    <TicketsContext value={state}>
+      <TicketsDispatchContext value={dispatch}>{children}</TicketsDispatchContext>
+    </TicketsContext>
+  );
+}
+
+export function useTickets() {
+  const ctx = useContext(TicketsContext);
+  if (!ctx) throw new Error('useTickets wymaga <TicketsProvider>');
+  return ctx;
+}
+
+export function useTicketsDispatch() {
+  const ctx = useContext(TicketsDispatchContext);
+  if (!ctx) throw new Error('useTicketsDispatch wymaga <TicketsProvider>');
+  return ctx;
+}
+```
+
+#T CODE_TSX Provider ticketów (TSX)
+`Dispatch<TicketsAction>` to typ funkcji `dispatch` przyjmującej tylko akcje z unii — w każdym komponencie, który ją odczyta.
+```
+// TicketsContext.tsx
+import { createContext, useContext, useReducer, type Dispatch, type ReactNode } from 'react';
+import { ticketsReducer, type TicketsAction, type TicketsState } from './ticketsReducer';
+import { tickets as initialTickets } from '../data/tickets';
+
+const TicketsContext = createContext<TicketsState | null>(null);
+const TicketsDispatchContext = createContext<Dispatch<TicketsAction> | null>(null);
+
+export function TicketsProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(ticketsReducer, { tickets: initialTickets, selectedId: null });
+  return (
+    <TicketsContext value={state}>
+      <TicketsDispatchContext value={dispatch}>{children}</TicketsDispatchContext>
+    </TicketsContext>
+  );
+}
+
+export function useTickets(): TicketsState {
+  const ctx = useContext(TicketsContext);
+  if (!ctx) throw new Error('useTickets wymaga <TicketsProvider>');
+  return ctx;
+}
+
+export function useTicketsDispatch(): Dispatch<TicketsAction> {
+  const ctx = useContext(TicketsDispatchContext);
+  if (!ctx) throw new Error('useTicketsDispatch wymaga <TicketsProvider>');
+  return ctx;
+}
+```
+
+#T NOTE JSX ↔ TSX — kontrakt akcji w całej aplikacji
+W TSX typ akcji z reducera „rozlewa się” po całej aplikacji przez `Dispatch<TicketsAction>`: przycisk głęboko w drzewie wysyłający `{ type: 'closed', id: ticket.id }` jest sprawdzany względem tej samej unii, co reducer. Zmiana nazwy akcji w unii pokazuje wszystkie miejsca wysyłające starą nazwę. W JSX takie miejsca wyszukasz tekstowo (`'closed'`), ale przegapione wywołanie zgłosi się wyjątkiem z `default` reducera dopiero po kliknięciu.
+
+#T CODE_BASIC Komponenty bez props z danymi
+Przycisk czyta tylko `dispatch`, karta — tylko stan. Żaden z nich nie dostaje ticketów przez props od pośredników.
+```
+import { useTickets, useTicketsDispatch } from './TicketsContext';
+
+export function CloseButton({ id }: { id: number }) {
+  const dispatch = useTicketsDispatch();
+  return <button type="button" onClick={() => dispatch({ type: 'closed', id })}>Zamknij</button>;
+}
+
+export function SelectedTicketCard() {
+  const { tickets, selectedId } = useTickets();
+  const ticket = tickets.find((t) => t.id === selectedId);
+  if (!ticket) return <p>Wybierz ticket z listy</p>;
+  return (
+    <article>
+      <h3>#{ticket.id} {ticket.title}</h3>
+      <CloseButton id={ticket.id} />
+    </article>
+  );
+}
+```
+
+#T DEFINITION Dzielenie kontekstów według częstotliwości zmian
+Każda zmiana wartości kontekstu renderuje wszystkich jego czytelników. Dlatego dziel konteksty według tego, jak często się zmieniają i kto ich używa:
+- **preferencje i użytkownik** — rzadko; osobny kontekst,
+- **tickety i zaznaczenie** — przy każdej akcji; osobny kontekst stanu,
+- **dispatch** — nigdy; osobny kontekst,
+- **tekst wyszukiwania** — przy każdym znaku; zostaw jako lokalny stan ekranu, nie w kontekście.
+
+Jeśli wartość providera to obiekt tworzony w renderze (`value={{ prefs, updatePrefs }}`), każdy render providera daje nowy obiekt i renderuje czytelników — nawet gdy dane się nie zmieniły. Gdy pomiar pokaże problem, użyj `useMemo` dla wartości (rozdział 16) lub podziel kontekst.
+
+#T CODE_PRACTICAL Kompozycja providerów
+```
+import type { ReactNode } from 'react';
+import { PrefsProvider } from './PrefsContext';
+import { TicketsProvider } from './TicketsContext';
+
+export function AppProviders({ children }: { children: ReactNode }) {
+  return (
+    <PrefsProvider>
+      <TicketsProvider>{children}</TicketsProvider>
+    </PrefsProvider>
+  );
+}
+
+// main.tsx:
+// createRoot(document.getElementById('root')!).render(<AppProviders><App /></AppProviders>);
+```
+
+#T STEP_BY_STEP Budujemy razem: tickety w kontekście
+1. Utwórz `TicketsContext` z dwoma kontekstami i hookami.
+2. Utwórz `AppProviders` i opakuj nim aplikację.
+3. Usuń `useReducer` z `Main`; komponenty pobierają dane przez `useTickets()`, a akcje wysyłają przez `useTicketsDispatch()`.
+4. Usuń z `TicketTable`, `TicketRow`, karty i paska akcji props, które służyły tylko do przekazywania ticketów i callbacków.
+5. Filtry, wyszukiwanie i paginację zostaw jako lokalny stan `Main` — to stan ekranu, nie danych.
+6. Włącz w React DevTools „Highlight updates” i kliknij „Zamknij” — zobacz, które komponenty się renderują. Przycisk „Zamknij” (czytający tylko `dispatch`) nie powinien być podświetlany przy zmianach innych ticketów, jeśli jego rodzic się nie renderuje.
+
+#T PITFALL Provider w złym miejscu
+Komponent czytający kontekst widzi **najbliższy provider powyżej siebie**. Jeśli `TicketsProvider` zostanie umieszczony wewnątrz `Main`, a modal renderowany obok `Main` (np. w `App`) użyje `useTickets()`, dostanie błąd „wymaga <TicketsProvider>”. Druga pułapka: dwa providery tego samego kontekstu w różnych miejscach drzewa to dwa niezależne stany — zmiana w jednym nie jest widoczna w drugim.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Context + reducer: reducer z logiką i `useReducer` w providerze, osobne konteksty dla stanu i dla `dispatch`, hooki `useX()` i `useXDispatch()` sprawdzające obecność providera. Konteksty dziel według częstotliwości zmian; stan ekranu (filtry, wyszukiwanie) trzymaj lokalnie. Providery składaj w jednym komponencie `AppProviders`. W TSX `Dispatch<Action>` przenosi kontrakt akcji do każdego komponentu.
+
+Kryterium akceptacji: tickety i zaznaczenie żyją w `TicketsProvider`, komponenty DevDesk czytają je hookami, przycisk „Zamknij” używa tylko `dispatch`, a pośrednie komponenty nie przekazują już ticketów ani callbacków przez props.
