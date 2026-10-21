@@ -1,0 +1,179 @@
+#T INTRO Rozgrzewka i problem: zrzut ekranu do zgłoszenia
+Rozgrzewka: Dlaczego uprawnienia opisujesz akcjami, a nie rolami? Co frontend robi przy 401, a co przy 403? Kto naprawdę chroni dane?
+
+Problem: zgłaszający chcą dołączać do ticketów zrzuty ekranu i logi, a agenci — pobierać raport CSV z listy ticketów. Wysyłanie plików to inny format niż JSON (`multipart/form-data`), duże pliki potrzebują paska postępu, a pobieranie wygenerowanego pliku z API wymaga obsługi `Blob`. Ta lekcja przeprowadza przez obie strony: React i Spring Boot.
+
+#T DEFINITION Wysyłanie pliku: FormData i multipart
+Plik z pola `<input type="file">` (obiekt `File`) wkładasz do `FormData` i wysyłasz jako ciało żądania. **Nie ustawiasz** nagłówka `Content-Type` — przeglądarka sama ustawi `multipart/form-data` z odpowiednią granicą (boundary). W Springu odbierasz plik jako `MultipartFile` (`@RequestParam("file") MultipartFile file`) albo `@RequestPart`. Limity rozmiaru ustawiasz w `spring.servlet.multipart.max-file-size` i `max-request-size`.
+
+`fetch` nie raportuje postępu wysyłania — do paska postępu potrzebny jest `XMLHttpRequest` (zdarzenie `upload.onprogress`) albo biblioteka (np. axios z `onUploadProgress`).
+
+#T CODE_BASIC Endpoint w Spring Boot
+```
+@RestController
+@RequestMapping("/api/tickets/{ticketId}/attachments")
+class AttachmentController {
+
+    private final AttachmentService service;
+
+    AttachmentController(AttachmentService service) {
+        this.service = service;
+    }
+
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    ResponseEntity<AttachmentDto> upload(@PathVariable long ticketId, @RequestParam("file") MultipartFile file) {
+        if (!List.of("image/png", "image/jpeg", "text/plain", "application/pdf").contains(file.getContentType())) {
+            throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Niedozwolony typ pliku");
+        }
+        AttachmentDto saved = service.store(ticketId, file);
+        return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+    }
+}
+// application.properties:
+// spring.servlet.multipart.max-file-size=5MB
+// spring.servlet.multipart.max-request-size=6MB
+```
+
+#T CODE_JSX Wysyłanie z paskiem postępu (JSX)
+```
+// uploadAttachment.js
+export function uploadAttachment(ticketId, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/tickets/${ticketId}/attachments`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve(JSON.parse(xhr.responseText)) : reject(new Error(`Błąd ${xhr.status}`)));
+    xhr.onerror = () => reject(new Error('Błąd sieci'));
+    const data = new FormData();
+    data.append('file', file);
+    xhr.send(data); // Content-Type ustawi przeglądarka
+  });
+}
+```
+
+#T CODE_TSX Wysyłanie z paskiem postępu (TSX)
+Typ odpowiedzi `Attachment` i parametr `signal` do przerwania wysyłania przyciskiem „Anuluj”.
+```
+// uploadAttachment.ts
+export type Attachment = { id: number; fileName: string; sizeBytes: number; contentType: string };
+
+export function uploadAttachment(ticketId: number, file: File, onProgress: (percent: number) => void, signal?: AbortSignal): Promise<Attachment> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/tickets/${ticketId}/attachments`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve(JSON.parse(xhr.responseText) as Attachment) : reject(new Error(`Błąd ${xhr.status}`)));
+    xhr.onerror = () => reject(new Error('Błąd sieci'));
+    signal?.addEventListener('abort', () => {
+      xhr.abort();
+      reject(new DOMException('Przerwano wysyłanie', 'AbortError'));
+    });
+    const data = new FormData();
+    data.append('file', file);
+    xhr.send(data);
+  });
+}
+```
+
+#T NOTE JSX ↔ TSX — File, Blob i FormData
+`File` (z pola pliku) dziedziczy po `Blob` — w TSX możesz przekazać `File` tam, gdzie oczekiwany jest `Blob`, ale nie odwrotnie (`Blob` nie ma `name`). `FormData.append(nazwa, wartość)` przyjmuje `string | Blob`, więc wysłanie liczby wymaga `String(...)` — w JSX przeglądarka zamieni ją na tekst po cichu. Typ zdarzenia `e` w `upload.onprogress` to `ProgressEvent` — TypeScript zna pola `loaded`, `total`, `lengthComputable`. Odpowiedź z `XMLHttpRequest` to zwykły tekst (`responseText`) — rzutowanie `as Attachment` ma te same ograniczenia co wcześniej.
+
+#T CODE_PRACTICAL Komponent załączników z podglądem i walidacją
+Walidacja typu i rozmiaru po stronie klienta oszczędza czas użytkownika — ale serwer sprawdza i tak.
+```
+import { useState, type ChangeEvent } from 'react';
+import { uploadAttachment, type Attachment } from './uploadAttachment';
+
+const MAX_BYTES = 5 * 1024 * 1024;
+const ALLOWED = ['image/png', 'image/jpeg', 'text/plain', 'application/pdf'];
+
+export function AttachmentUploader({ ticketId, onUploaded }: { ticketId: number; onUploaded: (a: Attachment) => void }) {
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // pozwala wybrać ten sam plik ponownie
+    if (!file) return;
+    if (!ALLOWED.includes(file.type)) return setError('Dozwolone: PNG, JPEG, TXT, PDF.');
+    if (file.size > MAX_BYTES) return setError('Plik może mieć najwyżej 5 MB.');
+    setError(null);
+    setProgress(0);
+    try {
+      onUploaded(await uploadAttachment(ticketId, file, setProgress));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się wysłać pliku.');
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  return (
+    <div>
+      <label htmlFor="attachment">Dodaj załącznik</label>
+      <input id="attachment" type="file" accept={ALLOWED.join(',')} onChange={handleChange} disabled={progress !== null} />
+      {progress !== null && <progress max={100} value={progress} aria-label="Postęp wysyłania">{progress}%</progress>}
+      {error && <p role="alert">{error}</p>}
+    </div>
+  );
+}
+```
+
+#T DEFINITION Pobieranie pliku z API
+Gdy plik generuje API (np. eksport CSV wymagający uwierzytelnienia), zwykły link `<a href>` nie wyśle tokenu z nagłówka. Wtedy: pobierz odpowiedź przez `fetch` jako `Blob` (`await res.blob()`), utwórz tymczasowy adres `URL.createObjectURL(blob)`, „kliknij” niewidoczny link z atrybutem `download` i zwolnij adres `URL.revokeObjectURL`. Nazwę pliku odczytasz z nagłówka `Content-Disposition` (Spring: `ResponseEntity` z `ContentDisposition.attachment().filename(...)`). Jeśli uwierzytelnienie opiera się na ciasteczku sesji — wystarczy zwykły link do endpointu.
+
+#T CODE_JSX Pobieranie eksportu CSV (JSX)
+```
+// downloadExport.js
+export async function downloadExport(query) {
+  const res = await fetch(`/api/tickets/export?${new URLSearchParams(query)}`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`Nie udało się wygenerować eksportu (${res.status})`);
+  const blob = await res.blob();
+  const name = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'tickety.csv';
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+```
+
+#T CODE_TSX Pobieranie eksportu CSV (TSX)
+```
+// downloadExport.ts
+export async function downloadExport(query: Record<string, string>): Promise<void> {
+  const res = await fetch(`/api/tickets/export?${new URLSearchParams(query)}`, { credentials: 'include' });
+  if (!res.ok) throw new Error(`Nie udało się wygenerować eksportu (${res.status})`);
+  const blob = await res.blob();
+  const name = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'tickety.csv';
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: załączniki i eksport w DevDesk
+1. W Springu dodaj `AttachmentController` (zapis plików na dysku lub w bazie) i limity w `application.properties`; w MSW — odpowiadający handler (MSW obsługuje `request.formData()`).
+2. Dodaj `AttachmentUploader` w zakładce „Szczegóły” karty ticketu; po wysłaniu odśwież listę załączników (unieważnienie zapytania `['tickets', 'detail', id, 'attachments']`).
+3. Sprawdź walidację klienta (plik `.exe`, plik 20 MB) i serwera (wyłącz walidację klienta — Spring zwraca 413 lub 415, komunikat pojawia się przy polu).
+4. Na wolnej sieci (DevTools → Network → Slow 3G) obserwuj pasek postępu; dodaj przycisk „Anuluj” przerywający wysyłanie przez `AbortController`.
+5. Dodaj podgląd miniatur obrazków z `URL.createObjectURL` (ze zwalnianiem — rozdział 08, boss).
+6. W Springu dodaj `GET /api/tickets/export` zwracający CSV z nagłówkiem `Content-Disposition: attachment; filename="tickety-2026-10-21.csv"`; w pasku narzędzi tabeli dodaj przycisk „Eksport CSV” wywołujący `downloadExport` z aktualnymi filtrami.
+
+#T PITFALL Ręczny nagłówek Content-Type przy FormData
+`fetch(url, { method: 'POST', headers: { 'Content-Type': 'multipart/form-data' }, body: formData })` — nagłówek bez parametru `boundary` sprawia, że serwer nie potrafi rozdzielić części żądania i odrzuca je (Spring: „the request was rejected because no multipart boundary was found”). Przy `FormData` nie ustawiaj `Content-Type` wcale.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Plik wysyłasz w `FormData` bez ręcznego `Content-Type`; w Springu odbierasz `MultipartFile` i ustawiasz limity rozmiaru. Postęp wysyłania daje `XMLHttpRequest` (`upload.onprogress`), przerwanie — `abort()`. Waliduj typ i rozmiar po stronie klienta (wygoda) i serwera (bezpieczeństwo). Plik z API pobierasz jako `Blob`, tworzysz tymczasowy adres z `createObjectURL`, klikasz link z `download` i zwalniasz adres. W TSX: `File` jest `Blob`em, `FormData.append` przyjmuje `string | Blob`, a zdarzenie postępu ma typ `ProgressEvent`.
+
+Kryterium akceptacji: do ticketu można dołączyć zrzut ekranu z paskiem postępu i możliwością anulowania, niedozwolone pliki są odrzucane z komunikatem (po stronie klienta i serwera), a „Eksport CSV” pobiera plik z aktualnie filtrowanymi ticketami i nazwą z nagłówka serwera.

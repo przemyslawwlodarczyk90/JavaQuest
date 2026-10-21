@@ -1,0 +1,109 @@
+#T INTRO Boss rozdziału 11: funkcja end-to-end w React i Spring Boot
+Ten boss łączy dwa światy, które znasz: Javę ze Springiem i Reacta. Budujesz jedną kompletną funkcję od bazy danych po interfejs — tak, jak robi się to w zespołach full-stack. Funkcja: **obserwowanie ticketów** z powiadomieniami. Projektujesz kontrakt, implementujesz backend, generujesz typy, budujesz UI i spinasz wszystko w czasie rzeczywistym.
+
+#T DEFINITION Brief zadania
+Funkcja „Obserwuj ticket”:
+1. Na karcie ticketu przycisk **„☆ Obserwuj / ★ Obserwujesz”** z licznikiem obserwujących.
+2. W nagłówku aplikacji **dzwonek z liczbą nieprzeczytanych powiadomień**; po kliknięciu panel z listą (najnowsze u góry) i przyciskiem „Oznacz wszystkie jako przeczytane”.
+3. Powiadomienie powstaje, gdy **ktoś inny** zmieni obserwowany ticket (status, osoba, nowy komentarz).
+4. Powiadomienia przychodzą **na żywo** (SSE) — dzwonek aktualizuje się bez odświeżania.
+5. Ekran **„Obserwowane”** z listą obserwowanych ticketów (paginacja serwerowa).
+6. Uprawnienia: obserwować może każdy zalogowany; listę obserwujących ticketu widzi tylko admin.
+
+#T STEP_BY_STEP Kryteria akceptacji — backend
+1. Encje `Watch(userLogin, ticketId)` i `Notification(id, userLogin, ticketId, text, createdAt, read)` z repozytoriami JPA.
+2. Endpointy: `PUT /api/tickets/{id}/watch` i `DELETE /api/tickets/{id}/watch` (idempotentne), `GET /api/me/notifications?unreadOnly=`, `POST /api/me/notifications/read-all`, `GET /api/me/watched?page=`.
+3. Zmiana ticketu publikuje zdarzenie aplikacyjne; słuchacz tworzy powiadomienia dla obserwujących (z pominięciem autora zmiany) i wysyła zdarzenie SSE `notification` do zalogowanych odbiorców.
+4. Specyfikacja OpenAPI z adnotacjami odpowiedzi (200/204/401/403/404); `GET /api/tickets/{id}/watchers` zabezpieczony `@PreAuthorize("hasRole('ADMIN')")`.
+
+#T STEP_BY_STEP Kryteria akceptacji — frontend
+1. Typy wygenerowane z OpenAPI (w wersji TS — bez ręcznie pisanych DTO); w wersji JS — klient `openapi-fetch` z JSDoc.
+2. Hooki zapytań i mutacji w TanStack Query z fabryką kluczy (`notifications`, `watched`, `ticket watch status`).
+3. Obserwowanie z aktualizacją optymistyczną (gwiazdka i licznik zmieniają się od razu, wycofanie przy błędzie).
+4. Dzwonek: liczba nieprzeczytanych to dane wyliczane z listy powiadomień w cache; zdarzenie SSE dopisuje powiadomienie do cache (`setQueryData`) i pokazuje toast.
+5. Panel powiadomień jako popover/menu dostępny z klawiatury (rozdział 08); „Oznacz wszystkie” — mutacja z optymistycznym wyzerowaniem licznika.
+6. Lista obserwujących ticketu widoczna tylko dla admina (`Can`), a próba pobrania jej przez agenta kończy się 403 (sprawdź w konsoli).
+7. Wszystkie stany: ładowanie, błąd z ponowieniem, pusta lista („Nie obserwujesz jeszcze żadnych ticketów”).
+8. Test ręczny w dwóch oknach: Anna obserwuje #42, Piotr zmienia jego status — u Anny dzwonek pokazuje 1 w ciągu sekundy, u Piotra — bez zmian.
+
+#T CODE_JSX Hook obserwowania z optymistyczną aktualizacją (JSX)
+```
+// useWatch.js
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api/client';
+
+const watchKey = (id) => ['tickets', 'detail', id, 'watch'];
+
+export function useToggleWatch(ticketId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (watching) => {
+      const { error } = watching
+        ? await api.DELETE('/api/tickets/{id}/watch', { params: { path: { id: ticketId } } })
+        : await api.PUT('/api/tickets/{id}/watch', { params: { path: { id: ticketId } } });
+      if (error) throw new Error('Nie udało się zmienić obserwowania');
+    },
+    onMutate: async (watching) => {
+      await queryClient.cancelQueries({ queryKey: watchKey(ticketId) });
+      const previous = queryClient.getQueryData(watchKey(ticketId));
+      queryClient.setQueryData(watchKey(ticketId), (old) =>
+        old ? { watching: !watching, count: old.count + (watching ? -1 : 1) } : old);
+      return { previous };
+    },
+    onError: (_e, _v, context) => queryClient.setQueryData(watchKey(ticketId), context?.previous),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: watchKey(ticketId) }),
+  });
+}
+```
+
+#T CODE_TSX Hook obserwowania z optymistyczną aktualizacją (TSX)
+```
+// useWatch.ts
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+
+type WatchStatus = { watching: boolean; count: number };
+declare const api: {
+  PUT: (path: '/api/tickets/{id}/watch', init: { params: { path: { id: number } } }) => Promise<{ error?: unknown }>;
+  DELETE: (path: '/api/tickets/{id}/watch', init: { params: { path: { id: number } } }) => Promise<{ error?: unknown }>;
+};
+
+const watchKey = (id: number) => ['tickets', 'detail', id, 'watch'] as const;
+
+export function useToggleWatch(ticketId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (watching: boolean) => {
+      const init = { params: { path: { id: ticketId } } };
+      const { error } = watching ? await api.DELETE('/api/tickets/{id}/watch', init) : await api.PUT('/api/tickets/{id}/watch', init);
+      if (error) throw new Error('Nie udało się zmienić obserwowania');
+    },
+    onMutate: async (watching) => {
+      await queryClient.cancelQueries({ queryKey: watchKey(ticketId) });
+      const previous = queryClient.getQueryData<WatchStatus>(watchKey(ticketId));
+      queryClient.setQueryData<WatchStatus>(watchKey(ticketId), (old) =>
+        old ? { watching: !watching, count: old.count + (watching ? -1 : 1) } : old);
+      return { previous };
+    },
+    onError: (_e, _v, context) => queryClient.setQueryData(watchKey(ticketId), context?.previous),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: watchKey(ticketId) }),
+  });
+}
+```
+
+#T NOTE Wskazówka 1 — kolejność pracy w funkcji full-stack
+1) Kontrakt (ścieżki, kształty, kody błędów) zapisany na kartce lub w Swagger UI — uzgodniony przed kodem. 2) Backend z testem kontrolera (MockMvc). 3) Wygenerowane typy. 4) Hooki danych sprawdzone w devtools. 5) UI. 6) Czas rzeczywisty na końcu — gdy wszystko działa z ręcznym odświeżaniem, SSE tylko przyspiesza aktualizację.
+
+#T NOTE Wskazówka 2 — powiadomienia SSE do konkretnego użytkownika
+Przechowuj emitery w mapie `login → lista emiterów` (użytkownik może mieć kilka kart). Login weź z `SecurityContext` w metodzie `subscribe`. Słuchacz zdarzeń wysyła powiadomienie tylko do emiterów odbiorców. Po stronie frontendu zdarzenie `notification` dopisuj do cache: `queryClient.setQueryData(['notifications'], (old) => old ? [n, ...old] : [n])` — bez ponownego pobierania całej listy.
+
+#T PITFALL Typowe błędy w tym zadaniu
+- Powiadomienie dla autora zmiany („Ty zmieniłeś status”) — trzeba pominąć `event.by === recipient`.
+- Licznik nieprzeczytanych trzymany w osobnym `useState` i rozjeżdżający się z listą.
+- `PUT /watch` nieidempotentny — podwójne kliknięcie tworzy dwa wpisy `Watch` (unikalny indeks w bazie + `existsBy...` w serwisie).
+- Brak `onError` w mutacji obserwowania — gwiazdka zostaje zapalona mimo błędu 500.
+- Lista obserwujących ukryta w UI, ale endpoint bez `@PreAuthorize` — każdy może ją pobrać.
+
+#T SUMMARY Podsumowanie rozdziału 11
+W tym rozdziale połączyłeś React ze Spring Boot: kontrakt REST i proxy Vite, błędy jako ProblemDetail, logowanie przez sesję lub JWT z bezpiecznym przechowywaniem tokenu, uprawnienia odzwierciedlone w interfejsie (z ochroną na serwerze), wysyłanie i pobieranie plików, zmiany na żywo przez SSE i WebSocket oraz typy generowane z OpenAPI. W TSX: mapowanie typów Javy, unia stanu logowania, typowane uprawnienia, typy `File`/`Blob`, walidacja zdarzeń i klient `openapi-fetch` z typami ze specyfikacji.
+
+Boss zaliczony, gdy wszystkie kryteria backendu i frontendu są spełnione, a test w dwóch oknach przeglądarki działa zgodnie z punktem 8.

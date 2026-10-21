@@ -1,5 +1,60 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Rozgrzewka i problem: kolega zamknął ticket, a Ty go nadal widzisz",
+      "body": "Rozgrzewka: Dlaczego przy `FormData` nie ustawiasz `Content-Type`? Jak pokazać postęp wysyłania pliku? Jak pobrać plik z API wymagającego tokenu?\n\nProblem: dwóch agentów pracuje nad tą samą kolejką. Anna zamyka ticket #42, a Piotr przez kolejne 30 sekund (do odświeżenia cache) widzi go jako otwarty i też zaczyna nad nim pracować. Odpytywanie serwera co sekundę obciąża go i nadal ma opóźnienie. Potrzebny jest **kanał z serwera do przeglądarki**: serwer sam informuje o zmianach. Dwie technologie: **Server-Sent Events** (SSE, jednokierunkowe) i **WebSocket** (dwukierunkowe)."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "SSE, WebSocket i odpytywanie",
+      "body": "- **Odpytywanie (polling)** — klient co N sekund pyta o zmiany (`refetchInterval` w TanStack Query). Najprostsze, działa wszędzie, ale z opóźnieniem i zbędnym ruchem.\n- **SSE (`EventSource`)** — klient otwiera jedno długie połączenie HTTP, a serwer wysyła przez nie zdarzenia tekstowe. Tylko serwer → klient, automatyczne wznawianie po zerwaniu, działa przez zwykły HTTP (proxy, uwierzytelnienie ciasteczkiem). W Springu: `SseEmitter` (MVC) albo `Flux<ServerSentEvent>` (WebFlux).\n- **WebSocket** — trwałe połączenie dwukierunkowe (czat, współpraca na żywo, gry). W Springu: moduł WebSocket z protokołem **STOMP** (kanały subskrypcji, np. `/topic/tickets`) — klient JS `@stomp/stompjs`.\n\nDo powiadomień „coś się zmieniło” zwykle wystarcza **SSE**. WebSocket wybierz, gdy klient też często wysyła wiadomości w czasie rzeczywistym."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "SSE w Spring Boot",
+      "body": "Serwer trzyma listę połączonych klientów i wysyła im zdarzenie po każdej zmianie ticketu.",
+      "code": "@RestController\nclass TicketEventsController {\n\n    private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();\n\n    @GetMapping(path = \"/api/events\", produces = MediaType.TEXT_EVENT_STREAM_VALUE)\n    SseEmitter subscribe() {\n        SseEmitter emitter = new SseEmitter(0L); // bez limitu czasu\n        emitters.add(emitter);\n        emitter.onCompletion(() -> emitters.remove(emitter));\n        emitter.onTimeout(() -> emitters.remove(emitter));\n        return emitter;\n    }\n\n    @EventListener\n    void onTicketChanged(TicketChangedEvent event) {\n        for (SseEmitter emitter : emitters) {\n            try {\n                emitter.send(SseEmitter.event().name(\"ticket-changed\").data(event));\n            } catch (IOException e) {\n                emitters.remove(emitter);\n            }\n        }\n    }\n}\n\nrecord TicketChangedEvent(long ticketId, String change, String by) {}"
+    },
+    {
+      "type": "CODE_JSX",
+      "heading": "Subskrypcja SSE i unieważnianie cache (JSX)",
+      "body": "Zdarzenie z serwera nie niesie całego ticketu — tylko informację „zmienił się #42”. Klient unieważnia odpowiednie zapytania, a TanStack Query pobiera świeże dane.",
+      "code": "// useTicketEvents.js\nimport { useEffect } from 'react';\nimport { useQueryClient } from '@tanstack/react-query';\n\nexport function useTicketEvents(onNotice) {\n  const queryClient = useQueryClient();\n\n  useEffect(() => {\n    const source = new EventSource('/api/events', { withCredentials: true });\n\n    function handleChange(e) {\n      const event = JSON.parse(e.data); // { ticketId, change, by }\n      void queryClient.invalidateQueries({ queryKey: ['tickets', 'detail', event.ticketId] });\n      void queryClient.invalidateQueries({ queryKey: ['tickets', 'list'] });\n      onNotice(`${event.by}: ${event.change} #${event.ticketId}`);\n    }\n\n    source.addEventListener('ticket-changed', handleChange);\n    source.onerror = () => console.warn('Połączenie z serwerem zdarzeń przerwane — przeglądarka spróbuje ponownie');\n    return () => source.close();\n  }, [queryClient, onNotice]);\n}"
+    },
+    {
+      "type": "CODE_TSX",
+      "heading": "Subskrypcja SSE i unieważnianie cache (TSX)",
+      "body": "Dane zdarzenia przychodzą jako tekst — walidujesz je schematem, bo to dane z zewnątrz. `onNotice` opakowane w `useEffectEvent`, żeby zmiana funkcji nie zrywała połączenia.",
+      "code": "// useTicketEvents.ts\nimport { useEffect, useEffectEvent } from 'react';\nimport { useQueryClient } from '@tanstack/react-query';\nimport { z } from 'zod';\n\nconst ticketChangedSchema = z.object({ ticketId: z.number(), change: z.string(), by: z.string() });\n\nexport function useTicketEvents(onNotice: (text: string) => void) {\n  const queryClient = useQueryClient();\n  const notify = useEffectEvent(onNotice);\n\n  useEffect(() => {\n    const source = new EventSource('/api/events', { withCredentials: true });\n\n    function handleChange(e: MessageEvent<string>) {\n      const parsed = ticketChangedSchema.safeParse(JSON.parse(e.data));\n      if (!parsed.success) return;\n      const event = parsed.data;\n      void queryClient.invalidateQueries({ queryKey: ['tickets', 'detail', event.ticketId] });\n      void queryClient.invalidateQueries({ queryKey: ['tickets', 'list'] });\n      notify(`${event.by}: ${event.change} #${event.ticketId}`);\n    }\n\n    source.addEventListener('ticket-changed', handleChange);\n    source.onerror = () => console.warn('Połączenie z serwerem zdarzeń przerwane — przeglądarka spróbuje ponownie');\n    return () => source.close();\n  }, [queryClient]);\n}"
+    },
+    {
+      "type": "NOTE",
+      "heading": "JSX ↔ TSX — dane zdarzeń to dane z zewnątrz",
+      "body": "`e.data` w zdarzeniu SSE jest tekstem — w TSX `MessageEvent<string>` to mówi wprost. `JSON.parse` zwraca `any`, więc bez schematu typy znów byłyby fikcją; walidacja `safeParse` chroni obie wersje przed zdarzeniem w starym formacie po wdrożeniu nowej wersji backendu. Druga różnica: w wersji TSX użyto `useEffectEvent` (rozdział 07) — wtedy `onNotice` nie jest zależnością efektu i nowa funkcja od rodzica nie zrywa połączenia SSE przy każdym renderze. W wersji JSX `onNotice` jest w zależnościach — rodzic musi przekazywać stabilną funkcję."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "WebSocket ze STOMP (Spring WebSocket)",
+      "body": "Gdy potrzebujesz komunikacji dwukierunkowej — np. podglądu „Anna pisze komentarz…” w czasie rzeczywistym.",
+      "code": "import { Client } from '@stomp/stompjs';\nimport { useEffect, useState } from 'react';\n\nexport function useTypingIndicator(ticketId: number, me: string) {\n  const [typing, setTyping] = useState<string[]>([]);\n  const [client] = useState(() => new Client({ brokerURL: `ws://${location.host}/ws`, reconnectDelay: 3000 }));\n\n  useEffect(() => {\n    client.onConnect = () => {\n      client.subscribe(`/topic/tickets/${ticketId}/typing`, (message) => {\n        const { user, active } = JSON.parse(message.body) as { user: string; active: boolean };\n        if (user === me) return;\n        setTyping((prev) => (active ? [...new Set([...prev, user])] : prev.filter((u) => u !== user)));\n      });\n    };\n    client.activate();\n    return () => { void client.deactivate(); };\n  }, [client, ticketId, me]);\n\n  function sendTyping(active: boolean) {\n    if (client.connected) client.publish({ destination: `/app/tickets/${ticketId}/typing`, body: JSON.stringify({ user: me, active }) });\n  }\n\n  return { typing, sendTyping };\n}"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Budujemy razem: zmiany na żywo w DevDesk",
+      "body": "1. W Springu dodaj `TicketEventsController` z `SseEmitter` i publikuj `TicketChangedEvent` (`ApplicationEventPublisher`) przy zamknięciu, edycji i komentarzu.\n2. Jeśli korzystasz z proxy Vite, sprawdź, że strumień SSE nie jest buforowany (proxy Vite przekazuje go poprawnie; za Nginx w produkcji wyłącz buforowanie dla `/api/events`).\n3. Dodaj `useTicketEvents` w `Main`; komunikaty pokazuj jako toasty („anna: zamknięto #42”).\n4. Otwórz DevDesk w dwóch oknach (zaloguj się jako dwie osoby). Zamknij ticket w jednym — w drugim lista i karta zmieniają się w ciągu sekundy.\n5. Zatrzymaj backend i uruchom ponownie — w zakładce Network widać, że `EventSource` sam wznawia połączenie.\n6. Pomiń zdarzenia wywołane przez samego siebie (porównaj `event.by` z zalogowanym użytkownikiem), żeby nie pokazywać sobie toastu o własnej zmianie.\n7. (Rozszerzenie) Dodaj wskaźnik „pisze…” przez WebSocket i STOMP w panelu komentarzy."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Połączenie otwierane w każdym komponencie",
+      "body": "Hook `useTicketEvents` wywołany w każdym wierszu tabeli otworzy dziesiątki połączeń SSE (przeglądarki ograniczają liczbę równoległych połączeń HTTP/1.1 do jednego serwera do 6 — reszta żądań utknie w kolejce). Połączenie otwieraj **raz**, wysoko w drzewie (w `Main` albo w providerze), a zdarzenia rozprowadzaj przez cache TanStack Query lub kontekst."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Kryterium akceptacji i podsumowanie",
+      "body": "Do zmian w czasie rzeczywistym: odpytywanie (proste, z opóźnieniem), SSE (`EventSource`, serwer → klient, automatyczne wznawianie, w Springu `SseEmitter`) lub WebSocket/STOMP (dwukierunkowe). Zdarzenia z serwera najlepiej traktować jako sygnał „dane się zmieniły” i unieważniać cache TanStack Query. Połączenie otwieraj raz, wysoko w drzewie, ze sprzątaniem w efekcie. W TSX dane zdarzeń są tekstem — waliduj je schematem; `useEffectEvent` chroni połączenie przed zrywaniem przy zmianie callbacków.\n\nKryterium akceptacji: zmiana ticketu w jednym oknie przeglądarki pojawia się w drugim w ciągu sekundy (lista, karta i toast), połączenie wznawia się po restarcie backendu, a aplikacja otwiera dokładnie jedno połączenie SSE."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
