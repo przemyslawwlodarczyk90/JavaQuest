@@ -1,0 +1,148 @@
+#T INTRO Rozgrzewka i problem: komponent, który nie umie służyć dwóm panom
+Rozgrzewka: Czym różni się render prop od HOC? Dlaczego HOC wywołuje się na poziomie modułu? Co zyskujesz, zamieniając HOC na hook?
+
+Problem: komponent `TagPicker` (wybór tagów ticketu z listy z wyszukiwaniem) jest używany w trzech miejscach. W formularzu nowego ticketu wystarczy, żeby działał sam i oddał wynik przy zapisie. W filtrze tabeli wybrane tagi muszą być w stanie rodzica (filtrowanie), a przycisk „Wyczyść filtry” musi je resetować. W edycji masowej rodzic ustawia tagi z kodu. Jedna wersja komponentu nie pasuje do wszystkich — chyba że obsłuży **oba tryby**: kontrolowany i niekontrolowany, jak natywny `<input>`.
+
+#T DEFINITION Konwencja value / defaultValue / onChange
+Wzorowana na polach formularza:
+- `value` + `onChange` → **kontrolowany**: stan jest u rodzica, komponent tylko wyświetla i zgłasza zmiany,
+- `defaultValue` (+ opcjonalne `onChange`) → **niekontrolowany**: komponent trzyma stan sam, startując od `defaultValue`, i tylko informuje o zmianach,
+- tryb rozpoznajesz po tym, czy `value !== undefined`, i **nie zmieniasz go** w trakcie życia komponentu (React ostrzega o tym przy natywnych polach z tego samego powodu).
+
+Tę logikę warto zamknąć w hooku `useControllableState`, używanym przez wszystkie Twoje komponenty z wartością.
+
+#T CODE_JSX Hook useControllableState (JSX)
+```
+// useControllableState.js
+import { useRef, useState } from 'react';
+
+export function useControllableState({ value, defaultValue, onChange }) {
+  const [internal, setInternal] = useState(defaultValue);
+  const isControlled = value !== undefined;
+  const wasControlled = useRef(isControlled);
+
+  if (wasControlled.current !== isControlled) {
+    console.warn('Komponent zmienił tryb między kontrolowanym a niekontrolowanym — tak nie wolno.');
+  }
+
+  const current = isControlled ? value : internal;
+
+  function setValue(next) {
+    const resolved = typeof next === 'function' ? next(current) : next;
+    if (!isControlled) setInternal(resolved);
+    onChange?.(resolved);
+  }
+
+  return [current, setValue];
+}
+```
+
+#T CODE_TSX Hook useControllableState (TSX)
+Generyczny hook: `T` to typ wartości (tablica tagów, tekst, liczba). Setter przyjmuje wartość albo funkcję aktualizującą — jak `useState`.
+```
+// useControllableState.ts
+import { useRef, useState } from 'react';
+
+type Options<T> = { value?: T; defaultValue: T; onChange?: (value: T) => void };
+
+export function useControllableState<T>({ value, defaultValue, onChange }: Options<T>) {
+  const [internal, setInternal] = useState<T>(defaultValue);
+  const isControlled = value !== undefined;
+  const wasControlled = useRef(isControlled);
+
+  if (wasControlled.current !== isControlled) {
+    console.warn('Komponent zmienił tryb między kontrolowanym a niekontrolowanym — tak nie wolno.');
+  }
+
+  const current = isControlled ? value : internal;
+
+  function setValue(next: T | ((prev: T) => T)) {
+    const resolved = typeof next === 'function' ? (next as (prev: T) => T)(current) : next;
+    if (!isControlled) setInternal(resolved);
+    onChange?.(resolved);
+  }
+
+  return [current, setValue] as const;
+}
+```
+
+#T NOTE JSX ↔ TSX — sygnatura komponentu w obu trybach
+W TSX rzutowanie `next as (prev: T) => T` jest potrzebne, bo `typeof next === 'function'` nie zawęża unii `T | ((prev: T) => T)`, gdy `T` samo może być funkcją — rzadki przypadek, ale kompilator musi go uwzględnić. Bardziej wartościowe jest typowanie samego komponentu: możesz wymusić, że **albo** podano `value` z `onChange`, **albo** `defaultValue` — unią typów props: `({ value: string[]; onChange: (v: string[]) => void } | { defaultValue?: string[]; onChange?: (v: string[]) => void })`. Wtedy `value` bez `onChange` (pole tylko do odczytu przez pomyłkę) jest błędem kompilacji. W JSX tę umowę opisuje dokumentacja i ostrzeżenie w konsoli.
+
+#T CODE_BASIC TagPicker w obu trybach
+```
+import { useControllableState } from './useControllableState';
+
+const ALL_TAGS = ['api', 'ui', 'export', 'auth', 'mobile', 'billing'];
+
+type TagPickerProps = { value?: string[]; defaultValue?: string[]; onChange?: (tags: string[]) => void };
+
+export function TagPicker({ value, defaultValue = [], onChange }: TagPickerProps) {
+  const [tags, setTags] = useControllableState({ value, defaultValue, onChange });
+
+  function toggle(tag: string) {
+    setTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  }
+
+  return (
+    <fieldset>
+      <legend>Tagi</legend>
+      {ALL_TAGS.map((tag) => (
+        <label key={tag}>
+          <input type="checkbox" checked={tags.includes(tag)} onChange={() => toggle(tag)} /> {tag}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+```
+
+#T CODE_PRACTICAL Trzy miejsca użycia
+```
+import { useState } from 'react';
+import { TagPicker } from './TagPicker';
+
+// 1. niekontrolowany: formularz sam zbiera tagi
+export function NewTicketTags({ onTagsChange }: { onTagsChange: (tags: string[]) => void }) {
+  return <TagPicker defaultValue={['api']} onChange={onTagsChange} />;
+}
+
+// 2. kontrolowany: filtr tabeli z resetem z zewnątrz
+export function TagFilter() {
+  const [tags, setTags] = useState<string[]>([]);
+  return (
+    <>
+      <TagPicker value={tags} onChange={setTags} />
+      <button type="button" onClick={() => setTags([])}>Wyczyść filtry</button>
+      <p>Filtrowane tagi: {tags.join(', ') || 'brak'}</p>
+    </>
+  );
+}
+
+// 3. kontrolowany: rodzic ustawia wartość z kodu
+export function BulkTags() {
+  const [tags, setTags] = useState<string[]>(['ui']);
+  return (
+    <>
+      <button type="button" onClick={() => setTags(['api', 'auth'])}>Szablon „Backend”</button>
+      <TagPicker value={tags} onChange={setTags} />
+    </>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: komponenty wartości w DevDesk
+1. Utwórz `useControllableState` w `hooks/`.
+2. Zbuduj `TagPicker` i użyj go w trzech miejscach: formularz nowego ticketu (niekontrolowany), filtr tagów w pasku narzędzi tabeli (kontrolowany, filtruje listę), edycja masowa zaznaczonych ticketów (kontrolowany z szablonami).
+3. Przepisz `Tabs` z poprzedniej lekcji tak, by korzystał z `useControllableState` zamiast własnej logiki `value ?? internal`.
+4. Przepisz `Toggle` / przełączniki w panelu ustawień na ten sam wzorzec.
+5. Zrób test błędu: przekaż `value={undefined}` w pierwszym renderze i tablicę w kolejnym — zobacz ostrzeżenie o zmianie trybu.
+6. W wersji TS zapisz props `TagPicker` jako unię trybów i sprawdź, że `<TagPicker value={tags} />` bez `onChange` jest błędem.
+
+#T PITFALL Kopiowanie value do stanu wewnętrznego
+Najczęstsza błędna implementacja: `const [tags, setTags] = useState(props.value)` — komponent udaje kontrolowany, ale po pierwszym renderze ignoruje zmiany `value` od rodzica („Wyczyść filtry” nie działa). To ten sam błąd co kopiowanie props do stanu w rozdziale 06. W trybie kontrolowanym jedynym źródłem prawdy jest `props.value`.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Komponent z wartością powinien działać jak natywne pole: kontrolowany przez `value` + `onChange` albo niekontrolowany z `defaultValue`, z trybem ustalonym raz. Logikę zamykasz w generycznym hooku `useControllableState`, który w trybie kontrolowanym czyta `value`, a w niekontrolowanym — własny stan, i zawsze woła `onChange`. Nigdy nie kopiuj `value` do stanu wewnętrznego. W TSX możesz wymusić poprawne kombinacje props unią typów.
+
+Kryterium akceptacji: `TagPicker` działa w trzech miejscach DevDesk w obu trybach, „Wyczyść filtry” resetuje wybrane tagi, szablon „Backend” ustawia tagi z kodu, a `Tabs` i przełączniki ustawień korzystają z tego samego hooka.
