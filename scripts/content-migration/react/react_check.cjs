@@ -46,7 +46,7 @@ for (const file of files) {
         const text = code.join('\n');
         const isModule = /^\s*(import|export) /m.test(text) && !/^\s*[{[]/.test(text);
         if (type !== 'CODE_WRONG' && isModule && !text.includes('@check-skip')) {
-          const tsx = type === "CODE_TSX" || (type !== "CODE_JSX" && /}: {|}: [A-Z]|import type |\): \w|\w\??: (string|number|boolean|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text));
+          const tsx = type === "CODE_TSX" || (type !== "CODE_JSX" && /}: {|}: [A-Z]|import type |\): \w|\w\??: (string|number|boolean|unknown|any|void|never|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text));
           const named = text.match(/^\/\/ ([\w.-]+\.(?:tsx?|jsx?))(?=\s|$)/m);
           const fileName = named && !fs.existsSync(path.join(lessonDir, named[1])) ? named[1] : `snippet${++n}.${tsx ? 'tsx' : 'jsx'}`;
           const name = `L${lessonNo}/${fileName}`;
