@@ -1,0 +1,141 @@
+#T INTRO Rozgrzewka i problem: cache, który nie wie o zmianach
+Rozgrzewka: Czym różni się stan serwera od stanu UI? Co musi znaleźć się w kluczu zapytania? Co oznacza `staleTime`?
+
+Problem: po przejściu na TanStack Query zamknięcie ticketu wysyła `PATCH`, ale tabela przez 30 sekund pokazuje stary status — cache nie wie, że dane się zmieniły. Ręczne `refetch()` w każdym miejscu to powrót do chaosu. Mutacje w TanStack Query mają **`useMutation`** i mechanizm **unieważniania (invalidation)**: po zmianie mówisz „dane o kluczu `['tickets']` są nieaktualne”, a biblioteka odświeża wszystko, co ich używa. Do tego aktualizacja optymistyczna z automatycznym wycofaniem.
+
+#T DEFINITION useMutation
+`const mutation = useMutation({ mutationFn, onMutate, onError, onSuccess, onSettled })`:
+- `mutationFn(zmienne)` — funkcja wykonująca zmianę (np. `updateTicket(id, changes)`),
+- `mutation.mutate(zmienne)` — uruchomienie (w handlerze zdarzenia), `mutateAsync` — wersja zwracająca obietnicę,
+- stan: `isPending`, `isError`, `error`, `isSuccess`, `variables` (ostatnio wysłane dane),
+- cykl życia: `onMutate` (przed wysłaniem — miejsce na zmianę optymistyczną), `onError` (wycofanie), `onSuccess`, `onSettled` (zawsze na końcu — miejsce na unieważnienie cache).
+
+`queryClient.invalidateQueries({ queryKey })` oznacza pasujące zapytania jako nieświeże i odświeża te, które są aktualnie wyświetlane. Klucz działa jak przedrostek: `['tickets']` unieważnia listy i szczegóły.
+
+#T CODE_JSX Zamykanie ticketu z unieważnieniem (JSX)
+```
+// useCloseTicket.js
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { updateTicket } from '../api/tickets';
+import { ticketKeys } from './ticketKeys';
+
+export function useCloseTicket() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => updateTicket(id, { status: 'CLOSED' }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(ticketKeys.detail(updated.id), updated); // szczegóły od razu z odpowiedzi
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ticketKeys.lists() }), // listy — odśwież
+  });
+}
+
+// w wierszu:
+// const close = useCloseTicket();
+// <button disabled={close.isPending} onClick={() => close.mutate(ticket.id)}>Zamknij</button>
+```
+
+#T CODE_TSX Zamykanie ticketu z unieważnieniem (TSX)
+Typ zmiennych mutacji (`number`) i wyniku (`Ticket`) wynikają z `mutationFn`. `setQueryData` jest sprawdzane względem typu danych pod danym kluczem.
+```
+// useCloseTicket.ts
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { Ticket } from '../types';
+
+declare function updateTicket(id: number, changes: Partial<Ticket>): Promise<Ticket>;
+
+export const ticketKeys = {
+  all: ['tickets'] as const,
+  lists: () => [...ticketKeys.all, 'list'] as const,
+  detail: (id: number) => [...ticketKeys.all, 'detail', id] as const,
+};
+
+export function useCloseTicket() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => updateTicket(id, { status: 'CLOSED' }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Ticket>(ticketKeys.detail(updated.id), updated);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ticketKeys.lists() }),
+  });
+}
+```
+
+#T NOTE JSX ↔ TSX — typ zmiennych i kontekstu mutacji
+W TSX `mutate` przyjmuje dokładnie typ parametru `mutationFn` — `close.mutate(ticket)` zamiast `close.mutate(ticket.id)` jest błędem. Wartość zwrócona z `onMutate` (kontekst, np. migawka do wycofania) ma znany typ w `onError` — w kolejnym przykładzie `context?.previous` jest typowane bez dodatkowych adnotacji. W JSX te same pomyłki ujawnią się dopiero przy pierwszym kliknięciu — np. `PATCH /api/tickets/[object Object]`.
+
+#T DEFINITION Aktualizacja optymistyczna z wycofaniem
+Schemat w TanStack Query:
+1. `onMutate`: przerwij trwające odświeżenia danych, które zmieniasz (`cancelQueries`), zapamiętaj ich obecną wartość (`getQueryData`), wstaw wartość optymistyczną (`setQueryData`) i zwróć migawkę jako kontekst,
+2. `onError`: przywróć migawkę z kontekstu,
+3. `onSettled`: unieważnij dane, żeby zsynchronizować się z serwerem niezależnie od wyniku.
+
+#T CODE_BASIC Optymistyczna zmiana priorytetu
+```
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { Ticket, TicketPriority } from '../types';
+
+declare function updateTicket(id: number, changes: Partial<Ticket>): Promise<Ticket>;
+const detailKey = (id: number) => ['tickets', 'detail', id] as const;
+
+export function useChangePriority() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, priority }: { id: number; priority: TicketPriority }) => updateTicket(id, { priority }),
+    onMutate: async ({ id, priority }) => {
+      await queryClient.cancelQueries({ queryKey: detailKey(id) });
+      const previous = queryClient.getQueryData<Ticket>(detailKey(id));
+      if (previous) queryClient.setQueryData<Ticket>(detailKey(id), { ...previous, priority });
+      return { previous };
+    },
+    onError: (_error, { id }, context) => {
+      if (context?.previous) queryClient.setQueryData(detailKey(id), context.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['tickets'] }),
+  });
+}
+```
+
+#T CODE_PRACTICAL Tworzenie ticketu i stan mutacji w formularzu
+`mutateAsync` pozwala czekać na wynik w handlerze formularza (np. z React Hook Form); błędy walidacji serwera trafiają do pól.
+```
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { Ticket } from '../types';
+
+type NewTicket = Pick<Ticket, 'title' | 'description' | 'priority' | 'assignee'>;
+declare function createTicket(body: NewTicket): Promise<Ticket>;
+
+export function useCreateTicket(onCreated: (t: Ticket) => void) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createTicket,
+    onSuccess: (ticket) => {
+      queryClient.setQueryData(['tickets', 'detail', ticket.id], ticket);
+      void queryClient.invalidateQueries({ queryKey: ['tickets', 'list'] });
+      onCreated(ticket);
+    },
+  });
+}
+
+// w formularzu:
+// const create = useCreateTicket((t) => { closeDialog(); toast.show({ message: `Utworzono #${t.id}` }); });
+// async function onValid(values) { try { await create.mutateAsync(values); } catch (e) { /* setError z fieldErrors */ } }
+// <button disabled={create.isPending}>{create.isPending ? 'Zapisywanie…' : 'Utwórz'}</button>
+```
+
+#T STEP_BY_STEP Budujemy razem: mutacje w DevDesk
+1. Utwórz hooki `useCreateTicket`, `useCloseTicket`, `useChangePriority`, `useDeleteTicket` w `queries/tickets`.
+2. Podepnij je pod formularz nowego ticketu, przycisk „Zamknij”, zmianę priorytetu w karcie i usuwanie (z toastem „Cofnij” z rozdziału 08 — `mutate` dopiero w `onExpire`).
+3. Zamknij ticket — tabela i karta pokazują nowy status bez ręcznego `refetch` (w devtools widać unieważnione i odświeżone zapytania).
+4. Zmień priorytet przy MSW zwracającym błąd 500 dla `PATCH` — plakietka zmienia się natychmiast, a po błędzie wraca do poprzedniej wartości; pojawia się toast z błędem.
+5. Ustaw opóźnienie `PATCH` na 2 s i szybko zmieniaj priorytet kilka razy — `cancelQueries` zapobiega nadpisaniu wartości optymistycznej przez starsze odświeżenie.
+6. Usuń z kodu wszystkie ręczne `retry()` i kopie listy w stanie — źródłem prawdy dla danych serwera jest cache.
+
+#T PITFALL Mutacja w efekcie albo w renderze
+`useEffect(() => { if (shouldClose) close.mutate(id); }, [shouldClose])` — mutacja wywołana efektem uruchomi się ponownie w StrictMode, po odświeżeniu komponentu albo przy zmianie zależności i wyśle zmianę dwa razy. Mutacje wywołujesz wyłącznie w handlerach zdarzeń użytkownika (kliknięcie, wysłanie formularza, wygaśnięcie toastu).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useMutation` wykonuje zmiany (`mutate`/`mutateAsync` w handlerach) i ma cykl `onMutate` → `onError`/`onSuccess` → `onSettled`. Po zmianie unieważniasz dane (`invalidateQueries` z kluczem-przedrostkiem) albo wstawiasz wynik do cache (`setQueryData`). Aktualizacja optymistyczna: `cancelQueries`, migawka z `getQueryData`, `setQueryData`, wycofanie w `onError`, unieważnienie w `onSettled`. W TSX typy zmiennych, wyniku i kontekstu mutacji wynikają z funkcji.
+
+Kryterium akceptacji: tworzenie, zamykanie, zmiana priorytetu i usuwanie ticketów działają przez `useMutation`, tabela i karta aktualizują się bez ręcznego odświeżania, zmiana priorytetu jest natychmiastowa i wycofuje się przy błędzie serwera, a w kodzie nie ma kopii danych serwera w `useState`.
