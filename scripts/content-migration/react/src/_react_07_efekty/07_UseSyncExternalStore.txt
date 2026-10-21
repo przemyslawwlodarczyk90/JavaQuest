@@ -1,0 +1,142 @@
+#T INTRO Rozgrzewka i problem: stan, który żyje poza Reactem
+Rozgrzewka: Do czego służy `useEffectEvent`? Czym różni się `useLayoutEffect` od `useEffect`? Kiedy funkcja nie powinna być zależnością efektu?
+
+Problem: DevDesk korzysta z kilku źródeł danych, którymi React nie zarządza: stan połączenia z siecią (`navigator.onLine`), szerokość okna (układ mobilny), mały magazyn powiadomień napisany w czystym JavaScripcie (używany też przez kod spoza Reacta). Wersja z `useState` + `useEffect` działa, ale przy renderowaniu współbieżnym może pokazać w jednym renderze dwie różne wartości tego samego źródła („tearing”). React ma do tego dedykowany hook: `useSyncExternalStore`.
+
+#T DEFINITION useSyncExternalStore
+`const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot?)`:
+- **subscribe(callback)** — podpina `callback` do źródła i zwraca funkcję wypisującą; React wywoła `callback`, gdy coś się zmieni,
+- **getSnapshot()** — zwraca aktualną wartość źródła; przy braku zmian musi zwracać **tę samą** wartość (dla obiektów — tę samą referencję), inaczej React wpadnie w pętlę renderów,
+- **getServerSnapshot()** — opcjonalnie: wartość używana przy renderowaniu na serwerze i hydratacji.
+
+Hook gwarantuje, że wszystkie komponenty w danym renderze widzą tę samą wartość źródła i że po każdej zmianie się zaktualizują. To niskopoziomowe narzędzie — z niego korzystają biblioteki stanu (Zustand, Redux) pod spodem.
+
+#T CODE_JSX Stan sieci przez useSyncExternalStore (JSX)
+`subscribe` i `getSnapshot` zdefiniowane poza komponentem — są stabilne i nie wymagają ponownej subskrypcji przy renderze.
+```
+// useOnline.js
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback) {
+  window.addEventListener('online', callback);
+  window.addEventListener('offline', callback);
+  return () => {
+    window.removeEventListener('online', callback);
+    window.removeEventListener('offline', callback);
+  };
+}
+
+const getSnapshot = () => navigator.onLine;
+const getServerSnapshot = () => true; // na serwerze zakładamy „online”
+
+export function useOnline() {
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+```
+
+#T CODE_TSX Stan sieci przez useSyncExternalStore (TSX)
+Typ wyniku hooka wynika z `getSnapshot` — tu `boolean`.
+```
+// useOnline.ts
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback: () => void): () => void {
+  window.addEventListener('online', callback);
+  window.addEventListener('offline', callback);
+  return () => {
+    window.removeEventListener('online', callback);
+    window.removeEventListener('offline', callback);
+  };
+}
+
+const getSnapshot = (): boolean => navigator.onLine;
+const getServerSnapshot = (): boolean => true;
+
+export function useOnline(): boolean {
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+```
+
+#T NOTE JSX ↔ TSX — kontrakt subscribe
+Typ `subscribe: (callback: () => void) => () => void` to dokładnie kontrakt wymagany przez React — w TSX przekazanie funkcji, która nie zwraca funkcji wypisującej, jest błędem kompilacji. W JSX brak `return` w `subscribe` oznacza wyciek: React nie będzie miał jak się wypisać. Typ snapshotu (`boolean`, obiekt magazynu) przepływa do komponentów automatycznie, więc `useOnline()` ma typ `boolean` bez adnotacji w komponencie.
+
+#T CODE_BASIC Magazyn powiadomień w czystym JavaScripcie
+Mały magazyn zgodny z kontraktem: niemutowalne aktualizacje (nowa tablica przy zmianie), więc `getSnapshot` zwraca tę samą referencję, dopóki nic się nie zmieniło.
+```
+// notificationsStore.ts
+export type Notification = { id: number; text: string };
+
+let notifications: Notification[] = [];
+const listeners = new Set<() => void>();
+
+function emit() {
+  listeners.forEach((l) => l());
+}
+
+export const notificationsStore = {
+  subscribe(listener: () => void) {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  },
+  getSnapshot: () => notifications,
+  push(text: string) {
+    notifications = [{ id: Date.now(), text }, ...notifications].slice(0, 20);
+    emit();
+  },
+  dismiss(id: number) {
+    notifications = notifications.filter((n) => n.id !== id);
+    emit();
+  },
+};
+```
+
+#T CODE_PRACTICAL Komponent czytający magazyn
+Kod spoza Reacta (np. obsługa błędów sieci w module API) może wywołać `notificationsStore.push(...)`, a komponent się zaktualizuje.
+```
+import { useSyncExternalStore } from 'react';
+import { notificationsStore } from './notificationsStore';
+
+export function NotificationList() {
+  const items = useSyncExternalStore(notificationsStore.subscribe, notificationsStore.getSnapshot);
+  if (items.length === 0) return null;
+  return (
+    <ul aria-live="polite">
+      {items.map((n) => (
+        <li key={n.id}>
+          {n.text} <button type="button" onClick={() => notificationsStore.dismiss(n.id)}>✕</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+#T CODE_WRONG getSnapshot zwracający nowy obiekt
+Nowy obiekt przy każdym wywołaniu → React uznaje, że wartość ciągle się zmienia → nieskończona pętla renderów (React zgłosi błąd).
+```
+const getSnapshot = () => ({ width: window.innerWidth, height: window.innerHeight });
+const size = useSyncExternalStore(subscribe, getSnapshot);
+```
+
+#T CODE_RIGHT Snapshot jako wartość prosta
+```
+const getWidth = () => window.innerWidth;
+const width = useSyncExternalStore(subscribeResize, getWidth);
+const isMobile = width < 768; // wyliczane w renderze
+```
+
+#T STEP_BY_STEP Budujemy razem: zewnętrzne źródła w DevDesk
+1. Zastąp `useOnlineStatus` z lekcji o sprzątaniu hookiem `useOnline` na `useSyncExternalStore`.
+2. Napisz `useWindowWidth` (subskrypcja zdarzenia `resize`, snapshot `window.innerWidth`) i ukrywaj panel boczny poniżej 768 px.
+3. Utwórz `notificationsStore` i komponent `NotificationList` w nagłówku.
+4. W module z danymi (`data/tickets` lub przyszłe `api/`) wywołaj `notificationsStore.push('Zapisano zmiany')` po akcjach — bez przekazywania czegokolwiek przez props czy kontekst.
+5. Wywołaj w konsoli przeglądarki `notificationsStore.push('test')` (eksportuj magazyn na chwilę do `window`) — lista w nagłówku zaktualizuje się, choć zmiana przyszła spoza Reacta.
+6. Sprawdź błąd: zmień `getSnapshot` na zwracający kopię tablicy (`[...notifications]`) i przeczytaj komunikat Reacta w konsoli. Przywróć.
+
+#T WHEN_TO_USE useSyncExternalStore czy useState + useEffect
+`useSyncExternalStore` wybierz dla danych, które żyją poza Reactem i mogą się zmieniać niezależnie: API przeglądarki (sieć, `matchMedia`, rozmiar okna, widoczność strony), własne magazyny w czystym JS, biblioteki z modelem subskrypcji. Dla zapisu do zewnętrznego systemu (localStorage, tytuł strony) zostaje `useEffect`. W typowej aplikacji rzadko piszesz ten hook sam — częściej korzystasz z biblioteki stanu, która go używa (rozdział 13).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot?)` odczytuje dane z zewnętrznego źródła i aktualizuje komponent przy zmianach, gwarantując spójną wartość w całym renderze. `subscribe` zwraca funkcję wypisującą, `getSnapshot` musi zwracać tę samą wartość (referencję) przy braku zmian — stąd niemutowalne aktualizacje w magazynie i snapshoty jako wartości proste. Funkcje definiuj poza komponentem. W TSX kontrakt `subscribe` jest sprawdzany, a typ snapshotu przepływa do komponentu.
+
+Kryterium akceptacji: stan sieci i szerokość okna w DevDesk pochodzą z `useSyncExternalStore`, panel boczny chowa się na wąskim ekranie, a powiadomienia z magazynu w czystym JS pojawiają się w nagłówku także po wywołaniu spoza Reacta.

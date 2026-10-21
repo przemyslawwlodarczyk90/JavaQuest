@@ -1,0 +1,141 @@
+#T INTRO Rozgrzewka i problem: efekt reaguje na coś, na co nie powinien
+Rozgrzewka: Jakie dwa pytania zadajesz przed napisaniem efektu? Jak powiadomić rodzica o zmianie bez efektu? Czym zastąpić efekt resetujący stan przy zmianie props?
+
+Problem 1: panel „Na żywo” łączy się z kanałem zdarzeń wybranego ticketu i przy każdym zdarzeniu odtwarza dźwięk — ale tylko jeśli użytkownik ma włączone dźwięki w preferencjach. Preferencja jest używana w efekcie, więc jest zależnością: przełączenie dźwięku **rozłącza i łączy kanał od nowa**. Problem 2: podpowiedź (tooltip) nad przyciskiem przy krawędzi ekranu najpierw pojawia się w złym miejscu, a po chwili przeskakuje — widać mignięcie. Dwa nowe narzędzia: `useEffectEvent` i `useLayoutEffect`.
+
+#T DEFINITION useEffectEvent: zdarzenie wewnątrz efektu
+`useEffectEvent(fn)` (stabilny od React 19.2) tworzy funkcję, która:
+- zawsze widzi **najnowsze** props i stan (nie ma problemu nieaktualnego domknięcia),
+- **nie jest zależnością** efektu — zmiana wartości, które czyta, nie uruchamia efektu ponownie.
+
+Dzielisz kod efektu na dwie części: **reaktywną** (połączenie z kanałem `ticketId` — ma się odnowić, gdy zmieni się ticket) i **niereaktywną** (reakcja na zdarzenie z kanału — ma czytać aktualną preferencję dźwięku, ale nie powodować ponownego łączenia). Funkcję z `useEffectEvent` wywołujesz wyłącznie wewnątrz efektów, nie w renderze ani w handlerach.
+
+#T CODE_JSX Kanał ticketu z useEffectEvent (JSX)
+```
+// useTicketChannel.js
+import { useEffect, useEffectEvent } from 'react';
+
+export function useTicketChannel(ticketId, soundOn, onEvent, connect) {
+  const handleEvent = useEffectEvent((event) => {
+    onEvent(event);                 // najnowsza funkcja z props
+    if (soundOn) new Audio('/ping.mp3').play(); // najnowsza preferencja
+  });
+
+  useEffect(() => {
+    const connection = connect(ticketId);
+    connection.on('event', (e) => handleEvent(e));
+    return () => connection.close();
+  }, [ticketId, connect]); // soundOn i onEvent nie są zależnościami
+}
+```
+
+#T CODE_TSX Kanał ticketu z useEffectEvent (TSX)
+Typy połączenia opisują zewnętrzne API. `handleEvent` nie trafia do tablicy zależności — linter wie, że funkcje z `useEffectEvent` nie są zależnościami.
+```
+// useTicketChannel.ts
+import { useEffect, useEffectEvent } from 'react';
+
+export type ChannelEvent = { type: 'comment' | 'status'; text: string };
+export type Connection = { on: (name: 'event', cb: (e: ChannelEvent) => void) => void; close: () => void };
+
+export function useTicketChannel(
+  ticketId: number,
+  soundOn: boolean,
+  onEvent: (e: ChannelEvent) => void,
+  connect: (ticketId: number) => Connection,
+) {
+  const handleEvent = useEffectEvent((event: ChannelEvent) => {
+    onEvent(event);
+    if (soundOn) void new Audio('/ping.mp3').play();
+  });
+
+  useEffect(() => {
+    const connection = connect(ticketId);
+    connection.on('event', (e) => handleEvent(e));
+    return () => connection.close();
+  }, [ticketId, connect]);
+}
+```
+
+#T NOTE JSX ↔ TSX — Promise z play() i stabilność connect
+W TSX `void new Audio(...).play()` — `play()` zwraca `Promise`, a reguły lintera dla TS (`no-floating-promises`) wymagają jawnego oznaczenia, że wynik ignorujesz. W JSX ten sam kod działa, ale odrzucona obietnica (np. przeglądarka zablokowała autoodtwarzanie) trafi do konsoli jako nieobsłużony błąd. Druga rzecz: `connect` jest w zależnościach, bo przychodzi z props — jeśli rodzic przekaże nową funkcję przy każdym renderze, kanał będzie się odnawiał. Funkcję `connect` warto więc zdefiniować poza komponentem (moduł API) — wtedy jest stabilna w obu wersjach.
+
+#T CODE_WRONG Wyciszenie lintera zamiast useEffectEvent
+Kanał nie odnawia się przy zmianie dźwięku, ale `soundOn` jest zamrożony na wartości z chwili połączenia — przełącznik nie działa.
+```
+useEffect(() => {
+  const connection = connect(ticketId);
+  connection.on('event', (e) => {
+    onEvent(e);
+    if (soundOn) new Audio('/ping.mp3').play();
+  });
+  return () => connection.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [ticketId]);
+```
+
+#T CODE_RIGHT Część niereaktywna w useEffectEvent
+```
+const handleEvent = useEffectEvent((e) => {
+  onEvent(e);
+  if (soundOn) new Audio('/ping.mp3').play();
+});
+
+useEffect(() => {
+  const connection = connect(ticketId);
+  connection.on('event', (e) => handleEvent(e));
+  return () => connection.close();
+}, [ticketId, connect]);
+```
+
+#T DEFINITION useLayoutEffect: przed malowaniem ekranu
+`useEffect` uruchamia się **po** tym, jak przeglądarka narysuje ekran. Jeśli efekt mierzy element i zmienia stan (np. pozycję podpowiedzi), użytkownik przez ułamek sekundy widzi pierwszą, błędną wersję — mignięcie. `useLayoutEffect` ma to samo API, ale uruchamia się **po zmianach w DOM, a przed malowaniem**; React wykonuje wywołany w nim `setState` synchronicznie, więc na ekran trafia od razu wersja poprawiona.
+
+Koszt: blokuje malowanie, więc spowalnia aplikację, jeśli robi coś ciężkiego. Używaj tylko do pomiarów DOM wpływających na układ.
+
+#T VISUAL_EXAMPLE useEffect a useLayoutEffect
+useEffect:        render → commit DOM → MALOWANIE (tooltip w złym miejscu, widoczne!) → efekt mierzy → setState → render → malowanie (poprawnie)
+useLayoutEffect:  render → commit DOM → efekt mierzy → setState → render → commit → MALOWANIE (od razu poprawnie)
+
+#T CODE_PRACTICAL Podpowiedź, która nie wychodzi poza ekran
+```
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+
+export function Tooltip({ anchorRect, children }: { anchorRect: DOMRect; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [top, setTop] = useState(anchorRect.top - 8);
+
+  useLayoutEffect(() => {
+    const height = ref.current?.getBoundingClientRect().height ?? 0;
+    const above = anchorRect.top - height - 8;
+    setTop(above < 0 ? anchorRect.bottom + 8 : above); // za mało miejsca nad → pokaż pod
+  }, [anchorRect]);
+
+  return (
+    <div ref={ref} role="tooltip" className="tooltip" style={{ position: 'fixed', top, left: anchorRect.left }}>
+      {children}
+    </div>
+  );
+}
+```
+
+#T DEFINITION useInsertionEffect — tylko dla bibliotek
+Trzeci wariant, `useInsertionEffect`, uruchamia się jeszcze wcześniej — przed zmianami w DOM. Służy wyłącznie autorom bibliotek CSS-in-JS do wstrzykiwania reguł `<style>` przed pomiarami layoutu. W kodzie aplikacji praktycznie go nie używasz; warto wiedzieć, że istnieje, gdy zobaczysz go w kodzie biblioteki.
+
+#T STEP_BY_STEP Budujemy razem: kanał ticketu i podpowiedzi
+1. Zbuduj symulowane `connect(ticketId)` w module `api/channel` (zwraca obiekt z `on` i `close`, wysyła zdarzenie co kilka sekund i loguje „połączono #id” / „rozłączono #id”).
+2. Dodaj `useTicketChannel` w karcie szczegółów; zdarzenia dopisuj do listy w karcie.
+3. Dodaj przełącznik „Dźwięki” w preferencjach. Najpierw wersja z `soundOn` w zależnościach — w konsoli zobaczysz rozłączanie przy każdym przełączeniu.
+4. Przepisz na `useEffectEvent` — przełączanie dźwięku nie rozłącza kanału, a dźwięk respektuje aktualne ustawienie.
+5. Przełącz ticket — kanał rozłącza się i łączy z nowym (to zachowanie reaktywne, pożądane).
+6. Dodaj `Tooltip` z wersją `useEffect` przy przycisku w górnym rogu ekranu — zobacz mignięcie (spowolnij CPU w DevTools: Performance → CPU throttling). Zamień na `useLayoutEffect` — mignięcia nie ma.
+
+#T WHEN_TO_USE Który hook efektu
+- `useEffect` — domyślnie, do każdej synchronizacji z systemem zewnętrznym.
+- `useEffectEvent` — gdy fragment logiki efektu ma czytać najnowsze wartości, ale ich zmiana nie powinna ponownie uruchamiać efektu (logowanie z aktualnymi danymi, reakcja na zdarzenie z subskrypcji, wywołanie callbacku z props).
+- `useLayoutEffect` — pomiar DOM, którego wynik zmienia układ widoczny dla użytkownika (pozycja podpowiedzi, przewinięcie do elementu przed malowaniem). Działa tylko w przeglądarce — przy renderowaniu na serwerze nie jest wykonywany.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useEffectEvent` wydziela z efektu część niereaktywną: funkcja widzi najnowsze props i stan, ale nie jest zależnością i nie powoduje ponownego uruchomienia efektu — zamiast wyciszania lintera. `useLayoutEffect` uruchamia się przed malowaniem i służy do pomiarów DOM bez mignięć; blokuje malowanie, więc stosuj go oszczędnie. `useInsertionEffect` jest dla bibliotek CSS-in-JS. W TSX typujesz API zewnętrzne (połączenie, zdarzenia) i oznaczasz ignorowane obietnice.
+
+Kryterium akceptacji: przełączanie dźwięku nie rozłącza kanału ticketu (widać to w logach), zmiana ticketu łączy z nowym kanałem, a podpowiedź przy krawędzi ekranu od razu pojawia się w poprawnym miejscu.
