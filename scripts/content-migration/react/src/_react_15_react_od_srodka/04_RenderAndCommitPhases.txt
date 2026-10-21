@@ -1,0 +1,155 @@
+#T INTRO Rozgrzewka i problem: „render” to nie to samo co „zmiana na ekranie”
+Rozgrzewka: Co przechowuje fiber? Czym jest drzewo work-in-progress? Dlaczego faza commit nie może być przerwana?
+
+Problem: w DevTools „Highlight updates” podświetla komponent po każdym kliknięciu, choć na ekranie nic się nie zmienia — czy to błąd wydajności? Efekt mierzący wysokość elementu daje zły wynik, a ten sam kod w `useLayoutEffect` — dobry. Ref jest `null` w ciele komponentu, ale już ustawiony w efekcie. Wszystkie te zagadki rozwiązuje znajomość **dokładnej kolejności** faz: wyzwolenie → render → commit → malowanie → efekty.
+
+#T DEFINITION Trzy kroki każdej aktualizacji
+1. **Wyzwolenie (trigger)** — powód renderu: pierwsze montowanie (`root.render`), zmiana stanu (`setState`, `dispatch`), zmiana kontekstu, render rodzica.
+2. **Render** — React wywołuje funkcje komponentów, porównuje elementy z poprzednimi (rekoncyliacja) i wylicza listę zmian. **Nic nie zmienia się na ekranie.** Faza może być przerwana i powtórzona.
+3. **Commit** — React nanosi wyliczone zmiany na DOM (wstawia, aktualizuje, usuwa węzły), ustawia refy, a potem uruchamia efekty układu (`useLayoutEffect`). Synchronicznie, w całości.
+
+Po commicie przeglądarka **maluje** ekran, a potem React uruchamia zwykłe efekty (`useEffect`).
+
+#T VISUAL_EXAMPLE Pełna oś czasu
+setState(…) w handlerze
+   │
+   ▼
+RENDER        wywołanie komponentów → nowe elementy → porównanie → lista zmian      (przerywalny, czysty)
+   │
+   ▼
+COMMIT        1. sprzątanie efektów układu dla zmienionych/odmontowanych komponentów
+              2. zmiany DOM (wstaw/aktualizuj/usuń)
+              3. przypisanie refów (ref.current = węzeł)
+              4. useLayoutEffect (setup)                                              (synchroniczny)
+   │
+   ▼
+MALOWANIE     przeglądarka rysuje nowy stan ekranu
+   │
+   ▼
+EFEKTY        sprzątanie poprzednich useEffect → nowe useEffect (setup)               (po malowaniu)
+
+#T CODE_JSX Kolejność wywołań w konsoli (JSX)
+Kliknij przycisk i porównaj kolejność logów z osią czasu.
+```
+// PhasesDemo.jsx
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+export function PhasesDemo() {
+  const [n, setN] = useState(0);
+  const ref = useRef(null);
+
+  console.log('1. render — ref.current:', ref.current); // przy pierwszym renderze: null
+
+  useLayoutEffect(() => {
+    console.log('3. useLayoutEffect — DOM już zmieniony, przed malowaniem:', ref.current?.textContent);
+    return () => console.log('   sprzątanie useLayoutEffect');
+  }, [n]);
+
+  useEffect(() => {
+    console.log('4. useEffect — po malowaniu');
+    return () => console.log('   sprzątanie useEffect');
+  }, [n]);
+
+  return (
+    <button ref={ref} type="button" onClick={() => { console.log('0. handler'); setN((x) => x + 1); }}>
+      Kliknięto {n}
+    </button>
+  );
+}
+```
+
+#T CODE_TSX Kolejność wywołań w konsoli (TSX)
+Typ refa `HTMLButtonElement | null` — w renderze może być `null` (pierwszy render), w efektach jest już ustawiony.
+```
+// PhasesDemo.tsx
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+export function PhasesDemo() {
+  const [n, setN] = useState(0);
+  const ref = useRef<HTMLButtonElement>(null);
+
+  console.log('1. render — ref.current:', ref.current);
+
+  useLayoutEffect(() => {
+    console.log('3. useLayoutEffect — DOM już zmieniony, przed malowaniem:', ref.current?.textContent);
+    return () => console.log('   sprzątanie useLayoutEffect');
+  }, [n]);
+
+  useEffect(() => {
+    console.log('4. useEffect — po malowaniu');
+    return () => console.log('   sprzątanie useEffect');
+  }, [n]);
+
+  return (
+    <button ref={ref} type="button" onClick={() => { console.log('0. handler'); setN((x) => x + 1); }}>
+      Kliknięto {n}
+    </button>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — typy odzwierciedlają fazy
+Typ `RefObject<HTMLButtonElement | null>` w TSX jest bezpośrednim odbiciem kolejności faz: przed commitem (w pierwszym renderze) ref jest pusty, po przypisaniu w commicie — wskazuje element, po odmontowaniu — znów `null`. Wymóg `ref.current?.` w TSX to przypomnienie, że czytanie refa w renderze jest nierzetelne. W JSX ten sam kod rzuci błąd „Cannot read properties of null” tylko w pierwszym renderze — łatwo go przeoczyć w testach.
+
+#T DEFINITION Render bez zmian w DOM
+Render komponentu nie oznacza zmiany ekranu. Jeśli komponent zwróci takie same elementy jak poprzednio (te same typy, te same props tagów HTML), rekoncyliacja nie znajdzie różnic i commit nie dotknie DOM. Dlatego podświetlenie w „Highlight updates” (render) nie jest samo w sobie problemem wydajności — problemem jest render, który **kosztuje dużo czasu** (rozdział 16). React ma też wczesne wyjście: `setState` z tą samą wartością (`Object.is`) zwykle pomija render komponentu i jego dzieci.
+
+#T CODE_BASIC Kiedy React pomija render
+```
+import { useState } from 'react';
+
+export function BailoutDemo() {
+  const [status, setStatus] = useState<'OPEN' | 'CLOSED'>('OPEN');
+  console.log('render BailoutDemo');
+  return (
+    <div>
+      <p>Status: {status}</p>
+      {/* ustawienie tej samej wartości — React może pominąć render (brak logu po kolejnym kliknięciu) */}
+      <button type="button" onClick={() => setStatus('OPEN')}>Ustaw OPEN</button>
+      <button type="button" onClick={() => setStatus('CLOSED')}>Ustaw CLOSED</button>
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Pomiar i przewinięcie w odpowiedniej fazie
+Przewinięcie listy do nowego komentarza musi nastąpić po wstawieniu węzła do DOM — w efekcie układu, a nie w handlerze (DOM jeszcze się nie zmienił) ani w renderze (element nie istnieje).
+```
+import { useLayoutEffect, useRef } from 'react';
+
+type Comment = { id: number; text: string };
+
+export function CommentList({ comments }: { comments: Comment[] }) {
+  const endRef = useRef<HTMLLIElement>(null);
+  const lastId = comments.at(-1)?.id;
+
+  useLayoutEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' }); // DOM już zawiera nowy komentarz, ekran jeszcze nie odmalowany
+  }, [lastId]);
+
+  return (
+    <ul className="comments">
+      {comments.map((c) => <li key={c.id}>{c.text}</li>)}
+      <li ref={endRef} aria-hidden="true" />
+    </ul>
+  );
+}
+```
+
+#T DEFINITION flushSync — wyjątek od grupowania
+Domyślnie aktualizacje z handlera są grupowane i renderowane razem po jego zakończeniu. `flushSync(() => setX(...))` z `react-dom` wymusza **natychmiastowy** render i commit wewnątrz handlera — po powrocie DOM jest już zaktualizowany. Przydaje się rzadko: np. gdy zaraz po dodaniu elementu musisz go przewinąć lub ustawić na nim fokus w tym samym handlerze, albo przy integracji z kodem spoza Reacta. Nadużywane psuje wydajność (wyłącza grupowanie).
+
+#T STEP_BY_STEP Budujemy razem: zobacz fazy na własne oczy
+1. Wklej `PhasesDemo`, otwórz konsolę i kliknij przycisk — zapisz kolejność logów (w StrictMode przy montowaniu zobaczysz dodatkowo podwójny render i cykl setup→sprzątanie→setup efektów).
+2. Zbuduj `BailoutDemo` i kliknij kilka razy „Ustaw OPEN” — po pierwszym razie render nie powtarza się.
+3. W Chrome DevTools nagraj profil wydajności (Performance) podczas kliknięcia w DevDesk: znajdź blok wykonania JavaScriptu (render), potem „Recalculate Style / Layout / Paint” — to commit i malowanie.
+4. Przepisz przewijanie listy komentarzy z `requestAnimationFrame` (rozdział 08) na `useLayoutEffect` zależny od ID ostatniego komentarza.
+5. Napisz wariant z `flushSync`: w handlerze dodania komentarza `flushSync(() => setComments(...))`, a zaraz po nim `listEnd.scrollIntoView()` — porównaj z wersją z efektem i zdecyduj, która jest czytelniejsza.
+
+#T PITFALL Odczyt DOM w handlerze zaraz po setState
+`setOpen(true); panelRef.current.focus();` — w chwili wywołania `focus` panel jeszcze nie istnieje (render i commit odbędą się po zakończeniu handlera), więc `panelRef.current` to `null`. Rozwiązania: efekt reagujący na `open` (najczęściej), atrybut `autoFocus` na elemencie, ewentualnie `flushSync` dla tej jednej aktualizacji.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Każda aktualizacja to wyzwolenie (setState, kontekst, rodzic), render (czyste, przerywalne obliczenie zmian), commit (synchroniczne zmiany DOM, przypisanie refów, `useLayoutEffect`), malowanie i wreszcie `useEffect`. Render nie oznacza zmiany DOM — commit nanosi tylko różnice, a ustawienie tej samej wartości stanu może pominąć render. Pomiary i przewijanie wykonuj w `useLayoutEffect`, odczyt DOM zaraz po setState w handlerze nie zadziała (wyjątkiem jest `flushSync`). W TSX typ refa `T | null` odzwierciedla fazy.
+
+Kryterium akceptacji: potrafisz przewidzieć i wyjaśnić kolejność logów `PhasesDemo`, pokazać pominięcie renderu przy tej samej wartości stanu oraz poprawnie przewijać listę komentarzy w `useLayoutEffect`.

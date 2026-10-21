@@ -1,0 +1,151 @@
+#T INTRO Rozgrzewka i problem: które aktualizacje są ważniejsze?
+Rozgrzewka: Jaka jest kolejność faz render, commit, malowanie, efekty? Kiedy uruchamia się `useLayoutEffect`? Do czego służy `flushSync`?
+
+Problem: w DevDesk jednocześnie dzieje się wiele rzeczy: użytkownik pisze w wyszukiwarce, przychodzi zdarzenie SSE o zmianie ticketu, kończy się żądanie z danymi strony, odlicza toast. Gdyby React renderował każdą zmianę natychmiast i w kolejności nadejścia, wpisywanie tekstu „zacinałoby się” za każdym razem, gdy przyjdzie duża porcja danych. React ma **harmonogram** (scheduler) z **priorytetami** (lanes) i **automatycznym grupowaniem** (batching) — ta lekcja wyjaśnia, jak decyduje, co i kiedy renderować.
+
+#T DEFINITION Automatyczny batching
+Od React 18 **wszystkie** aktualizacje stanu wywołane w tym samym „takcie” (w handlerze zdarzenia, w `setTimeout`, po `await`, w callbacku obietnicy, w zdarzeniu natywnym) są grupowane w **jeden render**. Trzy wywołania `setX`, `setY`, `setZ` po `await fetch(...)` dają jeden render, a nie trzy. W React 17 i wcześniej grupowanie działało tylko w handlerach zdarzeń Reacta — w `setTimeout` czy po `await` każdy setter powodował osobny render (stąd w starym kodzie `unstable_batchedUpdates`).
+
+#T CODE_JSX Licznik renderów przy grupowaniu (JSX)
+```
+// BatchingDemo.jsx
+import { useState } from 'react';
+
+let renders = 0;
+
+export function BatchingDemo() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  renders += 1; // tylko do obserwacji
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    await new Promise((r) => setTimeout(r, 300));
+    // trzy aktualizacje po await — jeden render (React 18+)
+    setItems(['A', 'B', 'C']);
+    setLoading(false);
+    setError(null);
+  }
+
+  return (
+    <div>
+      <button type="button" onClick={load}>Wczytaj</button>
+      <p>{loading ? 'Ładowanie…' : items.join(', ')} {error}</p>
+      <small>Renderów: {renders}</small>
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Licznik renderów przy grupowaniu (TSX)
+```
+// BatchingDemo.tsx
+import { useState } from 'react';
+
+let renders = 0;
+
+export function BatchingDemo() {
+  const [items, setItems] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  renders += 1;
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    await new Promise((r) => setTimeout(r, 300));
+    setItems(['A', 'B', 'C']);
+    setLoading(false);
+    setError(null);
+  }
+
+  return (
+    <div>
+      <button type="button" onClick={load}>Wczytaj</button>
+      <p>{loading ? 'Ładowanie…' : items.join(', ')} {error}</p>
+      <small>Renderów: {renders}</small>
+    </div>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — harmonogram nie ma typów
+Batching, priorytety i harmonogram to zachowanie środowiska uruchomieniowego Reacta — identyczne dla JSX i TSX i niewidoczne dla kompilatora. TypeScript pomaga tylko pośrednio: unia stanu (rozdział 10) zamiast trzech niezależnych zmiennych (`items`, `loading`, `error`) eliminuje cały problem „pośrednich stanów” między setterami — z jedną zmienną stanu nie ma czego grupować. To lepsze rozwiązanie niż liczenie na batching.
+
+#T DEFINITION Priorytety (lanes)
+Każda aktualizacja dostaje **pas** (lane) — priorytet wynikający z tego, skąd pochodzi:
+- **SyncLane / dyskretne zdarzenia** — kliknięcie, naciśnięcie klawisza, wpisanie tekstu: najwyższy priorytet, użytkownik oczekuje natychmiastowej reakcji,
+- **ciągłe zdarzenia** — przewijanie, ruch myszy, przeciąganie: wysoki priorytet,
+- **DefaultLane** — aktualizacje spoza zdarzeń (np. po odpowiedzi sieci, w `setTimeout`),
+- **TransitionLanes** — aktualizacje oznaczone `startTransition` / `useTransition`: niepilne, mogą być przerwane przez pilniejsze,
+- **IdleLane** — praca w tle, gdy nic innego się nie dzieje.
+
+Harmonogram najpierw renderuje pas o najwyższym priorytecie. Praca z niskiego pasa (np. przejście) jest przerywana, gdy pojawi się aktualizacja z wysokiego — i wznawiana albo powtarzana później.
+
+#T VISUAL_EXAMPLE Pisanie przy ciężkim renderze
+bez transition:
+  znak „a” → [render tabeli 120 ms — blokada] → znak „p” czeka → [render 120 ms] → pole „zacina się”
+
+z transition (filtr tabeli jako niepilny):
+  znak „a” → render pola (pilne, 2 ms) ✔ → start renderu tabeli (niepilne)…
+  znak „p” → PRZERWANIE renderu tabeli → render pola (2 ms) ✔ → render tabeli od nowa dla „ap”
+  przerwa w pisaniu → render tabeli kończy się → commit
+
+#T CODE_BASIC Oznaczenie aktualizacji jako niepilnej
+```
+import { startTransition, useState } from 'react';
+
+export function useSplitPriority() {
+  const [input, setInput] = useState('');     // pilne: to, co widzi użytkownik w polu
+  const [filter, setFilter] = useState('');   // niepilne: kosztowne filtrowanie listy
+
+  function handleChange(value: string) {
+    setInput(value);
+    startTransition(() => setFilter(value));
+  }
+
+  return { input, filter, handleChange };
+}
+```
+
+#T CODE_PRACTICAL flushSync: wymuszenie synchronicznego commitu
+Przeciwieństwo przejścia — gdy coś musi trafić do DOM natychmiast, w środku handlera.
+```
+import { useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+
+export function TagAdder() {
+  const [tags, setTags] = useState<string[]>([]);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  function addTag(tag: string) {
+    flushSync(() => setTags((prev) => [...prev, tag])); // DOM zaktualizowany przed następną linią
+    listRef.current?.lastElementChild?.scrollIntoView({ block: 'nearest' });
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => addTag(`tag-${tags.length + 1}`)}>Dodaj tag</button>
+      <ul ref={listRef}>{tags.map((t) => <li key={t}>{t}</li>)}</ul>
+    </>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: obserwacja harmonogramu
+1. Zbuduj `BatchingDemo` i sprawdź, że jedno kliknięcie „Wczytaj” daje dwa rendery (jeden po `setLoading(true)`, jeden po trzech setterach za `await`), a nie cztery.
+2. Przepisz go na jedną zmienną stanu jako unię (`idle | loading | success | error`) i porównaj czytelność.
+3. W DevDesk wygeneruj 5000 ticketów w MSW i podłącz filtr tabeli bezpośrednio do pola wyszukiwania — odczuj „zacinanie” przy pisaniu (spowolnienie CPU w DevTools ×4).
+4. Rozdziel priorytety jak w `useSplitPriority`: pole pilne, filtr w `startTransition` — pisanie staje się płynne.
+5. W React DevTools Profiler nagraj pisanie w obu wersjach i porównaj długość commitów pola tekstowego.
+6. Zbuduj `TagAdder` z `flushSync` i bez niego (sam `setTags` + `scrollIntoView`) — w drugiej wersji przewinięcie trafia w przedostatni element.
+
+#T PITFALL Przejście dla pola tekstowego
+`startTransition(() => setInput(value))` dla wartości kontrolowanego pola sprawia, że pole może nie nadążać za pisaniem (aktualizacja niepilna może zostać odłożona), a w skrajnych przypadkach kursor skacze. Wartość pola, które użytkownik właśnie edytuje, jest zawsze pilna; w przejściu umieszczasz tylko kosztowne skutki (filtrowanie, wykres, przeliczenia).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+React grupuje wszystkie aktualizacje z jednego taktu w jeden render (automatyczny batching od React 18, także po `await` i w `setTimeout`). Harmonogram nadaje aktualizacjom priorytety (lanes): zdarzenia dyskretne (kliknięcia, pisanie) są pilne, przejścia (`startTransition`) — niepilne i przerywalne. Pilne aktualizacje przerywają niepilny render, który później jest wznawiany lub powtarzany. `flushSync` wymusza natychmiastowy render i commit. Stan jako unia zamiast kilku zmiennych usuwa problem pośrednich stanów niezależnie od batchingu.
+
+Kryterium akceptacji: potrafisz pokazać liczbę renderów w `BatchingDemo` i ją wyjaśnić, w DevDesk z 5000 ticketów pisanie w wyszukiwarce jest płynne dzięki rozdzieleniu priorytetów, a `TagAdder` z `flushSync` przewija do właściwego elementu.
