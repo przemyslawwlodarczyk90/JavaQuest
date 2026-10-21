@@ -19,16 +19,17 @@
 
 JavaQuest zaczął się jako moja osobista encyklopedia i repetytorium Javy — lekcja po lekcji, od
 zmiennych po mikroserwisy. Dziś to **pełna aplikacja webowa** (Spring Boot + React), która serwuje
-ten kurs i trzy kolejne, z kontem użytkownika, postępem i quizami ocenianymi po stronie serwera.
+ten kurs i cztery kolejne, z kontem użytkownika, postępem i quizami ocenianymi po stronie serwera.
 
 ## 📚 Kursy
 
-Przełącznik na panelu głównym — cztery równoległe tory na jednym backendzie:
+Przełącznik na panelu głównym — pięć równoległych torów na jednym backendzie:
 
 | Tor | Rozdziały | Lekcje | Pytania quizowe | Zadania | Stan |
 |---|---:|---:|---:|---:|---|
 | ☕ **Java** (domyślny) | 41 | 760 | ~68 800 | ~20 900 | ✅ kompletny |
 | 🟨 **JavaScript** | 14 | 90 | ~9 000 | ~2 700 | ✅ kompletny |
+| ⚛️ **React** | 11 | 63 | — | — | 🚧 zarys, lekcje w przygotowaniu |
 | 🐧 **Linux** | 46 | 437 | — | — | 🚧 teoria w toku |
 | 🎓 **OCP Java 21** | 14 | 38 | 2 026 | 500 | ✅ kompletny |
 
@@ -156,7 +157,7 @@ JWT trzymaj w `javaquest-platform-secrets.properties` — plik jest w `.gitignor
 |---|---|---|
 | `POST` | `/api/auth/register` · `/login` · `/forgot-password` · `/reset-password` | konto |
 | `GET` | `/api/auth/confirm?token=` · `/api/auth/me` | aktywacja, bieżący użytkownik |
-| `GET` | `/api/chapters?track=JAVA\|JAVASCRIPT\|LINUX` | rozdziały toru |
+| `GET` | `/api/chapters?track=JAVA\|JAVASCRIPT\|REACT\|LINUX\|OCP` | rozdziały toru |
 | `GET` | `/api/chapters/{c}/lessons` | lekcje rozdziału |
 | `GET` | `/api/chapters/{c}/lessons/{l}/theory` · `/exercises` | treść lekcji |
 | `GET` | `/api/chapters/{c}/lessons/{l}/quiz` | stan quizu + mastery lekcji |

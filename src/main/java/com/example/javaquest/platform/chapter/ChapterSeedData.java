@@ -588,6 +588,66 @@ public final class ChapterSeedData {
                     "04_WindowHistoryAndHistoryApi", "05_EcmaScriptStandards", "06_DebuggingInVsCode"
             ), CourseTrack.JAVASCRIPT),
 
+            // ===== TOR REACT (2026-10-21) =====
+            // Kurs po torze JavaScript: jeden rozwijany projekt (DevDesk - panel ticketow), lekcja =
+            // funkcja dodawana do aplikacji, rozdzialy 01-09 koncza sie lekcja Boss (zadanie w innej
+            // domenie z mniejsza liczba podpowiedzi), rozdzial 10 - projekt koncowy.
+            // Pliki tresci JSON sa PUSTE - frontend pokazuje lekcje jako "w przygotowaniu".
+            new ChapterSeed("_react_00_wprowadzenie", "React - wprowadzenie i środowisko", List.of(
+                    "01_CourseAndDevDeskProject", "02_EnvironmentNodeAndVite", "03_TypeScriptMinimumForReact",
+                    "04_ToolingEslintPrettierDevtools"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_01_komponenty", "React - fundamenty komponentów", List.of(
+                    "01_AppShellAndFirstComponent", "02_JsxAndDynamicData", "03_PropsAndTyping",
+                    "04_ListsAndKeys", "05_CompositionAndChildren", "06_BossUserDashboard"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_02_state_i_tabela", "React - interakcja, state i tabela", List.of(
+                    "01_EventsAndUseState", "02_ControlledSearchInput", "03_DerivedDataFiltering",
+                    "04_SortableColumns", "05_LocalPagination", "06_BossProductCatalog"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_03_formularze", "React - formularze i walidacja", List.of(
+                    "01_FirstControlledForm", "02_SelectCheckboxTextarea", "03_ValidationAndErrors",
+                    "04_SubmitAndReset", "05_EditFormAndStateReset", "06_BossRegistrationForm"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_04_architektura_stanu", "React - architektura stanu", List.of(
+                    "01_LiftingStateUp", "02_SingleSourceOfTruth", "03_UseReducer",
+                    "04_ContextForPreferences", "05_CustomHooks", "06_BossBulkOrderActions"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_05_wzorce_ui", "React - wzorce interfejsu i efekty", List.of(
+                    "01_TabsComponent", "02_PortalAndModal", "03_RefsAndFocus", "04_ToastAndUndo",
+                    "05_EffectsSyncWithExternalSystems", "06_BossAccessibleProfileModal"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_06_api", "React - dane z API i stan serwera", List.of(
+                    "01_MockApiWithMsw", "02_FetchingData", "03_LoadingErrorEmptyStates",
+                    "04_CleanupAndRaceConditions", "05_CrudMutations", "06_TanStackQuery", "07_BossBooksCrud"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_07_routing", "React - routing i URL jako stan", List.of(
+                    "01_RouterBasics", "02_LayoutAndNestedRoutes", "03_RouteParams",
+                    "04_SearchParamsAsState", "05_NotFoundAndRouteErrors", "06_BossProductRoutes"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_08_testy", "React - testowanie zachowania", List.of(
+                    "01_VitestBasics", "02_ReactTestingLibrary", "03_UserEventInteractions",
+                    "04_AsyncTestsWithMsw", "05_PlaywrightE2e", "06_BossTestUnknownComponent"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_09_wydajnosc", "React - wydajność i współczesny React", List.of(
+                    "01_RenderModelAndProfiler", "02_Memoization", "03_LazyAndSuspense",
+                    "04_TransitionsAndDeferredValues", "05_BossFindTheBottleneck"
+            ), CourseTrack.REACT),
+
+            new ChapterSeed("_react_10_produkcja", "React - produkcja i projekt końcowy", List.of(
+                    "01_ProjectArchitecture", "02_ErrorBoundaries", "03_AccessibilityPass",
+                    "04_BuildAndDeployment", "05_CapstoneIssueAdmin"
+            ), CourseTrack.REACT),
+
             // ===== TRZECI BLOK PLATFORMY: KURS LINUX (2026-09-26) =====
             // Struktura ZAPROJEKTOWANA na podstawie notatek w "dodatkowe materialy/LinuxMistery/"
             // (klasy LN01-LN31 w src/main/java/org/example/notes - kazda notatka to temat z

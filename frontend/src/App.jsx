@@ -16,13 +16,14 @@ import { useProgress } from './useProgress'
 const TRACKS = [
   { path: '/', label: 'Java' },
   { path: '/js', label: 'JavaScript' },
+  { path: '/react', label: 'React' },
   { path: '/linux', label: 'Linux' },
   { path: '/ocp', label: 'OCP' },
 ]
 
 function TrackSwitcher() {
   const location = useLocation()
-  const activePath = location.pathname.includes('_ocp_') ? '/ocp' : location.pathname.includes('_lx_') ? '/linux' : location.pathname.includes('_js_') ? '/js' : TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
+  const activePath = location.pathname.includes('_ocp_') ? '/ocp' : location.pathname.includes('_lx_') ? '/linux' : location.pathname.includes('_react_') ? '/react' : location.pathname.includes('_js_') ? '/js' : TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
 
   return (
     <nav className="track-switcher">
@@ -91,6 +92,7 @@ function App() {
           <Route element={<RequireAuth />}>
             <Route path="/" element={<ChapterListPage track="JAVA" />} />
             <Route path="/js" element={<ChapterListPage track="JAVASCRIPT" />} />
+            <Route path="/react" element={<ChapterListPage track="REACT" />} />
             <Route path="/linux" element={<ChapterListPage track="LINUX" />} />
             <Route path="/ocp" element={<ChapterListPage track="OCP" />} />
             <Route path="/krytyczne" element={<CriticalTopicsPage />} />
