@@ -1,0 +1,209 @@
+#T INTRO Rozgrzewka i problem: usunięcie bez odwrotu
+Rozgrzewka: Jakie są trzy zasady fokusu dla okna modalnego? Co robi atrybut `inert`? Dlaczego fokusu nie ustawiasz w renderze?
+
+Problem: przycisk „Usuń” w DevDesk usuwa ticket natychmiast i bez śladu. Okno potwierdzenia („Czy na pewno?”) przy każdym usunięciu irytuje i ludzie klikają „Tak” odruchowo. Lepszy wzorzec, znany z poczty czy dysków w chmurze: usuń od razu, pokaż na kilka sekund powiadomienie **„Usunięto ticket #42 — Cofnij”**. Budujesz system powiadomień (toastów) z kolejką, automatycznym znikaniem i akcją cofnięcia.
+
+#T DEFINITION Toast i optymistyczna akcja z cofnięciem
+**Toast** to krótkie, nieblokujące powiadomienie w rogu ekranu, które znika samo po kilku sekundach. Wzorzec „cofnij”:
+1. Użytkownik klika „Usuń” → ticket od razu znika z listy (stan aktualizowany optymistycznie).
+2. Pojawia się toast z przyciskiem „Cofnij” i odliczaniem.
+3. „Cofnij” w tym czasie przywraca ticket na jego miejsce.
+4. Po upływie czasu toast znika, a usunięcie staje się ostateczne (np. dopiero wtedy wysyłasz żądanie do serwera).
+
+Potrzebne elementy: kolejka toastów (stan), timery (refy + sprzątanie), komunikaty dostępne dla czytników ekranu (`aria-live`).
+
+#T CODE_JSX Kontekst toastów (JSX)
+```
+// ToastContext.jsx
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+
+const ToastContext = createContext(null);
+
+export function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const timers = useRef(new Map());
+
+  const dismiss = useCallback((id) => {
+    clearTimeout(timers.current.get(id));
+    timers.current.delete(id);
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const show = useCallback((toast) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev, { ...toast, id }].slice(-3)); // najwyżej 3 naraz
+    timers.current.set(id, setTimeout(() => {
+      toast.onExpire?.();
+      dismiss(id);
+    }, toast.durationMs ?? 5000));
+    return id;
+  }, [dismiss]);
+
+  useEffect(() => () => timers.current.forEach(clearTimeout), []); // sprzątanie przy odmontowaniu
+
+  return (
+    <ToastContext value={{ show, dismiss }}>
+      {children}
+      <div className="toasts" role="region" aria-label="Powiadomienia" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            {t.message}
+            {t.action && (
+              <button type="button" onClick={() => { t.action.onClick(); dismiss(t.id); }}>{t.action.label}</button>
+            )}
+            <button type="button" aria-label="Zamknij" onClick={() => dismiss(t.id)}>✕</button>
+          </div>
+        ))}
+      </div>
+    </ToastContext>
+  );
+}
+
+export function useToast() {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast wymaga <ToastProvider>');
+  return ctx;
+}
+```
+
+#T CODE_TSX Kontekst toastów (TSX)
+Typ `ToastInput` opisuje, co można przekazać do `show`: tekst, opcjonalną akcję, czas i callback wygaśnięcia.
+```
+// ToastContext.tsx
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+
+type ToastAction = { label: string; onClick: () => void };
+export type ToastInput = { message: string; action?: ToastAction; durationMs?: number; onExpire?: () => void };
+type Toast = ToastInput & { id: string };
+type ToastApi = { show: (toast: ToastInput) => string; dismiss: (id: string) => void };
+
+const ToastContext = createContext<ToastApi | null>(null);
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const dismiss = useCallback((id: string) => {
+    clearTimeout(timers.current.get(id));
+    timers.current.delete(id);
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const show = useCallback((toast: ToastInput) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev, { ...toast, id }].slice(-3));
+    timers.current.set(id, setTimeout(() => {
+      toast.onExpire?.();
+      dismiss(id);
+    }, toast.durationMs ?? 5000));
+    return id;
+  }, [dismiss]);
+
+  useEffect(() => {
+    const map = timers.current;
+    return () => map.forEach(clearTimeout);
+  }, []);
+
+  return (
+    <ToastContext value={{ show, dismiss }}>
+      {children}
+      <div className="toasts" role="region" aria-label="Powiadomienia" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            {t.message}
+            {t.action && (
+              <button type="button" onClick={() => { t.action?.onClick(); dismiss(t.id); }}>{t.action.label}</button>
+            )}
+            <button type="button" aria-label="Zamknij" onClick={() => dismiss(t.id)}>✕</button>
+          </div>
+        ))}
+      </div>
+    </ToastContext>
+  );
+}
+
+export function useToast(): ToastApi {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast wymaga <ToastProvider>');
+  return ctx;
+}
+```
+
+#T NOTE JSX ↔ TSX — typ identyfikatora timera i useCallback
+W TSX ID timera zapisano jako `ReturnType<typeof setTimeout>` — w przeglądarce to `number`, w Node obiekt `Timeout`; zapis przez `ReturnType` działa w obu środowiskach (np. w testach na Node). `useCallback` (dokładnie w rozdziale 16) sprawia, że `show` i `dismiss` mają stałą tożsamość — komponenty używające ich w zależnościach efektów nie będą ich ponownie uruchamiać. Zwróć uwagę na `t.action?.onClick()` w TSX: wewnątrz lambdy TypeScript nie przenosi zawężenia z `t.action &&`, więc potrzebny jest `?.`. W JSX ten niuans nie istnieje.
+
+#T CODE_BASIC Usunięcie z cofnięciem
+Ticket znika od razu; cofnięcie przywraca go na tę samą pozycję. Ostateczne usunięcie (np. żądanie do API) — dopiero po wygaśnięciu toastu.
+```
+import type { Ticket } from '../types';
+import { useToast } from './ToastContext';
+
+type Props = {
+  tickets: Ticket[];
+  setTickets: (updater: (prev: Ticket[]) => Ticket[]) => void;
+  deleteOnServer: (id: number) => void;
+};
+
+export function useDeleteWithUndo({ tickets, setTickets, deleteOnServer }: Props) {
+  const { show } = useToast();
+
+  return function deleteTicket(id: number) {
+    const index = tickets.findIndex((t) => t.id === id);
+    const removed = tickets[index];
+    if (!removed) return;
+
+    setTickets((prev) => prev.filter((t) => t.id !== id));
+    show({
+      message: `Usunięto ticket #${id}`,
+      action: { label: 'Cofnij', onClick: () => setTickets((prev) => prev.toSpliced(index, 0, removed)) },
+      onExpire: () => deleteOnServer(id),
+    });
+  };
+}
+```
+
+#T CODE_PRACTICAL Style i dostępność toastów
+`aria-live="polite"` sprawia, że czytnik ekranu odczyta nowy toast po zakończeniu bieżącej wypowiedzi. Toast pozostaje dłużej, gdy kursor jest nad nim — dobra praktyka, której implementację zostawiamy jako ćwiczenie.
+```
+/* toasts.css */
+.toasts {
+  position: fixed;
+  inset-block-end: var(--space-4);
+  inset-inline-end: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  z-index: 1000;
+}
+
+.toast {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--text);
+  color: var(--bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast { animation: toast-in 150ms ease-out; }
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+```
+
+#T STEP_BY_STEP Budujemy razem: powiadomienia i cofanie w DevDesk
+1. Utwórz `ToastProvider` i dodaj go do `AppProviders`.
+2. Podepnij „Usuń” w wierszu tabeli pod `useDeleteWithUndo`; `deleteOnServer` na razie wypisuje w konsoli „usunięto na serwerze #id”.
+3. Usuń ticket i kliknij „Cofnij” — wraca na to samo miejsce w tabeli; w konsoli nie ma wpisu o usunięciu na serwerze.
+4. Usuń ticket i poczekaj 5 s — toast znika, w konsoli pojawia się wpis.
+5. Usuń szybko cztery tickety — widać najwyżej trzy toasty (najstarszy wypada z kolejki; zastanów się, czy jego `onExpire` powinien się wtedy wykonać, i popraw, jeśli trzeba).
+6. Zastąp komunikat „Utworzono ticket #N” z rozdziału 05 wywołaniem `show(...)`.
+7. Włącz czytnik ekranu i sprawdź, że toast jest odczytywany.
+
+#T PITFALL Ważna informacja tylko w toaście
+Toast znika sam i nie każdy go zauważy — nie jest dobrym miejscem na **jedyną** informację o krytycznym błędzie („Nie udało się zapisać — Twoje zmiany nie zostały zachowane”). Błąd, który wymaga działania, pokaż przy formularzu lub jako stały komunikat do zamknięcia. Toast nie powinien też zawierać jedynego sposobu wykonania ważnej akcji bez alternatywy (np. „Cofnij” dostępne także w historii zmian).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+System toastów to kolejka w stanie, timery w refie z czyszczeniem przy zamknięciu i odmontowaniu oraz kontener z `aria-live`. Wzorzec „usuń z cofnięciem”: optymistyczne usunięcie ze stanu, toast z akcją przywracającą rekord na tę samą pozycję i ostateczne usunięcie po wygaśnięciu. Krytycznych błędów nie pokazuj wyłącznie w toaście. W TSX typujesz wejście `show`, ID timera przez `ReturnType<typeof setTimeout>` i pilnujesz zawężeń w lambdach.
+
+Kryterium akceptacji: usunięcie ticketu pokazuje toast „Usunięto ticket #N — Cofnij”, cofnięcie przywraca ticket na to samo miejsce, po 5 s usunięcie staje się ostateczne (wpis w konsoli), naraz widać najwyżej trzy toasty, a czytnik ekranu je odczytuje.
