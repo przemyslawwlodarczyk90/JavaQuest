@@ -1,0 +1,154 @@
+#T INTRO Rozgrzewka i problem: jak testować dane z serwera?
+Rozgrzewka: Co zwraca `renderHook`? Po co `act` przy wywoływaniu akcji hooka? Jak przetestować, że hook posprzątał interwał?
+
+Problem: najważniejsze ekrany DevDesk pobierają dane z API: tabela, szczegóły, komentarze, mutacje. Mockowanie `fetch` ręcznie (`vi.spyOn(global, 'fetch').mockResolvedValue(...)`) wiąże test ze szczegółami implementacji — przejście z `fetch` na klienta API albo z `useAsync` na TanStack Query psuje testy, choć aplikacja działa. Masz już handlery **MSW** z rozdziału 10 — te same handlery działają w testach w Node (`setupServer`). Komponenty wysyłają prawdziwe żądania, a MSW odpowiada zgodnie z kontraktem.
+
+#T DEFINITION MSW w testach
+`setupServer(...handlers)` z `msw/node` przechwytuje żądania w procesie testów. Standardowa konfiguracja w pliku setup:
+- `beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))` — żądanie bez handlera kończy test błędem (nie przegapisz nieoczekiwanego wywołania),
+- `afterEach(() => server.resetHandlers())` — po każdym teście wraca do domyślnych handlerów,
+- `afterAll(() => server.close())`.
+
+W pojedynczym teście nadpisujesz zachowanie `server.use(http.get(..., () => HttpResponse.json(..., { status: 500 })))` — np. dla scenariusza błędu. Na treść asynchroniczną czekasz zapytaniami `findBy…` lub `waitFor`.
+
+#T CODE_JSX Serwer MSW dla testów (JSX)
+Ten sam zestaw handlerów co w przeglądarce (`mocks/handlers`), uruchomiony w Node.
+```
+// test/server.js
+import { setupServer } from 'msw/node';
+import { handlers } from '../mocks/handlers';
+
+export const server = setupServer(...handlers);
+```
+
+#T CODE_TSX Serwer MSW dla testów (TSX)
+Kod identyczny; typy handlerów z rozdziału 10 obowiązują także w testach.
+```
+// test/server.ts
+import { setupServer } from 'msw/node';
+import { handlers } from '../mocks/handlers';
+
+export const server = setupServer(...handlers);
+```
+
+#T CODE_JSX Plik setup testów (JSX)
+W MSW 3 opcja reakcji na żądanie bez handlera nazywa się `onUnhandledFrame` (w MSW 2 — `onUnhandledRequest`; w starszych poradnikach zobaczysz tę drugą nazwę).
+```
+// test/setup.js
+import '@testing-library/jest-dom/vitest';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+import { server } from './server';
+
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+#T CODE_TSX Plik setup testów (TSX)
+Nadpisanie handlera w teście z odpowiedzią niezgodną z kontraktem jest w TSX błędem kompilacji.
+```
+// test/setup.ts
+import '@testing-library/jest-dom/vitest';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+import { server } from './server';
+
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+#T NOTE JSX ↔ TSX — ten sam kontrakt w aplikacji, mockach i testach
+W TSX jeden zestaw typów kontraktu (ręcznych albo generowanych z OpenAPI) obowiązuje w trzech miejscach: kliencie API, handlerach MSW i nadpisaniach `server.use` w testach. Test scenariusza „serwer zwraca pustą listę” z błędnym kształtem (`{ data: [] }`) nie skompiluje się — test nie będzie fałszywie sprawdzał nierealnej sytuacji. W JSX trzeba pilnować zgodności mocków z rzeczywistym API ręcznie (rozdział 11: porównanie odpowiedzi Springa z mockami).
+
+#T CODE_BASIC Test listy: ładowanie, sukces, błąd, pusto
+```
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { describe, expect, test } from 'vitest';
+import { server } from '../test/server';
+import { renderWithProviders } from '../test/render';
+
+declare function TicketsPage(): React.JSX.Element;
+
+describe('TicketsPage', () => {
+  test('pokazuje ładowanie, a potem tickety z API', async () => {
+    renderWithProviders(<TicketsPage />, { route: '/tickets' });
+    expect(screen.getByLabelText('Ładowanie ticketów')).toBeInTheDocument();
+    expect(await screen.findByRole('row', { name: /API timeout/ })).toBeInTheDocument();
+  });
+
+  test('błąd serwera pokazuje komunikat, a „Spróbuj ponownie” ponawia żądanie', async () => {
+    let calls = 0;
+    server.use(
+      http.get('/api/tickets', () => {
+        calls += 1;
+        return calls === 1
+          ? HttpResponse.json({ message: 'Błąd serwera' }, { status: 500 })
+          : HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 10 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<TicketsPage />, { route: '/tickets' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Nie udało się wczytać/);
+    await user.click(screen.getByRole('button', { name: 'Spróbuj ponownie' }));
+    expect(await screen.findByText('Brak ticketów pasujących do filtrów.')).toBeInTheDocument();
+  });
+});
+```
+
+#T CODE_PRACTICAL Test mutacji: wysłane dane i aktualizacja widoku
+Sprawdzasz zachowanie z obu stron: co komponent wysłał do serwera (przechwycone w handlerze) i co pokazał użytkownikowi.
+```
+import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
+import { expect, test } from 'vitest';
+import { server } from '../test/server';
+import { renderWithProviders } from '../test/render';
+
+declare function TicketsPage(): React.JSX.Element;
+
+test('zamknięcie ticketu wysyła PATCH i odświeża status w tabeli', async () => {
+  const sent: unknown[] = [];
+  server.use(
+    http.patch('/api/tickets/:id', async ({ request, params }) => {
+      const body = await request.json();
+      sent.push({ id: params.id, body });
+      return HttpResponse.json({ id: Number(params.id), title: 'API timeout', description: '', status: 'CLOSED', priority: 'HIGH', assignee: null, createdAt: '2026-10-01T09:30:00Z', tags: [] });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithProviders(<TicketsPage />, { route: '/tickets' });
+
+  const row = await screen.findByRole('row', { name: /API timeout/ });
+  await user.click(within(row).getByRole('button', { name: 'Zamknij' }));
+
+  expect(sent).toEqual([{ id: '42', body: { status: 'CLOSED' } }]);
+  expect(await within(row).findByText('Zamknięty')).toBeInTheDocument();
+});
+```
+
+#T DEFINITION findBy, waitFor i czekanie na zniknięcie
+- `await screen.findByRole(...)` — czeka (domyślnie do 1 s), aż element się pojawi; najczęstszy sposób na treść asynchroniczną,
+- `await waitFor(() => expect(...).…)` — powtarza asercję, aż przejdzie (np. „przycisk przestał być wyłączony”); w środku tylko asercje, bez efektów ubocznych,
+- `await waitForElementToBeRemoved(() => screen.queryByLabelText('Ładowanie ticketów'))` — czeka na zniknięcie elementu.
+
+Testy z TanStack Query: świeży `QueryClient` na każdy test z `retry: false` (inaczej test błędu czeka na trzy ponowienia) — dlatego `renderWithProviders` tworzy klienta wewnątrz.
+
+#T STEP_BY_STEP Budujemy razem: testy z siecią DevDesk
+1. Dodaj `test/server` i rozszerz plik setup o cykl życia MSW; użyj tych samych handlerów co w przeglądarce.
+2. Napisz testy tabeli: ładowanie → dane, błąd 500 → komunikat i ponowienie, pusta lista → pusty stan z „Wyczyść filtry”.
+3. Napisz test filtrów w adresie: render z `route: '/tickets?status=OPEN'`, sprawdź w handlerze, że żądanie zawiera `status=OPEN` (odczytaj `new URL(request.url).searchParams`).
+4. Napisz test mutacji: zamknięcie (wysłane dane + nowy status), tworzenie z błędem 400 (komunikat przy polu tytułu).
+5. Napisz test aktualizacji optymistycznej: zmiana priorytetu przy odpowiedzi 500 — plakietka zmienia się od razu, a po błędzie wraca do poprzedniej wartości.
+6. Ustaw `onUnhandledFrame: 'error'` i sprawdź, że test komponentu wysyłającego nieznane żądanie kończy się czytelnym błędem.
+
+#T PITFALL Mockowanie fetch albo klienta API zamiast sieci
+`vi.mock('../api/tickets', () => ({ fetchTickets: vi.fn().mockResolvedValue(...) }))` sprawdza tylko, że komponent wywołuje funkcję o tej nazwie. Zmiana klienta API, parametrów zapytania, kluczy cache albo biblioteki danych nie zostanie wykryta — albo zepsuje testy, choć aplikacja działa. MSW mockuje na granicy sieci: test sprawdza prawdziwą ścieżkę komponent → hook → klient API → `fetch` → odpowiedź.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+MSW w testach (`setupServer` z `msw/node`) przechwytuje prawdziwe żądania komponentów tymi samymi handlerami co w przeglądarce; cykl `listen` → `resetHandlers` → `close` w pliku setup, a scenariusze testu przez `server.use`. Na treść asynchroniczną czekasz `findBy…`, `waitFor`, `waitForElementToBeRemoved`. Testujesz obie strony: co komponent wysłał (przechwycone w handlerze) i co pokazał. Każdy test ma świeży `QueryClient` z `retry: false`. W TSX typy kontraktu obowiązują też w mockach testów.
+
+Kryterium akceptacji: tabela DevDesk ma testy stanów ładowania, sukcesu, błędu z ponowieniem i pustej listy przez MSW, mutacja zamknięcia sprawdza wysłane dane i nowy status, a test aktualizacji optymistycznej potwierdza wycofanie przy błędzie.

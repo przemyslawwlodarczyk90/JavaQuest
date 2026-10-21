@@ -87,7 +87,11 @@ for (const file of files) {
 // uzyty w lekcji o kontekscie) - kopiujemy ten plik (z jego sciezka) do lekcji, ktora go importuje. Dwa przebiegi,
 // zeby skopiowany plik mogl pociagnac swoje wlasne importy.
 const namedFiles = new Map(); // `${rozdzial}/${sciezka bez rozszerzenia}` -> fragment (pozniejsza lekcja nadpisuje)
-for (const s of map) if (s.named) namedFiles.set(`${path.dirname(s.file)}/${s.rel.replace(/\.(tsx?|jsx?)$/, '')}`, s);
+for (const s of map) {
+  if (!s.named) continue;
+  const key = s.rel.replace(/\.(tsx?|jsx?)$/, '');
+  namedFiles.set(`${path.dirname(s.file)}/${key}`, s);
+}
 const exists = (base) => ['.ts', '.tsx', '.js', '.jsx'].some((ext) => fs.existsSync(base + ext));
 for (let pass = 0; pass < 2; pass++) {
   for (const s of map) {
