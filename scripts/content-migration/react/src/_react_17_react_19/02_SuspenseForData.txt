@@ -1,0 +1,165 @@
+#T INTRO Rozgrzewka i problem: stany ładowania w każdym komponencie
+Rozgrzewka: Co robi `use(promise)` podczas renderu? Dlaczego obietnica musi być stabilna? Czym `use(Context)` różni się od `useContext`?
+
+Problem: każdy komponent z danymi w DevDesk zaczyna się tak samo: `if (isPending) return <Spinner />; if (isError) return <Error />;`. Na ekranie szczegółów ticketu są trzy takie komponenty (ticket, komentarze, historia) — i trzy spinnery pojawiające się w różnych momentach. **Suspense dla danych** odwraca odpowiedzialność: komponent zakłada, że dane są gotowe, a **granice** `Suspense` i błędów wyżej w drzewie decydują, co pokazać w trakcie ładowania i przy błędzie — i które części ładują się razem.
+
+#T DEFINITION Granice Suspense i błędów zamiast flag
+Model deklaratywnego ładowania:
+- komponent czyta dane z mechanizmu zgodnego z Suspense (`use`, `useSuspenseQuery` z TanStack Query, loadery frameworka) i dostaje **od razu dane** — bez `isPending`,
+- **`<Suspense fallback>`** nad nim pokazuje zastępczy widok, dopóki **którykolwiek** komponent w jego wnętrzu się ładuje,
+- **granica błędów** (Error Boundary, rozdział 19) nad nim pokazuje widok błędu, gdy którykolwiek komponent wewnątrz rzuci błąd.
+
+Umiejscowienie granic decyduje o UX: jedna granica wokół trzech sekcji = jeden skeleton i wszystko pojawia się naraz; osobne granice = każda sekcja pojawia się, gdy jest gotowa. Zagnieżdżone granice pozwalają pokazać szybko nagłówek, a wolniejsze części — później.
+
+#T CODE_JSX useSuspenseQuery w TanStack Query (JSX)
+`useSuspenseQuery` to wersja `useQuery` zgodna z Suspense: `data` jest zawsze zdefiniowane, ładowanie i błędy obsługują granice.
+```
+// TicketScreen.jsx
+import { Suspense } from 'react';
+import { useSuspenseQuery } from '@tanstack/react-query';
+import { ErrorBoundary } from 'react-error-boundary';
+import { fetchTicket, fetchComments } from '../api/tickets';
+
+function TicketHeader({ id }) {
+  const { data: ticket } = useSuspenseQuery({ queryKey: ['tickets', 'detail', id], queryFn: () => fetchTicket(id) });
+  return <h1>#{ticket.id} {ticket.title}</h1>;
+}
+
+function Comments({ id }) {
+  const { data: comments } = useSuspenseQuery({ queryKey: ['tickets', 'detail', id, 'comments'], queryFn: () => fetchComments(id) });
+  return <ul>{comments.map((c) => <li key={c.id}>{c.text}</li>)}</ul>;
+}
+
+export function TicketScreen({ id }) {
+  return (
+    <ErrorBoundary fallback={<p role="alert">Nie udało się wczytać ticketu.</p>}>
+      <Suspense fallback={<div className="skeleton skeleton--title" aria-busy="true" />}>
+        <TicketHeader id={id} />
+        <Suspense fallback={<p aria-busy="true">Ładowanie komentarzy…</p>}>
+          <Comments id={id} />
+        </Suspense>
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+```
+
+#T CODE_TSX useSuspenseQuery w TanStack Query (TSX)
+W TSX `data` z `useSuspenseQuery` ma typ wyniku `queryFn` bez `undefined` — komponent nie musi sprawdzać stanu ładowania.
+```
+// TicketScreen.tsx
+import { Suspense } from 'react';
+import { useSuspenseQuery } from '@tanstack/react-query';
+import { ErrorBoundary } from 'react-error-boundary';
+
+type Ticket = { id: number; title: string };
+type Comment = { id: number; text: string };
+declare function fetchTicket(id: number): Promise<Ticket>;
+declare function fetchComments(id: number): Promise<Comment[]>;
+
+function TicketHeader({ id }: { id: number }) {
+  const { data: ticket } = useSuspenseQuery({ queryKey: ['tickets', 'detail', id], queryFn: () => fetchTicket(id) });
+  return <h1>#{ticket.id} {ticket.title}</h1>;
+}
+
+function Comments({ id }: { id: number }) {
+  const { data: comments } = useSuspenseQuery({ queryKey: ['tickets', 'detail', id, 'comments'], queryFn: () => fetchComments(id) });
+  return <ul>{comments.map((c) => <li key={c.id}>{c.text}</li>)}</ul>;
+}
+
+export function TicketScreen({ id }: { id: number }) {
+  return (
+    <ErrorBoundary fallback={<p role="alert">Nie udało się wczytać ticketu.</p>}>
+      <Suspense fallback={<div className="skeleton skeleton--title" aria-busy="true" />}>
+        <TicketHeader id={id} />
+        <Suspense fallback={<p aria-busy="true">Ładowanie komentarzy…</p>}>
+          <Comments id={id} />
+        </Suspense>
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — znika unia stanów w komponencie
+W rozdziale 10 TSX wymuszał sprawdzenie `status` przed użyciem `data` (unia). Z Suspense ta odpowiedzialność przechodzi do granic: typ `data` z `useSuspenseQuery` to po prostu `Ticket`. Kod komponentu jest krótszy w obu wersjach; w TSX dodatkowo kompilator potwierdza, że nie ma ścieżki, w której `data` jest `undefined`. Uwaga: przekazanie `enabled: false` (warunkowe zapytanie) nie ma sensu w `useSuspenseQuery` — warunek przenosi się na renderowanie komponentu.
+
+#T DEFINITION Wodospad żądań w Suspense
+Zagnieżdżone komponenty zawieszające się po kolei tworzą **wodospad**: `Comments` zaczyna pobieranie dopiero po wyrenderowaniu, a renderuje się dopiero, gdy `TicketHeader` przestanie się ładować (jeśli są w tej samej granicy lub zagnieżdżone). Rozwiązania: rozpocznij pobieranie wszystkich danych **wcześniej** — w loaderze trasy (`ensureQueryData` dla obu zapytań równolegle, rozdział 12), przez `queryClient.prefetchQuery` w rodzicu, albo `useSuspenseQueries` (kilka zapytań naraz). Wtedy komponenty tylko odczytują dane już w drodze.
+
+#T CODE_BASIC Równoległe zapytania w jednym komponencie
+```
+import { useSuspenseQueries } from '@tanstack/react-query';
+
+type Ticket = { id: number; title: string };
+type HistoryEntry = { id: number; change: string };
+declare function fetchTicket(id: number): Promise<Ticket>;
+declare function fetchHistory(id: number): Promise<HistoryEntry[]>;
+
+export function TicketWithHistory({ id }: { id: number }) {
+  const [ticketQuery, historyQuery] = useSuspenseQueries({
+    queries: [
+      { queryKey: ['tickets', 'detail', id], queryFn: () => fetchTicket(id) },
+      { queryKey: ['tickets', 'detail', id, 'history'], queryFn: () => fetchHistory(id) },
+    ],
+  });
+  return (
+    <section>
+      <h2>{ticketQuery.data.title}</h2>
+      <ol>{historyQuery.data.map((h) => <li key={h.id}>{h.change}</li>)}</ol>
+    </section>
+  );
+}
+```
+
+#T CODE_PRACTICAL Strumieniowanie z loadera: dane krytyczne i odroczone
+Loader czeka na dane krytyczne (ticket), a dla wolnych (historia) zwraca obietnicę bez `await` — komponent odczyta ją przez `use` lub `<Await>` w granicy `Suspense`. Ekran pokazuje się szybko, a historia dołącza, gdy będzie gotowa.
+```
+import { Suspense, use } from 'react';
+import { useLoaderData, type LoaderFunctionArgs } from 'react-router';
+
+type Ticket = { id: number; title: string };
+type HistoryEntry = { id: number; change: string };
+declare function fetchTicket(id: number): Promise<Ticket>;
+declare function fetchHistory(id: number): Promise<HistoryEntry[]>;
+
+export async function ticketLoader({ params }: LoaderFunctionArgs) {
+  const id = Number(params.ticketId);
+  const historyPromise = fetchHistory(id);   // bez await — leci równolegle
+  const ticket = await fetchTicket(id);      // krytyczne — czekamy
+  return { ticket, historyPromise };
+}
+
+function History({ historyPromise }: { historyPromise: Promise<HistoryEntry[]> }) {
+  const history = use(historyPromise);
+  return <ol>{history.map((h) => <li key={h.id}>{h.change}</li>)}</ol>;
+}
+
+export function TicketRoute() {
+  const { ticket, historyPromise } = useLoaderData<typeof ticketLoader>();
+  return (
+    <article>
+      <h1>{ticket.title}</h1>
+      <Suspense fallback={<p aria-busy="true">Ładowanie historii…</p>}>
+        <History historyPromise={historyPromise} />
+      </Suspense>
+    </article>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: Suspense w DevDesk
+1. Zainstaluj `react-error-boundary` (granice błędów omówisz szczegółowo w rozdziale 19).
+2. Przepisz ekran szczegółów ticketu na `useSuspenseQuery` z granicami: zewnętrzna (nagłówek ticketu), wewnętrzna (komentarze) i granica błędów.
+3. Ustaw w MSW opóźnienia: ticket 300 ms, komentarze 1500 ms — nagłówek pojawia się szybko, komentarze później.
+4. Sprawdź wodospad w Network: komentarze zaczynają się pobierać dopiero po nagłówku. Napraw: w loaderze trasy uruchom oba zapytania równolegle (`ensureQueryData` dla ticketu, `prefetchQuery` dla komentarzy).
+5. Przenieś historię zmian na strumieniowanie z loadera (obietnica bez `await` + `use` w `Suspense`).
+6. Przełącz między ticketami — dzięki nawigacji w przejściu stary ticket zostaje na ekranie, zamiast mignąć skeletonem (rozdział 16).
+
+#T PITFALL Jedna granica Suspense na całą aplikację
+`<Suspense fallback={<FullPageSpinner />}>` wokół całej aplikacji i nic więcej sprawia, że każde ładowanie dowolnej sekcji zastępuje **cały ekran** spinnerem — także po kliknięciu w zakładkę z komentarzami. Granice umieszczaj tam, gdzie ma się pojawić placeholder (sekcja, panel, karta), a nawigację i przełączanie widoków wykonuj w przejściach.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Suspense dla danych przenosi obsługę ładowania i błędów z komponentów do granic: komponent czyta gotowe dane (`use`, `useSuspenseQuery`, loadery), `<Suspense>` pokazuje fallback, granica błędów — widok błędu. Umiejscowienie i zagnieżdżenie granic decyduje, co ładuje się razem, a co osobno. Unikaj wodospadów: rozpoczynaj pobieranie wcześniej (loader, prefetch, `useSuspenseQueries`). Loader może strumieniować dane odroczone jako obietnice odczytywane przez `use`. W TSX `data` z zapytań Suspense nie zawiera `undefined`.
+
+Kryterium akceptacji: ekran szczegółów ticketu ma osobne granice dla nagłówka i komentarzy (nagłówek pojawia się wcześniej), dane ładują się równolegle bez wodospadu (Network), historia jest strumieniowana z loadera, a błąd 404 pokazuje widok granicy błędów.

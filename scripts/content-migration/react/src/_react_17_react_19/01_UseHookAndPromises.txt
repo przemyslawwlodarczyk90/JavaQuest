@@ -1,0 +1,144 @@
+#T INTRO Rozgrzewka i problem: hook, który łamie zasadę hooków
+Rozgrzewka: Co mierzy INP, a co CLS? Dlaczego obraz LCP nie powinien mieć `loading="lazy"`? Jakie są kategorie problemów wydajności i ich narzędzia?
+
+Problem: w React 19 pojawił się `use` — funkcja, którą **wolno** wywołać w warunku i pętli, choć wygląda jak hook. Potrafi „odczytać” obietnicę (Promise) — komponent czeka na wynik w granicy `Suspense` — oraz kontekst warunkowo. To fundament nowego modelu danych w React (strumieniowanie, komponenty serwerowe), ale też źródło nieporozumień: czy `use(fetch(...))` w komponencie to dobry pomysł? Ta lekcja wyjaśnia, jak `use` działa, gdzie jest przydatny i gdzie nie.
+
+#T DEFINITION use(zasób)
+`use(zasób)` odczytuje wartość zasobu podczas renderu:
+- **`use(promise)`** — jeśli obietnica jest rozstrzygnięta, zwraca wynik (lub rzuca błąd do najbliższej granicy błędów); jeśli nie — komponent **zawiesza się** (suspend), a najbliższy `<Suspense>` pokazuje fallback. Po rozstrzygnięciu React renderuje komponent ponownie i `use` zwraca wartość.
+- **`use(Context)`** — jak `useContext`, ale wolno go wywołać warunkowo (np. po wczesnym `return`).
+
+W odróżnieniu od innych hooków `use` może być w `if` i pętli — bo nie zajmuje stałego miejsca w liście hooków. Nie może być w `try/catch` (błędy obsługuje granica błędów) ani poza komponentem/hookiem.
+
+#T DEFINITION Najważniejsza zasada: obietnica musi być stabilna
+`use(fetch('/api/tickets/42').then((r) => r.json()))` w ciele komponentu tworzy **nową obietnicę przy każdym renderze** — po zawieszeniu i ponownym renderze komponent znów zaczyna od nowej, nierozstrzygniętej obietnicy i zawiesza się w nieskończoność (React zgłosi ostrzeżenie o nieprzechowywanej obietnicy). Obietnica dla `use` musi pochodzić z **poza renderu**: utworzona w komponencie-rodzicu i przekazana w props, w loaderze routera, z cache (np. `queryClient.ensureQueryData`, `fetchQuery`), albo — w frameworkach — z komponentu serwerowego. To dlatego `use` nie zastępuje TanStack Query, tylko z nim współpracuje.
+
+#T CODE_JSX Obietnica z rodzica, odczyt w dziecku (JSX)
+Rodzic rozpoczyna pobieranie (w handlerze lub przy montowaniu przez stan) i przekazuje obietnicę; dziecko czyta ją przez `use` w granicy `Suspense`.
+```
+// TicketPreview.jsx
+import { Suspense, use, useState } from 'react';
+
+function fetchTicket(id) {
+  return fetch(`/api/tickets/${id}`).then((res) => {
+    if (!res.ok) throw new Error(`Błąd ${res.status}`);
+    return res.json();
+  });
+}
+
+function TicketDetails({ ticketPromise }) {
+  const ticket = use(ticketPromise); // zawiesza się, dopóki obietnica nie jest gotowa
+  return <article><h3>#{ticket.id} {ticket.title}</h3><p>{ticket.description}</p></article>;
+}
+
+export function TicketPreview() {
+  const [ticketPromise, setTicketPromise] = useState(null);
+
+  return (
+    <section>
+      <button type="button" onClick={() => setTicketPromise(fetchTicket(42))}>Pokaż #42</button>
+      {ticketPromise && (
+        <Suspense fallback={<p aria-busy="true">Ładowanie ticketu…</p>}>
+          <TicketDetails ticketPromise={ticketPromise} />
+        </Suspense>
+      )}
+    </section>
+  );
+}
+```
+
+#T CODE_TSX Obietnica z rodzica, odczyt w dziecku (TSX)
+Typ props `Promise<Ticket>` mówi wprost: dziecko dostaje obietnicę, a `use` zwraca `Ticket` — bez `isLoading` i bez sprawdzania `undefined`.
+```
+// TicketPreview.tsx
+import { Suspense, use, useState } from 'react';
+import type { Ticket } from '../types';
+
+function fetchTicket(id: number): Promise<Ticket> {
+  return fetch(`/api/tickets/${id}`).then((res) => {
+    if (!res.ok) throw new Error(`Błąd ${res.status}`);
+    return res.json() as Promise<Ticket>;
+  });
+}
+
+function TicketDetails({ ticketPromise }: { ticketPromise: Promise<Ticket> }) {
+  const ticket = use(ticketPromise);
+  return <article><h3>#{ticket.id} {ticket.title}</h3><p>{ticket.description}</p></article>;
+}
+
+export function TicketPreview() {
+  const [ticketPromise, setTicketPromise] = useState<Promise<Ticket> | null>(null);
+
+  return (
+    <section>
+      <button type="button" onClick={() => setTicketPromise(fetchTicket(42))}>Pokaż #42</button>
+      {ticketPromise && (
+        <Suspense fallback={<p aria-busy="true">Ładowanie ticketu…</p>}>
+          <TicketDetails ticketPromise={ticketPromise} />
+        </Suspense>
+      )}
+    </section>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — use rozpakowuje typ obietnicy
+W TSX `use(promise: Promise<T>)` zwraca `T`, a `use(Context)` — typ wartości kontekstu. To duża zmiana w porównaniu z wcześniejszymi wzorcami: zamiast unii `{ status: 'loading' } | { status: 'success', data }` komponent dostaje od razu dane, bo stan ładowania i błędu obsługują granice `Suspense` i `ErrorBoundary` wyżej w drzewie. W JSX działa to identycznie, tylko bez gwarancji typu wyniku. Typ props `Promise<Ticket>` dokumentuje też kontrakt: rodzic odpowiada za utworzenie obietnicy, dziecko — za jej odczyt.
+
+#T CODE_BASIC use(Context) po wczesnym return
+`useContext` musiałby być wywołany przed warunkiem; `use` może być po nim.
+```
+import { createContext, use } from 'react';
+
+type Theme = 'light' | 'dark';
+const ThemeContext = createContext<Theme>('light');
+
+export function StatusLabel({ status }: { status: string | null }) {
+  if (status === null) return null;          // wczesny return
+  const theme = use(ThemeContext);           // dozwolone z use (nie z useContext)
+  return <span className={`label label--${theme}`}>{status}</span>;
+}
+```
+
+#T CODE_PRACTICAL use z cache TanStack Query i loaderem
+Obietnica stabilna, bo pochodzi z cache: kolejne rendery dostają tę samą obietnicę, a dane są współdzielone z resztą aplikacji. (TanStack Query ma też gotowy `useSuspenseQuery` — następna lekcja.)
+```
+import { use } from 'react';
+import { QueryClient } from '@tanstack/react-query';
+
+type Ticket = { id: number; title: string };
+declare function fetchTicket(id: number): Promise<Ticket>;
+
+export const queryClient = new QueryClient();
+const promises = new Map<number, Promise<Ticket>>();
+
+export function ticketPromise(id: number): Promise<Ticket> {
+  let p = promises.get(id);
+  if (!p) {
+    p = queryClient.fetchQuery({ queryKey: ['tickets', 'detail', id], queryFn: () => fetchTicket(id) });
+    promises.set(id, p);
+  }
+  return p;
+}
+
+export function TicketTitle({ id }: { id: number }) {
+  const ticket = use(ticketPromise(id)); // ta sama obietnica przy kolejnych renderach
+  return <h2>{ticket.title}</h2>;
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: podgląd ticketu z use
+1. Zbuduj `TicketPreview` z przyciskiem i granicą `Suspense`; w MSW ustaw opóźnienie 1 s dla szczegółów.
+2. Kliknij — widać fallback, potem dane. W DevTools zobacz komponent `TicketDetails` w stanie zawieszenia.
+3. Zrób celowo błąd: przenieś `fetchTicket(42)` do ciała `TicketDetails` (`use(fetchTicket(42))`) — zobacz ostrzeżenie Reacta i niekończące się ładowanie albo powtarzane żądania w Network. Przywróć.
+4. Dodaj granicę błędów wokół `Suspense` (`react-error-boundary` albo własna, rozdział 19) i sprawdź scenariusz 404 — komunikat zamiast białego ekranu.
+5. Zastąp warunkowy `useContext` w jednym komponencie przez `use(Context)` po wczesnym `return`.
+6. Zapisz w komentarzu, dlaczego w DevDesk do zwykłego pobierania danych nadal używasz TanStack Query, a `use` stosujesz do odczytu obietnic z cache, loaderów i komponentów serwerowych.
+
+#T PITFALL use w try/catch i obietnica tworzona w renderze
+Dwa najczęstsze błędy: (1) `try { use(promise) } catch {}` — zawieszenie działa przez mechanizm, którego nie wolno przechwytywać (React zgłosi błąd); błędy obsługuje granica błędów, a ładowanie — `Suspense`; (2) `use(fetch(...))` w ciele komponentu — nowa obietnica przy każdym renderze. Obie pułapki łatwo pomylić z „działa u mnie”, bo pierwsze wywołanie czasem się udaje.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`use(promise)` odczytuje wynik obietnicy w renderze, zawieszając komponent do czasu rozstrzygnięcia (fallback `Suspense`, błąd do granicy błędów), a `use(Context)` czyta kontekst — oba wolno wywołać warunkowo. Obietnica musi być stabilna: utworzona poza renderem (rodzic, loader, cache, komponent serwerowy), nigdy w ciele komponentu. `use` nie może być w `try/catch`. Do zwykłego pobierania danych w SPA nadal używasz biblioteki danych, a `use` do odczytu przygotowanych obietnic. W TSX `use(Promise<T>)` zwraca `T`.
+
+Kryterium akceptacji: podgląd ticketu działa przez `use` z obietnicą utworzoną w handlerze rodzica, z fallbackiem `Suspense` i granicą błędów dla 404; potrafisz pokazać i wyjaśnić błąd obietnicy tworzonej w renderze.
