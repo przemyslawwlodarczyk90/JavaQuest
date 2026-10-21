@@ -20,6 +20,10 @@ const TYPE_META = {
   WHEN_TO_USE: { icon: '🧭', label: 'Kiedy używać, a kiedy nie' },
   API_REFERENCE: { icon: '📚', label: 'Katalog metod' },
   SUMMARY: { icon: '📋', label: 'Podsumowanie' },
+
+  // --- Tor React: ten sam przyklad w JSX i TSX obok siebie ---
+  CODE_JSX: { icon: '🟨', label: 'Wersja JSX (JavaScript)' },
+  CODE_TSX: { icon: '🟦', label: 'Wersja TSX (TypeScript)' },
 }
 
 // Typy blokow kodu, ktore - jesli wystapia jeden po drugim - pokazujemy obok siebie na
@@ -28,6 +32,7 @@ const TYPE_META = {
 const PAIRABLE_SEQUENCES = [
   ['CODE_BASIC', 'CODE_PRACTICAL'],
   ['CODE_WRONG', 'CODE_RIGHT'],
+  ['CODE_JSX', 'CODE_TSX'],
 ]
 
 function findPair(blocks, index) {

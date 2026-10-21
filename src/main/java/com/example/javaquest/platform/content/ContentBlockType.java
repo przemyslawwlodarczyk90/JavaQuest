@@ -56,5 +56,12 @@ public enum ContentBlockType {
      * metody/operatory zwiazane z omawianym zjawiskiem, nie tylko podzbior z materialu
      * zrodlowego.
      */
-    API_REFERENCE
+    API_REFERENCE,
+
+    // --- Tor React: ten sam przyklad w dwoch wersjach, wyswietlane obok siebie ---
+
+    /** Kod w wersji JavaScript (plik .jsx). */
+    CODE_JSX,
+    /** Ten sam kod w wersji TypeScript (plik .tsx) - nastepuje po {@link #CODE_JSX}. */
+    CODE_TSX
 }
