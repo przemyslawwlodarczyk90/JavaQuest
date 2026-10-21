@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
+import './LessonMaterials.css'
 import {
   getLessonMaterials, addLessonLink, editLessonLink, deleteLessonLink,
   uploadLessonAttachment, deleteLessonAttachment, downloadLessonAttachment,
 } from '../api'
+
+function MaterialIcon({ file = false }) {
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+    {file ? <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5Zm0 0v6h5M8 13h8M8 17h5" /> : <><path d="m10 13 4-4M8 15l-1 1a3.5 3.5 0 0 1-5-5l4-4a3.5 3.5 0 0 1 5 0M13 9l1-1a3.5 3.5 0 0 1 5 5l-4 4a3.5 3.5 0 0 1-5 0" /></>}
+  </svg>
+}
+
+function linkHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
+}
 
 function MaterialDialog({ action, busy, error, onClose, onConfirm }) {
   const ref = useRef(null)
@@ -56,6 +67,7 @@ export default function LessonMaterials({ chapter, lesson }) {
   const [url, setUrl] = useState('')
   const [file, setFile] = useState(null)
   const fileInput = useRef(null)
+  const linkComposer = useRef(null)
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -118,19 +130,22 @@ export default function LessonMaterials({ chapter, lesson }) {
     <dialog ref={drawer} id="materials-drawer" className="materials-drawer" aria-labelledby="my-materials-title"
       onClose={() => setExpanded(false)} onCancel={(event) => { if (busy) event.preventDefault() }}>
     <section className="lesson-materials">
-      <button type="button" className="materials-close" onClick={() => setExpanded(false)} disabled={busy} aria-label="Zamknij moje materiały">Zamknij ×</button>
-      <h3 id="my-materials-title">Moje materiały</h3>
-      <p className="hint">Twoje załączniki i linki do tej lekcji widzisz tylko Ty.</p>
+      <header className="materials-header">
+        <div><span className="materials-eyebrow">Biblioteka lekcji</span><h3 id="my-materials-title">Moje materiały</h3></div>
+        <button type="button" className="materials-close" onClick={() => setExpanded(false)} disabled={busy} aria-label="Zamknij moje materiały">×</button>
+      </header>
+      <p className="materials-private">Prywatne · widoczne tylko dla Ciebie</p>
       {loading ? <p className="hint">Wczytywanie materiałów…</p> : <>
-        <details>
-          <summary>Załączniki ({attachments.length})</summary>
+        <details className="materials-section" open>
+          <summary><span className="materials-section__icon"><MaterialIcon file /></span><span>Załączniki</span><span className="materials-count">{attachments.length}</span></summary>
+          <div className="materials-section__content">
           <ul className="materials-list">
             {attachments.map((item) => <li key={item.id}>
-              <button type="button" className="material-download" onClick={() => download(item)} disabled={busy}>{item.title}</button>
+              <div className="material-entry"><MaterialIcon file /><button type="button" className="material-download" onClick={() => download(item)} disabled={busy}>{item.title}</button></div>
               <button type="button" onClick={() => open('delete', item)} disabled={busy} aria-label={'Usuń załącznik ' + item.title}>Usuń</button>
             </li>)}
           </ul>
-          {!attachments.length && <p className="hint">Nie masz jeszcze załączników.</p>}
+          {!attachments.length && <p className="materials-empty">Zapisz tutaj notatki i pliki do tej lekcji.</p>}
           <form className="materials-form" onSubmit={(event) => {
             event.preventDefault()
             if (!file) return
@@ -142,34 +157,47 @@ export default function LessonMaterials({ chapter, lesson }) {
               fileInput.current.value = ''
             })
           }}>
-            <label>Dodaj plik<input ref={fileInput} type="file" required disabled={busy} onChange={(event) => setFile(event.target.files[0] ?? null)} /></label>
-            <button type="submit" disabled={busy || !file}>Dodaj załącznik</button>
+            <label className={`materials-file ${file ? 'materials-file--selected' : ''}`}>
+              <input ref={fileInput} type="file" required disabled={busy} aria-label="Wybierz załącznik" onChange={(event) => setFile(event.target.files[0] ?? null)} />
+              <span className="materials-file__icon"><MaterialIcon file /></span>
+              <span><strong>{file ? file.name : 'Wybierz plik'}</strong><small>{file ? 'Kliknij, aby zmienić plik' : 'Notatki, dokumenty i inne załączniki'}</small></span>
+              <span aria-hidden="true">＋</span>
+            </label>
+            {file && <button className="materials-primary" type="submit" disabled={busy}>{busy ? 'Przesyłanie…' : 'Zapisz załącznik'}</button>}
           </form>
+          </div>
         </details>
-        <details>
-          <summary>Moje linki ({links.length})</summary>
+        <details className="materials-section" open>
+          <summary><span className="materials-section__icon"><MaterialIcon /></span><span>Moje linki</span><span className="materials-count">{links.length}</span></summary>
+          <div className="materials-section__content">
           <ul className="materials-list">
             {links.map((item) => <li key={item.id}>
-              <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
+              <div className="material-entry"><span className="material-entry__icon"><MaterialIcon /></span><a href={item.url} target="_blank" rel="noopener noreferrer"><strong>{item.title}<span aria-hidden="true"> ↗</span></strong><small>{linkHost(item.url)}</small></a></div>
               <div className="materials-actions">
                 <button type="button" onClick={() => open('edit', item)} disabled={busy} aria-label={'Edytuj link ' + item.title}>Edytuj</button>
-                <button type="button" onClick={() => open('delete', item)} disabled={busy} aria-label={'Usuń link ' + item.title}>Usuń</button>
+                <button type="button" className="materials-remove" onClick={() => open('delete', item)} disabled={busy} aria-label={'Usuń link ' + item.title}>Usuń</button>
               </div>
             </li>)}
           </ul>
-          {!links.length && <p className="hint">Nie masz jeszcze linków.</p>}
+          {!links.length && <p className="materials-empty">Zachowaj artykuły i filmy, do których chcesz wrócić.</p>}
+          <details ref={linkComposer} className="materials-composer">
+          <summary>＋ Dodaj link</summary>
           <form className="materials-form" onSubmit={(event) => {
             event.preventDefault()
             run(async () => {
               const item = await addLessonLink(chapter, lesson, { title, url })
               if (!mounted.current) return
               setItems((current) => [...current, item]); setTitle(''); setUrl('')
+              linkComposer.current.open = false
+              linkComposer.current.querySelector('summary').focus()
             })
           }}>
-            <label>Tytuł<input required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} disabled={busy} /></label>
+            <label>Tytuł<input required maxLength={200} placeholder="Np. Wyjaśnienie z przykładami" value={title} onChange={(event) => setTitle(event.target.value)} disabled={busy} /></label>
             <label>Adres artykułu lub filmu<input required type="url" maxLength={2048} placeholder="https://…" value={url} onChange={(event) => setUrl(event.target.value)} disabled={busy} /></label>
-            <button type="submit" disabled={busy}>Dodaj link</button>
+            <button className="materials-primary" type="submit" disabled={busy}>{busy ? 'Zapisywanie…' : 'Zapisz link'}</button>
           </form>
+          </details>
+          </div>
         </details>
       </>}
       {error && <p role="alert" className="error">{error}</p>}

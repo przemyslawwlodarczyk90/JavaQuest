@@ -1,3 +1,4 @@
+import './App.css'
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import ChapterListPage from './pages/ChapterListPage'
 import LessonListPage from './pages/LessonListPage'
@@ -11,7 +12,6 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useAuth } from './useAuth'
 import { useProgress } from './useProgress'
-import './App.css'
 
 const TRACKS = [
   { path: '/', label: 'Java' },
