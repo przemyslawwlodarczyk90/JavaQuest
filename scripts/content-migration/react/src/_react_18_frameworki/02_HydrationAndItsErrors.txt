@@ -1,0 +1,126 @@
+#T INTRO Rozgrzewka i problem: „Hydration failed”
+Rozgrzewka: Czym różni się SSR od SSG? Co daje streaming? Dlaczego dane z serwera przekazujesz jako tekst ISO, a nie `Date`?
+
+Problem: wersja SSR widoku artykułu działa, ale w konsoli pojawia się czerwony komunikat: *„Hydration failed because the server rendered HTML didn't match the client”*, a godzina aktualizacji na chwilę „przeskakuje”. To **błąd hydratacji** — najczęstszy problem aplikacji renderowanych na serwerze. Nauczysz się, czym jest hydratacja, jak czytać ten błąd i jak naprawić pięć typowych przyczyn.
+
+#T DEFINITION Hydratacja
+**Hydratacja** to proces, w którym React w przeglądarce bierze HTML wyrenderowany na serwerze i „podpina” do niego komponenty: dołącza handlery zdarzeń, odtwarza stan, uruchamia efekty. Funkcja `hydrateRoot(kontener, <App />)` (zamiast `createRoot().render`) **nie tworzy DOM od nowa** — zakłada, że pierwszy render klienta da **dokładnie ten sam wynik** co na serwerze, i tylko porównuje.
+
+Jeśli wynik się różni (**niezgodność hydratacji**), React zgłasza błąd i renderuje fragment (lub całość) od nowa po stronie klienta — tracisz korzyść z SSR, a użytkownik widzi mignięcie. Efekty (`useEffect`) **nie** wykonują się na serwerze — dlatego kod zależny od przeglądarki umieszcza się w efektach.
+
+#T CODE_WRONG Pięć typowych przyczyn niezgodności
+```
+// 1. Czas i losowość — inna wartość na serwerze i w przeglądarce
+<p>Wygenerowano: {new Date().toLocaleTimeString()}</p>
+<li key={Math.random()}>…</li>
+
+// 2. API przeglądarki w renderze
+const theme = typeof window !== 'undefined' ? localStorage.getItem('theme') : 'light';
+
+// 3. Strefa czasowa / ustawienia regionalne serwera inne niż użytkownika
+<p>{new Date(updatedAt).toLocaleString()}</p>
+
+// 4. Nieprawidłowe zagnieżdżenie HTML — przeglądarka „naprawia” DOM
+<p><div>blok w akapicie</div></p>
+
+// 5. Rozszerzenia przeglądarki modyfikujące DOM przed hydratacją (np. tłumacz, menedżer haseł)
+```
+
+#T CODE_JSX Komponent bezpieczny dla hydratacji (JSX)
+Wartość zależna od przeglądarki pojawia się dopiero po hydratacji: pierwszy render (serwer i klient) pokazuje wersję neutralną, efekt ustawia prawdziwą.
+```
+// RelativeTime.jsx
+import { useEffect, useState } from 'react';
+
+export function RelativeTime({ iso }) {
+  const [label, setLabel] = useState(null);
+
+  useEffect(() => {
+    const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    setLabel(minutes < 60 ? `${minutes} min temu` : new Date(iso).toLocaleString('pl-PL'));
+  }, [iso]);
+
+  // na serwerze i w pierwszym renderze klienta: stabilna data w UTC
+  return <time dateTime={iso}>{label ?? iso.slice(0, 10)}</time>;
+}
+```
+
+#T CODE_TSX Komponent bezpieczny dla hydratacji (TSX)
+```
+// RelativeTime.tsx
+import { useEffect, useState } from 'react';
+
+export function RelativeTime({ iso }: { iso: string }) {
+  const [label, setLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    setLabel(minutes < 60 ? `${minutes} min temu` : new Date(iso).toLocaleString('pl-PL'));
+  }, [iso]);
+
+  return <time dateTime={iso}>{label ?? iso.slice(0, 10)}</time>;
+}
+```
+
+#T NOTE JSX ↔ TSX — typy nie wykryją niezgodności
+Błąd hydratacji to problem **czasu wykonania**: kod jest poprawny typowo w obu wersjach, a różnica pojawia się dopiero, gdy serwer i przeglądarka obliczą coś inaczej. TypeScript pomaga pośrednio: `useState<string | null>(null)` jasno mówi, że w pierwszym renderze wartości jeszcze nie ma, a `iso: string` przypomina o serializacji. Nieprawidłowe zagnieżdżenie (`<div>` w `<p>`) przepuszczą obie wersje — wyłapie je dopiero ostrzeżenie Reacta w konsoli albo walidator HTML.
+
+#T CODE_BASIC useSyncExternalStore z wartością serwerową
+Dla wartości z API przeglądarki (np. szerokość okna, stan online) `useSyncExternalStore` przyjmuje trzecią funkcję — **wartość na serwerze i przy hydratacji**. React użyje jej w pierwszym renderze, a potem przełączy się na wartość z przeglądarki.
+```
+// useOnline.ts
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback: () => void) {
+  window.addEventListener('online', callback);
+  window.addEventListener('offline', callback);
+  return () => {
+    window.removeEventListener('online', callback);
+    window.removeEventListener('offline', callback);
+  };
+}
+
+export function useOnline() {
+  return useSyncExternalStore(
+    subscribe,
+    () => navigator.onLine, // klient
+    () => true,             // serwer i hydratacja
+  );
+}
+```
+
+#T CODE_PRACTICAL suppressHydrationWarning i komponent tylko-klienta
+Dwa narzędzia ostatniej szansy: `suppressHydrationWarning` na **jednym elemencie**, którego tekst celowo się różni (np. znacznik czasu), oraz komponent renderowany tylko po stronie klienta.
+```
+import { useEffect, useState, type ReactNode } from 'react';
+
+export function ClientOnly({ children, fallback = null }: { children: ReactNode; fallback?: ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  return mounted ? children : fallback;
+}
+
+export function BuildStamp({ iso }: { iso: string }) {
+  // tylko tekst tego elementu może się różnić; dzieci nadal są sprawdzane
+  return <small suppressHydrationWarning>{new Date(iso).toLocaleString()}</small>;
+}
+
+// <ClientOnly fallback={<div className="map-placeholder" />}><TicketMap /></ClientOnly>
+```
+
+#T STEP_BY_STEP Budujemy razem: polowanie na błędy hydratacji
+1. W serwerze SSR z lekcji 01 zamień `createRoot` na `hydrateRoot(document.getElementById('root'), <ArticleView … />)` w kodzie klienta.
+2. Dodaj celowo `new Date().toLocaleTimeString()` w nagłówku — przeczytaj komunikat w konsoli: React 19 pokazuje różnicę (serwer vs klient) w formie diffu.
+3. Napraw: zastąp `RelativeTime`; sprawdź, że błąd zniknął, a w źródle strony jest data w UTC.
+4. Dodaj `<p><div>…</div></p>` — zobacz ostrzeżenie o nieprawidłowym zagnieżdżeniu; popraw na `<div>`.
+5. Wskaźnik „offline” zbuduj na `useOnline` z wartością serwerową `true`.
+6. Ciężki komponent mapy (używający `window`) opakuj w `ClientOnly` z placeholderem o tym samym rozmiarze (brak przesunięcia układu — CLS).
+7. Ustaw w przeglądarce inną strefę czasową (DevTools → Sensors → Location) i sprawdź, że strona nie zgłasza niezgodności.
+
+#T PITFALL suppressHydrationWarning jako plaster na wszystko
+`suppressHydrationWarning` działa tylko na **jeden poziom** (tekst i atrybuty tego elementu) i nie naprawia niezgodności — tylko ucisza komunikat; React nadal może pokazać nieaktualny tekst z serwera. Dodawanie go na `<body>` „żeby nie krzyczało” ukrywa prawdziwe błędy. Wyjątek uznawany w praktyce: `<html suppressHydrationWarning>`, gdy skrypt motywu przed hydratacją ustawia klasę `dark` na elemencie `html`.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Hydratacja podpina komponenty do HTML-a z serwera i wymaga identycznego pierwszego renderu po obu stronach. Typowe przyczyny niezgodności: czas i losowość, API przeglądarki w renderze, strefa czasowa i ustawienia regionalne, nieprawidłowe zagnieżdżenie HTML, rozszerzenia przeglądarki. Naprawy: wartość zależna od przeglądarki w efekcie, `useSyncExternalStore` z wartością serwerową, `ClientOnly` dla komponentów tylko-klienta, a `suppressHydrationWarning` wyłącznie punktowo. Typy nie wykryją niezgodności — to błąd czasu wykonania.
+
+Kryterium akceptacji: widok artykułu hydratuje się bez ostrzeżeń w konsoli, także przy innej strefie czasowej użytkownika; czas względny, wskaźnik offline i mapa korzystają z wzorców bezpiecznych dla hydratacji.

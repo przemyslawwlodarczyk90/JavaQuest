@@ -1,0 +1,128 @@
+#T INTRO Rozgrzewka i problem: pusta strona przed JavaScriptem
+Rozgrzewka: Czym różni się komponent serwerowy od klienckiego? Co oznacza granica serializacji? Do czego służy `'use server'`?
+
+Problem: DevDesk to SPA zbudowane w Vite. Serwer wysyła prawie pusty HTML (`<div id="root"></div>`) i paczkę JS; dopiero po jej pobraniu i wykonaniu użytkownik widzi interfejs. Na słabym telefonie to kilka sekund białego ekranu, robot wyszukiwarki widzi pustą stronę, a podgląd linku do publicznej bazy wiedzy w komunikatorze jest pusty. Dla panelu za logowaniem to zwykle w porządku — ale dla publicznych stron już nie. W tej lekcji poznasz **strategie renderowania**: gdzie i kiedy powstaje HTML. Zrobisz eksperyment: zmierzysz to samo w SPA i w wersji renderowanej na serwerze.
+
+#T DEFINITION Cztery strategie
+- **CSR (Client-Side Rendering)** — HTML powstaje w przeglądarce. Serwer wysyła pusty szkielet i JS. Prosty hosting (pliki statyczne), pełna interaktywność, ale wolny pierwszy widok i słabe SEO.
+- **SSR (Server-Side Rendering)** — HTML powstaje **na serwerze przy każdym żądaniu** (z aktualnymi danymi), potem przeglądarka „ożywia” go JavaScriptem (**hydratacja**, lekcja 02). Szybki pierwszy widok, dobre SEO, ale potrzebny serwer Node i koszt każdego żądania.
+- **SSG (Static Site Generation)** — HTML powstaje **przy budowaniu** i jest serwowany jako plik. Najszybsze i najtańsze, ale dane są tak świeże jak ostatni build.
+- **ISR / revalidacja** — SSG z odświeżaniem: strona statyczna jest generowana ponownie co określony czas albo na żądanie (np. po edycji artykułu).
+
+Do tego **streaming SSR**: serwer wysyła HTML kawałkami — najpierw szkielet i treść gotową od razu, a fragmenty w `Suspense` doklejane są, gdy ich dane będą gotowe (rozdział 17).
+
+#T VISUAL_EXAMPLE Oś czasu pierwszego widoku
+CSR:   [HTML pusty]──[pobierz JS]──[wykonaj JS]──[fetch danych]──► TREŚĆ (interaktywna)
+SSR:   [render na serwerze + dane]──► TREŚĆ (HTML) ──[pobierz JS]──[hydratacja]──► interaktywna
+SSG:   ► TREŚĆ (gotowy plik z CDN) ──[pobierz JS]──[hydratacja]──► interaktywna
+Stream:[szkielet + nagłówek]──► część treści ──► dalsze fragmenty z Suspense ──► interaktywna
+
+Kluczowe metryki (rozdział 16): LCP — kiedy pojawia się główna treść; INP — jak szybko reaguje na interakcję. SSR/SSG poprawiają LCP; hydratacja może pogorszyć INP, jeśli paczka JS jest duża.
+
+#T CODE_JSX Ten sam komponent w CSR i SSR (JSX)
+Komponent jest identyczny — zmienia się tylko miejsce, w którym dostaje dane i jest renderowany. Wersja CSR pobiera dane w przeglądarce, wersja SSR dostaje je jako props od serwera.
+```
+// ArticleView.jsx
+export function ArticleView({ article }) {
+  return (
+    <article>
+      <h1>{article.title}</h1>
+      <p className="meta">Zaktualizowano: {new Date(article.updatedAt).toLocaleDateString('pl-PL')}</p>
+      <div>{article.body}</div>
+    </article>
+  );
+}
+
+// CSR (Vite SPA): useQuery w przeglądarce, potem <ArticleView article={data} />
+// SSR (serwer): const html = renderToString(<ArticleView article={await loadArticle(slug)} />)
+```
+
+#T CODE_TSX Ten sam komponent w CSR i SSR (TSX)
+W TSX typ danych przekazywanych z serwera to kontrakt: przy SSR dane muszą być serializowalne (data jako tekst ISO, nie obiekt `Date`), bo trafiają do HTML-a i są ponownie odczytywane przy hydratacji.
+```
+// ArticleView.tsx
+export type Article = { slug: string; title: string; body: string; updatedAt: string };
+
+export function ArticleView({ article }: { article: Article }) {
+  return (
+    <article>
+      <h1>{article.title}</h1>
+      <p className="meta">Zaktualizowano: {new Date(article.updatedAt).toLocaleDateString('pl-PL')}</p>
+      <div>{article.body}</div>
+    </article>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — `updatedAt: string`, nie `Date`
+W obu wersjach dane z serwera przechodzą przez JSON (w HTML-u lub w odpowiedzi), więc `Date` zamienia się w tekst. W JSX łatwo o kod `article.updatedAt.getTime()`, który działa w testach z obiektem `Date`, a w produkcji rzuca `TypeError`. W TSX typ `updatedAt: string` wymusza jawną konwersję `new Date(...)`. Uwaga: `toLocaleDateString` przy SSR zależy od strefy czasowej serwera — źródło błędów hydratacji (lekcja 02).
+
+#T CODE_BASIC Minimalny SSR bez frameworka
+Żeby zobaczyć mechanizm, a nie magię frameworka: serwer Node renderuje komponent do HTML-a funkcją z `react-dom/server`.
+```
+// server.tsx (Node, uproszczone)
+import { renderToString } from 'react-dom/server';
+import { createServer } from 'node:http';
+import { ArticleView, type Article } from './ArticleView';
+
+const article: Article = { slug: 'reset-hasla', title: 'Jak zresetować hasło', body: 'Kliknij „Nie pamiętam hasła”…', updatedAt: '2026-10-01T10:00:00Z' };
+
+createServer((_req, res) => {
+  const html = renderToString(<ArticleView article={article} />);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(`<!doctype html><html lang="pl"><body><div id="root">${html}</div></body></html>`);
+}).listen(3000);
+```
+
+#T CODE_PRACTICAL Streaming z renderToPipeableStream
+W praktyce frameworki używają streamingu: `renderToPipeableStream` wysyła szkielet od razu, a treść w `Suspense` — gdy się wczyta.
+```
+// stream-server.tsx (Node, uproszczone)
+import { renderToPipeableStream } from 'react-dom/server';
+import { createServer } from 'node:http';
+import { Suspense } from 'react';
+
+declare function SlowRelatedArticles(): React.JSX.Element; // komponent zawieszający się na danych
+
+function Page() {
+  return (
+    <html lang="pl">
+      <body>
+        <h1>Baza wiedzy</h1>
+        <Suspense fallback={<p>Ładowanie powiązanych artykułów…</p>}>
+          <SlowRelatedArticles />
+        </Suspense>
+      </body>
+    </html>
+  );
+}
+
+createServer((_req, res) => {
+  const { pipe } = renderToPipeableStream(<Page />, {
+    onShellReady() {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      pipe(res); // szkielet natychmiast, reszta strumieniem
+    },
+    onShellError() {
+      res.statusCode = 500;
+      res.end('Błąd serwera');
+    },
+  });
+}).listen(3001);
+```
+
+#T STEP_BY_STEP Budujemy razem: eksperyment CSR kontra SSR
+1. W DevDesk dodaj publiczny widok artykułu bazy wiedzy (`ArticleView`) i uruchom go jako zwykłą trasę SPA.
+2. W DevTools (Network → „Disable cache”, throttling „Slow 4G”, CPU 4× slowdown) zmierz w zakładce Performance czas do LCP. Podejrzyj źródło strony (Ctrl+U) — `<div id="root"></div>` jest pusty.
+3. Uruchom minimalny serwer SSR z przykładu (`tsx server.tsx` albo przez Vite SSR) i powtórz pomiar; w źródle strony jest już cała treść.
+4. Wyłącz JavaScript w przeglądarce (DevTools → Command Menu → „Disable JavaScript”) — wersja SSR pokazuje artykuł, CSR — pustą stronę.
+5. Zapisz w notatce tabelę: która strategia dla których ekranów DevDesk — panel za logowaniem (CSR wystarcza), publiczna baza wiedzy (SSG + revalidacja po edycji), strona statusu systemu (SSR, dane bieżące).
+6. To przygotowanie do Next.js (lekcja 03), który robi to wszystko konfiguracją, a nie ręcznym serwerem.
+
+#T PITFALL SSR wszędzie „bo szybsze”
+SSR nie jest darmowy: każdy widok kosztuje czas serwera, aplikacja potrzebuje środowiska Node (a nie tylko plików na CDN), a kod musi działać w dwóch środowiskach (bez `window` i `localStorage` podczas renderowania na serwerze). Dla panelu administracyjnego za logowaniem, w którym SEO nie ma znaczenia, a użytkownicy wracają codziennie (paczka w cache), SPA jest często prostsze i wystarczająco szybkie. Wybieraj strategię per ekran, a nie dla całej firmy.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+CSR renderuje w przeglądarce (prosty hosting, wolny pierwszy widok, słabe SEO), SSR — na serwerze przy każdym żądaniu, SSG — przy budowaniu, ISR — statycznie z odświeżaniem. Streaming wysyła szkielet od razu, a fragmenty w `Suspense` doklejane są później. `renderToString` i `renderToPipeableStream` z `react-dom/server` to mechanizm, na którym stoją frameworki. Dane przekazywane z serwera muszą być serializowalne — w TSX typy (tekst zamiast `Date`) tego pilnują.
+
+Kryterium akceptacji: masz zmierzony LCP widoku artykułu w CSR i SSR na wolnym łączu, sprawdzone działanie bez JavaScriptu oraz tabelę wyboru strategii renderowania dla trzech typów ekranów DevDesk.
