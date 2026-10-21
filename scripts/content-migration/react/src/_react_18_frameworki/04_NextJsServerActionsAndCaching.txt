@@ -1,0 +1,149 @@
+#T INTRO Rozgrzewka i problem: formularz zgłoszenia i nieaktualna lista
+Rozgrzewka: Co oznacza plik `loading.tsx`? Dlaczego `params` trzeba `await`? Dlaczego komponent serwerowy nie powinien wołać własnego `route.ts`?
+
+Problem: publiczna baza wiedzy dostaje formularz „Nie znalazłeś odpowiedzi? Zgłoś problem”, który tworzy ticket w DevDesk. W SPA zrobiłbyś `fetch` z handlera, endpoint i ręczne odświeżenie listy. W Next.js użyjesz **akcji serwerowej**: funkcji wykonywanej na serwerze, podpiętej do `<form action>`, działającej nawet bez JavaScriptu. Drugi problem: po dodaniu artykułu lista w bazie wiedzy pokazuje stare dane, bo jest w **cache** — nauczysz się nim sterować (`revalidate`, `revalidatePath`, `revalidateTag`).
+
+#T DEFINITION Akcje serwerowe w Next.js
+Akcja serwerowa (rozdział 17) to asynchroniczna funkcja z dyrektywą `'use server'`. W Next.js:
+- możesz ją zdefiniować w pliku `actions.ts` (z `'use server'` na górze) i importować w komponentach serwerowych i klienckich,
+- przekazujesz ją do `<form action={akcja}>` — formularz działa jako zwykły POST także przed załadowaniem JS (progressive enhancement),
+- w komponencie klienckim łączysz ją z `useActionState` (komunikaty błędów, stan oczekiwania) i `useFormStatus`,
+- po zapisie wywołujesz `revalidatePath('/articles')` lub `revalidateTag('articles')`, żeby odświeżyć cache, i ewentualnie `redirect('/…')`.
+
+Akcja to **publiczny endpoint** — zawsze waliduj dane i sprawdzaj uprawnienia wewnątrz niej.
+
+#T CODE_JSX Formularz zgłoszenia z akcją (JSX)
+```
+// app/report/ReportForm.jsx
+'use client';
+import { useActionState } from 'react';
+import { createTicketAction } from './actions';
+
+export function ReportForm() {
+  const [state, formAction, isPending] = useActionState(createTicketAction, { error: null, ticketId: null });
+
+  if (state.ticketId) return <p role="status">Dziękujemy! Numer zgłoszenia: #{state.ticketId}</p>;
+
+  return (
+    <form action={formAction}>
+      <label htmlFor="email">E-mail</label>
+      <input id="email" name="email" type="email" required />
+      <label htmlFor="description">Opis problemu</label>
+      <textarea id="description" name="description" required minLength={10} />
+      {state.error && <p role="alert">{state.error}</p>}
+      <button type="submit" disabled={isPending}>{isPending ? 'Wysyłanie…' : 'Zgłoś'}</button>
+    </form>
+  );
+}
+```
+
+#T CODE_TSX Formularz zgłoszenia z akcją (TSX)
+Typ stanu akcji jest wspólny dla akcji i formularza — eksportujesz go z `actions.ts`.
+```
+// app/report/ReportForm.tsx
+'use client';
+import { useActionState } from 'react';
+import { createTicketAction, type ReportState } from './actions';
+
+const initial: ReportState = { error: null, ticketId: null };
+
+export function ReportForm() {
+  const [state, formAction, isPending] = useActionState(createTicketAction, initial);
+
+  if (state.ticketId) return <p role="status">Dziękujemy! Numer zgłoszenia: #{state.ticketId}</p>;
+
+  return (
+    <form action={formAction}>
+      <label htmlFor="email">E-mail</label>
+      <input id="email" name="email" type="email" required />
+      <label htmlFor="description">Opis problemu</label>
+      <textarea id="description" name="description" required minLength={10} />
+      {state.error && <p role="alert">{state.error}</p>}
+      <button type="submit" disabled={isPending}>{isPending ? 'Wysyłanie…' : 'Zgłoś'}</button>
+    </form>
+  );
+}
+```
+
+#T CODE_BASIC Akcja serwerowa z walidacją i wywołaniem API Spring
+```
+// app/report/actions.ts
+'use server';
+
+import { z } from 'zod';
+import { revalidateTag } from 'next/cache';
+
+export type ReportState = { error: string | null; ticketId: number | null };
+
+const schema = z.object({
+  email: z.email('Podaj poprawny e-mail'),
+  description: z.string().trim().min(10, 'Opis musi mieć co najmniej 10 znaków'),
+});
+
+export async function createTicketAction(_prev: ReportState, formData: FormData): Promise<ReportState> {
+  const parsed = schema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Błędne dane', ticketId: null };
+
+  const res = await fetch(`${process.env.API_URL}/api/public/tickets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.API_TOKEN}` },
+    body: JSON.stringify(parsed.data),
+  });
+  if (!res.ok) return { error: 'Nie udało się utworzyć zgłoszenia. Spróbuj później.', ticketId: null };
+
+  const { id } = (await res.json()) as { id: number };
+  revalidateTag('public-tickets', 'max'); // drugi argument: profil cache (Next.js 16+); w starszych wersjach tylko tag
+  return { error: null, ticketId: id };
+}
+```
+
+#T NOTE JSX ↔ TSX — wspólny typ stanu
+W TSX `ReportState` jest eksportowany razem z akcją i używany w formularzu, więc zmiana kształtu odpowiedzi (np. dodanie `fieldErrors`) od razu pokazuje miejsca do poprawy w UI. W JSX trzeba pamiętać, żeby stan początkowy w `useActionState` miał ten sam kształt co zwracany przez akcję. Sekret `API_TOKEN` jest bezpieczny w obu wersjach, bo plik z `'use server'` nie trafia do przeglądarki — klient dostaje tylko odwołanie do akcji.
+
+#T DEFINITION Cache i revalidacja
+Next.js przechowuje wyniki renderowania i pobierania danych, żeby nie liczyć ich przy każdym żądaniu. Szczegóły zmieniały się między wersjami (od Next.js 15 `fetch` **nie jest** domyślnie cache'owany, a nowsze wersje wprowadzają dyrektywę `'use cache'` z funkcjami `cacheLife` i `cacheTag`) — zawsze sprawdź dokumentację swojej wersji. Narzędzia, które działają w każdej z nich:
+- `fetch(url, { next: { revalidate: 300 } })` — wynik ważny 300 s, potem odświeżany w tle (ISR),
+- `fetch(url, { next: { tags: ['articles'] } })` — oznaczenie danych tagiem,
+- `revalidateTag('articles')` — unieważnienie wszystkich danych z tagiem (np. po edycji artykułu),
+- `revalidatePath('/articles')` — unieważnienie konkretnej ścieżki,
+- `cache: 'no-store'` albo odczyt `cookies()`/`headers()` — strona dynamiczna przy każdym żądaniu.
+
+#T CODE_PRACTICAL Lista z tagiem i endpoint revalidacji wywoływany ze Springa
+Gdy redaktor zapisze artykuł w DevDesk (Spring Boot), backend wywołuje endpoint Next.js, który unieważnia cache — baza wiedzy pokazuje zmiany od razu, bez czekania na `revalidate`.
+```
+// app/api/revalidate/route.ts
+import { revalidateTag } from 'next/cache';
+import type { NextRequest } from 'next/server';
+
+export async function POST(request: NextRequest) {
+  if (request.headers.get('x-revalidate-secret') !== process.env.REVALIDATE_SECRET) {
+    return Response.json({ ok: false }, { status: 401 });
+  }
+  const { tag } = (await request.json()) as { tag: string };
+  revalidateTag(tag, 'max');
+  return Response.json({ ok: true, tag });
+}
+
+// w app/articles/page.tsx:
+// const res = await fetch(`${process.env.API_URL}/api/articles`, { next: { tags: ['articles'], revalidate: 3600 } });
+//
+// w Spring Boot po zapisie artykułu:
+// restClient.post().uri(kbUrl + "/api/revalidate").header("x-revalidate-secret", secret).body(Map.of("tag", "articles")).retrieve();
+```
+
+#T STEP_BY_STEP Budujemy razem: formularz zgłoszenia i świeża baza wiedzy
+1. Utwórz `app/report/actions.ts` z akcją i walidacją Zod oraz `app/report/page.tsx` renderujący `ReportForm`.
+2. Wyślij formularz z błędnym e-mailem — komunikat z akcji; poprawnie — numer ticketu z Spring Boot.
+3. Wyłącz JavaScript w przeglądarce i wyślij formularz ponownie — działa jako zwykły POST (progressive enhancement).
+4. Oznacz pobieranie listy artykułów tagiem `articles` i `revalidate: 3600`; zbuduj (`npm run build`) i uruchom wersję produkcyjną (`npm start`).
+5. Zmień tytuł artykułu w backendzie — lista się nie zmienia (cache). Wywołaj `POST /api/revalidate` z sekretem (curl) — po odświeżeniu widać zmianę.
+6. Dodaj wywołanie revalidacji w serwisie Spring Boot po zapisie artykułu.
+7. Sprawdź, że endpoint bez sekretu zwraca 401.
+
+#T PITFALL Sprawdzanie cache w trybie deweloperskim
+W `npm run dev` Next.js renderuje strony przy każdym żądaniu i wiele mechanizmów cache działa inaczej niż w produkcji — „u mnie odświeża się od razu” nic nie mówi o zachowaniu po wdrożeniu. Zachowanie cache i revalidacji testuj zawsze na `npm run build && npm start` i czytaj raport buildu (strony statyczne ○ vs dynamiczne ƒ).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Akcje serwerowe w Next.js (`'use server'`) obsługują formularze bez ręcznych endpointów, działają bez JavaScriptu i współpracują z `useActionState`; wewnątrz zawsze walidujesz dane i sprawdzasz uprawnienia. Cache sterujesz przez `revalidate` (czas), tagi i `revalidateTag`/`revalidatePath` (na żądanie, np. wywołane z backendu). Szczegóły cache zależą od wersji Next.js — testuj na buildzie produkcyjnym. W TSX typ stanu akcji jest wspólny dla akcji i formularza.
+
+Kryterium akceptacji: formularz zgłoszenia tworzy ticket przez akcję serwerową z walidacją (także bez JS), lista artykułów jest w cache z tagiem, a zapis artykułu w Spring Boot unieważnia cache przez zabezpieczony endpoint revalidacji.
