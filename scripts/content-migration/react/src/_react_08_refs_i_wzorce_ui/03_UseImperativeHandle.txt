@@ -1,0 +1,163 @@
+#T INTRO Rozgrzewka i problem: rodzic ma za duży dostęp
+Rozgrzewka: Jak przekazać ref do wewnętrznego elementu własnego komponentu w React 19? Kiedy użyć ref callbacka? Jakich operacji nie wolno robić na elemencie przez ref?
+
+Problem: komponent `RichEditor` (pole opisu ticketu z paskiem narzędzi) przekazuje rodzicowi ref do swojego `<textarea>`. Rodzic robi z nim, co chce — zmienia `value`, styl, dopisuje elementy. Po zmianie implementacji edytora (np. na `contenteditable`) kod rodzica się sypie. Lepiej udostępnić rodzicowi **ograniczone API**: `focus()`, `insertText(text)`, `clear()` — i nic więcej. Do tego służy `useImperativeHandle`.
+
+#T DEFINITION useImperativeHandle
+`useImperativeHandle(ref, () => ({ ...metody }), [zależności])` sprawia, że ref przekazany do komponentu nie wskazuje na element DOM, tylko na **obiekt, który zwrócisz**. Rodzic wywołuje `editorRef.current.insertText('...')`, a komponent decyduje, jak to zrobić. Wnętrze komponentu (prawdziwy element) pozostaje prywatne.
+
+To API imperatywne — „zrób teraz X” — więc stosuj je tylko dla działań, których nie da się wyrazić props: fokus, przewinięcie, wstawienie tekstu w miejscu kursora, odtworzenie animacji.
+
+#T CODE_JSX Edytor z ograniczonym API (JSX)
+```
+// RichEditor.jsx
+import { useImperativeHandle, useRef } from 'react';
+
+export function RichEditor({ value, onChange, ref }) {
+  const areaRef = useRef(null);
+
+  useImperativeHandle(ref, () => ({
+    focus() {
+      areaRef.current.focus();
+    },
+    insertText(text) {
+      const area = areaRef.current;
+      const start = area.selectionStart;
+      const end = area.selectionEnd;
+      const next = value.slice(0, start) + text + value.slice(end);
+      onChange(next);
+      requestAnimationFrame(() => {
+        area.focus();
+        area.setSelectionRange(start + text.length, start + text.length);
+      });
+    },
+    clear() {
+      onChange('');
+    },
+  }), [value, onChange]);
+
+  return (
+    <div className="editor">
+      <div className="editor__toolbar">
+        <button type="button" onClick={() => onChange(`${value}**pogrubienie**`)}>B</button>
+      </div>
+      <textarea ref={areaRef} aria-label="Opis" value={value} onChange={(e) => onChange(e.target.value)} rows={6} />
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Edytor z ograniczonym API (TSX)
+Typ uchwytu `RichEditorHandle` jest publicznym kontraktem komponentu. Rodzic tworzy `useRef<RichEditorHandle>(null)` i widzi wyłącznie trzy metody.
+```
+// RichEditor.tsx
+import { useImperativeHandle, useRef, type Ref } from 'react';
+
+export type RichEditorHandle = {
+  focus: () => void;
+  insertText: (text: string) => void;
+  clear: () => void;
+};
+
+type Props = { value: string; onChange: (v: string) => void; ref?: Ref<RichEditorHandle> };
+
+export function RichEditor({ value, onChange, ref }: Props) {
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus() {
+      areaRef.current?.focus();
+    },
+    insertText(text: string) {
+      const area = areaRef.current;
+      if (!area) return;
+      const start = area.selectionStart;
+      const end = area.selectionEnd;
+      onChange(value.slice(0, start) + text + value.slice(end));
+      requestAnimationFrame(() => {
+        area.focus();
+        area.setSelectionRange(start + text.length, start + text.length);
+      });
+    },
+    clear() {
+      onChange('');
+    },
+  }), [value, onChange]);
+
+  return (
+    <div className="editor">
+      <div className="editor__toolbar">
+        <button type="button" onClick={() => onChange(`${value}**pogrubienie**`)}>B</button>
+      </div>
+      <textarea ref={areaRef} aria-label="Opis" value={value} onChange={(e) => onChange(e.target.value)} rows={6} />
+    </div>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — uchwyt jako kontrakt
+W TSX typ `RichEditorHandle` sprawia, że `editorRef.current?.innerHTML` czy `editorRef.current?.style` są błędami kompilacji — rodzic fizycznie nie ma dostępu do szczegółów implementacji. W JSX ograniczenie działa tylko w czasie działania: obiekt uchwytu nie ma tych pól, więc odczyt da `undefined`, a próba wywołania — wyjątek. Typ uchwytu warto eksportować razem z komponentem, tak jak typ props.
+
+#T CODE_BASIC Rodzic korzystający z uchwytu
+```
+import { useRef, useState } from 'react';
+import { RichEditor, type RichEditorHandle } from './RichEditor';
+
+const SNIPPETS = ['Kroki do odtworzenia:\n1. ', 'Oczekiwany rezultat: ', 'Aktualny rezultat: '];
+
+export function DescriptionField() {
+  const [text, setText] = useState('');
+  const editorRef = useRef<RichEditorHandle>(null);
+
+  return (
+    <div>
+      {SNIPPETS.map((s) => (
+        <button key={s} type="button" onClick={() => editorRef.current?.insertText(s)}>
+          + {s.split(':')[0]}
+        </button>
+      ))}
+      <button type="button" onClick={() => editorRef.current?.clear()}>Wyczyść</button>
+      <RichEditor ref={editorRef} value={text} onChange={setText} />
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Uchwyt z animacją „zwróć uwagę”
+Działanie, którego nie da się dobrze wyrazić propem: jednorazowe „mrugnięcie” pola, np. gdy walidacja nie przeszła.
+```
+import { useImperativeHandle, useRef, type ReactNode, type Ref } from 'react';
+
+export type ShakeHandle = { shake: () => void };
+
+export function ShakeBox({ children, ref }: { children: ReactNode; ref?: Ref<ShakeHandle> }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    shake() {
+      boxRef.current?.animate(
+        [{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }],
+        { duration: 300 },
+      );
+    },
+  }), []);
+
+  return <div ref={boxRef}>{children}</div>;
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: edytor opisu ticketu
+1. Utwórz `RichEditor` z `useImperativeHandle` udostępniającym `focus`, `insertText`, `clear`.
+2. Zastąp pole opisu w formularzu nowego ticketu komponentem `DescriptionField` z przyciskami szablonów („Kroki do odtworzenia” itd.).
+3. Ustaw kursor w środku tekstu i kliknij szablon — tekst wstawia się w miejscu kursora, a kursor ląduje za wstawionym fragmentem.
+4. Opakuj pole tytułu w `ShakeBox` i wywołaj `shake()` przy nieudanej walidacji.
+5. W wersji TS spróbuj z rodzica odczytać `editorRef.current?.value` — przeczytaj błąd: uchwyt nie ma takiego pola.
+6. Zmień wewnętrzną implementację edytora (np. dodaj podgląd Markdown obok) bez zmiany kodu rodzica — kontrakt uchwytu się nie zmienia.
+
+#T PITFALL API imperatywne zamiast props
+Jeśli coś da się wyrazić props, nie rób z tego metody uchwytu. `editorRef.current.setReadOnly(true)` to zły pomysł — stan „tylko do odczytu” to prop `readOnly`. `modalRef.current.open()` też zwykle przegrywa z propem `open={isOpen}`, bo stan otwarcia trafia wtedy do rodzica jako jedno źródło prawdy. Uchwyt jest dla jednorazowych działań, nie dla stanu.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useImperativeHandle(ref, () => api, deps)` sprawia, że ref komponentu wskazuje na obiekt z wybranymi metodami zamiast na element DOM — rodzic dostaje ograniczone API, a implementacja zostaje prywatna. Stosuj go tylko do działań imperatywnych (fokus, wstawienie tekstu, animacja), a stan wyrażaj props. W TSX typ uchwytu (`RichEditorHandle`) jest eksportowanym kontraktem, a `useRef<Handle>(null)` po stronie rodzica blokuje dostęp do szczegółów.
+
+Kryterium akceptacji: przyciski szablonów wstawiają tekst w miejscu kursora w edytorze opisu, „Wyczyść” czyści edytor, pole tytułu „trzęsie się” przy błędzie walidacji, a rodzic nie ma dostępu do elementu `textarea` edytora.

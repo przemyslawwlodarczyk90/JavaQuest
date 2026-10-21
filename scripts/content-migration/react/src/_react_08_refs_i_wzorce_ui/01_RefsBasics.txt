@@ -1,0 +1,163 @@
+#T INTRO Rozgrzewka i problem: wartość, która nie powinna renderować ekranu
+Rozgrzewka: Co musi zwracać `getSnapshot` w `useSyncExternalStore`, gdy nic się nie zmieniło? Kiedy użyjesz `useLayoutEffect`? Czym jest część niereaktywna efektu?
+
+Problem: w DevDesk chcesz zmierzyć, ile czasu użytkownik spędził w formularzu nowego ticketu (do statystyk), pamiętać ID timera automatycznego zapisu i liczyć, ile razy kliknięto „Odśwież” — ale żadna z tych wartości nie jest wyświetlana na ekranie. Trzymanie ich w `useState` powoduje zbędne rendery, a zwykła zmienna resetuje się przy każdym renderze. Do tego służy **ref**.
+
+#T DEFINITION useRef
+`const ref = useRef(wartośćPoczątkowa)` zwraca obiekt `{ current: wartość }`, który:
+- **przetrwa między renderami** (jak stan),
+- **można zmieniać bezpośrednio**: `ref.current = 5`,
+- **zmiana nie powoduje renderu** — React nie wie, że coś się zmieniło.
+
+Ref to „schowek” komponentu na wartości potrzebne logice, ale nie wpływające na to, co widać. Obiekt `ref` jest ten sam przez całe życie komponentu.
+
+#T VISUAL_EXAMPLE Zmienna, stan i ref
+                     przetrwa render?   zmiana renderuje?   odczyt w renderze?
+zwykła zmienna        NIE                —                    tak
+useState              TAK                TAK                  tak
+useRef                TAK                NIE                  nie zalecany (poza inicjalizacją)
+
+#T CODE_JSX Pomiar czasu wypełniania formularza (JSX)
+```
+// useFormTimer.js
+import { useRef } from 'react';
+
+export function useFormTimer() {
+  const startedAt = useRef(null);
+
+  function markStart() {
+    if (startedAt.current === null) startedAt.current = performance.now();
+  }
+
+  function elapsedSeconds() {
+    if (startedAt.current === null) return 0;
+    return Math.round((performance.now() - startedAt.current) / 1000);
+  }
+
+  function reset() {
+    startedAt.current = null;
+  }
+
+  return { markStart, elapsedSeconds, reset };
+}
+
+// w formularzu: <input onFocus={timer.markStart} ... />
+// w onSubmit:   console.log('Formularz wypełniono w', timer.elapsedSeconds(), 's'); timer.reset();
+```
+
+#T CODE_TSX Pomiar czasu wypełniania formularza (TSX)
+`useRef<number | null>(null)` — typ wartości w `current`. Dla refów na wartości (nie elementy DOM) `current` jest w pełni zapisywalne.
+```
+// useFormTimer.ts
+import { useRef } from 'react';
+
+export function useFormTimer() {
+  const startedAt = useRef<number | null>(null);
+
+  function markStart() {
+    if (startedAt.current === null) startedAt.current = performance.now();
+  }
+
+  function elapsedSeconds(): number {
+    if (startedAt.current === null) return 0;
+    return Math.round((performance.now() - startedAt.current) / 1000);
+  }
+
+  function reset() {
+    startedAt.current = null;
+  }
+
+  return { markStart, elapsedSeconds, reset };
+}
+```
+
+#T NOTE JSX ↔ TSX — typ refa
+W TSX ref ma typ `RefObject<T>` (w React 19 jeden typ dla wszystkich refów), a `current` ma typ podany w generyku. `useRef<number | null>(null)` mówi: „na start pusto, potem liczba”. Bez generyka `useRef(null)` miałby typ `null` na zawsze i przypisanie liczby byłoby błędem — ta sama zasada co przy `useState(null)`. W JSX ref to po prostu obiekt z polem `current`, w którym możesz trzymać cokolwiek.
+
+#T CODE_BASIC ID timera w refie
+Ref idealnie przechowuje „uchwyty” — ID timerów, interwałów, instancje obiektów zewnętrznych — potrzebne później do ich zatrzymania.
+```
+import { useRef, useState } from 'react';
+
+export function AutoSaveIndicator({ onSave }: { onSave: () => void }) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [status, setStatus] = useState<'idle' | 'pending' | 'saved'>('idle');
+
+  function scheduleSave() {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setStatus('pending');
+    timerRef.current = setTimeout(() => {
+      onSave();
+      setStatus('saved');
+    }, 1500);
+  }
+
+  return (
+    <div>
+      <textarea aria-label="Opis" onChange={scheduleSave} />
+      <small>{status === 'pending' ? 'Zapisywanie…' : status === 'saved' ? 'Zapisano' : ''}</small>
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Najnowsza wartość dla kodu asynchronicznego
+Pamiętasz, że opóźniony kod widzi migawkę stanu (rozdział 04)? Gdy naprawdę potrzebujesz najnowszej wartości w callbacku, możesz ją odbijać w refie — aktualizując go w handlerze (nie w renderze).
+```
+import { useRef, useState } from 'react';
+
+export function DelayedSend() {
+  const [text, setText] = useState('');
+  const latestText = useRef('');
+
+  function handleChange(value: string) {
+    setText(value);
+    latestText.current = value;
+  }
+
+  function sendLater() {
+    setTimeout(() => {
+      alert(`Wysyłam: ${latestText.current}`); // najnowszy tekst, nie migawka z chwili kliknięcia
+    }, 3000);
+  }
+
+  return (
+    <>
+      <input aria-label="Wiadomość" value={text} onChange={(e) => handleChange(e.target.value)} />
+      <button type="button" onClick={sendLater}>Wyślij za 3 s</button>
+    </>
+  );
+}
+```
+
+#T DEFINITION Zasady używania refów
+1. **Nie odczytuj i nie zmieniaj `ref.current` podczas renderowania** (poza jednorazową inicjalizacją) — render ma być czysty, a ref zmienia się poza wiedzą Reacta; ekran nie odzwierciedli wartości.
+2. Zmieniaj refy w **handlerach** i **efektach**.
+3. Jeśli wartość ma być widoczna na ekranie — to stan, nie ref.
+4. Ref jest „furtką ewakuacyjną” (escape hatch) — jeśli używasz go do wszystkiego, prawdopodobnie walczysz z Reactem.
+
+#T CODE_WRONG Ref wyświetlany na ekranie
+Licznik w refie rośnie, ale ekran pokazuje starą wartość, dopóki coś innego nie wywoła renderu.
+```
+const clicks = useRef(0);
+return <button onClick={() => { clicks.current++; }}>Kliknięto {clicks.current} razy</button>;
+```
+
+#T CODE_RIGHT Wartość na ekranie to stan
+```
+const [clicks, setClicks] = useState(0);
+return <button onClick={() => setClicks((c) => c + 1)}>Kliknięto {clicks} razy</button>;
+```
+
+#T STEP_BY_STEP Budujemy razem: refy w DevDesk
+1. Dodaj `useFormTimer` do formularza nowego ticketu: start przy pierwszym fokusie, wynik w konsoli przy wysłaniu.
+2. Dodaj automatyczny zapis szkicu opisu ticketu z `AutoSaveIndicator` (ID timera w refie, wskaźnik w stanie).
+3. Dodaj sprzątanie: przy odmontowaniu formularza wyczyść oczekujący timer (efekt z `return () => clearTimeout(timerRef.current)`).
+4. Zbuduj `DelayedSend` i porównaj z wersją ze stanem z rozdziału 04 (migawka) — zrozum, kiedy które zachowanie jest pożądane.
+5. Zrób test błędu: wyświetl `clicks.current` w JSX i zobacz, że ekran nie nadąża.
+6. W React DevTools zobacz, że hooki `Ref` są widoczne, ale ich zmiana nie podświetla renderu.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useRef(start)` zwraca obiekt `{ current }`, który przetrwa rendery, można go zmieniać bezpośrednio, a zmiana nie powoduje renderu. Refy służą do wartości potrzebnych logice, ale niewidocznych na ekranie: ID timerów, pomiary czasu, instancje obiektów zewnętrznych, najnowsza wartość dla kodu asynchronicznego. Nie czytaj i nie zmieniaj refów podczas renderu. W TSX `useRef<T | null>(null)` określa typ `current`.
+
+Kryterium akceptacji: formularz mierzy czas wypełniania (wynik w konsoli), opis ticketu zapisuje się automatycznie 1,5 s po ostatniej zmianie ze wskaźnikiem „Zapisywanie…/Zapisano”, a oczekujący zapis jest anulowany przy zamknięciu formularza.
