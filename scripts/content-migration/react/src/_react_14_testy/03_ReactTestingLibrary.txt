@@ -1,0 +1,143 @@
+#T INTRO Rozgrzewka i problem: testowanie tego, co widać na ekranie
+Rozgrzewka: Czym różni się `toBe` od `toEqual`? Po co fałszywe zegary? Dlaczego testy muszą sprzątać po sobie?
+
+Problem: funkcje czyste są przetestowane, ale błędy w DevDesk często siedzą w komponentach: plakietka pokazuje zły kolor dla statusu, pusta tabela nie pokazuje komunikatu, przycisk „Zamknij” nie jest wyłączony dla zamkniętego ticketu. Do testów komponentów służy **React Testing Library** (RTL): renderuje komponent w symulowanym DOM (jsdom) i pozwala szukać elementów tak, jak robi to użytkownik — po roli, etykiecie i tekście.
+
+#T STEP_BY_STEP Konfiguracja środowiska testów komponentów
+1. `npm install -D @testing-library/react @testing-library/dom @testing-library/user-event @testing-library/jest-dom jsdom` (`@testing-library/dom` jest wymaganą zależnością równorzędną biblioteki — bez niej nie zadziała m.in. `screen`).
+2. W `vite.config.ts` dodaj sekcję `test: { environment: 'jsdom', setupFiles: './src/test/setup.ts' }` (w wersji JS — `setup.js`).
+3. W pliku setup dodaj `import '@testing-library/jest-dom/vitest';` — dopasowania DOM (`toBeInTheDocument`, `toBeDisabled`, `toHaveTextContent`, `toHaveAccessibleName`…).
+4. W TS dodaj typy w `tsconfig` (`"types": ["vitest/globals", "@testing-library/jest-dom"]`, jeśli używasz `globals: true`) lub importuj funkcje z `vitest` jawnie.
+5. RTL automatycznie odmontowuje komponenty po każdym teście (przy Vitest z `globals: true`; bez tego — dodaj `afterEach(cleanup)` w pliku setup).
+
+#T DEFINITION Zapytania: jak RTL znajduje elementy
+Kolejność preferencji (od najlepszego):
+1. `getByRole('button', { name: 'Zamknij' })` — po roli dostępności i nazwie; to samo „widzi” czytnik ekranu. **Domyślny wybór.**
+2. `getByLabelText('Tytuł')` — pola formularza po etykiecie.
+3. `getByPlaceholderText`, `getByText` (treść nieinteraktywna), `getByDisplayValue`.
+4. `getByAltText`, `getByTitle`.
+5. `getByTestId('…')` — ostateczność, gdy elementu nie da się znaleźć inaczej (atrybut `data-testid`).
+
+Warianty: `getBy…` (jeden element, błąd gdy brak), `queryBy…` (zwraca `null` — do sprawdzania, że czegoś **nie ma**), `findBy…` (obietnica — czeka, aż element się pojawi; do treści asynchronicznej), `getAllBy…` (wiele elementów). `within(element)` zawęża wyszukiwanie do fragmentu (np. jednego wiersza tabeli).
+
+#T CODE_JSX Testy plakietki i wiersza tabeli (JSX)
+```
+// TicketRow.test.jsx
+import { render, screen } from '@testing-library/react';
+import { describe, expect, test } from 'vitest';
+import { StatusBadge } from './StatusBadge';
+import { TicketTable } from './TicketTable';
+
+const ticket = { id: 42, title: 'API timeout', description: '', status: 'OPEN', priority: 'HIGH', assignee: null, createdAt: '2026-10-01T09:30:00Z', tags: [] };
+
+describe('StatusBadge', () => {
+  test('pokazuje polską etykietę statusu', () => {
+    render(<StatusBadge status="IN_PROGRESS" />);
+    expect(screen.getByText('W toku')).toBeInTheDocument();
+  });
+});
+
+describe('TicketTable', () => {
+  test('pokazuje wiersz z tytułem i „—” dla nieprzypisanego ticketu', () => {
+    render(<TicketTable tickets={[ticket]} />);
+    const row = screen.getByRole('row', { name: /API timeout/ });
+    expect(row).toHaveTextContent('42');
+    expect(row).toHaveTextContent('—');
+  });
+
+  test('pusta lista pokazuje komunikat', () => {
+    render(<TicketTable tickets={[]} />);
+    expect(screen.getByText('Brak ticketów do wyświetlenia')).toBeInTheDocument();
+    expect(screen.queryByRole('row', { name: /API/ })).not.toBeInTheDocument();
+  });
+});
+```
+
+#T CODE_TSX Testy plakietki i wiersza tabeli (TSX)
+Fabryka danych testowych `makeTicket(overrides)` daje poprawny `Ticket` z możliwością nadpisania pól — typ pilnuje, by dane testowe były kompletne.
+```
+// TicketRow.test.tsx
+import { render, screen, within } from '@testing-library/react';
+import { describe, expect, test } from 'vitest';
+import type { Ticket } from '../types';
+import { TicketTable } from './TicketTable';
+
+export function makeTicket(overrides: Partial<Ticket> = {}): Ticket {
+  return { id: 42, title: 'API timeout', description: '', status: 'OPEN', priority: 'HIGH', assignee: null, createdAt: '2026-10-01T09:30:00Z', tags: [], ...overrides };
+}
+
+describe('TicketTable', () => {
+  test('przycisk „Zamknij” jest wyłączony dla zamkniętego ticketu', () => {
+    render(<TicketTable tickets={[makeTicket({ id: 1, title: 'Otwarty' }), makeTicket({ id: 2, title: 'Zamknięty', status: 'CLOSED' })]} />);
+    const closedRow = screen.getByRole('row', { name: /Zamknięty/ });
+    expect(within(closedRow).getByRole('button', { name: 'Zamknij' })).toBeDisabled();
+    const openRow = screen.getByRole('row', { name: /Otwarty/ });
+    expect(within(openRow).getByRole('button', { name: 'Zamknij' })).toBeEnabled();
+  });
+
+  test('pusta lista pokazuje komunikat', () => {
+    render(<TicketTable tickets={[]} />);
+    expect(screen.getByText('Brak ticketów do wyświetlenia')).toBeInTheDocument();
+  });
+});
+```
+
+#T NOTE JSX ↔ TSX — fabryka danych testowych
+Dane testowe to miejsce, gdzie TSX szczególnie pomaga: gdy dodasz do `Ticket` nowe wymagane pole, wszystkie ręcznie pisane obiekty testowe przestaną się kompilować — a jedna fabryka `makeTicket` z wartościami domyślnymi sprawia, że poprawiasz to w jednym miejscu. W JSX ten sam wzorzec fabryki jest równie przydatny (jedno miejsce z poprawnym kształtem), tylko bez ostrzeżenia, gdy kształt się zmieni. Zwróć uwagę, że typy nie zastąpiły testu: „przycisk jest wyłączony” to zachowanie, którego żaden typ nie sprawdzi.
+
+#T DEFINITION Dlaczego role, a nie klasy
+`getByRole` sprawdza dwie rzeczy naraz: że element istnieje i że jest **dostępny** — ma właściwą rolę (przycisk to `<button>`, a nie `<div onClick>`) i nazwę dostępną dla czytnika ekranu. Test oparty na rolach wymusza dobrą semantykę i przetrwa zmianę klas CSS, struktury `div`-ów czy biblioteki komponentów. Jeśli nie umiesz znaleźć elementu po roli — to często sygnał, że czytnik ekranu też ma z nim problem. Pomocnik: `screen.logTestingPlaygroundURL()` i `screen.debug()` pokazują, co widzi test.
+
+#T CODE_BASIC Render z providerami: własna funkcja renderWithProviders
+Komponenty korzystające z kontekstów (preferencje, toasty, router, TanStack Query) potrzebują providerów także w testach. Jedna funkcja pomocnicza zamiast powtarzania ich w każdym teście.
+```
+// test/render.tsx
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, type RenderOptions } from '@testing-library/react';
+import type { ReactElement, ReactNode } from 'react';
+import { MemoryRouter } from 'react-router';
+
+export function renderWithProviders(ui: ReactElement, { route = '/', ...options }: RenderOptions & { route?: string } = {}) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }); // świeży klient na test
+  function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
+  }
+  return { queryClient, ...render(ui, { wrapper: Wrapper, ...options }) };
+}
+```
+
+#T CODE_PRACTICAL Test komponentu z routerem i kontekstem
+```
+import { screen } from '@testing-library/react';
+import { expect, test } from 'vitest';
+import { renderWithProviders } from '../test/render';
+import { Breadcrumbs } from './Breadcrumbs';
+
+test('okruszki pokazują aktualną ścieżkę z ostatnim elementem jako bieżącą stroną', () => {
+  renderWithProviders(<Breadcrumbs />, { route: '/settings/security' });
+  const nav = screen.getByRole('navigation', { name: 'Ścieżka' });
+  expect(nav).toHaveTextContent('DevDesk');
+  expect(screen.getByRole('link', { name: 'Ustawienia' })).toHaveAttribute('href', '/settings');
+  expect(screen.getByText('Bezpieczeństwo')).toHaveAttribute('aria-current', 'page');
+});
+```
+
+#T STEP_BY_STEP Budujemy razem: testy komponentów DevDesk
+1. Skonfiguruj jsdom, plik setup z `jest-dom` i `renderWithProviders`.
+2. Napisz testy `StatusBadge`, `PriorityBadge` (wszystkie warianty przez `test.each`), `TicketTable` (wiersze, pusty stan, wyłączone przyciski) i `Breadcrumbs`.
+3. Utwórz fabrykę `makeTicket` w `test/factories` i używaj jej we wszystkich testach.
+4. Znajdź element, którego nie da się wyszukać po roli lub etykiecie (np. ikona-przycisk bez `aria-label`) — popraw komponent, zamiast dodawać `data-testid`.
+5. Uruchom `screen.debug()` w jednym teście i obejrzyj wyrenderowany DOM.
+6. Zmień w `StatusBadge` CSS Modules na inne klasy — testy nadal przechodzą (bo testują tekst i role).
+
+#T PITFALL Testowanie po strukturze DOM i liczbie divów
+`container.querySelector('div > div:nth-child(2) span')` albo `expect(container.innerHTML).toContain('badge--success')` pęka przy każdej zmianie układu lub stylów, a nie łapie realnych błędów (np. złego tekstu dla czytnika ekranu). Szukaj po roli i nazwie; sprawdzaj tekst, atrybuty dostępności i stany (`toBeDisabled`, `toHaveAttribute('aria-expanded', 'true')`).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+React Testing Library renderuje komponent w jsdom i szuka elementów jak użytkownik: najpierw `getByRole` z nazwą, potem etykieta i tekst, `data-testid` w ostateczności. Warianty `getBy` (musi być), `queryBy` (sprawdzenie braku), `findBy` (czekanie), a `within` zawęża zakres. `jest-dom` dodaje dopasowania DOM. Komponenty z kontekstami renderujesz przez własne `renderWithProviders` ze świeżym `QueryClient` i `MemoryRouter`. Dane testowe twórz fabryką. W TSX fabryka i typy props pilnują kompletności danych testowych.
+
+Kryterium akceptacji: plakietki, tabela ticketów (wiersze, pusty stan, wyłączone akcje) i okruszki mają testy oparte na rolach i tekstach, wszystkie testy używają wspólnej fabryki danych i `renderWithProviders`, a zmiana klas CSS nie psuje żadnego testu.

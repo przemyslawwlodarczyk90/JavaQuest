@@ -26,6 +26,8 @@ fs.writeFileSync(path.join(work, 'src', 'env.d.ts'), [
   'interface ImportMetaEnv { readonly [key: string]: string | boolean | undefined; readonly DEV: boolean; readonly PROD: boolean; readonly MODE: string; readonly VITE_API_URL?: string }',
   'interface ImportMeta { readonly env: ImportMetaEnv }',
 ].join('\n') + '\n');
+// Dopasowania jest-dom (toBeInTheDocument, toBeDisabled...) dla przykladow testow - jak plik setup w projekcie.
+fs.writeFileSync(path.join(work, 'src', 'vitest-setup.ts'), "import '@testing-library/jest-dom/vitest';\n");
 
 const TYPES_TS = [
   "export type TicketStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';",
