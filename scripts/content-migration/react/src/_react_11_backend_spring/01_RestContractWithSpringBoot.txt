@@ -1,0 +1,138 @@
+#T INTRO Rozgrzewka i problem: od udawanego serwera do prawdziwego
+Rozgrzewka: Co robi `invalidateQueries`? Dlaczego mutacji nie ponawiasz automatycznie? Za co odpowiada klient API?
+
+Problem: DevDesk działa na MSW, a backend znasz z kursu Javy — Spring Boot. Czas połączyć jedno z drugim: kontroler REST w Springu zgodny z kontraktem z rozdziału 10, frontend na Vite pod `localhost:5173`, backend pod `localhost:8080`. Pierwsze żądanie kończy się błędem CORS, daty przychodzą w innym formacie, a błąd walidacji ma inny kształt niż w mockach. Ta lekcja to praktyczne zestrojenie obu stron.
+
+#T DEFINITION Dwa serwery w trakcie pracy, jeden w produkcji
+- **Tryb deweloperski**: Vite (5173) serwuje frontend z HMR, Spring Boot (8080) — API. Żeby przeglądarka nie widziała dwóch różnych źródeł (i CORS), Vite przekazuje żądania `/api/*` do Springa przez **proxy**. Frontend woła `fetch('/api/tickets')` — tak samo jak z MSW.
+- **Produkcja**: zbudowany frontend (katalog `dist`) trafia do `src/main/resources/static` aplikacji Spring albo za wspólny serwer (Nginx) — wtedy frontend i API są pod tym samym adresem i CORS nie jest potrzebny (rozdział 21).
+
+#T CODE_BASIC Kontroler REST w Spring Boot
+Endpoint zgodny z kontraktem z rozdziału 10: lista z filtrami i paginacją, szczegóły z 404, tworzenie z 201.
+```
+@RestController
+@RequestMapping("/api/tickets")
+class TicketController {
+
+    private final TicketService service;
+
+    TicketController(TicketService service) {
+        this.service = service;
+    }
+
+    @GetMapping
+    PageDto<TicketDto> list(@RequestParam(required = false) TicketStatus status,
+                            @RequestParam(defaultValue = "") String q,
+                            @RequestParam(defaultValue = "1") int page,
+                            @RequestParam(defaultValue = "10") int pageSize) {
+        return service.find(status, q, page, pageSize);
+    }
+
+    @GetMapping("/{id}")
+    TicketDto get(@PathVariable long id) {
+        return service.get(id); // rzuca TicketNotFoundException → 404
+    }
+
+    @PostMapping
+    ResponseEntity<TicketDto> create(@Valid @RequestBody CreateTicketRequest body) {
+        TicketDto created = service.create(body);
+        return ResponseEntity.created(URI.create("/api/tickets/" + created.id())).body(created);
+    }
+}
+
+record TicketDto(long id, String title, String description, TicketStatus status,
+                 TicketPriority priority, String assignee, Instant createdAt, List<String> tags) {}
+record PageDto<T>(List<T> items, long total, int page, int pageSize) {}
+record CreateTicketRequest(@NotBlank @Size(min = 5, max = 120) String title, String description,
+                           @NotNull TicketPriority priority, String assignee) {}
+```
+
+#T CODE_PRACTICAL Proxy w Vite
+Żądania `/api/*` z przeglądarki trafiają do Vite, a ten przekazuje je do Springa. Dla przeglądarki to jedno źródło — brak CORS.
+```
+// vite.config.ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
+  },
+});
+```
+
+#T DEFINITION Format błędów: ProblemDetail
+Spring Boot (od wersji 3) obsługuje standard **RFC 9457 Problem Details**: błąd jako JSON `{ "type", "title", "status", "detail", "instance" }` z typem treści `application/problem+json`. Włączasz to właściwością `spring.mvc.problemdetails.enabled=true` albo zwracasz `ProblemDetail` z `@ExceptionHandler`. Błędy walidacji (`MethodArgumentNotValidException`) warto rozszerzyć o własne pole z błędami pól — żeby frontend mógł pokazać komunikaty przy polach, jak w rozdziale 10.
+
+#T CODE_JSX Odczyt ProblemDetail w kliencie API (JSX)
+```
+// api/problem.js
+export function toApiErrorDetails(body, status) {
+  // ProblemDetail ze Springa: { title, detail, status, errors? }
+  return {
+    message: body.detail ?? body.title ?? `Błąd ${status}`,
+    fieldErrors: body.errors ?? undefined, // własne rozszerzenie: { title: ['...'] }
+  };
+}
+
+// w kliencie: if (!res.ok) { const body = await res.json().catch(() => ({})); throw new ApiError(..., res.status, toApiErrorDetails(body, res.status)); }
+```
+
+#T CODE_TSX Odczyt ProblemDetail w kliencie API (TSX)
+Schemat Zod dla ProblemDetail — odpowiedź błędu też jest danymi z zewnątrz i warto ją sprawdzić.
+```
+// api/problem.ts
+import { z } from 'zod';
+
+const problemSchema = z.object({
+  title: z.string().optional(),
+  detail: z.string().optional(),
+  status: z.number().optional(),
+  errors: z.record(z.string(), z.array(z.string())).optional(),
+});
+
+export type ApiErrorDetails = { message: string; fieldErrors?: Record<string, string[]> };
+
+export function toApiErrorDetails(body: unknown, status: number): ApiErrorDetails {
+  const parsed = problemSchema.safeParse(body);
+  if (!parsed.success) return { message: `Błąd ${status}` };
+  return { message: parsed.data.detail ?? parsed.data.title ?? `Błąd ${status}`, fieldErrors: parsed.data.errors };
+}
+```
+
+#T NOTE JSX ↔ TSX — typy z Javy w TypeScripcie
+Rekord Javy `TicketDto` i typ `Ticket` w TS opisują ten sam obiekt — ale nic ich nie łączy: zmiana nazwy pola w Javie nie zmieni typu w TS. Dwa rozwiązania: (1) walidacja odpowiedzi schematem Zod (działa w JSX i TSX, wykrywa rozjazd w czasie działania), (2) generowanie typów TS ze specyfikacji OpenAPI backendu (lekcja 6 — wykrywa rozjazd przy kompilacji). Uwaga na typy: `Instant` z Javy przychodzi jako tekst ISO (`"2026-10-01T09:30:00Z"`) — w TS to `string`, nie `Date`; `long` to `number` (bezpieczny do 2^53); `Optional`/`null` w Javie to `null` w JSON-ie, a nie brak pola.
+
+#T API_REFERENCE Zgodność typów Java ↔ JSON ↔ TypeScript
+- `String` → `"tekst"` → `string`,
+- `int`, `long`, `double` → liczba → `number` (ID większe niż 2^53 przesyłaj jako tekst),
+- `BigDecimal` → domyślnie liczba (ryzyko utraty precyzji) — dla kwot lepiej tekst albo grosze jako `long`,
+- `boolean` → `true/false` → `boolean`,
+- `enum TicketStatus { OPEN, CLOSED }` → `"OPEN"` → unia literałów `'OPEN' | 'CLOSED'`,
+- `Instant`, `LocalDateTime`, `LocalDate` → tekst ISO (przy `spring.jackson` z domyślnymi ustawieniami Boot) → `string`,
+- `List<T>`, `Set<T>` → tablica → `T[]`,
+- `Map<String, V>` → obiekt → `Record<string, V>`,
+- `null` → `null` → `T | null`.
+
+#T STEP_BY_STEP Budujemy razem: DevDesk na prawdziwym backendzie
+1. Utwórz w projekcie Spring Boot (z kursu Javy lub nowy ze Spring Initializr: Web, Validation, Data JPA, H2) encję `Ticket`, repozytorium, serwis i `TicketController` zgodny z kontraktem.
+2. Włącz `spring.mvc.problemdetails.enabled=true` i dodaj `@ExceptionHandler` dla `MethodArgumentNotValidException`, który dopisuje do `ProblemDetail` pole `errors` z mapą „pole → komunikaty”.
+3. Uruchom backend na 8080 i sprawdź `curl http://localhost:8080/api/tickets` (albo w przeglądarce).
+4. Dodaj proxy w `vite.config` i wyłącz MSW (np. zmienną `VITE_USE_MOCKS=false`, sprawdzaną w `enableMocking`).
+5. Odśwież DevDesk — tabela pokazuje dane z bazy H2; w zakładce Network adres to nadal `/api/tickets` (5173), a odpowiedź pochodzi ze Springa.
+6. Wyślij formularz z tytułem „abc” — komunikat walidacji z adnotacji `@Size` pojawia się przy polu (dzięki `toApiErrorDetails`).
+7. Porównaj odpowiedzi Springa i MSW (format dat, `null` zamiast braku pola, kształt błędów) i popraw handlery MSW, żeby były zgodne z prawdziwym backendem — mocki mają odzwierciedlać rzeczywistość.
+
+#T PITFALL CORS „naprawiany” na froncie
+Błąd CORS kusi „rozwiązaniami” po stronie frontendu: rozszerzenia przeglądarki wyłączające CORS, `mode: 'no-cors'` w `fetch` (odpowiedź staje się nieczytelna — `res.ok` zawsze `false`, ciała nie da się odczytać). CORS rozwiązuje się po stronie serwera (`@CrossOrigin`, `CorsConfigurationSource` w Spring Security) albo przez proxy/wspólny adres. W trybie deweloperskim proxy Vite jest najprostsze.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+W trakcie pracy Vite i Spring Boot działają osobno, a proxy Vite przekazuje `/api/*` do Springa — przeglądarka widzi jedno źródło, więc nie ma CORS. Kontroler REST implementuje kontrakt z frontendu, błędy zwraca jako ProblemDetail (z rozszerzeniem o błędy pól), a klient API zamienia je na jednolity `ApiError`. Typy Javy mapujesz świadomie (`Instant` → `string`, enum → unia literałów, `null` → `T | null`). Mocki MSW mają odzwierciedlać prawdziwe odpowiedzi.
+
+Kryterium akceptacji: DevDesk pobiera i tworzy tickety przez Spring Boot (dane w H2), żądania idą przez proxy Vite bez błędów CORS, a błąd walidacji z adnotacji Bean Validation pojawia się przy polu formularza.

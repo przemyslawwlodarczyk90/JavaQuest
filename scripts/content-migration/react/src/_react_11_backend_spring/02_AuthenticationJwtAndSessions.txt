@@ -1,0 +1,198 @@
+#T INTRO Rozgrzewka i problem: każdy widzi wszystko
+Rozgrzewka: Po co proxy w Vite? Jak Spring Boot zwraca błędy w formacie ProblemDetail? Jaki typ w TS ma pole `Instant` z Javy?
+
+Problem: DevDesk jest otwarty dla każdego, a backend przyjmuje każde żądanie. Potrzebne jest logowanie: formularz, sprawdzenie hasła na serwerze, a potem każde żądanie musi nieść informację „to jest Anna”. Są dwa główne podejścia — **sesja z ciasteczkiem** i **token JWT** — i każde ma inne konsekwencje dla frontendu: gdzie trzymać dane logowania, jak chronić się przed atakami, jak obsłużyć wygaśnięcie.
+
+#T DEFINITION Sesja z ciasteczkiem a token JWT
+**Sesja (cookie)**: po zalogowaniu serwer zapisuje sesję u siebie i wysyła ciasteczko z jej identyfikatorem (`Set-Cookie: SESSION=...; HttpOnly; Secure; SameSite=Lax`). Przeglądarka **sama** dołącza ciasteczko do każdego żądania pod ten adres. JavaScript nie ma do niego dostępu (`HttpOnly`) — kradzież przez XSS jest utrudniona. Wymaga ochrony przed CSRF (SameSite, token CSRF).
+
+**JWT (token)**: po zalogowaniu serwer zwraca podpisany token z danymi użytkownika i datą ważności. Frontend przechowuje go i dołącza w nagłówku `Authorization: Bearer <token>`. Serwer nie musi pamiętać sesji (bezstanowość). Ryzyko: token dostępny dla JavaScriptu można ukraść przez XSS; trzeba obsłużyć wygasanie (krótki token dostępu + token odświeżający).
+
+Dla aplikacji, w której frontend i API są pod jednym adresem (jak DevDesk ze Springiem), **sesja z ciasteczkiem `HttpOnly`** jest zwykle bezpieczniejsza i prostsza. JWT ma przewagę przy wielu usługach, aplikacjach mobilnych i API dla innych klientów.
+
+#T CODE_JSX Kontekst uwierzytelnienia (JSX)
+Wariant z tokenem w pamięci (nie w localStorage) i ciasteczkiem odświeżającym po stronie serwera. Przy starcie aplikacji próbujemy odświeżyć sesję.
+```
+// AuthContext.jsx
+import { createContext, useContext, useEffect, useState } from 'react';
+
+const AuthContext = createContext(null);
+let accessToken = null; // w pamięci modułu — znika po odświeżeniu strony
+export const getAccessToken = () => accessToken;
+
+export function AuthProvider({ children }) {
+  const [state, setState] = useState({ status: 'checking' });
+
+  useEffect(() => {
+    // odśwież token na podstawie ciasteczka HttpOnly (refresh token po stronie serwera)
+    fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Brak sesji'))))
+      .then(({ token, user }) => { accessToken = token; setState({ status: 'authenticated', user }); })
+      .catch(() => setState({ status: 'anonymous' }));
+  }, []);
+
+  async function login(login, password) {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password }),
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? 'Błędny login lub hasło' : 'Nie udało się zalogować');
+    const { token, user } = await res.json();
+    accessToken = token;
+    setState({ status: 'authenticated', user });
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    accessToken = null;
+    setState({ status: 'anonymous' });
+  }
+
+  return <AuthContext value={{ ...state, login, logout }}>{children}</AuthContext>;
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth wymaga <AuthProvider>');
+  return ctx;
+}
+```
+
+#T CODE_TSX Kontekst uwierzytelnienia (TSX)
+Stan logowania jako unia: `checking` (sprawdzamy sesję), `anonymous`, `authenticated` z użytkownikiem. Komponent może odczytać `user` dopiero po sprawdzeniu statusu.
+```
+// AuthContext.tsx
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+
+export type User = { login: string; name: string; role: 'agent' | 'admin' };
+type AuthState = { status: 'checking' } | { status: 'anonymous' } | { status: 'authenticated'; user: User };
+type AuthApi = AuthState & { login: (login: string, password: string) => Promise<void>; logout: () => Promise<void> };
+
+const AuthContext = createContext<AuthApi | null>(null);
+let accessToken: string | null = null;
+export const getAccessToken = () => accessToken;
+
+type TokenResponse = { token: string; user: User };
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<AuthState>({ status: 'checking' });
+
+  useEffect(() => {
+    fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
+      .then((res) => (res.ok ? (res.json() as Promise<TokenResponse>) : Promise.reject(new Error('Brak sesji'))))
+      .then(({ token, user }) => { accessToken = token; setState({ status: 'authenticated', user }); })
+      .catch(() => setState({ status: 'anonymous' }));
+  }, []);
+
+  async function login(login: string, password: string) {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login, password }),
+    });
+    if (!res.ok) throw new Error(res.status === 401 ? 'Błędny login lub hasło' : 'Nie udało się zalogować');
+    const { token, user } = (await res.json()) as TokenResponse;
+    accessToken = token;
+    setState({ status: 'authenticated', user });
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    accessToken = null;
+    setState({ status: 'anonymous' });
+  }
+
+  return <AuthContext value={{ ...state, login, logout }}>{children}</AuthContext>;
+}
+
+export function useAuth(): AuthApi {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth wymaga <AuthProvider>');
+  return ctx;
+}
+```
+
+#T NOTE JSX ↔ TSX — stan logowania jako unia
+`AuthState` jako unia z dyskryminatorem wymusza w TSX obsługę trzech sytuacji: w trakcie sprawdzania sesji (`checking`) nie pokazujesz ani ekranu logowania, ani aplikacji (unikasz „mignięcia” formularza logowania u zalogowanego użytkownika), a `auth.user` jest dostępne tylko po `auth.status === 'authenticated'`. W JSX łatwo napisać `auth.user.name` w nagłówku i dostać wyjątek dla niezalogowanego. Zauważ też: `AuthApi = AuthState & {...}` — przecięcie unii z obiektem daje unię, w której każda gałąź ma funkcje `login` i `logout`.
+
+#T CODE_BASIC Token w kliencie API
+Klient API dołącza token do każdego żądania; przy 401 próbuje raz odświeżyć token i powtórzyć żądanie.
+```
+import { getAccessToken } from './AuthContext';
+
+export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const withToken = (): RequestInit => {
+    const token = getAccessToken();
+    const headers = new Headers(init.headers);
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return { ...init, headers, credentials: 'include' };
+  };
+
+  let res = await fetch(input, withToken());
+  if (res.status === 401) {
+    const refreshed = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+    if (refreshed.ok) res = await fetch(input, withToken()); // w pełnej wersji: zapisz nowy token
+  }
+  return res;
+}
+```
+
+#T CODE_PRACTICAL Formularz logowania
+```
+import { useState, type FormEvent } from 'react';
+import { useAuth } from './AuthContext';
+
+export function LoginForm() {
+  const auth = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget);
+    setPending(true);
+    setError(null);
+    try {
+      await auth.login(String(data.get('login')), String(data.get('password')));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się zalogować');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <label htmlFor="login">Login</label>
+      <input id="login" name="login" autoComplete="username" required />
+      <label htmlFor="password">Hasło</label>
+      <input id="password" name="password" type="password" autoComplete="current-password" required />
+      {error && <p role="alert">{error}</p>}
+      <button type="submit" disabled={pending}>{pending ? 'Logowanie…' : 'Zaloguj'}</button>
+    </form>
+  );
+}
+```
+
+#T DEFINITION Gdzie NIE trzymać tokenu
+`localStorage` i `sessionStorage` są dostępne dla każdego skryptu na stronie — jeden udany atak XSS (rozdział 19) pozwala odczytać token i używać konta ofiary z dowolnego miejsca. Bezpieczniejsze opcje: sesja w ciasteczku `HttpOnly` (JavaScript nie ma do niej dostępu) albo krótko żyjący token dostępu **w pamięci** (zmienna modułu) + długo żyjący token odświeżający w ciasteczku `HttpOnly` z endpointem `/refresh`. Wtedy po odświeżeniu strony token w pamięci znika, a aplikacja odzyskuje go z ciasteczka.
+
+#T STEP_BY_STEP Budujemy razem: logowanie w DevDesk
+1. Po stronie Springa dodaj Spring Security z endpointami `/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout` (wariant JWT z ciasteczkiem odświeżającym albo zwykła sesja — według kursu Spring Security). Dla nauki frontendu możesz zacząć od handlerów MSW symulujących te endpointy.
+2. Utwórz `AuthProvider` i dodaj go do `AppProviders` (nad `QueryClientProvider`).
+3. W `App`: przy `checking` pokaż pełnoekranowy wskaźnik, przy `anonymous` — `LoginForm`, przy `authenticated` — aplikację.
+4. Przepisz klienta API na `authFetch` (token w nagłówku, ponowienie po odświeżeniu).
+5. W nagłówku pokaż imię użytkownika i przycisk „Wyloguj”; po wylogowaniu wyczyść cache TanStack Query (`queryClient.clear()`), żeby dane poprzedniego użytkownika nie zostały w pamięci.
+6. Zaloguj się, odśwież stronę — aplikacja odzyskuje sesję bez ponownego logowania (dzięki `/refresh`).
+7. Zajrzyj do Application → Local Storage — tokenu tam nie ma.
+
+#T PITFALL Ukrywanie elementów zamiast ochrony na serwerze
+Schowanie przycisku „Usuń” dla roli `agent` nie chroni danych — każdy może wysłać `DELETE /api/tickets/42` z konsoli przeglądarki albo przez curl. Uprawnienia sprawdza **zawsze serwer** (Spring Security, `@PreAuthorize`). Frontend ukrywa niedostępne akcje wyłącznie dla wygody użytkownika.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Sesja z ciasteczkiem `HttpOnly` jest prosta i odporna na kradzież przez XSS (wymaga ochrony CSRF); JWT w nagłówku `Authorization` pasuje do wielu usług i klientów, ale trzeba go bezpiecznie przechowywać (pamięć + odświeżanie przez ciasteczko, nie localStorage) i obsłużyć wygasanie. Stan logowania trzymaj w kontekście jako unię `checking | anonymous | authenticated`. Klient API dołącza token i odświeża go przy 401. Po wylogowaniu czyść cache danych. Uprawnienia sprawdza serwer.
+
+Kryterium akceptacji: DevDesk wymaga zalogowania, po odświeżeniu strony sesja jest odzyskiwana bez ponownego logowania, każde żądanie API niesie dane uwierzytelnienia, wylogowanie czyści dane poprzedniego użytkownika, a token nie jest zapisany w localStorage.
