@@ -77,7 +77,8 @@ class OcpCourseApiRegressionTest {
         }
         assertThat(lessons).isEqualTo(39);
         assertThat(quizQuestions).isGreaterThanOrEqualTo(2000);
-        assertThat(openQuestions).isEqualTo(500);
+        // 500 w Tescie wiedzy Java + 6 we wprowadzeniu + po 8 w kazdej z 27 lekcji rozdzialow 01-12
+        assertThat(openQuestions).isEqualTo(722);
         assertThat(pool).isNotNull();
         assertThat(pool.path("quiz").size()).isEqualTo(quizQuestions);
         assertThat(pool.path("exercises").size()).isEqualTo(openQuestions);
