@@ -1,0 +1,156 @@
+#T INTRO Rozgrzewka i problem: klikalne nagłówki tabeli
+Rozgrzewka: Czym różni się stan od danych wyliczanych? Dlaczego `filteredTickets` nie powinno być stanem? Jak bezpiecznie zapisać wartość z `<select>` do stanu typu unii w TSX?
+
+Problem: użytkownicy chcą sortować tabelę: po ID, tytule, priorytecie, dacie utworzenia — rosnąco i malejąco, kliknięciem w nagłówek. Sortowanie to kolejny przykład danych wyliczanych, ale z pułapkami: mutowanie tablicy przez `sort`, porównywanie tekstów z polskimi znakami, sortowanie priorytetów, które nie są alfabetyczne.
+
+#T DEFINITION Stan sortowania i wyliczona kolejność
+Stan to tylko **opis sortowania**: `{ key: 'createdAt', direction: 'desc' }`. Posortowana lista jest wyliczana: `filteredTickets.toSorted(comparator)`. Kliknięcie nagłówka zmienia opis według reguły: klik w nową kolumnę → sortuj rosnąco po niej; klik w tę samą kolumnę → odwróć kierunek.
+
+#T API_REFERENCE Komparatory dla różnych typów danych
+- **liczby**: `(a, b) => a.id - b.id`,
+- **teksty z polskimi znakami**: `(a, b) => a.title.localeCompare(b.title, 'pl')` — poprawnie układa „Ą” po „A”, a „ł” po „l”; zwykłe `<` porównuje kody znaków,
+- **daty ISO** (`'2026-10-01T09:30:00Z'`): `a.createdAt.localeCompare(b.createdAt)` działa, bo format ISO sortuje się leksykograficznie; dla innych formatów porównuj `Date.parse(a) - Date.parse(b)`,
+- **wartości o własnej kolejności** (priorytet): mapa rang `{ LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 }` i porównanie rang,
+- **wartości puste** (`assignee: null`): zdecyduj, czy idą na koniec, i obsłuż jawnie,
+- **kierunek malejący**: wynik komparatora mnożysz przez `-1`.
+
+#T CODE_JSX Sortowanie tabeli (JSX)
+```
+// sorting.js
+const PRIORITY_RANK = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+
+const COMPARATORS = {
+  id: (a, b) => a.id - b.id,
+  title: (a, b) => a.title.localeCompare(b.title, 'pl'),
+  priority: (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+  createdAt: (a, b) => a.createdAt.localeCompare(b.createdAt),
+};
+
+export function sortTickets(tickets, sort) {
+  const compare = COMPARATORS[sort.key];
+  const sign = sort.direction === 'asc' ? 1 : -1;
+  return tickets.toSorted((a, b) => compare(a, b) * sign);
+}
+
+export function nextSort(current, key) {
+  if (current.key !== key) return { key, direction: 'asc' };
+  return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+}
+```
+
+#T CODE_TSX Sortowanie tabeli (TSX)
+`SortKey` to unia kolumn, które da się sortować. `Record<SortKey, Comparator>` wymusza komparator dla każdej z nich, a `Record<TicketPriority, number>` — rangę dla każdego priorytetu.
+```
+// sorting.ts
+import type { Ticket, TicketPriority } from '../types';
+
+export type SortKey = 'id' | 'title' | 'priority' | 'createdAt';
+export type SortState = { key: SortKey; direction: 'asc' | 'desc' };
+
+type Comparator = (a: Ticket, b: Ticket) => number;
+
+const PRIORITY_RANK: Record<TicketPriority, number> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+
+const COMPARATORS: Record<SortKey, Comparator> = {
+  id: (a, b) => a.id - b.id,
+  title: (a, b) => a.title.localeCompare(b.title, 'pl'),
+  priority: (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+  createdAt: (a, b) => a.createdAt.localeCompare(b.createdAt),
+};
+
+export function sortTickets(tickets: readonly Ticket[], sort: SortState): Ticket[] {
+  const compare = COMPARATORS[sort.key];
+  const sign = sort.direction === 'asc' ? 1 : -1;
+  return tickets.toSorted((a, b) => compare(a, b) * sign);
+}
+
+export function nextSort(current: SortState, key: SortKey): SortState {
+  if (current.key !== key) return { key, direction: 'asc' };
+  return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+}
+```
+
+#T NOTE JSX ↔ TSX — sortowanie z typami
+Najważniejsze zyski w TSX: kolumna, której nie ma w `COMPARATORS`, jest błędem kompilacji (w JSX `compare` byłoby `undefined` i wywołanie rzuciłoby wyjątek przy kliknięciu); nowy priorytet w `TicketPriority` wymaga rangi w `PRIORITY_RANK`; `readonly Ticket[]` w parametrze uniemożliwia przypadkowe użycie mutującego `sort`. Logika i wynik są identyczne — warto zauważyć, że funkcje sortujące trzymasz w osobnym pliku bez Reacta, więc łatwo je przetestować (rozdział 14).
+
+#T CODE_BASIC Klikalny nagłówek kolumny
+Nagłówek to przycisk (obsługa klawiatury za darmo), a `aria-sort` informuje czytniki ekranu o kierunku.
+```
+import type { SortKey, SortState } from './sorting';
+
+type SortHeaderProps = {
+  label: string;
+  column: SortKey;
+  sort: SortState;
+  onSort: (column: SortKey) => void;
+};
+
+export function SortHeader({ label, column, sort, onSort }: SortHeaderProps) {
+  const active = sort.key === column;
+  const ariaSort = active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none';
+  return (
+    <th scope="col" aria-sort={ariaSort}>
+      <button type="button" className="sort-header" onClick={() => onSort(column)}>
+        {label} {active ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}
+      </button>
+    </th>
+  );
+}
+```
+
+#T CODE_PRACTICAL Spięcie w Main: filtr, potem sort
+```
+import { useState } from 'react';
+import { tickets as initialTickets } from '../data/tickets';
+import { nextSort, sortTickets, type SortKey, type SortState } from './sorting';
+
+export function useSortedTickets() {
+  const [tickets] = useState(initialTickets);
+  const [query] = useState('');
+  const [sort, setSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
+
+  const visible = sortTickets(
+    tickets.filter((t) => t.title.toLowerCase().includes(query.toLowerCase())),
+    sort,
+  );
+
+  function handleSort(column: SortKey) {
+    setSort((current) => nextSort(current, column));
+  }
+
+  return { visible, sort, handleSort };
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: sortowanie w DevDesk
+1. Utwórz `src/utils/sorting.js` (`.ts`) z `sortTickets` i `nextSort`.
+2. Dodaj do `Main` stan `sort` z wartością startową „najnowsze najpierw” (`createdAt`, `desc`).
+3. Wylicz `visibleTickets = sortTickets(filteredTickets, sort)` i przekaż do tabeli.
+4. Zastąp nagłówki ID, Tytuł, Priorytet, Utworzono komponentem `SortHeader`; kolumny Status i Osoba zostaw bez sortowania.
+5. Dodaj kolumnę „Priorytet” z `PriorityBadge` i kolumnę „Utworzono” z datą `new Date(t.createdAt).toLocaleDateString('pl-PL')`.
+6. Sprawdź tytuły zaczynające się od „Ł” i „Ś” — po sortowaniu stoją w poprawnym miejscu alfabetu.
+7. Przeładuj stronę i sprawdź, że oryginalna kolejność danych w `data/tickets` jest nienaruszona (sortowanie nie mutuje).
+
+#T PITFALL sort() na props lub stanie
+`props.tickets.sort(...)` sortuje tablicę **w miejscu** — zmienia dane rodzica podczas renderowania. Efekt: kolejność w innych widokach zmienia się „sama”, a w StrictMode wyniki bywają różne. Używaj `toSorted` (lub `[...arr].sort`).
+
+#T CODE_WRONG Sortowanie mutujące otrzymaną tablicę
+```
+export function TicketTable({ tickets, sort }) {
+  const rows = tickets.sort((a, b) => a.id - b.id);
+  return <tbody>{rows.map((t) => <tr key={t.id}><td>{t.id}</td></tr>)}</tbody>;
+}
+```
+
+#T CODE_RIGHT Sortowanie na kopii
+```
+export function TicketTable({ tickets, sort }) {
+  const rows = tickets.toSorted((a, b) => a.id - b.id);
+  return <tbody>{rows.map((t) => <tr key={t.id}><td>{t.id}</td></tr>)}</tbody>;
+}
+```
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+W stanie trzymasz tylko opis sortowania `{ key, direction }`; posortowaną listę wyliczasz przez `toSorted` z komparatorem dla danego typu danych (`localeCompare('pl')` dla tekstów, rangi dla priorytetów). Kliknięcie tej samej kolumny odwraca kierunek. Nagłówek jest przyciskiem z `aria-sort`. Logikę sortowania trzymasz w czystych funkcjach poza komponentem. W TSX `Record<SortKey, Comparator>` wymusza komparator dla każdej kolumny.
+
+Kryterium akceptacji: kliknięcie nagłówka sortuje rosnąco, ponowne — malejąco; priorytety sortują się LOW → CRITICAL; polskie tytuły stoją w poprawnej kolejności; sortowanie współpracuje z filtrami; dane źródłowe nie są modyfikowane.

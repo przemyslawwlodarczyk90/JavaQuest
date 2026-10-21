@@ -30,7 +30,13 @@ fs.writeFileSync(path.join(work, 'src', 'data', 'tickets.ts'), "import type { Ti
 fs.writeFileSync(path.join(work, 'src', 'env.d.ts'), "declare module '*.svg' { const src: string; export default src; }\ndeclare module '*.css';\ndeclare module '*.module.css' { const classes: Record<string, string>; export default classes; }\n");
 
 const map = [];
+let lessonNo = 0;
 for (const file of files) {
+  // Kazda lekcja we wlasnym katalogu src/L<n>/ (ten sam poziom co components - dziala import '../types').
+  // Fragment zaczynajacy sie komentarzem z nazwa pliku (np. // sorting.ts) jest zapisywany pod ta nazwa,
+  // wiec inne fragmenty tej lekcji moga go importowac ('./sorting').
+  const lessonDir = path.join(work, 'src', `L${++lessonNo}`);
+  fs.mkdirSync(lessonDir);
   const lines = fs.readFileSync(file, 'utf8').replace(/\r/g, '').split('\n');
   let type = null, heading = '', code = null, n = 0;
   for (const line of lines) {
@@ -41,8 +47,10 @@ for (const file of files) {
         const isModule = /^\s*(import|export) /m.test(text) && !/^\s*[{[]/.test(text);
         if (type !== 'CODE_WRONG' && isModule && !text.includes('@check-skip')) {
           const tsx = type === "CODE_TSX" || (type !== "CODE_JSX" && /}: {|}: [A-Z]|import type |\): \w|\w\??: (string|number|boolean|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text));
-          const name = `${path.basename(path.dirname(file))}__${path.basename(file, '.txt')}__${++n}.${tsx ? 'tsx' : 'jsx'}`;
-          fs.writeFileSync(path.join(work, 'src', 'components', name), text + '\n');
+          const named = text.match(/^\/\/ ([\w.-]+\.(?:tsx?|jsx?))(?=\s|$)/m);
+          const fileName = named && !fs.existsSync(path.join(lessonDir, named[1])) ? named[1] : `snippet${++n}.${tsx ? 'tsx' : 'jsx'}`;
+          const name = `L${lessonNo}/${fileName}`;
+          fs.writeFileSync(path.join(lessonDir, fileName), text + '\n');
           map.push({ name, file: path.relative(srcRoot, file), heading, tsx });
         }
         code = null;
