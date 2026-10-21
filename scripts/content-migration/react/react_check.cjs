@@ -67,7 +67,7 @@ for (const file of files) {
       if (line.startsWith('```')) {
         const text = code.join('\n');
         const isModule = /^\s*(import|export) /m.test(text) && !/^\s*[{[]/.test(text);
-        if (type !== 'CODE_WRONG' && isModule && !text.includes('@check-skip')) {
+        if (type !== 'CODE_WRONG' && isModule && !text.includes('@check-skip') && !text.startsWith('---')) {
           const tsx = isTsx(type, text);
           const header = text.match(/^\/\/ ((?:[\w-]+\/)*[\w.-]+\.(?:tsx?|jsx?))(?=\s|$)/m);
           let rel = header ? (header[1].includes('/') ? header[1] : `components/${header[1]}`) : null;

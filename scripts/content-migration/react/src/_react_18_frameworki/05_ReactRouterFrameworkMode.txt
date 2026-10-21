@@ -1,0 +1,177 @@
+#T INTRO Rozgrzewka i problem: ten sam router, ale z serwerem
+Rozgrzewka: Gdzie definiujesz akcję serwerową w Next.js? Czym różni się `revalidateTag` od `revalidate` w `fetch`? Dlaczego cache testujesz na buildzie produkcyjnym?
+
+Problem: DevDesk już korzysta z React Router (rozdział 09) — z loaderami, akcjami i trasami zagnieżdżonymi w trybie danych. Przejście na Next.js oznaczałoby przepisanie routingu. React Router ma jednak trzeci tryb: **tryb frameworka** (dawniej Remix). Te same pojęcia — `loader`, `action`, `<Form>`, `useNavigation` — ale wykonywane **na serwerze**, z SSR, prerenderowaniem, podziałem kodu per trasa i generowanymi typami. W tej lekcji przenosisz trasę szczegółów ticketu do trybu frameworka i porównujesz z Next.js.
+
+#T DEFINITION Trzy tryby React Router
+- **Tryb deklaratywny** — `<BrowserRouter>`, `<Routes>`, `<Route>`; tylko dopasowanie adresów i nawigacja.
+- **Tryb danych** — `createBrowserRouter` z `loader`/`action` w obiektach tras (rozdział 09); dane ładowane przed renderem, ale w przeglądarce.
+- **Tryb frameworka** — plugin Vite `@react-router/dev`, plik `app/routes.ts` z konfiguracją tras i **moduły tras**: każdy plik eksportuje `loader`, `action`, `meta`, komponent domyślny i ewentualnie `ErrorBoundary`. Loader i action wykonują się **na serwerze** (przy SSR) albo przy budowaniu (prerender), a kod serwerowy jest usuwany z paczki klienta. `react-router.config.ts` ustawia `ssr: true/false` i listę stron do prerenderowania.
+
+Typy dla każdej trasy są **generowane** (`react-router typegen`) do katalogu `+types` — `Route.LoaderArgs`, `Route.ComponentProps` z dokładnym typem `loaderData` i `params`.
+
+#T CODE_BASIC Konfiguracja tras i frameworka
+```
+// app/routes.ts
+import { type RouteConfig, index, layout, route } from '@react-router/dev/routes';
+
+export default [
+  index('routes/home.tsx'),
+  layout('routes/app-layout.tsx', [
+    route('tickets', 'routes/tickets.tsx'),
+    route('tickets/:ticketId', 'routes/ticket-detail.tsx'),
+  ]),
+  route('kb/:slug', 'routes/kb-article.tsx'),
+] satisfies RouteConfig;
+
+// react-router.config.ts
+// import type { Config } from '@react-router/dev/config';
+// export default { ssr: true, prerender: ['/', '/kb/reset-hasla'] } satisfies Config;
+```
+
+#T CODE_JSX Moduł trasy szczegółów ticketu (JSX)
+`loader` i `action` wykonują się na serwerze — mogą czytać ciasteczko sesji i wołać API Spring Boot z tokenem. Komponent dostaje dane przez props `loaderData`.
+```
+// app/routes/ticket-detail.jsx
+import { Form, data, useNavigation } from 'react-router';
+
+export async function loader({ params, request }) {
+  const res = await fetch(`${process.env.API_URL}/api/tickets/${params.ticketId}`, {
+    headers: { Cookie: request.headers.get('Cookie') ?? '' },
+  });
+  if (res.status === 404) throw data('Nie ma takiego ticketu', { status: 404 });
+  return { ticket: await res.json() };
+}
+
+export async function action({ params, request }) {
+  const formData = await request.formData();
+  await fetch(`${process.env.API_URL}/api/tickets/${params.ticketId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Cookie: request.headers.get('Cookie') ?? '' },
+    body: JSON.stringify({ status: formData.get('status') }),
+  });
+  return null; // po akcji React Router sam ponownie wywoła loadery
+}
+
+export function meta({ data }) {
+  return [{ title: data ? `#${data.ticket.id} ${data.ticket.title} · DevDesk` : 'DevDesk' }];
+}
+
+export default function TicketDetail({ loaderData }) {
+  const { ticket } = loaderData;
+  const navigation = useNavigation();
+  return (
+    <article>
+      <h1>#{ticket.id} {ticket.title}</h1>
+      <p>Status: {ticket.status}</p>
+      <Form method="post">
+        <button name="status" value="CLOSED" disabled={navigation.state !== 'idle'}>Zamknij</button>
+      </Form>
+    </article>
+  );
+}
+```
+
+#T CODE_TSX Moduł trasy szczegółów ticketu (TSX)
+Generowane typy `Route.*` znają ścieżkę trasy (`params.ticketId: string`) i wynik loadera — `loaderData.ticket` ma typ zwracany przez `loader`, bez ręcznego deklarowania.
+```
+// app/routes/ticket-detail.tsx
+import { Form, data, useNavigation } from 'react-router';
+import type { Route } from './+types/ticket-detail';
+
+type Ticket = { id: number; title: string; status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED' };
+
+export async function loader({ params, request }: Route.LoaderArgs) {
+  const res = await fetch(`${process.env.API_URL}/api/tickets/${params.ticketId}`, {
+    headers: { Cookie: request.headers.get('Cookie') ?? '' },
+  });
+  if (res.status === 404) throw data('Nie ma takiego ticketu', { status: 404 });
+  return { ticket: (await res.json()) as Ticket };
+}
+
+export async function action({ params, request }: Route.ActionArgs) {
+  const formData = await request.formData();
+  await fetch(`${process.env.API_URL}/api/tickets/${params.ticketId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Cookie: request.headers.get('Cookie') ?? '' },
+    body: JSON.stringify({ status: formData.get('status') }),
+  });
+  return null;
+}
+
+export function meta({ data }: Route.MetaArgs) {
+  return [{ title: data ? `#${data.ticket.id} ${data.ticket.title} · DevDesk` : 'DevDesk' }];
+}
+
+export default function TicketDetail({ loaderData }: Route.ComponentProps) {
+  const { ticket } = loaderData;
+  const navigation = useNavigation();
+  return (
+    <article>
+      <h1>#{ticket.id} {ticket.title}</h1>
+      <p>Status: {ticket.status}</p>
+      <Form method="post">
+        <button name="status" value="CLOSED" disabled={navigation.state !== 'idle'}>Zamknij</button>
+      </Form>
+    </article>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — typy generowane z tras
+To największa różnica w tej lekcji: w TSX nie piszesz typów props ręcznie — `react-router typegen` (uruchamiany przez `react-router dev` i `build`) tworzy `+types/ticket-detail.d.ts` na podstawie `routes.ts` i eksportów modułu. Zmiana wzorca trasy na `tickets/:id` od razu pokazuje błąd przy `params.ticketId`, a zmiana kształtu wyniku loadera — błędy w komponencie. W JSX ten sam kod działa, ale literówka w nazwie parametru da `undefined` w adresie API. Dodaj katalog `.react-router/` do `.gitignore` (typy są generowane).
+
+#T CODE_PRACTICAL clientLoader: dane z przeglądarki i z serwera
+Nie każda trasa musi pobierać dane na serwerze. `clientLoader` wykonuje się w przeglądarce — np. dla danych z `localStorage` albo gdy chcesz użyć cache TanStack Query; `HydrateFallback` jest pokazywany, dopóki dane klienta się nie wczytają.
+```
+// app/routes/drafts.tsx
+type Draft = { id: string; title: string };
+
+export async function clientLoader() {
+  const raw = localStorage.getItem('devdesk:drafts');
+  return { drafts: raw ? (JSON.parse(raw) as Draft[]) : [] };
+}
+
+export function HydrateFallback() {
+  return <p aria-busy="true">Wczytywanie szkiców…</p>;
+}
+
+export default function Drafts({ loaderData }: { loaderData: { drafts: Draft[] } }) {
+  return (
+    <ul>
+      {loaderData.drafts.map((d) => <li key={d.id}>{d.title}</li>)}
+    </ul>
+  );
+}
+```
+
+#T API_REFERENCE React Router (tryb frameworka) a Next.js App Router
+```
+                         React Router (framework)            Next.js App Router
+─────────────────────    ─────────────────────────────────   ─────────────────────────────────
+definicja tras           app/routes.ts (konfiguracja)         katalogi app/ (pliki)
+dane do widoku           loader → loaderData (props)          async komponent serwerowy
+mutacje                  action + <Form>                      akcje serwerowe 'use server'
+po mutacji               automatyczne ponowne loadery         revalidatePath / revalidateTag
+komponenty serwerowe     opcjonalnie (wsparcie RSC rozwijane) domyślnie
+typy                     generowane +types per trasa          typy Next + własne
+migracja z SPA           łatwa dla tras w trybie danych        przepisanie routingu
+hosting                  Node, serwerless, statycznie (ssr:false) Node, Vercel, inne adaptery
+```
+
+#T STEP_BY_STEP Budujemy razem: DevDesk w trybie frameworka
+1. Utwórz nowy projekt: `npx create-react-router@latest devdesk-fw`; uruchom `npm run dev` i obejrzyj `app/root.tsx`, `app/routes.ts`, `react-router.config.ts`.
+2. Przenieś trasy listy i szczegółów ticketu z trybu danych: obiekty tras zamień na wpisy w `routes.ts`, a `loader`/`action` przenieś do modułów tras.
+3. W loaderze przekaż ciasteczko sesji do Spring Boot (nagłówek `Cookie`) — dane pobierają się na serwerze; sprawdź źródło strony.
+4. Dodaj `meta` i `ErrorBoundary` w module trasy; wejdź na nieistniejący ticket — status 404 i komunikat.
+5. W wersji TSX uruchom `npx react-router typegen` i zobacz, jak IDE podpowiada `loaderData.ticket.status`; zmień nazwę parametru w `routes.ts` i obserwuj błędy.
+6. Ustaw `prerender: ['/kb/reset-hasla']` i zbuduj (`npm run build`) — w `build/client` jest gotowy plik HTML artykułu.
+7. Spróbuj `ssr: false` — aplikacja buduje się jako SPA z prerenderowanymi wybranymi stronami (dobry krok migracji).
+
+#T PITFALL Kod serwerowy importowany w komponencie
+Loader i action są usuwane z paczki klienta, ale **importy używane w komponencie** — nie. Jeśli moduł trasy importuje klienta bazy danych albo plik z sekretem i choć raz użyje go poza `loader`/`action`, kod trafi do przeglądarki (albo build się nie powiedzie). Kod tylko-serwerowy trzymaj w plikach `*.server.ts` — React Router zgłosi błąd, gdy taki plik zostanie zaimportowany do kodu klienta.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Tryb frameworka React Router to te same `loader`, `action` i `<Form>` co w trybie danych, ale z SSR, prerenderowaniem, podziałem kodu i typami generowanymi per trasa. Trasy definiujesz w `app/routes.ts`, moduł trasy eksportuje `loader`, `action`, `meta`, komponent i `ErrorBoundary`; `clientLoader` pobiera dane w przeglądarce. Po akcji loadery uruchamiają się ponownie automatycznie. Dla istniejących aplikacji na React Router to najkrótsza droga do SSR; Next.js oferuje pełniejszy model komponentów serwerowych.
+
+Kryterium akceptacji: lista i szczegóły ticketu działają w trybie frameworka z danymi pobieranymi na serwerze (widoczne w źródle strony), zamknięcie ticketu przez `<Form>` odświeża dane bez ręcznego kodu, a w wersji TSX `loaderData` jest typowane z generowanych typów.
