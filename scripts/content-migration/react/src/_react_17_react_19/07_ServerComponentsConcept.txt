@@ -1,0 +1,149 @@
+#T INTRO Rozgrzewka i problem: czy każdy komponent musi trafić do przeglądarki?
+Rozgrzewka: Co robi `<Activity mode="hidden">` z efektami? Kiedy `<ViewTransition>` uruchamia animację? Dlaczego obietnica dla `use` musi być stabilna?
+
+Problem: ekran raportów DevDesk pobiera z API 5000 ticketów tylko po to, żeby policzyć statystyki i narysować tabelę podsumowania, której użytkownik nigdy nie edytuje. Do przeglądarki trafia: kod komponentów, biblioteka do formatowania i pełne dane JSON — a potem przeglądarka liczy to, co serwer mógłby policzyć raz. **Komponenty serwerowe** (React Server Components, RSC) to model, w którym część komponentów wykonuje się **wyłącznie na serwerze**: mają bezpośredni dostęp do bazy i plików, a do przeglądarki trafia tylko wynik (opis UI), bez ich kodu. Ta lekcja wyjaśnia ideę — praktykę zrobisz w rozdziale 18 we frameworku.
+
+#T DEFINITION Komponenty serwerowe i klienckie
+- **Komponent serwerowy** — wykonuje się na serwerze (przy budowaniu albo przy żądaniu). Może być `async` i czekać na dane (`await db.query(...)`), czytać pliki, używać sekretów. **Nie** może używać stanu, efektów, refów, handlerów zdarzeń ani API przeglądarki. Jego kod **nie trafia** do pakietu JS przeglądarki.
+- **Komponent kliencki** — znany Ci do tej pory: działa w przeglądarce (i może być wstępnie renderowany na serwerze), ma stan, efekty, interakcje. Plik zaczyna się dyrektywą **`'use client'`**, która oznacza granicę: ten moduł i wszystko, co importuje, trafia do przeglądarki.
+
+Komponent serwerowy może renderować klienckie i przekazywać im props (dane serializowalne: teksty, liczby, obiekty, tablice, daty, a także JSX jako `children`). Kliencki nie może importować serwerowego, ale może dostać go jako `children` od serwerowego rodzica.
+
+#T VISUAL_EXAMPLE Drzewo mieszane
+SERWER (kod nie trafia do przeglądarki)            PRZEGLĄDARKA (kod w pakiecie JS)
+ReportsPage (async, czyta bazę)
+├── <h1>Raporty</h1>
+├── StatsSummary (liczy statystyki z 5000 rekordów)
+│     → do przeglądarki trafia tylko gotowa tabela
+└── FiltersPanel  ─────────────'use client'────────►  FiltersPanel (stan filtrów, onChange)
+      props: { categories: [...] }  (serializowalne)       └── interakcje, efekty
+
+Do przeglądarki płynie: wynik renderu części serwerowej (specjalny format RSC) + kod tylko komponentów klienckich.
+
+#T CODE_JSX Komponent serwerowy i kliencki (JSX)
+Dwa pliki w projekcie frameworka obsługującego RSC (np. Next.js App Router). Kod serwerowy czyta dane bezpośrednio — bez endpointu API.
+```
+// app/reports/page.jsx — KOMPONENT SERWEROWY (domyślnie we frameworku)
+import { db } from '@/server/db';
+import { StatusFilter } from './StatusFilter';
+
+export default async function ReportsPage() {
+  const rows = await db.query('select status, count(*) as total from tickets group by status');
+  return (
+    <section>
+      <h1>Raporty</h1>
+      <table>
+        <tbody>{rows.map((r) => <tr key={r.status}><td>{r.status}</td><td>{r.total}</td></tr>)}</tbody>
+      </table>
+      <StatusFilter statuses={rows.map((r) => r.status)} />
+    </section>
+  );
+}
+
+// app/reports/StatusFilter.jsx — KOMPONENT KLIENCKI
+// 'use client';
+// import { useState } from 'react';
+// export function StatusFilter({ statuses }) {
+//   const [value, setValue] = useState('');
+//   return <select value={value} onChange={(e) => setValue(e.target.value)}>{statuses.map((s) => <option key={s}>{s}</option>)}</select>;
+// }
+```
+
+#T CODE_TSX Komponent serwerowy i kliencki (TSX)
+W TSX props przekazywane z serwera do klienta muszą być serializowalne — typy pomagają tego pilnować (np. funkcja w props komponentu klienckiego z serwera jest błędem w frameworkach sprawdzających granice).
+```
+// app/reports/page.tsx — KOMPONENT SERWEROWY
+import { db } from '@/server/db';
+import { StatusFilter } from './StatusFilter';
+
+type Row = { status: 'OPEN' | 'IN_PROGRESS' | 'CLOSED'; total: number };
+
+export default async function ReportsPage() {
+  const rows: Row[] = await db.query('select status, count(*) as total from tickets group by status');
+  return (
+    <section>
+      <h1>Raporty</h1>
+      <table>
+        <tbody>{rows.map((r) => <tr key={r.status}><td>{r.status}</td><td>{r.total}</td></tr>)}</tbody>
+      </table>
+      <StatusFilter statuses={rows.map((r) => r.status)} />
+    </section>
+  );
+}
+
+// app/reports/StatusFilter.tsx — KOMPONENT KLIENCKI
+// 'use client';
+// import { useState } from 'react';
+// export function StatusFilter({ statuses }: { statuses: string[] }) { ... }
+```
+
+#T NOTE JSX ↔ TSX — granica serializacji
+Najważniejsza nowa reguła RSC to **granica serializacji**: wszystko, co przechodzi z komponentu serwerowego do klienckiego, musi dać się przesłać przez sieć. W TSX możesz to wyrazić typami (props komponentu klienckiego bez funkcji i klas), a frameworki dodają własne sprawdzenia. W JSX błąd (np. przekazanie funkcji `onChange` z serwera albo obiektu `Map`) pojawi się dopiero przy uruchomieniu z komunikatem frameworka. Wyjątek: **akcje serwerowe** (`'use server'`, niżej) — to funkcje, które *wolno* przekazać, bo framework zamienia je na odwołanie do endpointu.
+
+#T DEFINITION Akcje serwerowe: 'use server'
+Funkcja oznaczona dyrektywą `'use server'` (w osobnym pliku albo wewnątrz komponentu serwerowego) jest **wykonywana na serwerze**, ale może być wywołana z klienta — framework tworzy dla niej endpoint i zamienia wywołanie na żądanie sieciowe. Najczęściej przekazujesz ją do `<form action={…}>` (akcje formularzy z rozdziału 05 i 17 działają z nią bezpośrednio, także bez JavaScriptu w przeglądarce) albo wywołujesz w `startTransition`. To miejsce na zapis do bazy, walidację, sprawdzenie uprawnień — zawsze z walidacją danych wejściowych (to publiczny endpoint).
+
+#T CODE_BASIC Akcja serwerowa zapisująca komentarz
+```
+// app/tickets/[id]/actions.ts
+'use server';
+
+import { z } from 'zod';
+
+declare const db: { comments: { insert: (row: { ticketId: number; text: string; author: string }) => Promise<void> } };
+declare function currentUser(): Promise<{ login: string } | null>;
+
+const schema = z.object({ ticketId: z.coerce.number().int().positive(), text: z.string().trim().min(3) });
+
+export async function addCommentAction(_prev: { error: string | null }, formData: FormData) {
+  const user = await currentUser();
+  if (!user) return { error: 'Zaloguj się, aby dodać komentarz.' };
+  const parsed = schema.safeParse({ ticketId: formData.get('ticketId'), text: formData.get('text') });
+  if (!parsed.success) return { error: 'Komentarz musi mieć co najmniej 3 znaki.' };
+  await db.comments.insert({ ...parsed.data, author: user.login });
+  return { error: null };
+}
+```
+
+#T CODE_PRACTICAL Komponent serwerowy z danymi i klienckim wyspami interakcji
+Wzorzec „serwer domyślnie, klient tam, gdzie interakcja”: lista komentarzy renderuje się na serwerze, a formularz (z `useActionState`) i przycisk polubienia są klienckie.
+```
+// app/tickets/[id]/page.tsx — komponent serwerowy
+import { CommentForm } from './CommentForm';   // 'use client'
+import { LikeButton } from './LikeButton';     // 'use client'
+
+declare const db: { tickets: { find: (id: number) => Promise<{ id: number; title: string }> }; comments: { forTicket: (id: number) => Promise<{ id: number; text: string; likes: number }[]> } };
+
+export default async function TicketPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const ticketId = Number(id);
+  const [ticket, comments] = await Promise.all([db.tickets.find(ticketId), db.comments.forTicket(ticketId)]);
+  return (
+    <article>
+      <h1>#{ticket.id} {ticket.title}</h1>
+      <ul>
+        {comments.map((c) => (
+          <li key={c.id}>{c.text} <LikeButton commentId={c.id} initialLikes={c.likes} /></li>
+        ))}
+      </ul>
+      <CommentForm ticketId={ticket.id} />
+    </article>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: zrozumienie RSC przed praktyką
+1. Narysuj drzewo komponentów ekranu raportów DevDesk i oznacz każdy jako serwerowy lub kliencki według zasady: interakcja, stan, efekty, API przeglądarki → kliencki; reszta → serwerowy.
+2. Policz, ile kodu i danych przestałoby trafiać do przeglądarki (biblioteki formatowania, pełna lista 5000 ticketów, kod tabeli podsumowania).
+3. Wypisz props przekazywane z serwerowych do klienckich i sprawdź, czy są serializowalne (zamień funkcje na akcje serwerowe albo przenieś logikę do klienta).
+4. Zaprojektuj akcję serwerową dodawania komentarza z walidacją Zod i sprawdzeniem użytkownika (jak w przykładzie) — to odpowiednik endpointu w Springu.
+5. Porównaj model z obecną architekturą DevDesk (SPA + REST w Spring Boot): co zyskujesz (mniej JS, dane bliżej bazy), co tracisz (frontend i backend w jednym procesie Node, inny model wdrożenia).
+6. W rozdziale 18 zrealizujesz to praktycznie w Next.js.
+
+#T PITFALL 'use client' na wszystkim albo na niczym
+Dwa skrajne błędy: (1) `'use client'` na górze każdego pliku — aplikacja działa jak zwykłe SPA, a zalety RSC znikają; (2) próba dodania stanu lub `onClick` w komponencie serwerowym — błąd budowania. Granicę `'use client'` stawia się jak najniżej: na małych, interaktywnych „wyspach” (przycisk, formularz, filtr), a cały układ i dane zostają po stronie serwera. Pamiętaj też: dyrektywa obejmuje moduł i jego importy — import ciężkiej biblioteki w pliku klienckim wciąga ją do pakietu.
+
+#T SUMMARY Podsumowanie rozdziału 17
+Komponenty serwerowe wykonują się tylko na serwerze (mogą być `async`, czytać bazę i sekrety, ich kod nie trafia do przeglądarki), a klienckie — oznaczone `'use client'` — mają stan, efekty i interakcje. Serwerowe renderują klienckie i przekazują im serializowalne props; akcje serwerowe (`'use server'`) to funkcje serwera wywoływane z klienta, zwykle przez formularze. RSC działają we frameworkach (rozdział 18). W tym rozdziale poznałeś też `use`, Suspense dla danych, `useOptimistic`, akcje i przejścia asynchroniczne, natywne metadane i wskazówki zasobów oraz `Activity` i `ViewTransition`. W TSX: rozpakowanie typu obietnicy przez `use`, typy akcji i granica serializacji.
+
+Kryterium akceptacji: masz rozrysowane drzewo ekranu raportów z podziałem na komponenty serwerowe i klienckie, listę serializowalnych props na granicy, projekt akcji serwerowej z walidacją i porównanie modelu RSC z architekturą SPA + Spring Boot.
