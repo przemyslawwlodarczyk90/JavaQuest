@@ -1,0 +1,152 @@
+#T INTRO Rozgrzewka i problem: wyniki z przeszłości
+Rozgrzewka: Jakie cztery stany ma interfejs asynchroniczny? Dlaczego stan początkowy to „ładowanie”, a nie pusta lista? Po co osobna flaga odświeżania?
+
+Problem: użytkownik szybko wpisuje „api timeout” w wyszukiwarce. Wysyłane są żądania dla „api”, „api t”, „api timeout”. Serwer odpowiada w losowej kolejności: odpowiedź na „api” przychodzi **ostatnia** i nadpisuje wynik dla „api timeout” — tabela pokazuje wyniki dla tekstu, którego w polu już nie ma. To **wyścig odpowiedzi** (race condition). Do tego każde żądanie, które przestało być potrzebne, nadal obciąża sieć i serwer. Ta lekcja: ignorowanie przestarzałych odpowiedzi, przerywanie żądań i opóźnianie wysyłki.
+
+#T VISUAL_EXAMPLE Wyścig odpowiedzi
+czas →
+wpisano „api”          ──── żądanie A ─────────────────────────── odpowiedź A (wolna) ✘ nadpisuje!
+wpisano „api t”        ──── żądanie B ────────── odpowiedź B
+wpisano „api timeout”  ──── żądanie C ─── odpowiedź C ✔
+
+bez ochrony: ekran pokazuje A (ostatnia, która przyszła) — wyniki dla „api”, a w polu „api timeout”
+z ignore/abort: A i B są odrzucone lub przerwane — ekran pokazuje C
+
+#T DEFINITION Dwa poziomy ochrony
+1. **Ignorowanie** — flaga `ignore` w sprzątaniu efektu (znasz ją): odpowiedź starego żądania przychodzi, ale nie jest zapisywana. Chroni stan, ale żądanie i tak się wykonuje.
+2. **Przerywanie** — `AbortController`: sprzątanie wywołuje `controller.abort()`, a `fetch` z `signal` natychmiast przerywa żądanie (w zakładce Network status „canceled”) i rzuca błąd `AbortError`, który ignorujesz. Chroni stan i oszczędza sieć.
+
+Do tego **debounce** — wysłanie żądania dopiero po przerwie w pisaniu (np. 300 ms) — zmniejsza liczbę żądań u źródła.
+
+#T CODE_JSX Wyszukiwanie z AbortController (JSX)
+```
+// useTicketSearch.js
+import { useEffect, useState } from 'react';
+import { useDebouncedValue } from './useDebouncedValue';
+
+export function useTicketSearch(query) {
+  const debounced = useDebouncedValue(query.trim(), 300);
+  const [state, setState] = useState({ status: 'idle' });
+
+  useEffect(() => {
+    if (debounced.length < 2) {
+      setState({ status: 'idle' });
+      return;
+    }
+    const controller = new AbortController();
+    setState({ status: 'loading' });
+
+    fetch(`/api/tickets?q=${encodeURIComponent(debounced)}&pageSize=8`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Błąd ${res.status}`);
+        return res.json();
+      })
+      .then((page) => setState({ status: 'success', items: page.items }))
+      .catch((error) => {
+        if (error.name === 'AbortError') return; // przerwane celowo — nic nie rób
+        setState({ status: 'error', message: error.message });
+      });
+
+    return () => controller.abort();
+  }, [debounced]);
+
+  return state;
+}
+```
+
+#T CODE_TSX Wyszukiwanie z AbortController (TSX)
+Błąd w `catch` ma typ `unknown`; przerwanie rozpoznajesz przez `error instanceof DOMException && error.name === 'AbortError'`.
+```
+// useTicketSearch.ts
+import { useEffect, useState } from 'react';
+import type { Ticket } from '../types';
+import { useDebouncedValue } from './useDebouncedValue';
+
+type SearchState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; items: Ticket[] }
+  | { status: 'error'; message: string };
+
+export function useTicketSearch(query: string): SearchState {
+  const debounced = useDebouncedValue(query.trim(), 300);
+  const [state, setState] = useState<SearchState>({ status: 'idle' });
+
+  useEffect(() => {
+    if (debounced.length < 2) {
+      setState({ status: 'idle' });
+      return;
+    }
+    const controller = new AbortController();
+    setState({ status: 'loading' });
+
+    fetch(`/api/tickets?q=${encodeURIComponent(debounced)}&pageSize=8`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Błąd ${res.status}`);
+        return res.json() as Promise<{ items: Ticket[] }>;
+      })
+      .then((page) => setState({ status: 'success', items: page.items }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setState({ status: 'error', message: error instanceof Error ? error.message : 'Nieznany błąd' });
+      });
+
+    return () => controller.abort();
+  }, [debounced]);
+
+  return state;
+}
+```
+
+#T NOTE JSX ↔ TSX — rozpoznawanie przerwania
+W JSX `error.name === 'AbortError'` zakłada, że `error` jest obiektem z polem `name`. W TSX `error` w `catch` jest `unknown`, więc trzeba sprawdzić typ: przerwanie `fetch` rzuca `DOMException` z nazwą `AbortError`. Kompilator wymusza też rozróżnienie: tylko obiekty `Error` mają `message`. Druga różnica: `res.json() as Promise<{ items: Ticket[] }>` — rzutowanie obietnicy, z tym samym zastrzeżeniem co wcześniej (brak sprawdzenia w czasie działania).
+
+#T CODE_BASIC Funkcja API przyjmująca signal
+Warstwa API powinna przyjmować `signal` w opcjach i przekazywać go do `fetch` — wtedy każdy wywołujący może przerwać żądanie.
+```
+import type { Ticket } from '../types';
+
+export async function fetchTicket(id: number, options: { signal?: AbortSignal } = {}): Promise<Ticket> {
+  const res = await fetch(`/api/tickets/${id}`, { signal: options.signal });
+  if (!res.ok) throw new Error(res.status === 404 ? 'Nie znaleziono ticketu' : `Błąd ${res.status}`);
+  return (await res.json()) as Ticket;
+}
+
+// w efekcie:
+// const controller = new AbortController();
+// fetchTicket(id, { signal: controller.signal }).then(...).catch(...);
+// return () => controller.abort();
+```
+
+#T CODE_PRACTICAL Limit czasu żądania
+`AbortSignal.timeout(ms)` tworzy sygnał, który sam przerwie żądanie po czasie. `AbortSignal.any([...])` łączy kilka sygnałów — tu: przerwanie przez sprzątanie efektu albo po 8 sekundach.
+```
+export async function fetchWithTimeout(url: string, signal: AbortSignal, timeoutMs = 8000): Promise<Response> {
+  const combined = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+  try {
+    return await fetch(url, { signal: combined });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new Error('Serwer nie odpowiada — spróbuj ponownie za chwilę.');
+    }
+    throw error;
+  }
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: szybkie wyszukiwanie w nagłówku
+1. Dodaj w handlerze MSW `GET /api/tickets` losowe opóźnienie dla wyszukiwania: `await delay(200 + Math.random() * 1500)`.
+2. Zbuduj najpierw wersję **bez** ochrony (bez `ignore` i `abort`, bez debounce) z listą podpowiedzi pod polem w nagłówku. Wpisuj szybko — wyniki „przeskakują” i czasem kończą na starym tekście.
+3. Dodaj `AbortController` i sprzątanie — w zakładce Network przestarzałe żądania mają status „canceled”, a wynik zawsze odpowiada tekstowi w polu.
+4. Dodaj debounce 300 ms — przy szybkim pisaniu wysyłane jest jedno żądanie.
+5. Dodaj minimum 2 znaki i stan `idle` — przy pustym polu nie ma żądań ani komunikatu „brak wyników”.
+6. Przepisz `fetchTicket` i `fetchTickets` tak, by przyjmowały `signal`, a `useAsync` z poprzedniej lekcji — by przekazywał `signal` do funkcji `load`.
+7. Dodaj limit czasu 8 s przez `AbortSignal.timeout` i sprawdź `?scenario=slow` z opóźnieniem ustawionym na 10 s.
+
+#T PITFALL Wyświetlanie błędu przerwania
+Bez rozpoznania `AbortError` każde szybkie wpisanie znaku kończy się na chwilę komunikatem „Błąd: The user aborted a request”. Przerwanie wywołane przez sprzątanie to normalne zachowanie, nie błąd — `catch` musi je pominąć. Analogicznie w StrictMode: podwójne montowanie przerywa pierwsze żądanie i to jest poprawne.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Wyścig odpowiedzi występuje, gdy odpowiedzi przychodzą w innej kolejności niż żądania. Ochrona: flaga `ignore` (stan bezpieczny) i `AbortController` z `signal` w `fetch` (stan bezpieczny i oszczędność sieci) — przerwanie wywołuje sprzątanie efektu, a `AbortError` ignorujesz. Debounce zmniejsza liczbę żądań, a `AbortSignal.timeout` i `AbortSignal.any` dodają limit czasu. Warstwa API przyjmuje `signal` w opcjach. W TSX rozpoznajesz przerwanie przez `instanceof DOMException`.
+
+Kryterium akceptacji: wyszukiwanie w nagłówku przy losowych opóźnieniach zawsze pokazuje wyniki dla tekstu w polu, przestarzałe żądania są przerywane (status „canceled” w Network), szybkie pisanie wysyła jedno żądanie, a przerwania nie pokazują komunikatu błędu.

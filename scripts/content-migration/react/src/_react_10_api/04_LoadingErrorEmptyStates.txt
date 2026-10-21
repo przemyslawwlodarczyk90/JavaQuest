@@ -1,0 +1,144 @@
+#T INTRO Rozgrzewka i problem: pusty ekran zamiast informacji
+Rozgrzewka: Dlaczego funkcja efektu nie może być `async`? Co robi flaga `ignore`? Czy `as Page<Ticket>` sprawdza odpowiedź serwera?
+
+Problem: przy wolnym połączeniu tabela przez kilka sekund jest pusta i użytkownik nie wie, czy dane się ładują, czy ich nie ma. Przy błędzie serwera nic się nie dzieje. Przy pustym wyniku wyszukiwania widać same nagłówki tabeli. Kompletny interfejs asynchroniczny ma **cztery stany**: bezczynny/ładowanie, sukces z danymi, sukces bez danych i błąd — a do tego odświeżanie, gdy dane już są.
+
+#T DEFINITION Stan żądania jako unia
+Zamiast trzech niezależnych zmiennych (`loading`, `error`, `data`), które mogą się wykluczać lub rozjeżdżać, trzymasz jeden stan z polem `status`:
+- `{ status: 'loading' }` — pierwsze ładowanie, brak danych,
+- `{ status: 'success', data }` — dane gotowe (pusta lista to też sukces!),
+- `{ status: 'error', error }` — żądanie się nie udało.
+
+To unia z dyskryminatorem z rozdziału 01: w każdej gałęzi wiadomo, które pola istnieją. Dodatkowa flaga `isRefreshing` przydaje się, gdy pokazujesz stare dane w trakcie pobierania nowych (zmiana strony).
+
+#T CODE_JSX Hook useAsync i komponent ze stanami (JSX)
+```
+// useAsync.js
+import { useEffect, useState } from 'react';
+
+export function useAsync(load, deps) {
+  const [state, setState] = useState({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+    setState((prev) => (prev.status === 'success' ? { ...prev, refreshing: true } : { status: 'loading' }));
+    load()
+      .then((data) => { if (!ignore) setState({ status: 'success', data, refreshing: false }); })
+      .catch((error) => { if (!ignore) setState({ status: 'error', error }); });
+    return () => { ignore = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps przekazuje wywołujący (patrz uwaga niżej)
+  }, [...deps, attempt]);
+
+  return { ...state, retry: () => setAttempt((a) => a + 1) };
+}
+```
+
+#T CODE_TSX Hook useAsync i komponent ze stanami (TSX)
+Generyk `T` to typ danych. Typ wyniku to unia — komponent musi sprawdzić `status`, zanim użyje `data` lub `error`.
+```
+// useAsync.ts
+import { useEffect, useState, type DependencyList } from 'react';
+
+export type AsyncState<T> =
+  | { status: 'loading' }
+  | { status: 'success'; data: T; refreshing: boolean }
+  | { status: 'error'; error: Error };
+
+export function useAsync<T>(load: () => Promise<T>, deps: DependencyList) {
+  const [state, setState] = useState<AsyncState<T>>({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let ignore = false;
+    setState((prev) => (prev.status === 'success' ? { ...prev, refreshing: true } : { status: 'loading' }));
+    load()
+      .then((data) => { if (!ignore) setState({ status: 'success', data, refreshing: false }); })
+      .catch((e: unknown) => { if (!ignore) setState({ status: 'error', error: e instanceof Error ? e : new Error(String(e)) }); });
+    return () => { ignore = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps przekazuje wywołujący (patrz uwaga niżej)
+  }, [...deps, attempt]);
+
+  return { state, retry: () => setAttempt((a) => a + 1) };
+}
+```
+
+#T NOTE JSX ↔ TSX — unia stanów chroni przed „undefined” w UI
+W TSX odczyt `state.data` bez sprawdzenia `state.status === 'success'` jest błędem kompilacji, więc nie da się wyrenderować listy w trakcie ładowania ani w stanie błędu. W JSX `result.data.items` przy błędzie daje wyjątek i biały ekran. Uwaga o `eslint-disable`: hook przyjmuje zależności z zewnątrz, więc linter nie może ich sprawdzić — to jeden z powodów, dla których ręczne hooki do danych są kłopotliwe, a biblioteki (TanStack Query) używają **klucza zapytania** zamiast tablicy zależności. W tym kursie to świadomy, opisany wyjątek od zasady z rozdziału 07.
+
+#T CODE_BASIC Komponenty stanów
+Każdy stan ma osobny, jasny widok. Skeleton zamiast spinnera zmniejsza „skok” układu, bo zajmuje miejsce docelowej tabeli.
+```
+export function TableSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div aria-busy="true" aria-label="Ładowanie ticketów">
+      {Array.from({ length: rows }, (_, i) => <div key={i} className="skeleton-row" />)}
+    </div>
+  );
+}
+
+export function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="error-card">
+      <p>Nie udało się wczytać danych: {message}</p>
+      <button type="button" onClick={onRetry}>Spróbuj ponownie</button>
+    </div>
+  );
+}
+
+export function EmptyState({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="empty-state">
+      <p>Brak ticketów pasujących do filtrów.</p>
+      <button type="button" onClick={onClear}>Wyczyść filtry</button>
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Widok tabeli łączący wszystkie stany
+```
+import type { Ticket } from '../types';
+import type { AsyncState } from './useAsync';
+import { EmptyState, ErrorCard, TableSkeleton } from './states';
+
+type Page<T> = { items: T[]; total: number };
+
+type Props = { state: AsyncState<Page<Ticket>>; onRetry: () => void; onClearFilters: () => void };
+
+export function TicketsView({ state, onRetry, onClearFilters }: Props) {
+  switch (state.status) {
+    case 'loading':
+      return <TableSkeleton />;
+    case 'error':
+      return <ErrorCard message={state.error.message} onRetry={onRetry} />;
+    case 'success':
+      if (state.data.items.length === 0) return <EmptyState onClear={onClearFilters} />;
+      return (
+        <div className={state.refreshing ? 'is-refreshing' : undefined}>
+          {state.refreshing && <span role="status" className="refresh-hint">Odświeżanie…</span>}
+          <ul>{state.data.items.map((t) => <li key={t.id}>{t.title}</li>)}</ul>
+        </div>
+      );
+  }
+}
+```
+
+#T DEFINITION Brak danych a pusta lista
+„Jeszcze nie wiem” (ładowanie) i „wiem, że nic nie ma” (pusta lista z serwera) to dwa różne stany i wymagają różnych komunikatów. Częsty błąd to inicjalizacja stanu pustą tablicą (`useState([])`) — wtedy przed odpowiedzią serwera aplikacja przez chwilę pokazuje „Brak ticketów”, co wygląda jak błąd. Stan początkowy to `loading` (albo `null`), a nie pusta lista.
+
+#T STEP_BY_STEP Budujemy razem: kompletne stany tabeli DevDesk
+1. Utwórz `useAsync` i komponenty `TableSkeleton`, `ErrorCard`, `EmptyState`.
+2. Przepisz pobieranie listy w `Main` na `useAsync(() => fetchTickets(query), [status, q, page])`.
+3. Wyrenderuj `TicketsView` w miejscu tabeli; „Wyczyść filtry” resetuje filtry i stronę.
+4. Sprawdź każdy scenariusz z MSW: `?scenario=slow` (skeleton), `?scenario=error` (karta błędu, „Spróbuj ponownie” wysyła nowe żądanie), `?scenario=empty` (pusty stan), `?scenario=offline` (błąd sieci z czytelnym komunikatem).
+5. Zmień stronę przy wolnym scenariuszu — stare dane zostają, przyciemnione, z napisem „Odświeżanie…”, zamiast znikać.
+6. Dodaj styl `.is-refreshing { opacity: .6; transition: opacity .2s; }` i animację skeletonu z `prefers-reduced-motion`.
+
+#T PITFALL Spinner zastępujący całą stronę
+Pełnoekranowy spinner przy każdej zmianie strony lub filtra sprawia, że interfejs „mruga”, a użytkownik traci orientację (przewinięcie, zaznaczenie). Przy pierwszym ładowaniu pokazuj skeleton w miejscu treści, a przy kolejnych — zostaw stare dane z delikatnym wskaźnikiem odświeżania.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Interfejs asynchroniczny ma stany: ładowanie, sukces z danymi, sukces bez danych, błąd oraz odświeżanie przy istniejących danych. Stan żądania trzymaj jako unię z polem `status`, a każdy stan renderuj osobnym, jasnym widokiem (skeleton, karta błędu z ponowieniem, pusty stan z akcją). Stan początkowy to ładowanie, nie pusta lista. W TSX unia `AsyncState<T>` wymusza sprawdzenie statusu przed użyciem danych.
+
+Kryterium akceptacji: każdy scenariusz MSW (`slow`, `error`, `empty`, `offline`) ma w DevDesk osobny, czytelny widok, „Spróbuj ponownie” ponawia żądanie, a zmiana strony pokazuje stare dane ze wskaźnikiem odświeżania zamiast pustego ekranu.

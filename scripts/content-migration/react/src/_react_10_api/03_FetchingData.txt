@@ -1,0 +1,192 @@
+#T INTRO Rozgrzewka i problem: tabela wciąż czyta plik z danymi
+Rozgrzewka: Jak MSW przechwytuje żądania? Dlaczego logika mocków nie powinna trafiać do komponentów? Jak wywołać scenariusz błędu bez zmiany kodu?
+
+Problem: MSW odpowiada na `/api/tickets`, ale tabela DevDesk nadal importuje `data/tickets`. W tej lekcji tabela zacznie pobierać dane z API: żądanie przy montowaniu i przy zmianie filtrów, zapis wyniku w stanie, wyświetlenie. Napiszesz to ręcznie, przez `useEffect` — żeby rozumieć problemy, które później rozwiąże biblioteka TanStack Query.
+
+#T DEFINITION Pobieranie danych w efekcie
+Pobranie danych to synchronizacja z systemem zewnętrznym (serwerem), więc ręcznie robi się je w efekcie:
+1. efekt zależy od parametrów żądania (`status`, `q`, `page`),
+2. wewnątrz efektu definiujesz i wywołujesz funkcję `async` (sam efekt nie może być `async`),
+3. wynik zapisujesz w stanie,
+4. sprzątanie ustawia flagę `ignore`, żeby odpowiedź na stare parametry nie nadpisała nowszej (więcej w lekcji 5).
+
+Funkcję wysyłającą żądanie trzymaj **poza komponentem** — w module `api/` — żeby komponent nie znał adresów i szczegółów HTTP.
+
+#T CODE_JSX Funkcja API i komponent (JSX)
+```
+// api/tickets.js
+import { ticketsUrl } from './contract';
+
+export async function fetchTickets(query) {
+  const res = await fetch(ticketsUrl(query));
+  if (!res.ok) throw new Error(`Nie udało się pobrać ticketów (${res.status})`);
+  return res.json();
+}
+
+// TicketsPage.jsx
+import { useEffect, useState } from 'react';
+import { fetchTickets } from '../api/tickets';
+
+export function TicketsPage() {
+  const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    let ignore = false;
+    async function load() {
+      const data = await fetchTickets({ status: status || undefined, page, pageSize: 10 });
+      if (!ignore) setResult(data);
+    }
+    load();
+    return () => {
+      ignore = true;
+    };
+  }, [status, page]);
+
+  return (
+    <section>
+      <select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+        <option value="">Wszystkie</option>
+        <option value="OPEN">Otwarte</option>
+        <option value="CLOSED">Zamknięte</option>
+      </select>
+      {result && (
+        <>
+          <p>Wyników: {result.total}</p>
+          <ul>{result.items.map((t) => <li key={t.id}>{t.title}</li>)}</ul>
+        </>
+      )}
+    </section>
+  );
+}
+```
+
+#T CODE_TSX Funkcja API i komponent (TSX)
+Funkcja API zwraca `Promise<Page<Ticket>>`, a stan wynikowy to `Page<Ticket> | null` — `null` przed pierwszą odpowiedzią.
+```
+// api/tickets.ts
+import type { Ticket, TicketStatus } from '../types';
+
+export type Page<T> = { items: T[]; total: number; page: number; pageSize: number };
+export type TicketQuery = { status?: TicketStatus; q?: string; page?: number; pageSize?: number };
+
+export async function fetchTickets(query: TicketQuery): Promise<Page<Ticket>> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([k, v]) => { if (v !== undefined) params.set(k, String(v)); });
+  const res = await fetch(`/api/tickets?${params}`);
+  if (!res.ok) throw new Error(`Nie udało się pobrać ticketów (${res.status})`);
+  return (await res.json()) as Page<Ticket>;
+}
+
+// TicketsPage.tsx
+import { useEffect, useState } from 'react';
+
+export function TicketsPage() {
+  const [status, setStatus] = useState<TicketStatus | ''>('');
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState<Page<Ticket> | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    async function load() {
+      const data = await fetchTickets({ status: status || undefined, page, pageSize: 10 });
+      if (!ignore) setResult(data);
+    }
+    void load();
+    return () => {
+      ignore = true;
+    };
+  }, [status, page]);
+
+  return (
+    <section>
+      <select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value as TicketStatus | ''); setPage(1); }}>
+        <option value="">Wszystkie</option>
+        <option value="OPEN">Otwarte</option>
+        <option value="CLOSED">Zamknięte</option>
+      </select>
+      {result && (
+        <>
+          <p>Wyników: {result.total}</p>
+          <ul>{result.items.map((t) => <li key={t.id}>{t.title}</li>)}</ul>
+        </>
+      )}
+    </section>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — „as” przy res.json() to obietnica bez pokrycia
+`res.json()` w TSX zwraca `Promise<any>`. Rzutowanie `as Page<Ticket>` uspokaja kompilator, ale niczego nie sprawdza — to dokładnie to samo zaufanie, co w JSX. Prawdziwe zabezpieczenie to walidacja schematem: `ticketPageSchema.parse(await res.json())` (Zod, rozdział 05) — wtedy błędny kształt odpowiedzi zatrzyma się w warstwie API z czytelnym błędem, zamiast wybuchnąć w losowym komponencie. Zrobisz to w lekcji 7, w kliencie API. Zwróć uwagę też na `void load()` w TSX: oznacza świadome nieczekanie na obietnicę (reguła `no-floating-promises`).
+
+#T DEFINITION Dlaczego efekt nie może być async
+`useEffect(async () => {...})` jest błędem: funkcja `async` zawsze zwraca `Promise`, a React oczekuje, że efekt zwróci funkcję sprzątającą albo nic. Sprzątanie by nie zadziałało (React dostałby obietnicę), a TypeScript zgłosi błąd typu. Wzorzec: zwykła funkcja efektu, a w środku `async function load() {...}` wywołana od razu.
+
+#T CODE_WRONG Asynchroniczna funkcja efektu i brak sprawdzenia ok
+```
+useEffect(async () => {
+  const res = await fetch('/api/tickets');
+  setTickets(await res.json()); // przy 500 zapisze obiekt błędu jako listę
+}, []);
+```
+
+#T CODE_RIGHT Funkcja async wewnątrz efektu, warstwa API, flaga ignore
+```
+useEffect(() => {
+  let ignore = false;
+  fetchTickets({ page: 1 }).then((data) => {
+    if (!ignore) setResult(data);
+  });
+  return () => {
+    ignore = true;
+  };
+}, []);
+```
+
+#T CODE_PRACTICAL Szczegóły ticketu pobierane po ID
+Ten sam wzorzec dla jednego zasobu: efekt zależy od `ticketId`, a przy zmianie ID poprzednia odpowiedź jest ignorowana.
+```
+import { useEffect, useState } from 'react';
+import type { Ticket } from '../types';
+
+async function fetchTicket(id: number): Promise<Ticket> {
+  const res = await fetch(`/api/tickets/${id}`);
+  if (!res.ok) throw new Error(res.status === 404 ? 'Nie znaleziono ticketu' : `Błąd ${res.status}`);
+  return (await res.json()) as Ticket;
+}
+
+export function useTicket(ticketId: number) {
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    setTicket(null);
+    fetchTicket(ticketId).then((t) => {
+      if (!ignore) setTicket(t);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [ticketId]);
+
+  return ticket;
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: tabela na danych z API
+1. Utwórz `api/tickets.js` (`.ts`) z `fetchTickets(query)` sprawdzającym `res.ok`.
+2. W `Main` (lub `TicketsPage`) zastąp import danych stanem `result` i efektem pobierającym stronę wyników.
+3. Przekaż do API filtry i paginację: `status`, `q` (z wyszukiwarki z opóźnieniem z rozdziału 07), `page`, `pageSize` — filtrowanie i paginacja dzieją się teraz na „serwerze” (w handlerze MSW).
+4. Liczba stron w pagerze pochodzi z `total` z odpowiedzi.
+5. Sprawdź w zakładce Network: każda zmiana filtra, wpis w wyszukiwarce (po opóźnieniu) i zmiana strony to jedno żądanie z właściwymi parametrami.
+6. W karcie szczegółów użyj `useTicket(selectedId)` — dane szczegółów pochodzą z `GET /api/tickets/:id`.
+7. Zauważ, czego brakuje: przy wolnym scenariuszu (`?scenario=slow`) nie widać ładowania, a przy `?scenario=error` — nic się nie dzieje (w konsoli nieobsłużony błąd). To temat następnej lekcji.
+
+#T PITFALL Pobieranie danych w renderze
+`fetchTickets(...).then(setResult)` wywołane w ciele komponentu wysyła żądanie przy każdym renderze, a każde `setResult` powoduje kolejny render — nieskończona pętla żądań. Żądanie wysyłasz w efekcie (lub przez bibliotekę danych), a w handlerach — tylko w reakcji na działanie użytkownika (np. „Odśwież”).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Ręczne pobieranie danych: efekt zależny od parametrów żądania, w środku funkcja `async` wywołana od razu, wynik w stanie, flaga `ignore` w sprzątaniu. Funkcje HTTP trzymasz w module `api/` i zawsze sprawdzasz `res.ok`. Filtry i paginacja mogą być realizowane po stronie serwera — komponent przekazuje tylko parametry. W TSX funkcja API zwraca typowaną obietnicę, ale `res.json()` to `any` — pewność daje dopiero walidacja schematem.
+
+Kryterium akceptacji: tabela DevDesk pobiera tickety z `/api/tickets` z filtrami, wyszukiwaniem i paginacją po stronie serwera (każda zmiana to jedno żądanie widoczne w Network), a karta szczegółów pobiera wybrany ticket z `/api/tickets/:id`.
