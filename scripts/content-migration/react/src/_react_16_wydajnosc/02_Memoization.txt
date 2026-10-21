@@ -1,0 +1,142 @@
+#T INTRO Rozgrzewka i problem: 2000 wierszy renderuje się przy każdym kliknięciu
+Rozgrzewka: Z jakich trzech powodów komponent się renderuje? Do czego służy „Why did this render?”? Dlaczego najpierw mierzysz?
+
+Problem: Profiler z poprzedniej lekcji pokazał, że kliknięcie jednego wiersza renderuje wszystkie 2000 wierszy (powód: render rodzica), a każdy kosztuje 1 ms. Zaznaczenie zmieniło się tylko w dwóch wierszach (stary i nowy wybrany). To podręcznikowy przypadek dla **memoizacji**: `memo` pozwala pominąć render komponentu, gdy jego props się nie zmieniły, a `useMemo` i `useCallback` dbają o to, żeby props **rzeczywiście się nie zmieniały**.
+
+#T DEFINITION memo, useMemo, useCallback
+- **`memo(Komponent)`** — zwraca komponent, który przy renderze rodzica **porównuje props** z poprzednimi (płytko, `Object.is` dla każdego propsa) i pomija render, jeśli są takie same. Nie chroni przed zmianą własnego stanu ani kontekstu.
+- **`useMemo(() => obliczenie, [zależności])`** — zapamiętuje **wynik** obliczenia do zmiany zależności. Dwa zastosowania: kosztowne obliczenia oraz stabilna referencja obiektu/tablicy przekazywanej do `memo`-komponentu lub do zależności efektu.
+- **`useCallback(fn, [zależności])`** — zapamiętuje **funkcję** (to samo co `useMemo(() => fn, deps)`); stabilna referencja callbacku przekazywanego do `memo`-komponentu.
+
+`memo` bez stabilnych props nie daje nic: nowa funkcja `onSelect` albo nowy obiekt `style={{...}}` przy każdym renderze rodzica to „zmienione props”.
+
+#T CODE_JSX Wiersz z memo i stabilny callback (JSX)
+```
+// TicketTable.jsx
+import { memo, useCallback, useState } from 'react';
+
+const TicketRow = memo(function TicketRow({ ticket, selected, onSelect }) {
+  return (
+    <tr className={selected ? 'row row--selected' : 'row'} onClick={() => onSelect(ticket.id)}>
+      <td>{ticket.id}</td>
+      <td>{ticket.title}</td>
+    </tr>
+  );
+});
+
+export function TicketTable({ tickets }) {
+  const [selectedId, setSelectedId] = useState(null);
+
+  // stabilna funkcja: ta sama referencja przez całe życie komponentu (setter jest stabilny)
+  const handleSelect = useCallback((id) => setSelectedId(id), []);
+
+  return (
+    <table>
+      <tbody>
+        {tickets.map((t) => (
+          <TicketRow key={t.id} ticket={t} selected={t.id === selectedId} onSelect={handleSelect} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+```
+
+#T CODE_TSX Wiersz z memo i stabilny callback (TSX)
+`memo` zachowuje typ props komponentu. Po zmianie zaznaczenia renderują się tylko dwa wiersze, którym zmienił się `selected`.
+```
+// TicketTable.tsx
+import { memo, useCallback, useState } from 'react';
+import type { Ticket } from '../types';
+
+type RowProps = { ticket: Ticket; selected: boolean; onSelect: (id: number) => void };
+
+const TicketRow = memo(function TicketRow({ ticket, selected, onSelect }: RowProps) {
+  return (
+    <tr className={selected ? 'row row--selected' : 'row'} onClick={() => onSelect(ticket.id)}>
+      <td>{ticket.id}</td>
+      <td>{ticket.title}</td>
+    </tr>
+  );
+});
+
+export function TicketTable({ tickets }: { tickets: readonly Ticket[] }) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const handleSelect = useCallback((id: number) => setSelectedId(id), []);
+
+  return (
+    <table>
+      <tbody>
+        {tickets.map((t) => (
+          <TicketRow key={t.id} ticket={t} selected={t.id === selectedId} onSelect={handleSelect} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — memo a typy props
+`memo(function TicketRow(props: RowProps) {...})` w TSX zachowuje pełny typ props, więc użycie wiersza jest nadal sprawdzane. Nazwana funkcja wewnątrz `memo` daje czytelną nazwę w DevTools w obu wersjach (strzałka bez nazwy pokazałaby `Anonymous`). Typy pomagają też pilnować stabilności: jeśli props ma typ `readonly Ticket[]`, nikt nie zmutuje tablicy w miejscu (mutacja nie zmienia referencji, więc `memo` nie zauważyłoby zmiany i pokazało stare dane).
+
+#T CODE_BASIC useMemo dla kosztownego obliczenia
+Statystyki z 5000 ticketów liczone przy każdym renderze (np. przy wpisywaniu w niezwiązanym polu) — zapamiętane do zmiany listy.
+```
+import { useMemo } from 'react';
+import type { Ticket } from '../types';
+
+export function useTicketStats(tickets: readonly Ticket[]) {
+  return useMemo(() => {
+    const byStatus = { OPEN: 0, IN_PROGRESS: 0, CLOSED: 0 };
+    const byAssignee = new Map<string, number>();
+    for (const t of tickets) {
+      byStatus[t.status] += 1;
+      if (t.assignee) byAssignee.set(t.assignee, (byAssignee.get(t.assignee) ?? 0) + 1);
+    }
+    return { byStatus, topAssignees: [...byAssignee.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5) };
+  }, [tickets]);
+}
+```
+
+#T CODE_PRACTICAL Stabilna wartość kontekstu
+Wartość providera tworzona jako nowy obiekt przy każdym renderze renderuje wszystkich czytelników kontekstu (rozdział 06). `useMemo` i `useCallback` stabilizują ją, gdy dane się nie zmieniły.
+```
+import { createContext, useCallback, useMemo, useState, type ReactNode } from 'react';
+
+type Prefs = { density: 'compact' | 'comfortable' };
+type PrefsApi = { prefs: Prefs; setDensity: (d: Prefs['density']) => void };
+
+export const PrefsContext = createContext<PrefsApi | null>(null);
+
+export function PrefsProvider({ children }: { children: ReactNode }) {
+  const [prefs, setPrefs] = useState<Prefs>({ density: 'comfortable' });
+  const setDensity = useCallback((density: Prefs['density']) => setPrefs((p) => ({ ...p, density })), []);
+  const value = useMemo(() => ({ prefs, setDensity }), [prefs, setDensity]);
+  return <PrefsContext value={value}>{children}</PrefsContext>;
+}
+```
+
+#T DEFINITION Kiedy memoizacja nic nie daje (albo szkodzi)
+- props zawsze się zmieniają (nowy obiekt, nowa tablica z `filter`, lambda w JSX) — `memo` tylko dodaje koszt porównania,
+- komponent jest tani — porównanie props może kosztować tyle co render,
+- komponent czyta często zmieniany kontekst — `memo` nie chroni przed kontekstem,
+- `useMemo` dla prostych obliczeń (`a + b`, `items.length`) — narzut większy niż zysk,
+- **dzieci jako `children`**: `<Panel><Heavy /></Panel>` — element `<Heavy />` jest tworzony przez rodzica Panelu; jeśli to rodzic się renderuje, `Heavy` i tak dostaje nowy element (rozwiązaniem bywa przeniesienie stanu niżej albo przekazanie dzieci z wyższego poziomu).
+
+Często zamiast memoizacji lepsza jest **zmiana struktury**: przenieś stan niżej (do komponentu, który go używa) albo „podnieś treść w górę” (przekaż ciężką część jako `children` z komponentu, który się nie renderuje).
+
+#T STEP_BY_STEP Budujemy razem: memoizacja po pomiarze
+1. Otwórz zapis profilu z poprzedniej lekcji (2000 wierszy, kliknięcie: ok. 2000 ms w trybie deweloperskim).
+2. Owiń `TicketRow` w `memo` — i zmierz ponownie: brak poprawy, bo `onSelect` to nowa lambda przy każdym renderze („Why did this render?”: zmieniony prop `onSelect`).
+3. Dodaj `useCallback` dla `handleSelect` — po kliknięciu renderują się tylko 2 wiersze; zapisz nowy czas commitu.
+4. Dodaj `useTicketStats` z `useMemo` i sprawdź w Profilerze, że wpisywanie w polu notatki nie przelicza statystyk.
+5. Ustabilizuj wartość `PrefsProvider` i sprawdź, że render providera bez zmiany preferencji nie renderuje czytelników.
+6. Usuń memoizację, która nie dała mierzalnej poprawy (zostaw komentarz z wynikiem pomiaru przy tej, która została).
+
+#T PITFALL Kłamiące zależności useCallback
+`useCallback(() => onSave(draft), [])` — funkcja zapamiętała `draft` z pierwszego renderu i zawsze zapisuje stary szkic (nieaktualne domknięcie z rozdziału 07). Zależności `useMemo`/`useCallback` podlegają tej samej regule co efekty: wszystko, co funkcja czyta z komponentu, musi być w tablicy — pilnuje tego ten sam `react-hooks/exhaustive-deps`.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`memo` pomija render komponentu przy płytko równych props; `useMemo` zapamiętuje wynik obliczenia, a `useCallback` — funkcję, do zmiany zależności. Memoizacja działa tylko wtedy, gdy props są naprawdę stabilne (stąd para `memo` + `useCallback`/`useMemo`), i ma sens dla komponentów kosztownych lub licznych. Często lepsza od memoizacji jest zmiana struktury (stan niżej, treść jako `children`). Zależności podlegają tym samym zasadom co w efektach. Zawsze mierz przed i po.
+
+Kryterium akceptacji: kliknięcie wiersza w tabeli 2000 ticketów renderuje tylko dwa wiersze (potwierdzone w Profilerze), statystyki nie przeliczają się przy niezwiązanych zmianach, a każda pozostawiona memoizacja ma w kodzie komentarz z wynikiem pomiaru.

@@ -1,0 +1,118 @@
+#T INTRO Rozgrzewka i problem: „aplikacja jest wolna” — ale co dokładnie?
+Rozgrzewka: Czym różni się render od commitu? Kiedy React pomija render przy `setState`? Jak działa priorytet przejść?
+
+Problem: DevDesk z 5000 ticketów w trybie deweloperskim „przycina” przy zaznaczaniu wierszy, a zespół proponuje: „owińmy wszystko w `memo` i `useMemo`”. To najczęstszy błąd w optymalizacji Reacta — zgadywanie. Zanim cokolwiek zmienisz, musisz **zmierzyć**: które komponenty się renderują, dlaczego, ile to trwa i czy to w ogóle jest przyczyna. Ta lekcja: model renderowania z perspektywy wydajności i **React DevTools Profiler**.
+
+#T DEFINITION Dlaczego komponent się renderuje
+Komponent renderuje się, gdy:
+1. **zmienił się jego stan** (`useState`, `useReducer`),
+2. **zmienił się kontekst**, który czyta (`useContext`, `use`),
+3. **wyrenderował się jego rodzic** — domyślnie React renderuje ponownie **wszystkie dzieci** rodzica, niezależnie od tego, czy ich props się zmieniły.
+
+Punkt 3 zaskakuje najbardziej: zmiana stanu w `Main` renderuje całą tabelę, wszystkie wiersze, plakietki i przyciski. Zwykle to nie problem — render jest tani, a commit zmienia tylko różnice w DOM. Problem pojawia się, gdy render **jednego** komponentu jest kosztowny albo komponentów jest **bardzo dużo**.
+
+Uwaga: tryb deweloperski jest wielokrotnie wolniejszy od produkcyjnego (StrictMode, dodatkowe sprawdzenia). Pomiar „na oko” rób na buildzie produkcyjnym (`npm run build && npm run preview`), a szczegółowy — w Profilerze.
+
+#T DEFINITION React DevTools Profiler
+Zakładka **Profiler** w React DevTools nagrywa sesję i pokazuje każdy **commit**:
+- **Flamegraph** — drzewo komponentów w danym commicie; szerokość/kolor pokazują czas renderu (szary — nie renderował się),
+- **Ranked** — komponenty posortowane według czasu renderu w commicie,
+- **„Why did this render?”** (włącz w ustawieniach: „Record why each component rendered”) — powód: zmiana props (które), stanu, hooków, kontekstu albo render rodzica,
+- oś commitów u góry — wysokość słupka to czas commitu.
+
+Dodatkowo w ustawieniach Components: „Highlight updates when components render” — podświetla renderowane komponenty na żywo.
+
+#T CODE_JSX Komponent Profiler w kodzie (JSX)
+Komponent `<Profiler>` z Reacta mierzy fragment drzewa także poza DevTools — np. do logowania czasu renderu tabeli w trybie deweloperskim.
+```
+// MeasuredTable.jsx
+import { Profiler } from 'react';
+import { TicketTable } from './TicketTable';
+
+function onRender(id, phase, actualDuration, baseDuration) {
+  // actualDuration — czas renderu w tym commicie; baseDuration — szacunek pełnego renderu bez memoizacji
+  if (actualDuration > 8) console.warn(`[${id}] ${phase}: ${actualDuration.toFixed(1)} ms (bez memo: ${baseDuration.toFixed(1)} ms)`);
+}
+
+export function MeasuredTable({ tickets }) {
+  return (
+    <Profiler id="TicketTable" onRender={onRender}>
+      <TicketTable tickets={tickets} />
+    </Profiler>
+  );
+}
+```
+
+#T CODE_TSX Komponent Profiler w kodzie (TSX)
+Typ `ProfilerOnRenderCallback` opisuje parametry funkcji pomiaru.
+```
+// MeasuredTable.tsx
+import { Profiler, type ProfilerOnRenderCallback } from 'react';
+import type { Ticket } from '../types';
+import { TicketTable } from './TicketTable';
+
+const onRender: ProfilerOnRenderCallback = (id, phase, actualDuration, baseDuration) => {
+  if (actualDuration > 8) console.warn(`[${id}] ${phase}: ${actualDuration.toFixed(1)} ms (bez memo: ${baseDuration.toFixed(1)} ms)`);
+};
+
+export function MeasuredTable({ tickets }: { tickets: readonly Ticket[] }) {
+  return (
+    <Profiler id="TicketTable" onRender={onRender}>
+      <TicketTable tickets={tickets} />
+    </Profiler>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — wydajność to czas działania
+Wydajność renderowania nie zależy od tego, czy piszesz w JSX, czy w TSX — typy znikają przy budowaniu, więc wynikowy JavaScript jest taki sam. TypeScript pomaga pośrednio: `readonly` w props chroni przed mutacjami, które psują memoizację (lekcja 2), a typy hooków pokazują, które wartości są stabilne (setter z `useState`, `dispatch`), a które tworzone przy każdym renderze. Narzędzia pomiaru (Profiler, Performance w przeglądarce) działają identycznie dla obu wersji.
+
+#T DEFINITION Budżet 16 milisekund
+Przy 60 klatkach na sekundę przeglądarka ma ok. **16 ms** na klatkę — na JavaScript, style, układ i malowanie. Jeśli obsługa kliknięcia lub wpisania znaku (render + commit + malowanie) trwa dłużej, użytkownik czuje opóźnienie. Wskaźnik **INP** (Interaction to Next Paint, rozdział 16, lekcja 8) mierzy właśnie czas od interakcji do następnego malowania — dobra wartość to poniżej 200 ms, ale płynne pisanie wymaga dużo mniej.
+
+#T CODE_BASIC Sztucznie kosztowny wiersz do eksperymentów
+```
+import type { Ticket } from '../types';
+
+function slowFormat(text: string): string {
+  const start = performance.now();
+  while (performance.now() - start < 1) { /* 1 ms na wiersz — symulacja ciężkiego formatowania */ }
+  return text.toUpperCase();
+}
+
+export function SlowTicketRow({ ticket, selected, onSelect }: { ticket: Ticket; selected: boolean; onSelect: (id: number) => void }) {
+  return (
+    <tr className={selected ? 'row row--selected' : 'row'} onClick={() => onSelect(ticket.id)}>
+      <td>{ticket.id}</td>
+      <td>{slowFormat(ticket.title)}</td>
+    </tr>
+  );
+}
+```
+
+#T CODE_PRACTICAL Gdzie szukać kosztu — lista kontrolna
+```
+1. Czy problem występuje w buildzie produkcyjnym?        npm run build && npm run preview
+2. Który commit jest wolny?                               Profiler → najwyższy słupek
+3. Które komponenty dominują w tym commicie?              widok Ranked
+4. Dlaczego się renderowały?                              „Why did this render?” → props / stan / kontekst / rodzic
+5. Ile ich jest?                                           500 wierszy × 1 ms = 500 ms, nawet jeśli jeden jest „tani”
+6. Czy koszt jest w renderze, czy w DOM/układzie?         przeglądarka → Performance → Scripting vs Rendering/Painting
+7. Zapisz wynik PRZED zmianą — porównasz po optymalizacji
+```
+
+#T STEP_BY_STEP Budujemy razem: profil DevDesk
+1. Wygeneruj w MSW 2000 ticketów i wyświetl je bez paginacji (tymczasowo) z `SlowTicketRow`.
+2. Włącz w React DevTools „Highlight updates” i kliknij jeden wiersz — podświetla się cała tabela.
+3. Nagraj Profiler: kliknięcie wiersza, wpisanie trzech znaków w wyszukiwarce, przełączenie motywu. Zanotuj czasy commitów.
+4. Włącz „Record why each component rendered” i sprawdź powód renderu wierszy: „Parent component rendered” (rodzic z zaznaczeniem) — props wierszy, których zaznaczenie się nie zmieniło, są te same, poza nową funkcją `onSelect`.
+5. Dodaj `MeasuredTable` z ostrzeżeniem powyżej 8 ms i obserwuj konsolę.
+6. Zbuduj wersję produkcyjną i porównaj odczucia — zapisz pomiary „przed”; w kolejnych lekcjach poprawisz wynik i porównasz.
+
+#T PITFALL Optymalizacja bez pomiaru
+Owinięcie każdego komponentu w `memo` i każdej wartości w `useMemo` „na wszelki wypadek” dodaje kod, porównania props przy każdym renderze i błędy (zapomniane zależności, nieaktualne wartości), a często nic nie przyspiesza — bo prawdziwy koszt jest gdzie indziej (np. w jednym ciężkim obliczeniu, w liczbie węzłów DOM albo w bibliotece). Zasada: zmierz, znajdź przyczynę, popraw, zmierz ponownie.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Komponent renderuje się przy zmianie stanu, kontekstu albo renderze rodzica (domyślnie wszystkie dzieci). Render zwykle jest tani; problemem jest render kosztowny albo bardzo liczny. Mierz na buildzie produkcyjnym i w React DevTools Profiler (flamegraph, ranked, „why did this render”), a fragmenty drzewa możesz mierzyć komponentem `<Profiler>`. Budżet klatki to ok. 16 ms. Optymalizuj dopiero po pomiarze. Wydajność nie zależy od JSX/TSX.
+
+Kryterium akceptacji: masz zapisany profil DevDesk z 2000 wierszy (czasy commitów dla kliknięcia, pisania i zmiany motywu, powody renderów wierszy) — punkt odniesienia dla optymalizacji w kolejnych lekcjach.

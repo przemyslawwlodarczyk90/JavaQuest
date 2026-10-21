@@ -1,0 +1,137 @@
+#T INTRO Rozgrzewka i problem: memoizacja ręczna jest uciążliwa
+Rozgrzewka: Dlaczego `memo` bez `useCallback` często nic nie daje? Kiedy memoizacja szkodzi? Jakie zasady obowiązują zależności `useMemo`?
+
+Problem: po poprzedniej lekcji kod DevDesk pełen jest `memo`, `useMemo` i `useCallback` — z tablicami zależności do pilnowania, zagnieżdżeniami i komentarzami „nie usuwać, bo wydajność”. Łatwo o błąd, a każdy nowy komponent wymaga decyzji „memoizować czy nie”. **React Compiler** (stabilny od 2025 roku) robi to automatycznie: analizuje komponenty podczas budowania i dodaje memoizację tam, gdzie jest bezpieczna — także w miejscach, gdzie ręcznie byłoby to niewygodne.
+
+#T DEFINITION Co robi React Compiler
+React Compiler to wtyczka do procesu budowania (Babel, a w Vite przez wtyczkę React), która przekształca Twoje komponenty i hooki:
+- zapamiętuje wyniki obliczeń, JSX i funkcje na podstawie tego, od jakich wartości zależą (automatyczny odpowiednik `useMemo` i `useCallback`),
+- dzięki temu dzieci dostają stabilne props bez ręcznego `useCallback`, a niezmienione fragmenty JSX nie są tworzone od nowa,
+- działa na poziomie pojedynczych wyrażeń, więc memoizuje dokładniej niż ręczny kod.
+
+Warunek: kod musi przestrzegać **zasad Reacta** — czyste komponenty, niemutowalne props i stan, zasady hooków. Komponenty, które je łamią, kompilator pomija (bezpiecznie zostawia bez optymalizacji) i zgłasza przez ESLint.
+
+#T STEP_BY_STEP Włączenie kompilatora w projekcie Vite
+1. Zainstaluj: `npm install -D babel-plugin-react-compiler`.
+2. W `vite.config` przekaż wtyczkę do `@vitejs/plugin-react`: `react({ babel: { plugins: ['babel-plugin-react-compiler'] } })`.
+3. Zaktualizuj `eslint-plugin-react-hooks` do wersji z regułami kompilatora i włącz zalecany zestaw — linter zgłosi kod, którego kompilator nie może bezpiecznie zoptymalizować (np. mutacje w renderze, odczyt refów w renderze).
+4. W React DevTools komponenty zoptymalizowane przez kompilator mają oznaczenie „Memo ✨”.
+5. W większym istniejącym projekcie możesz włączyć kompilator stopniowo — tylko dla wybranych katalogów (opcja `sources`) albo w trybie „opt-in” z dyrektywą `'use memo'` w wybranych komponentach.
+
+#T CODE_JSX Ten sam komponent bez ręcznej memoizacji (JSX)
+Z kompilatorem nie piszesz `memo`, `useMemo` ani `useCallback` — kod wraca do najprostszej postaci, a wydajność jest taka jak po ręcznej optymalizacji.
+```
+// TicketTable.jsx — z React Compiler
+import { useState } from 'react';
+
+function TicketRow({ ticket, selected, onSelect }) {
+  return (
+    <tr className={selected ? 'row row--selected' : 'row'} onClick={() => onSelect(ticket.id)}>
+      <td>{ticket.id}</td>
+      <td>{ticket.title}</td>
+    </tr>
+  );
+}
+
+export function TicketTable({ tickets }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const stats = tickets.reduce((acc, t) => ({ ...acc, [t.status]: (acc[t.status] ?? 0) + 1 }), {});
+
+  return (
+    <>
+      <p>Otwarte: {stats.OPEN ?? 0}</p>
+      <table>
+        <tbody>
+          {tickets.map((t) => (
+            <TicketRow key={t.id} ticket={t} selected={t.id === selectedId} onSelect={setSelectedId} />
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+```
+
+#T CODE_TSX Ten sam komponent bez ręcznej memoizacji (TSX)
+Kompilator działa na kodzie po usunięciu typów — wersja TSX jest optymalizowana identycznie.
+```
+// TicketTable.tsx — z React Compiler
+import { useState } from 'react';
+import type { Ticket, TicketStatus } from '../types';
+
+function TicketRow({ ticket, selected, onSelect }: { ticket: Ticket; selected: boolean; onSelect: (id: number) => void }) {
+  return (
+    <tr className={selected ? 'row row--selected' : 'row'} onClick={() => onSelect(ticket.id)}>
+      <td>{ticket.id}</td>
+      <td>{ticket.title}</td>
+    </tr>
+  );
+}
+
+export function TicketTable({ tickets }: { tickets: readonly Ticket[] }) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const stats = tickets.reduce<Partial<Record<TicketStatus, number>>>((acc, t) => ({ ...acc, [t.status]: (acc[t.status] ?? 0) + 1 }), {});
+
+  return (
+    <>
+      <p>Otwarte: {stats.OPEN ?? 0}</p>
+      <table>
+        <tbody>
+          {tickets.map((t) => (
+            <TicketRow key={t.id} ticket={t} selected={t.id === selectedId} onSelect={setSelectedId} />
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — kompilator a typy
+React Compiler nie korzysta z typów TypeScript — analizuje przepływ wartości w kodzie (po usunięciu typów), więc JSX i TSX są optymalizowane tak samo. Typy pomagają mu pośrednio: kod z `readonly` w props i bez mutacji (wymuszonych przez TS) łatwiej spełnia zasady Reacta, a więc częściej zostaje zoptymalizowany. ESLint z regułami kompilatora działa w obu wersjach i jest głównym źródłem informacji, które komponenty kompilator pominął i dlaczego.
+
+#T CODE_WRONG Kod łamiący zasady — kompilator go pominie
+Mutacja propsa w renderze i odczyt refa w renderze: kompilator nie może bezpiecznie zapamiętać wyników, więc zostawia komponent bez optymalizacji (a ESLint zgłosi oba miejsca).
+```
+import { useRef } from 'react';
+
+export function BadList({ tickets }) {
+  const renders = useRef(0);
+  renders.current += 1;               // odczyt i zapis refa w renderze
+  tickets.sort((a, b) => a.id - b.id); // mutacja propsa w renderze
+  return <ul>{tickets.map((t) => <li key={t.id}>{t.title} ({renders.current})</li>)}</ul>;
+}
+```
+
+#T CODE_RIGHT Czysty komponent — kompilator go zoptymalizuje
+```
+export function GoodList({ tickets }) {
+  const sorted = tickets.toSorted((a, b) => a.id - b.id);
+  return <ul>{sorted.map((t) => <li key={t.id}>{t.title}</li>)}</ul>;
+}
+```
+
+#T DEFINITION Kiedy ręczna memoizacja nadal ma sens
+Z kompilatorem większość ręcznych `useMemo`/`useCallback` jest zbędna, ale nie wszystkie przypadki znikają:
+- **stabilna wartość jako zależność efektu**, gdy potrzebujesz pełnej kontroli nad tym, kiedy efekt się uruchamia (kompilator memoizuje, ale jawne `useMemo` dokumentuje intencję),
+- **bardzo kosztowne obliczenia** z wyraźnymi zależnościami — `useMemo` czytelnie pokazuje, co jest drogie,
+- **kod, którego kompilator nie optymalizuje** (łamie zasady, korzysta z bibliotek z mutowalnymi obiektami) — tu nadal działa ręczna memoizacja albo trzeba poprawić kod,
+- projekty bez kompilatora (starsze wersje Reacta, inne narzędzia budowania).
+
+Istniejącego `memo`/`useMemo` nie musisz usuwać — kompilator działa razem z nim — ale nowego kodu nie trzeba nimi obkładać.
+
+#T STEP_BY_STEP Budujemy razem: DevDesk z React Compiler
+1. Na osobnej gałęzi włącz kompilator w `vite.config` i zaktualizuj ESLint z regułami kompilatora.
+2. Uruchom `npm run lint` i popraw zgłoszone problemy (najczęściej: mutacje w renderze, odczyt refów w renderze, warunkowe hooki).
+3. Usuń ręczne `memo` i `useCallback` z `TicketTable` z poprzedniej lekcji.
+4. Nagraj Profiler dla kliknięcia wiersza w tabeli 2000 ticketów — porównaj czas z wersją ręcznie memoizowaną; w DevTools zobacz oznaczenia „Memo ✨”.
+5. Wprowadź celowo mutację propsa w jednym komponencie — linter go zgłosi, a w DevTools komponent straci oznaczenie.
+6. Zdecyduj dla projektu: kompilator włączony globalnie (nowe projekty) albo stopniowo (istniejący kod) — zapisz decyzję w README projektu.
+
+#T PITFALL Kompilator jako wymówka dla brudnego kodu
+Kompilator nie naprawia kodu łamiącego zasady Reacta — po prostu go pomija. Jeśli zignorujesz ostrzeżenia ESLint, część aplikacji będzie zoptymalizowana, a część nie, i trudno będzie zgadnąć, dlaczego jeden ekran jest wolny. Zasady czystości, niemutowalności i hooków z poprzednich rozdziałów są teraz także warunkiem wydajności.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+React Compiler podczas budowania automatycznie memoizuje wyniki, JSX i funkcje w komponentach i hookach, dzięki czemu ręczne `memo`/`useMemo`/`useCallback` przestają być potrzebne w większości miejsc. Warunkiem jest przestrzeganie zasad Reacta — kod łamiący je jest pomijany i zgłaszany przez ESLint. Włączasz go wtyczką Babel w `@vitejs/plugin-react` (globalnie lub stopniowo), a efekty widzisz w DevTools jako „Memo ✨”. Kompilator nie korzysta z typów — JSX i TSX optymalizuje tak samo.
+
+Kryterium akceptacji: na gałęzi z kompilatorem `npm run lint` nie zgłasza naruszeń zasad Reacta, tabela 2000 ticketów bez ręcznej memoizacji ma czas commitu porównywalny z wersją memoizowaną ręcznie, a decyzja o sposobie włączenia kompilatora jest zapisana w README.
