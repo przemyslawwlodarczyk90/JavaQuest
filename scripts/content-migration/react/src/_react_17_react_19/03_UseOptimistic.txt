@@ -1,0 +1,158 @@
+#T INTRO Rozgrzewka i problem: komentarz pojawia się dopiero po sekundzie
+Rozgrzewka: Gdzie umieszczasz granice `Suspense` i dlaczego? Jak uniknąć wodospadu żądań? Co daje `useSuspenseQuery`?
+
+Problem: w DevDesk dodanie komentarza przez akcję formularza (rozdział 05) czeka na odpowiedź serwera — komentarz pojawia się na liście po 500–1000 ms, a użytkownik w tym czasie nie wie, czy coś się stało. W rozdziale 10 zrobiłeś aktualizację optymistyczną w TanStack Query. React 19 ma wbudowany hook **`useOptimistic`** — prosty sposób na pokazanie wyniku akcji **natychmiast**, z automatycznym powrotem do prawdziwego stanu, gdy akcja się zakończy (sukcesem lub błędem).
+
+#T DEFINITION useOptimistic
+`const [optimisticState, addOptimistic] = useOptimistic(state, updateFn)`:
+- `state` — prawdziwy stan (np. lista komentarzy z serwera albo z cache),
+- `updateFn(currentState, optimisticValue)` — czysta funkcja zwracająca stan z naniesioną zmianą optymistyczną,
+- `addOptimistic(value)` — wywołane **wewnątrz akcji lub przejścia** dodaje zmianę optymistyczną.
+
+Dopóki akcja trwa, komponent renderuje `optimisticState` (prawdziwy stan + zmiany optymistyczne). Gdy akcja się zakończy, React **sam odrzuca** zmiany optymistyczne i wraca do `state` — który po sukcesie zawiera już prawdziwy wynik z serwera, a po błędzie — stan sprzed zmiany. Nie piszesz ręcznego wycofania.
+
+#T CODE_JSX Komentarze z natychmiastowym wyświetleniem (JSX)
+Komentarz optymistyczny ma flagę `sending` — można go wyróżnić (np. przyciemnić z dopiskiem „wysyłanie…”).
+```
+// OptimisticComments.jsx
+import { useOptimistic } from 'react';
+
+export function OptimisticComments({ comments, addComment }) {
+  const [optimisticComments, addOptimisticComment] = useOptimistic(
+    comments,
+    (current, newText) => [...current, { id: `temp-${current.length}`, text: newText, sending: true }],
+  );
+
+  async function formAction(formData) {
+    const text = String(formData.get('text') ?? '').trim();
+    if (!text) return;
+    addOptimisticComment(text);   // natychmiast na liście
+    await addComment(text);       // prawdziwy zapis; rodzic aktualizuje `comments`
+  }
+
+  return (
+    <section>
+      <ul>
+        {optimisticComments.map((c) => (
+          <li key={c.id} className={c.sending ? 'comment comment--sending' : 'comment'}>
+            {c.text} {c.sending && <small>(wysyłanie…)</small>}
+          </li>
+        ))}
+      </ul>
+      <form action={formAction}>
+        <label htmlFor="new-comment">Komentarz</label>
+        <input id="new-comment" name="text" />
+        <button type="submit">Dodaj</button>
+      </form>
+    </section>
+  );
+}
+```
+
+#T CODE_TSX Komentarze z natychmiastowym wyświetleniem (TSX)
+Typ stanu optymistycznego może rozszerzać typ prawdziwych danych (`sending?: boolean`, tymczasowe ID jako tekst).
+```
+// OptimisticComments.tsx
+import { useOptimistic } from 'react';
+
+type Comment = { id: number | string; text: string; sending?: boolean };
+
+type Props = { comments: Comment[]; addComment: (text: string) => Promise<void> };
+
+export function OptimisticComments({ comments, addComment }: Props) {
+  const [optimisticComments, addOptimisticComment] = useOptimistic(
+    comments,
+    (current: Comment[], newText: string): Comment[] => [...current, { id: `temp-${current.length}`, text: newText, sending: true }],
+  );
+
+  async function formAction(formData: FormData) {
+    const text = String(formData.get('text') ?? '').trim();
+    if (!text) return;
+    addOptimisticComment(text);
+    await addComment(text);
+  }
+
+  return (
+    <section>
+      <ul>
+        {optimisticComments.map((c) => (
+          <li key={c.id} className={c.sending ? 'comment comment--sending' : 'comment'}>
+            {c.text} {c.sending && <small>(wysyłanie…)</small>}
+          </li>
+        ))}
+      </ul>
+      <form action={formAction}>
+        <label htmlFor="new-comment">Komentarz</label>
+        <input id="new-comment" name="text" />
+        <button type="submit">Dodaj</button>
+      </form>
+    </section>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — typ wartości optymistycznej
+`useOptimistic<State, Action>` w TSX ma dwa typy: stanu i wartości przekazywanej do `addOptimistic` (tu `string` — tekst komentarza). Funkcja aktualizująca musi zwrócić `State`, więc pomyłka (np. zwrócenie samego obiektu zamiast tablicy) jest błędem kompilacji. Typ `id: number | string` dokumentuje, że komentarz optymistyczny ma tymczasowe ID — po zapisie serwer nada liczbowe. W JSX ta konwencja istnieje tylko w głowie programisty; łatwo przypadkiem wysłać tymczasowe ID do API.
+
+#T DEFINITION Gdzie wolno wywołać addOptimistic
+`addOptimistic` działa tylko **w trakcie akcji lub przejścia**: w funkcji przekazanej do `<form action>`, w akcji z `useActionState` albo w `startTransition(async () => {...})`. Wywołane poza nimi (np. w zwykłym handlerze `onClick` bez przejścia) React zgłosi ostrzeżenie, a stan optymistyczny może natychmiast zniknąć. Prawdziwy stan (`state`) musi zostać zaktualizowany **przed zakończeniem** akcji (np. przez setter rodzica albo odświeżenie cache), żeby po odrzuceniu zmian optymistycznych ekran pokazał wynik, a nie „mignął” starym stanem.
+
+#T CODE_BASIC Przełącznik obserwowania w przejściu
+Akcja wywołana przyciskiem (bez formularza) — `startTransition` z funkcją asynchroniczną.
+```
+import { useOptimistic, useState, useTransition } from 'react';
+
+declare function setWatchOnServer(ticketId: number, watching: boolean): Promise<void>;
+
+export function WatchButton({ ticketId, initialWatching }: { ticketId: number; initialWatching: boolean }) {
+  const [watching, setWatching] = useState(initialWatching);
+  const [optimisticWatching, setOptimisticWatching] = useOptimistic(watching);
+  const [, startTransition] = useTransition();
+
+  function toggle() {
+    startTransition(async () => {
+      const next = !optimisticWatching;
+      setOptimisticWatching(next);
+      try {
+        await setWatchOnServer(ticketId, next);
+        setWatching(next);           // prawdziwy stan po sukcesie
+      } catch {
+        // nic nie robimy — po zakończeniu przejścia React wraca do `watching` (stan sprzed kliknięcia)
+      }
+    });
+  }
+
+  return (
+    <button type="button" aria-pressed={optimisticWatching} onClick={toggle}>
+      {optimisticWatching ? '★ Obserwujesz' : '☆ Obserwuj'}
+    </button>
+  );
+}
+```
+
+#T CODE_PRACTICAL useOptimistic czy TanStack Query
+```
+useOptimistic (React 19)                          TanStack Query (onMutate / setQueryData)
+─────────────────────────────────────────         ─────────────────────────────────────────
+stan optymistyczny lokalny dla komponentu         zmiana w cache — widoczna we wszystkich komponentach
+automatyczne wycofanie po zakończeniu akcji       ręczne wycofanie w onError (migawka z onMutate)
+wymaga akcji / przejścia                          działa z dowolnym wywołaniem mutate
+najlepsze z akcjami formularzy i komponentami     najlepsze, gdy dane serwera są w cache zapytań
+serwerowymi w frameworkach                        (SPA z TanStack Query, jak DevDesk)
+```
+
+#T STEP_BY_STEP Budujemy razem: natychmiastowe reakcje w DevDesk
+1. Przepisz formularz komentarzy (rozdział 05) na `OptimisticComments`; `addComment` w rodzicu wysyła żądanie i aktualizuje listę (stan lub cache) przed zakończeniem.
+2. Ustaw opóźnienie MSW 1,5 s dla dodawania komentarza — komentarz pojawia się natychmiast, przyciemniony z „(wysyłanie…)”, a po zapisie — normalnie.
+3. Ustaw błąd 500 dla co drugiego komentarza — komentarz optymistyczny znika po błędzie; dodaj komunikat błędu przez stan akcji lub toast.
+4. Zbuduj `WatchButton` z przejściem i sprawdź zachowanie przy błędzie.
+5. Porównaj z optymistyczną zmianą priorytetu w TanStack Query z rozdziału 10 i zapisz w komentarzu, kiedy wybierasz które rozwiązanie w DevDesk.
+6. Zadbaj o dostępność: komunikat o błędzie zapisu w `role="alert"`, a stan „wysyłanie” odczytywany przez czytnik (np. `aria-busy` na elemencie listy).
+
+#T PITFALL Prawdziwy stan nie zaktualizowany przed końcem akcji
+Jeśli akcja kończy się, zanim prawdziwy stan zawiera nowy komentarz (np. odświeżenie cache uruchamiasz bez `await`), React odrzuca komentarz optymistyczny, a prawdziwy jeszcze nie przyszedł — komentarz na chwilę **znika i pojawia się ponownie**. Czekaj w akcji na zakończenie aktualizacji (np. `await queryClient.invalidateQueries(...)`) albo ustaw stan z odpowiedzi serwera przed zakończeniem funkcji.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+`useOptimistic(state, updateFn)` zwraca stan z naniesionymi zmianami optymistycznymi i funkcję je dodającą; działa w trakcie akcji lub przejścia, a po ich zakończeniu React automatycznie wraca do prawdziwego stanu — bez ręcznego wycofania. Prawdziwy stan aktualizujesz przed końcem akcji, żeby nie było mignięcia. Wybierz `useOptimistic` dla akcji formularzy i stanu lokalnego, a optymistyczne mutacje TanStack Query — dla danych w cache współdzielonych przez wiele komponentów. W TSX typy stanu i wartości optymistycznej są jawne.
+
+Kryterium akceptacji: komentarz pojawia się natychmiast po wysłaniu (z oznaczeniem „wysyłanie…”), po błędzie serwera znika z komunikatem błędu, przycisk obserwowania reaguje natychmiast i wraca przy błędzie, a w kodzie jest uzasadnienie wyboru między `useOptimistic` a TanStack Query.

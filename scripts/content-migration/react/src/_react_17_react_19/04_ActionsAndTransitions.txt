@@ -1,0 +1,152 @@
+#T INTRO Rozgrzewka i problem: stan oczekiwania pisany ręcznie wszędzie
+Rozgrzewka: Kiedy React odrzuca zmiany optymistyczne? Gdzie wolno wywołać funkcję z `useOptimistic`? Czym różni się `useOptimistic` od optymistycznej mutacji w TanStack Query?
+
+Problem: w DevDesk każdy przycisk wykonujący operację asynchroniczną ma ten sam kod: `const [pending, setPending] = useState(false)`, `try/finally`, blokada przycisku, obsługa błędu. React 19 wprowadził pojęcie **akcji** (Actions): funkcja asynchroniczna uruchomiona w przejściu. React sam śledzi stan oczekiwania, obsługuje błędy przez granice, współpracuje z `useOptimistic` i formularzami. W tej lekcji zbierasz wszystkie elementy: `startTransition` z funkcją asynchroniczną, `useActionState` poza formularzami i `useFormStatus`.
+
+#T DEFINITION Akcje: asynchroniczne przejścia
+Od React 19 `startTransition` (z `useTransition`) przyjmuje **funkcję asynchroniczną**. Wszystko, co dzieje się w niej (także po `await`), jest częścią przejścia:
+- `isPending` jest `true` od startu do zakończenia całej funkcji — bez ręcznego stanu,
+- aktualizacje stanu wewnątrz są niepilne (nie blokują interakcji),
+- `useOptimistic` działa w trakcie,
+- wiele kliknięć tworzy kolejne akcje; React śledzi je razem w `isPending`.
+
+Uwaga: aktualizacje stanu **po `await`** wewnątrz akcji trzeba opakować w kolejne `startTransition`, żeby zostały oznaczone jako część przejścia (ograniczenie wynikające z utraty kontekstu po `await` — opisane w dokumentacji `useTransition`).
+
+#T CODE_JSX Przycisk z akcją asynchroniczną (JSX)
+```
+// CloseTicketAction.jsx
+import { startTransition as markTransition, useState, useTransition } from 'react';
+
+export function CloseTicketAction({ ticketId, closeOnServer, onClosed }) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState(null);
+
+  function handleClick() {
+    startTransition(async () => {
+      setError(null);
+      try {
+        const updated = await closeOnServer(ticketId);
+        markTransition(() => onClosed(updated)); // aktualizacja po await — w kolejnym przejściu
+      } catch (e) {
+        markTransition(() => setError(e.message));
+      }
+    });
+  }
+
+  return (
+    <>
+      <button type="button" disabled={isPending} aria-busy={isPending} onClick={handleClick}>
+        {isPending ? 'Zamykanie…' : 'Zamknij ticket'}
+      </button>
+      {error && <span role="alert">{error}</span>}
+    </>
+  );
+}
+```
+
+#T CODE_TSX Przycisk z akcją asynchroniczną (TSX)
+`startTransition` przyjmuje w TSX `() => void | Promise<void>`. Typ błędu w `catch` to `unknown`.
+```
+// CloseTicketAction.tsx
+import { startTransition as markTransition, useState, useTransition } from 'react';
+import type { Ticket } from '../types';
+
+type Props = { ticketId: number; closeOnServer: (id: number) => Promise<Ticket>; onClosed: (t: Ticket) => void };
+
+export function CloseTicketAction({ ticketId, closeOnServer, onClosed }: Props) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function handleClick() {
+    startTransition(async () => {
+      setError(null);
+      try {
+        const updated = await closeOnServer(ticketId);
+        markTransition(() => onClosed(updated));
+      } catch (e) {
+        markTransition(() => setError(e instanceof Error ? e.message : 'Nieznany błąd'));
+      }
+    });
+  }
+
+  return (
+    <>
+      <button type="button" disabled={isPending} aria-busy={isPending} onClick={handleClick}>
+        {isPending ? 'Zamykanie…' : 'Zamknij ticket'}
+      </button>
+      {error && <span role="alert">{error}</span>}
+    </>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — sygnatura akcji
+Typ `(id: number) => Promise<Ticket>` dla `closeOnServer` w TSX dokumentuje, że akcja zwraca zaktualizowany rekord, a `onClosed: (t: Ticket) => void` — że rodzic dostaje pełny ticket. Kod przejścia jest identyczny w obu wersjach. Różnica w obsłudze błędu: `e.message` w JSX zakłada, że rzucono `Error`; w TSX `e: unknown` wymusza sprawdzenie. Konwencja nazw z dokumentacji Reacta: funkcje uruchamiane jako akcje nazywa się z sufiksem `Action` (`closeAction`, `submitAction`), żeby było widać, że wykonują się w przejściu.
+
+#T DEFINITION useActionState poza formularzem
+`useActionState(akcja, stanPoczątkowy)` (rozdział 05) zwraca `[stan, dispatchAction, isPending]`. `dispatchAction` możesz wywołać nie tylko przez `<form action>`, ale też ręcznie — **w przejściu** (`startTransition(() => dispatchAction(payload))`). Wywołania są **kolejkowane**: każde dostaje stan z poprzedniego, więc kilka szybkich kliknięć nie nadpisuje sobie wyników. To dobry wzorzec dla operacji, które zwracają nowy stan (licznik, lista, wynik walidacji z serwera).
+
+#T CODE_BASIC Kolejkowane akcje: dodawanie do koszyka
+```
+import { startTransition, useActionState } from 'react';
+
+declare function addToCartOnServer(productId: number): Promise<{ count: number }>;
+
+export function AddToCart({ productId }: { productId: number }) {
+  const [state, dispatchAction, isPending] = useActionState(
+    async (prev: { count: number; error: string | null }, id: number) => {
+      try {
+        const result = await addToCartOnServer(id);
+        return { count: result.count, error: null };
+      } catch {
+        return { ...prev, error: 'Nie udało się dodać produktu.' };
+      }
+    },
+    { count: 0, error: null },
+  );
+
+  return (
+    <div>
+      <button type="button" onClick={() => startTransition(() => dispatchAction(productId))}>
+        Dodaj do koszyka {isPending && '…'}
+      </button>
+      <span>W koszyku: {state.count}</span>
+      {state.error && <p role="alert">{state.error}</p>}
+    </div>
+  );
+}
+```
+
+#T CODE_PRACTICAL Wspólny przycisk wysyłania z useFormStatus
+Jeden komponent przycisku dla wszystkich formularzy z akcjami — wie, który formularz go zawiera, i pokazuje stan wysyłania bez props.
+```
+import { useFormStatus } from 'react-dom';
+
+export function SubmitButton({ children, pendingText }: { children: string; pendingText: string }) {
+  const { pending, data } = useFormStatus();
+  const title = data?.get('title');
+  return (
+    <button type="submit" disabled={pending} aria-busy={pending}>
+      {pending ? `${pendingText}${typeof title === 'string' && title ? ` „${title}”` : ''}` : children}
+    </button>
+  );
+}
+
+// <form action={createTicketAction}> … <SubmitButton pendingText="Tworzenie">Utwórz</SubmitButton> </form>
+```
+
+#T STEP_BY_STEP Budujemy razem: akcje w DevDesk
+1. Zastąp ręczne `pending` w przycisku „Zamknij ticket” przez `useTransition` z akcją asynchroniczną (`CloseTicketAction`).
+2. Kliknij szybko trzy razy przy opóźnieniu MSW 1 s — przycisk jest zablokowany przez całą akcję, a interfejs reaguje płynnie.
+3. Dodaj do akcji `useOptimistic` dla plakietki statusu — zmienia się na „Zamknięty” natychmiast.
+4. Zbuduj kolejkowaną akcję (`useActionState` poza formularzem) dla szybkiego dodawania tagów: każde kliknięcie tagu dostaje stan po poprzednim.
+5. Utwórz `SubmitButton` z `useFormStatus` i użyj go we wszystkich formularzach z akcjami.
+6. Przejrzyj DevDesk: wszędzie, gdzie był ręczny stan `pending` dla jednorazowej operacji, oceń, czy akcja upraszcza kod — zostaw TanStack Query tam, gdzie operacja zmienia cache danych serwera.
+
+#T PITFALL Aktualizacja stanu po await poza przejściem
+`startTransition(async () => { const t = await save(); setTicket(t); })` — w obecnych wersjach Reacta `setTicket` po `await` nie jest automatycznie częścią przejścia (traci kontekst asynchroniczny), więc może zostać wyrenderowane jako pilna aktualizacja albo „przeskoczyć” stan `isPending`. Zasada z dokumentacji: aktualizacje po `await` opakuj w kolejne `startTransition(() => ...)`.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Akcja w React 19 to funkcja asynchroniczna uruchomiona w przejściu: `startTransition(async () => {...})` daje `isPending` przez cały czas trwania, niepilne aktualizacje i współpracę z `useOptimistic`; aktualizacje po `await` opakowujesz w kolejne `startTransition`. `useActionState` działa też poza formularzem (wywołania w przejściu, kolejkowane), a `useFormStatus` daje stan wysyłania przyciskowi wewnątrz formularza. Akcje upraszczają operacje jednorazowe; dane serwera w cache nadal obsługują mutacje biblioteki danych. W TSX typujesz sygnatury akcji i błędy jako `unknown`.
+
+Kryterium akceptacji: przycisk „Zamknij ticket” korzysta z akcji asynchronicznej z optymistyczną plakietką, szybkie dodawanie tagów działa jako kolejkowana akcja `useActionState`, a wszystkie formularze z akcjami używają wspólnego `SubmitButton` z `useFormStatus`.
