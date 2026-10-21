@@ -1,0 +1,142 @@
+#T INTRO Rozgrzewka i problem: skąd useState wie, który stan zwrócić?
+Rozgrzewka: Co oznacza automatyczny batching? Czym różnią się pasy pilne od przejść? Dlaczego wartość pola tekstowego nie powinna być w `startTransition`?
+
+Problem: komponent `TicketForm` wywołuje `useState` cztery razy — dla tytułu, opisu, priorytetu i osoby — i za każdym razem dostaje właściwą wartość, choć nie podaje żadnej nazwy ani klucza. Jak React rozróżnia te cztery stany? Odpowiedź wyjaśnia, dlaczego **zasady hooków** (tylko na najwyższym poziomie, nigdy w warunkach i pętlach) nie są kwestią stylu, tylko konsekwencją mechanizmu.
+
+#T DEFINITION Hooki to lista w fiberze, rozpoznawana po kolejności
+Fiber komponentu funkcyjnego przechowuje w `memoizedState` **listę powiązaną hooków** — po jednym węźle na każde wywołanie hooka, w kolejności wywołań. Podczas renderu React ma wskaźnik „bieżący hook”:
+- pierwsze wywołanie `useState` → pierwszy węzeł listy,
+- drugie wywołanie → drugi węzeł… i tak dalej.
+
+Przy **pierwszym** renderze (montowanie) React tworzy węzły z wartościami początkowymi. Przy **kolejnych** odczytuje istniejące węzły w tej samej kolejności. Nazwy zmiennych (`title`, `priority`) nie mają znaczenia — liczy się wyłącznie **pozycja wywołania**. Jeśli kolejność się zmieni (hook w `if`), drugi `useState` dostanie węzeł, który należał do trzeciego.
+
+#T VISUAL_EXAMPLE Lista hooków komponentu TicketForm
+Fiber(TicketForm).memoizedState:
+
+  [0] useState  → 'Błąd eksportu'      (title)
+   │ next
+  [1] useState  → ''                    (description)
+   │ next
+  [2] useState  → 'HIGH'                (priority)
+   │ next
+  [3] useEffect → { deps: [title], destroy: fn }
+   │ next
+  [4] useRef    → { current: <input> }
+
+Render nr 2 z hookiem w warunku, który tym razem się nie wykonał:
+  wywołanie 1 → [0] ✔   wywołanie 2 (miało być priority) → [1] ✘ dostaje description   … rozjazd
+
+#T CODE_JSX Symulacja: hooki po kolejności (JSX)
+Uproszczony model, który pokazuje mechanizm: tablica stanów i indeks resetowany przed każdym „renderem”. Wywołanie hooka warunkowo psuje dopasowanie.
+```
+// hooksModel.js
+const slots = [];
+let index = 0;
+
+function useSimState(initial) {
+  const i = index++;
+  if (slots.length <= i) slots.push(initial); // montowanie
+  return [slots[i], (v) => { slots[i] = v; }];
+}
+
+function TicketForm(showDescription) {
+  const [title] = useSimState('Błąd eksportu');
+  const description = showDescription ? useSimState('')[0] : null; // ŹLE: hook w warunku
+  const [priority] = useSimState('HIGH');
+  return { title, description, priority };
+}
+
+export function demo() {
+  index = 0; console.log(TicketForm(true));  // { title: 'Błąd eksportu', description: '', priority: 'HIGH' }
+  index = 0; console.log(TicketForm(false)); // { title: 'Błąd eksportu', description: null, priority: '' } ← priority z cudzego slotu!
+}
+```
+
+#T CODE_TSX Symulacja: hooki po kolejności (TSX)
+W wersji TS slot ma typ `unknown`, bo mechanizm nie wie, czyj to stan — i dlatego rozjazd kończy się wartością złego typu (tekst opisu jako priorytet). Prawdziwy React rzuca w takiej sytuacji błąd „Rendered fewer hooks than expected”.
+```
+// hooksModel.ts
+const slots: unknown[] = [];
+let index = 0;
+
+function useSimState<T>(initial: T): [T, (v: T) => void] {
+  const i = index++;
+  if (slots.length <= i) slots.push(initial);
+  return [slots[i] as T, (v: T) => { slots[i] = v; }];
+}
+
+function TicketForm(showDescription: boolean) {
+  const [title] = useSimState('Błąd eksportu');
+  const description = showDescription ? useSimState('')[0] : null;
+  const [priority] = useSimState<'LOW' | 'HIGH'>('HIGH');
+  return { title, description, priority };
+}
+
+export function demo() {
+  index = 0; console.log(TicketForm(true));
+  index = 0; console.log(TicketForm(false)); // priority: '' — typ mówi 'LOW' | 'HIGH', a w środku jest pusty tekst
+}
+```
+
+#T NOTE JSX ↔ TSX — typy nie uratują złej kolejności
+Symulacja w TSX pokazuje ważną rzecz: typ `'LOW' | 'HIGH'` obiecuje jedną z dwóch wartości, a w środku ląduje pusty tekst — bo mechanizm hooków działa w czasie działania, po pozycji, poza kontrolą typów. W prawdziwym projekcie przed takim błędem chroni **ESLint** z regułą `react-hooks/rules-of-hooks` (działa w JSX i TSX) oraz React, który wykrywa zmianę liczby hooków między renderami i rzuca czytelny błąd. Kompilator TypeScript tego nie wykryje.
+
+#T API_REFERENCE Jak działają poszczególne hooki (uproszczenie)
+- **useState / useReducer** — węzeł przechowuje wartość i **kolejkę aktualizacji**. Setter dopisuje aktualizację do kolejki i planuje render; przy renderze React przetwarza kolejkę po kolei (stąd forma funkcyjna `prev => …` widzi wynik poprzednich pozycji kolejki).
+- **useEffect / useLayoutEffect** — węzeł przechowuje funkcję, tablicę zależności i funkcję sprzątającą. Przy renderze React porównuje nowe zależności z poprzednimi (`Object.is` element po elemencie); jeśli się różnią — oznacza efekt do uruchomienia w commicie.
+- **useRef** — węzeł przechowuje obiekt `{ current }` utworzony raz; zwracany jest zawsze ten sam obiekt.
+- **useMemo / useCallback** — węzeł przechowuje wynik (lub funkcję) i zależności; przy niezmienionych zależnościach zwraca zapamiętaną wartość.
+- **useContext** — nie zajmuje węzła w ten sam sposób; odczytuje wartość z najbliższego providera i rejestruje zależność fibera od kontekstu.
+- **useId** — węzeł przechowuje identyfikator wyliczony z pozycji w drzewie (stabilny także przy renderowaniu na serwerze).
+
+#T CODE_BASIC Zależności efektu: porównanie Object.is
+Model porównania zależności — dokładnie dlatego obiekt tworzony w renderze uruchamia efekt za każdym razem (rozdział 07).
+```
+export function depsChanged(prev: readonly unknown[] | undefined, next: readonly unknown[] | undefined): boolean {
+  if (prev === undefined || next === undefined) return true; // brak tablicy → po każdym renderze
+  if (prev.length !== next.length) return true;
+  return next.some((value, i) => !Object.is(value, prev[i]));
+}
+
+console.log(depsChanged([1, 'OPEN'], [1, 'OPEN']));         // false — efekt pominięty
+console.log(depsChanged([{ status: 'OPEN' }], [{ status: 'OPEN' }])); // true — nowy obiekt, nowa referencja
+console.log(depsChanged([NaN], [NaN]));                     // false — Object.is(NaN, NaN) === true
+```
+
+#T CODE_PRACTICAL Własne hooki to tylko kolejne węzły tej samej listy
+Własny hook nie ma własnej listy — jego wywołania hooków trafiają do listy komponentu, który go wywołał, we właściwej kolejności. Dlatego własny hook też musi być wywoływany bezwarunkowo, a dwa komponenty używające tego samego hooka mają niezależne stany (rozdział 06).
+```
+import { useEffect, useState } from 'react';
+
+function useOnline() {
+  const [online, setOnline] = useState(true);                  // węzeł N
+  useEffect(() => {                                            // węzeł N+1
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
+  return online;
+}
+
+export function StatusBar() {
+  const [collapsed, setCollapsed] = useState(false);           // węzeł 0
+  const online = useOnline();                                  // węzły 1 i 2 (z wnętrza hooka)
+  return <footer onClick={() => setCollapsed((c) => !c)}>{collapsed ? '…' : online ? 'Online' : 'Offline'}</footer>;
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: zajrzyj do listy hooków
+1. Uruchom `demo()` z symulacji i wyjaśnij na kartce, skąd wziął się zły priorytet.
+2. W prawdziwym komponencie DevDesk przenieś na chwilę jeden `useState` do `if` i zobacz: ostrzeżenie ESLint w edytorze oraz błąd Reacta w konsoli po zmianie warunku. Przywróć.
+3. W React DevTools zaznacz komponent formularza i obejrzyj sekcję „hooks” — lista w kolejności wywołań, z numerami; hooki z własnych hooków są zagnieżdżone pod ich nazwą.
+4. Przetestuj `depsChanged` dla tablic z liczbami, tekstami, obiektami i funkcjami — zapisz, które przypadki uruchamiają efekt.
+5. Zmień nazwę zmiennej z `useState` (np. `priority` → `prio`) — nic się nie zmienia w działaniu, co potwierdza, że liczy się kolejność, a nie nazwa.
+
+#T PITFALL Wczesny return przed hookiem
+`if (!ticket) return <Empty />; const [open, setOpen] = useState(false);` — przy pierwszym renderze (brak ticketu) hook nie jest wywołany, przy drugim (jest ticket) — jest. Lista hooków zmienia długość i React rzuca błąd. Wszystkie hooki wywołuj przed pierwszym warunkowym `return`, a warunek przenieś niżej (albo do osobnego komponentu-dziecka, który ma własną listę hooków).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Hooki komponentu to lista węzłów w jego fiberze, rozpoznawana wyłącznie po kolejności wywołań — nazwy zmiennych nie mają znaczenia. Stąd zasady hooków: wywołania tylko na najwyższym poziomie, bez warunków, pętli i wczesnych `return` przed nimi. `useState` przechowuje wartość i kolejkę aktualizacji, efekty — zależności porównywane `Object.is`, `useRef` — stały obiekt, `useMemo` — wynik z zależnościami. Własne hooki dopisują węzły do listy komponentu. Przed złą kolejnością chronią ESLint i React, nie TypeScript.
+
+Kryterium akceptacji: potrafisz wyjaśnić na symulacji, dlaczego hook w warunku zwraca cudzy stan, odtworzyć i opisać błąd Reacta o zmianie liczby hooków oraz przewidzieć wynik `depsChanged` dla wartości prostych, obiektów i `NaN`.

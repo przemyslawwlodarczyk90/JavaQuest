@@ -1,0 +1,206 @@
+#T INTRO Rozgrzewka i problem: zbuduj własnego Reacta w 80 liniach
+Rozgrzewka: Jak React rozpoznaje, który stan zwrócić z `useState`? Dlaczego hook nie może być w warunku? Jak porównywane są zależności efektu?
+
+Problem: wiesz już, czym są elementy, rekoncyliacja, fibery, fazy i lista hooków. Najlepszy sposób, żeby to utrwalić, to **zbudować uproszczonego Reacta samodzielnie**: funkcję tworzącą elementy, funkcję renderującą je do DOM i działający `useState` z ponownym renderem. Twój „mini-React” będzie na tyle dobry, żeby uruchomić licznik ticketów i listę — i na tyle prosty, żeby było widać, czego mu brakuje do prawdziwego.
+
+#T DEFINITION Co budujemy
+1. `h(type, props, ...children)` — odpowiednik `createElement`/`jsx`: zwraca obiekt `{ type, props }` (element).
+2. `render(element, kontener)` — zamienia drzewo elementów na węzły DOM: dla tekstu tworzy węzeł tekstowy, dla tagu — element z atrybutami i zdarzeniami, dla komponentu (funkcji) — wywołuje ją i renderuje wynik.
+3. `useState(initial)` — stan w tablicy indeksowanej kolejnością wywołań (jak w poprzedniej lekcji); setter zmienia wartość i **renderuje całość od nowa**.
+
+Celowe uproszczenia: brak rekoncyliacji (cały DOM jest podmieniany), jeden globalny korzeń, brak efektów, brak kluczy. Na końcu lekcji dopiszesz pierwsze ulepszenia.
+
+#T CODE_JSX Mini-React (JSX)
+```
+// miniReact.js
+export function h(type, props, ...children) {
+  return { type, props: { ...(props ?? {}), children: children.flat() } };
+}
+
+let hooks = [];
+let hookIndex = 0;
+let rootContainer = null;
+let rootElement = null;
+
+export function useState(initial) {
+  const i = hookIndex++;
+  if (hooks.length <= i) hooks[i] = initial;
+  const setState = (next) => {
+    hooks[i] = typeof next === 'function' ? next(hooks[i]) : next;
+    rerender();
+  };
+  return [hooks[i], setState];
+}
+
+function toDom(node) {
+  if (node === null || node === false || node === undefined) return document.createTextNode('');
+  if (typeof node === 'string' || typeof node === 'number') return document.createTextNode(String(node));
+  if (typeof node.type === 'function') return toDom(node.type(node.props)); // komponent: wywołaj i renderuj wynik
+
+  const el = document.createElement(node.type);
+  for (const [key, value] of Object.entries(node.props)) {
+    if (key === 'children') continue;
+    if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2).toLowerCase(), value);
+    else if (key === 'className') el.className = value;
+    else el.setAttribute(key, String(value));
+  }
+  node.props.children.forEach((child) => el.appendChild(toDom(child)));
+  return el;
+}
+
+function rerender() {
+  hookIndex = 0; // przed każdym renderem lista hooków czytana od początku
+  rootContainer.replaceChildren(toDom(rootElement));
+}
+
+export function render(element, container) {
+  rootContainer = container;
+  rootElement = element;
+  rerender();
+}
+```
+
+#T CODE_TSX Mini-React (TSX)
+Typy pokazują strukturę wprost: węzeł to element, tekst, liczba albo „nic”; element ma typ (tag lub komponent) i props z dziećmi.
+```
+// miniReact.ts
+export type MiniNode = MiniElement | string | number | null | false | undefined;
+export type Props = Record<string, unknown> & { children: MiniNode[] };
+export type Component = (props: Props) => MiniNode;
+export type MiniElement = { type: string | Component; props: Props };
+
+export function h(type: string | Component, props: Record<string, unknown> | null, ...children: (MiniNode | MiniNode[])[]): MiniElement {
+  return { type, props: { ...(props ?? {}), children: children.flat() } };
+}
+
+let hooks: unknown[] = [];
+let hookIndex = 0;
+let rootContainer: HTMLElement | null = null;
+let rootElement: MiniNode = null;
+
+export function useState<T>(initial: T): [T, (next: T | ((prev: T) => T)) => void] {
+  const i = hookIndex++;
+  if (hooks.length <= i) hooks[i] = initial;
+  const setState = (next: T | ((prev: T) => T)) => {
+    const prev = hooks[i] as T;
+    hooks[i] = typeof next === 'function' ? (next as (p: T) => T)(prev) : next;
+    rerender();
+  };
+  return [hooks[i] as T, setState];
+}
+
+function toDom(node: MiniNode): Node {
+  if (node === null || node === false || node === undefined) return document.createTextNode('');
+  if (typeof node === 'string' || typeof node === 'number') return document.createTextNode(String(node));
+  if (typeof node.type === 'function') return toDom(node.type(node.props));
+
+  const el = document.createElement(node.type);
+  for (const [key, value] of Object.entries(node.props)) {
+    if (key === 'children') continue;
+    if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2).toLowerCase(), value as EventListener);
+    else if (key === 'className') el.className = String(value);
+    else el.setAttribute(key, String(value));
+  }
+  node.props.children.forEach((child) => el.appendChild(toDom(child)));
+  return el;
+}
+
+function rerender() {
+  if (!rootContainer) return;
+  hookIndex = 0;
+  rootContainer.replaceChildren(toDom(rootElement));
+}
+
+export function render(element: MiniNode, container: HTMLElement) {
+  rootContainer = container;
+  rootElement = element;
+  rerender();
+}
+```
+
+#T NOTE JSX ↔ TSX — typy jako dokumentacja architektury
+Wersja TS mini-Reacta jest jednocześnie jego dokumentacją: `MiniNode` mówi, co da się wyrenderować (to uproszczony odpowiednik `ReactNode`), `MiniElement` — czym jest element, `Component` — że komponent to funkcja z props w element. Rzutowania (`value as EventListener`, `hooks[i] as T`) pokazują dokładnie te miejsca, gdzie mechanizm opiera się na konwencji, a nie na typach: lista hooków przechowuje `unknown`, a o poprawności decyduje kolejność wywołań — dokładnie jak w prawdziwym Reakcie. Możesz też skonfigurować JSX dla własnej funkcji (`"jsxFactory": "h"` w tsconfig albo komentarz `/** @jsx h */`) i pisać `<div>` zamiast `h('div')`.
+
+#T CODE_BASIC Aplikacja na mini-Reakcie
+Komponenty piszesz jak w React — tylko zamiast JSX wywołujesz `h`.
+```
+import { h, render, useState } from './miniReact';
+
+type Ticket = { id: number; title: string; status: 'OPEN' | 'CLOSED' };
+
+function TicketItem(props: Record<string, unknown>) {
+  const ticket = props.ticket as Ticket;
+  const onClose = props.onClose as (id: number) => void;
+  return h('li', null, `#${ticket.id} ${ticket.title} `,
+    ticket.status === 'OPEN' ? h('button', { onClick: () => onClose(ticket.id) }, 'Zamknij') : h('em', null, 'zamknięty'));
+}
+
+function App() {
+  const [tickets, setTickets] = useState<Ticket[]>([
+    { id: 41, title: 'Błąd logowania', status: 'OPEN' },
+    { id: 42, title: 'API timeout', status: 'OPEN' },
+  ]);
+  const open = tickets.filter((t) => t.status === 'OPEN').length;
+  const close = (id: number) => setTickets((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'CLOSED' } : t)));
+
+  return h('section', { className: 'mini-app' },
+    h('h2', null, `Otwarte: ${open}`),
+    h('ul', null, tickets.map((t) => h(TicketItem, { ticket: t, onClose: close }))),
+  );
+}
+
+const container = document.getElementById('mini-root');
+if (container) render(h(App, null), container);
+```
+
+#T DEFINITION Czego brakuje do prawdziwego Reacta
+Porównaj swój mini-React z prawdziwym:
+- **brak rekoncyliacji** — `replaceChildren` buduje cały DOM od nowa: znika fokus, zaznaczenie tekstu, pozycja przewinięcia, a wpisany w pole tekst przepada przy każdym renderze,
+- **brak fiberów** — stan jest globalną tablicą dla całej aplikacji, a nie per komponent na pozycji drzewa (dwa komponenty w innej kolejności dostałyby cudze stany),
+- **brak kluczy** — nie da się przenieść elementu listy z zachowaniem stanu,
+- **brak batchingu** — każdy setter od razu renderuje całość (trzy settery = trzy rendery),
+- **brak efektów i faz** — nie ma commit/layout/efektów ani sprzątania,
+- **renderowanie synchroniczne** — nie da się przerwać pracy ani nadać priorytetu,
+- **zdarzenia** — `addEventListener` na każdym elemencie zamiast jednego delegowanego nasłuchiwania na korzeniu (React używa delegacji zdarzeń).
+
+#T CODE_PRACTICAL Pierwsze ulepszenie: batching przez mikrozadanie
+Settery tylko oznaczają, że potrzebny jest render, a sam render odbywa się raz, po zakończeniu bieżącego kodu — tak jak automatyczny batching w React 18.
+```
+let scheduled = false;
+let renders = 0;
+
+function doRender() {
+  renders += 1;
+  console.log('render nr', renders);
+}
+
+export function scheduleRender() {
+  if (scheduled) return;
+  scheduled = true;
+  queueMicrotask(() => {
+    scheduled = false;
+    doRender(); // w mini-Reakcie: hookIndex = 0; rootContainer.replaceChildren(...)
+  });
+}
+
+// trzy „settery” w jednym handlerze → jeden render
+scheduleRender();
+scheduleRender();
+scheduleRender();
+```
+
+#T STEP_BY_STEP Budujemy razem: mini-React i jego ograniczenia
+1. Utwórz w osobnym katalogu (poza DevDesk) `miniReact.js` (`.ts`) i stronę z `<div id="mini-root">`; uruchom ją przez Vite.
+2. Zbuduj aplikację z listą ticketów i przyciskiem „Zamknij” — licznik otwartych zmienia się po kliknięciu.
+3. Dodaj pole tekstowe (np. `h('input', { onInput: ... })` aktualizujące stan) i zauważ, że po każdym znaku pole traci fokus — to skutek braku rekoncyliacji.
+4. Zastąp natychmiastowy `rerender` w setterze przez `scheduleRender` z mikrozadaniem i sprawdź w konsoli, że trzy settery w jednym handlerze dają jeden render.
+5. (Zaawansowane) Zamiast `replaceChildren` napisz prostą rekoncyliację: porównuj nowy element z poprzednim i aktualizuj istniejący węzeł, gdy typ się nie zmienił — pole przestanie tracić fokus.
+6. Zapisz listę różnic między mini-Reactem a prawdziwym — i przy każdej wskaż lekcję tego rozdziału, która ją wyjaśnia.
+
+#T PITFALL Wnioski z mini-Reacta przenoszone na prawdziwy
+Mini-React jest narzędziem do nauki, a nie wzorem kodu. Prawdziwy React nie przebudowuje całego DOM, ma stan per fiber, deleguje zdarzenia i renderuje współbieżnie. Nie wyciągaj z eksperymentu wniosków typu „każdy setState przebudowuje całą stronę” — to było celowe uproszczenie, które pokazuje, **dlaczego** React ma rekoncyliację, klucze i fibery.
+
+#T SUMMARY Podsumowanie rozdziału 15
+W tym rozdziale zajrzałeś do środka Reacta: elementy to zwykłe obiekty `{ type, props, key }`, „wirtualny DOM” to porównywane drzewo elementów, rekoncyliacja opiera się na typach i kluczach, Fiber dzieli render na przerywalne jednostki pracy na drzewie work-in-progress, commit jest synchroniczny, batching i priorytety decydują, co i kiedy renderować, a hooki to lista w fiberze rozpoznawana po kolejności. Zbudowałeś mini-Reacta i wiesz, czego mu brakuje. W TSX: `ReactElement` a `ReactNode`, typy refów odzwierciedlające fazy, typy jako opis architektury.
+
+Kryterium akceptacji: Twój mini-React renderuje listę ticketów ze stanem i zamykaniem, grupuje rendery przez mikrozadanie, a Ty potrafisz wskazać co najmniej pięć różnic względem prawdziwego Reacta i wyjaśnić każdą wiedzą z rozdziału.
