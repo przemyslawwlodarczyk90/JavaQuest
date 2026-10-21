@@ -1,0 +1,171 @@
+#T INTRO Rozgrzewka i problem: frontend czeka na backend
+Rozgrzewka: Jakie kody statusu oznaczają błąd po stronie klienta, a jakie serwera? Czy `fetch` rzuca wyjątek dla odpowiedzi 500? Do czego służy `URLSearchParams`?
+
+Problem: backend DevDesk jeszcze nie istnieje (zbudujesz go w rozdziale 11), a Ty chcesz pisać kod pobierania danych, stany ładowania, obsługę błędów i paginację serwerową. Możesz wpisać dane na sztywno w komponentach — ale wtedy kod nie wyśle ani jednego żądania i całą pracę trzeba będzie przepisać. **MSW (Mock Service Worker)** przechwytuje prawdziwe żądania `fetch` na poziomie sieci i odpowiada zgodnie z kontraktem. Komponenty nie wiedzą, że rozmawiają z udawanym serwerem.
+
+#T DEFINITION Jak działa MSW
+MSW rejestruje w przeglądarce **service worker** — skrypt, który przechwytuje żądania sieciowe strony. Definiujesz **handlery**: „dla `GET /api/tickets` zwróć taki JSON”. Gdy aplikacja wywoła `fetch('/api/tickets')`, żądanie jest widoczne w zakładce Network, ale odpowiedź generuje Twój handler. Te same handlery działają w testach (w Node, przez `setupServer`), więc jeden kontrakt mocków służy i do pracy, i do testów (rozdział 14).
+
+Instalacja: `npm install -D msw`, a następnie `npx msw init public/ --save` (kopiuje plik service workera do katalogu `public`).
+
+#T CODE_JSX Handlery DevDesk (JSX)
+Handlery trzymają dane w pamięci modułu — możesz tworzyć, zmieniać i usuwać tickety, a zmiany przetrwają do odświeżenia strony.
+```
+// mocks/handlers.js
+import { http, HttpResponse, delay } from 'msw';
+import { tickets as seed } from '../data/tickets';
+
+let db = [...seed];
+
+export const handlers = [
+  http.get('/api/tickets', async ({ request }) => {
+    await delay(400);
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status');
+    const q = (url.searchParams.get('q') ?? '').toLowerCase();
+    const page = Number(url.searchParams.get('page') ?? 1);
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 10);
+
+    const filtered = db.filter((t) => (!status || t.status === status) && t.title.toLowerCase().includes(q));
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+    return HttpResponse.json({ items, total: filtered.length, page, pageSize });
+  }),
+
+  http.get('/api/tickets/:id', async ({ params }) => {
+    await delay(300);
+    const ticket = db.find((t) => t.id === Number(params.id));
+    return ticket ? HttpResponse.json(ticket) : HttpResponse.json({ message: 'Nie znaleziono ticketu' }, { status: 404 });
+  }),
+
+  http.post('/api/tickets', async ({ request }) => {
+    await delay(500);
+    const body = await request.json();
+    if (!body.title || body.title.trim().length < 5) {
+      return HttpResponse.json({ message: 'Błędne dane', fieldErrors: { title: ['Co najmniej 5 znaków.'] } }, { status: 400 });
+    }
+    const ticket = { ...body, id: Math.max(0, ...db.map((t) => t.id)) + 1, status: 'OPEN', createdAt: new Date().toISOString(), tags: [] };
+    db = [ticket, ...db];
+    return HttpResponse.json(ticket, { status: 201 });
+  }),
+
+  http.delete('/api/tickets/:id', async ({ params }) => {
+    await delay(300);
+    db = db.filter((t) => t.id !== Number(params.id));
+    return new HttpResponse(null, { status: 204 });
+  }),
+];
+```
+
+#T CODE_TSX Handlery DevDesk (TSX)
+Generyki handlerów opisują parametry ścieżki, ciało żądania i ciało odpowiedzi — zgodnie z kontraktem z poprzedniej lekcji.
+```
+// mocks/handlers.ts
+import { http, HttpResponse, delay } from 'msw';
+import { tickets as seed } from '../data/tickets';
+import type { Ticket } from '../types';
+
+type Page<T> = { items: T[]; total: number; page: number; pageSize: number };
+type ApiError = { message: string; fieldErrors?: Record<string, string[]> };
+type CreateTicketBody = Pick<Ticket, 'title' | 'description' | 'priority' | 'assignee'>;
+
+let db: Ticket[] = [...seed];
+
+export const handlers = [
+  http.get<never, never, Page<Ticket>>('/api/tickets', async ({ request }) => {
+    await delay(400);
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status');
+    const q = (url.searchParams.get('q') ?? '').toLowerCase();
+    const page = Number(url.searchParams.get('page') ?? 1);
+    const pageSize = Number(url.searchParams.get('pageSize') ?? 10);
+
+    const filtered = db.filter((t) => (!status || t.status === status) && t.title.toLowerCase().includes(q));
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+    return HttpResponse.json({ items, total: filtered.length, page, pageSize });
+  }),
+
+  http.get<{ id: string }, never, Ticket | ApiError>('/api/tickets/:id', async ({ params }) => {
+    await delay(300);
+    const ticket = db.find((t) => t.id === Number(params.id));
+    return ticket ? HttpResponse.json(ticket) : HttpResponse.json({ message: 'Nie znaleziono ticketu' }, { status: 404 });
+  }),
+
+  http.post<never, CreateTicketBody, Ticket | ApiError>('/api/tickets', async ({ request }) => {
+    await delay(500);
+    const body = await request.json();
+    if (!body.title || body.title.trim().length < 5) {
+      return HttpResponse.json({ message: 'Błędne dane', fieldErrors: { title: ['Co najmniej 5 znaków.'] } }, { status: 400 });
+    }
+    const ticket: Ticket = { ...body, id: Math.max(0, ...db.map((t) => t.id)) + 1, status: 'OPEN', createdAt: new Date().toISOString(), tags: [] };
+    db = [ticket, ...db];
+    return HttpResponse.json(ticket, { status: 201 });
+  }),
+
+  http.delete<{ id: string }>('/api/tickets/:id', async ({ params }) => {
+    await delay(300);
+    db = db.filter((t) => t.id !== Number(params.id));
+    return new HttpResponse(null, { status: 204 });
+  }),
+];
+```
+
+#T NOTE JSX ↔ TSX — handlery jako egzekutor kontraktu
+W TSX generyki `http.get<Params, RequestBody, ResponseBody>` sprawiają, że handler musi zwrócić odpowiedź zgodną z typem kontraktu: `HttpResponse.json({ data: items })` zamiast `{ items, total, ... }` jest błędem kompilacji. Mock i frontend korzystają z tych samych typów, więc nie mogą się rozjechać. Parametry ścieżki są zawsze tekstami (`params.id: string`) — stąd `Number(params.id)` w obu wersjach. W JSX `request.json()` zwraca „cokolwiek” i walidacja ciała jest wyłącznie w kodzie handlera.
+
+#T CODE_BASIC Uruchomienie MSW w przeglądarce
+Worker startuje przed renderem aplikacji i tylko w trybie deweloperskim. Nieobsłużone żądania (np. do plików Vite) przechodzą dalej bez ostrzeżeń.
+```
+// mocks/browser.ts
+import { setupWorker } from 'msw/browser';
+import { handlers } from './handlers';
+
+export const worker = setupWorker(...handlers);
+
+// main.tsx:
+// async function enableMocking() {
+//   if (!import.meta.env.DEV) return;
+//   const { worker } = await import('./mocks/browser');
+//   await worker.start({ onUnhandledRequest: 'bypass' });
+// }
+// enableMocking().then(() => createRoot(document.getElementById('root')!).render(<App />));
+```
+
+#T CODE_PRACTICAL Scenariusze błędów na żądanie
+Przełącznik scenariusza w adresie strony (`?scenario=error`) pozwala wywołać każdy stan UI bez zmiany kodu — idealne do budowy stanów ładowania i błędów w następnych lekcjach.
+```
+import { http, HttpResponse, delay } from 'msw';
+
+function scenario(): string | null {
+  return new URLSearchParams(window.location.search).get('scenario');
+}
+
+export const scenarioHandlers = [
+  http.get('/api/tickets', async () => {
+    const s = scenario();
+    if (s === 'slow') await delay(4000);
+    if (s === 'error') return HttpResponse.json({ message: 'Błąd serwera' }, { status: 500 });
+    if (s === 'offline') return HttpResponse.error(); // błąd sieci — fetch rzuci TypeError
+    if (s === 'empty') return HttpResponse.json({ items: [], total: 0, page: 1, pageSize: 10 });
+    return undefined; // brak scenariusza → obsłuży kolejny handler
+  }),
+];
+
+// setupWorker(...scenarioHandlers, ...handlers) — kolejność ma znaczenie: pierwszy pasujący handler odpowiada
+```
+
+#T STEP_BY_STEP Budujemy razem: udawany serwer DevDesk
+1. Zainstaluj `msw` i uruchom `npx msw init public/ --save`.
+2. Utwórz `mocks/handlers.js` (`.ts`) z handlerami listy, szczegółów, tworzenia i usuwania oraz `mocks/browser.js` (`.ts`).
+3. Zmień `main.jsx` tak, by w trybie deweloperskim najpierw startował worker, a potem renderowała się aplikacja.
+4. W konsoli przeglądarki wykonaj `await (await fetch('/api/tickets?status=OPEN')).json()` — dostaniesz stronę wyników z handlera; w zakładce Network widać żądanie z adnotacją MSW.
+5. Wywołaj `fetch('/api/tickets/9999')` i sprawdź status 404 z komunikatem.
+6. Dodaj `scenarioHandlers` przed zwykłymi handlerami i sprawdź `?scenario=error`, `?scenario=slow`, `?scenario=empty`, `?scenario=offline`.
+7. Dodaj handler `PATCH /api/tickets/:id` (zmiana pól, 404 dla nieistniejącego) według wzoru pozostałych.
+
+#T PITFALL Logika mocków w komponentach
+Alternatywa „dla wygody” — `if (import.meta.env.DEV) return fakeData;` w funkcji pobierającej albo w komponencie — miesza kod aplikacji z danymi testowymi i sprawia, że ścieżka produkcyjna nigdy nie jest wykonywana podczas pracy. Z MSW kod aplikacji jest identyczny w trybie deweloperskim i produkcyjnym; różni się tylko to, kto odpowiada na żądanie.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+MSW przechwytuje prawdziwe żądania przez service worker i odpowiada handlerami (`http.get/post/patch/delete`, `HttpResponse.json`, `delay`, `HttpResponse.error`). Worker uruchamiasz tylko w trybie deweloperskim przed renderem aplikacji. Scenariusze (wolno, błąd, pusto, offline) wywołujesz parametrem adresu. Te same handlery posłużą w testach. W TSX generyki handlerów wymuszają zgodność odpowiedzi z kontraktem.
+
+Kryterium akceptacji: w trybie deweloperskim `fetch('/api/tickets')` zwraca dane z MSW (widoczne w zakładce Network), działają endpointy listy z filtrami i paginacją, szczegółów (z 404), tworzenia (z 400 dla błędnych danych), zmiany i usuwania, a scenariusze `slow`, `error`, `empty` i `offline` działają z adresu strony.
