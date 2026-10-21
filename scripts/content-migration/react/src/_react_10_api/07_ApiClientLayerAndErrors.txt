@@ -1,0 +1,189 @@
+#T INTRO Rozgrzewka i problem: fetch w dwudziestu wariantach
+Rozgrzewka: Jakie są trzy strategie aktualizacji UI po mutacji? Gdzie trafiają błędy walidacji z serwera? Dlaczego aktualizacja optymistyczna wymaga zapamiętania poprzedniego stanu?
+
+Problem: w DevDesk jest już kilkanaście funkcji API i każda powtarza to samo: bazowy adres, nagłówki `Content-Type`, za chwilę — token logowania, sprawdzanie `res.ok`, parsowanie błędu, obsługa `204`, przerywanie przez `signal`, limit czasu. W jednej funkcji ktoś zapomniał sprawdzić `res.ok`, w innej — nagłówka. Rozwiązaniem jest **jeden klient API**: mała funkcja, przez którą przechodzi każde żądanie, z walidacją odpowiedzi schematem.
+
+#T DEFINITION Klient API — odpowiedzialności
+Klient API (jeden plik, np. `api/client`) odpowiada za:
+1. **bazowy adres** z konfiguracji (`import.meta.env.VITE_API_URL`),
+2. **wspólne nagłówki** (JSON, później `Authorization`),
+3. **serializację** ciała i obsługę odpowiedzi bez treści (`204`),
+4. **jednolite błędy** — zawsze ta sama klasa błędu z kodem statusu, komunikatem i szczegółami,
+5. **walidację odpowiedzi** schematem — dane wchodzą do aplikacji tylko, jeśli mają poprawny kształt,
+6. **przerywanie i limit czasu** (`signal`, `AbortSignal.timeout`),
+7. punkty rozszerzeń (odpowiednik „interceptorów”): np. reakcja na `401` — przekierowanie do logowania.
+
+Funkcje domenowe (`fetchTickets`, `createTicket`) stają się jednolinijkowe.
+
+#T CODE_JSX Klient API z walidacją (JSX)
+```
+// api/client.js
+const BASE = import.meta.env.VITE_API_URL ?? '/api';
+
+export class ApiError extends Error {
+  constructor(message, status, details) {
+    super(message);
+    this.status = status;
+    this.details = details;
+  }
+}
+
+let onUnauthorized = () => {};
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
+export async function request(path, { method = 'GET', body, schema, signal, timeoutMs = 10000 } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(timeoutMs)]),
+  });
+
+  if (res.status === 401) onUnauthorized();
+  if (!res.ok) {
+    const details = await res.json().catch(() => ({ message: `Błąd ${res.status}` }));
+    throw new ApiError(details.message ?? `Błąd ${res.status}`, res.status, details);
+  }
+  if (res.status === 204) return undefined;
+
+  const json = await res.json();
+  return schema ? schema.parse(json) : json; // dane o złym kształcie zatrzymują się tutaj
+}
+```
+
+#T CODE_TSX Klient API z walidacją (TSX)
+Generyk wynika ze schematu: `request('/tickets', { schema: ticketPageSchema })` zwraca `Promise<z.infer<typeof ticketPageSchema>>` — typ jest prawdziwy, bo dane zostały sprawdzone w czasie działania.
+```
+// api/client.ts
+import type { z } from 'zod';
+
+const BASE: string = import.meta.env.VITE_API_URL ?? '/api';
+
+export type ApiErrorDetails = { message?: string; fieldErrors?: Record<string, string[]> };
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public details: ApiErrorDetails) {
+    super(message);
+  }
+}
+
+let onUnauthorized: () => void = () => {};
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn;
+}
+
+type RequestOptions<S extends z.ZodType> = {
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  body?: unknown;
+  schema?: S;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+export async function request<S extends z.ZodType>(path: string, options: RequestOptions<S> & { schema: S }): Promise<z.infer<S>>;
+export async function request(path: string, options?: RequestOptions<z.ZodType>): Promise<unknown>;
+export async function request(path: string, { method = 'GET', body, schema, signal, timeoutMs = 10000 }: RequestOptions<z.ZodType> = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(timeoutMs)]),
+  });
+
+  if (res.status === 401) onUnauthorized();
+  if (!res.ok) {
+    const details = (await res.json().catch(() => ({}))) as ApiErrorDetails;
+    throw new ApiError(details.message ?? `Błąd ${res.status}`, res.status, details);
+  }
+  if (res.status === 204) return undefined;
+
+  const json: unknown = await res.json();
+  return schema ? schema.parse(json) : json;
+}
+```
+
+#T NOTE JSX ↔ TSX — schemat jako źródło typu odpowiedzi
+To najważniejsza różnica w tym rozdziale. W TSX przeciążenia funkcji `request` sprawiają, że wywołanie **ze schematem** zwraca typ wyprowadzony ze schematu (`z.infer<S>`), a **bez schematu** — `unknown`, czyli dane, których nie wolno użyć bez sprawdzenia. Znika rzutowanie `as Page<Ticket>` z poprzednich lekcji: typ odpowiedzi jest wiarygodny, bo `schema.parse` sprawdził dane. W JSX walidacja działa tak samo w czasie działania — tracisz tylko podpowiedzi typów. Plik `vite-env.d.ts` (lub `types: ['vite/client']`) sprawia, że `import.meta.env.VITE_API_URL` jest znane w TSX.
+
+#T CODE_BASIC Schematy odpowiedzi i funkcje domenowe
+```
+// api/tickets.ts
+import { z } from 'zod';
+import { request } from './client';
+
+export const ticketSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  description: z.string(),
+  status: z.enum(['OPEN', 'IN_PROGRESS', 'CLOSED']),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+  assignee: z.string().nullable(),
+  createdAt: z.string(),
+  tags: z.array(z.string()),
+});
+
+export const ticketPageSchema = z.object({
+  items: z.array(ticketSchema),
+  total: z.number(),
+  page: z.number(),
+  pageSize: z.number(),
+});
+
+export type TicketDto = z.infer<typeof ticketSchema>;
+
+export const fetchTickets = (qs: string, signal?: AbortSignal) =>
+  request(`/tickets?${qs}`, { schema: ticketPageSchema, signal });
+
+export const fetchTicket = (id: number, signal?: AbortSignal) =>
+  request(`/tickets/${id}`, { schema: ticketSchema, signal });
+
+export const closeTicket = (id: number) =>
+  request(`/tickets/${id}`, { method: 'PATCH', body: { status: 'CLOSED' }, schema: ticketSchema });
+
+export const removeTicket = (id: number) => request(`/tickets/${id}`, { method: 'DELETE' });
+```
+
+#T CODE_PRACTICAL Komunikat błędu dla użytkownika
+Jedna funkcja zamienia dowolny błąd w zrozumiały tekst — komponenty nie muszą znać kodów statusu.
+```
+// api/errors.ts
+import { ZodError } from 'zod';
+import { ApiError } from './client';
+
+export function userMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return 'Sesja wygasła — zaloguj się ponownie.';
+    if (error.status === 403) return 'Nie masz uprawnień do tej operacji.';
+    if (error.status === 404) return 'Nie znaleziono zasobu — mógł zostać usunięty.';
+    if (error.status === 409) return 'Ktoś zmienił te dane w międzyczasie — odśwież i spróbuj ponownie.';
+    if (error.status >= 500) return 'Serwer ma problem. Spróbuj ponownie za chwilę.';
+    return error.message;
+  }
+  if (error instanceof ZodError) return 'Serwer zwrócił dane w nieoczekiwanym formacie.';
+  if (error instanceof DOMException && error.name === 'TimeoutError') return 'Serwer nie odpowiada.';
+  if (error instanceof TypeError) return 'Brak połączenia z serwerem.';
+  return 'Wystąpił nieoczekiwany błąd.';
+}
+```
+
+#T DEFINITION fetch czy axios
+**axios** to popularna biblioteka HTTP z wbudowanymi interceptorami, automatycznym JSON-em, rzucaniem wyjątku dla 4xx/5xx i obsługą postępu wysyłania. W nowych projektach często wystarcza `fetch` z cienkim klientem jak w tej lekcji — zero zależności, natywne przerywanie, działa wszędzie (także w Node i w frameworkach). axios spotkasz w wielu istniejących projektach; zasady (jeden klient, jednolite błędy, walidacja) są te same.
+
+#T STEP_BY_STEP Budujemy razem: jeden klient API DevDesk
+1. Utwórz `api/client` z `request`, `ApiError` i `setUnauthorizedHandler`.
+2. Dodaj do `.env.development` zmienną `VITE_API_URL=/api` (zmienne środowiskowe — rozdział 21).
+3. Napisz schematy `ticketSchema`, `ticketPageSchema` i przepisz wszystkie funkcje w `api/tickets` na `request`.
+4. W wersji TS usuń wszystkie `as Ticket` i `as Page<Ticket>` — typy wynikają teraz ze schematów (możesz zastąpić ręczny typ `Ticket` przez `z.infer<typeof ticketSchema>` albo sprawdzić zgodność obu).
+5. Dodaj `userMessage` i użyj go w `ErrorCard` oraz w toastach błędów.
+6. Zmień handler MSW, żeby zwracał ticket z `status: 'DONE'` — zobacz komunikat „nieoczekiwany format” zamiast przypadkowego błędu w komponencie.
+7. Ustaw `setUnauthorizedHandler(() => console.log('przekierowanie do logowania'))` i zwróć z MSW status 401 — handler się wywołuje (pełne logowanie w rozdziale 11).
+
+#T PITFALL Walidacja zbyt surowa albo zbyt luźna
+Schemat odpowiedzi, który odrzuca każde nowe pole dodane przez backend (`z.strictObject`), sprawi, że wdrożenie backendu zepsuje frontend. Domyślne `z.object` pomija nieznane pola — to zwykle właściwy wybór. Z drugiej strony `z.any()` w schemacie to brak walidacji. Waliduj pola, których aplikacja używa, i zgłaszaj błędy walidacji do monitoringu (rozdział 19) — to sygnał niezgodności kontraktu.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Klient API to jedno miejsce na bazowy adres, nagłówki, serializację, obsługę `204`, jednolite błędy (`ApiError` ze statusem i szczegółami), walidację odpowiedzi schematem, przerywanie, limit czasu i reakcję na `401`. Funkcje domenowe są jednolinijkowe, a komunikaty dla użytkownika powstają w jednej funkcji z rodzaju błędu. W TSX przeciążenia `request` dają typ odpowiedzi ze schematu (`z.infer`) albo `unknown` — bez rzutowań.
+
+Kryterium akceptacji: wszystkie funkcje API DevDesk korzystają z jednego klienta, odpowiedzi są walidowane schematami (w TS bez `as`), błędne dane z serwera kończą się czytelnym komunikatem, a status 401 wywołuje zarejestrowany handler.

@@ -1,0 +1,178 @@
+#T INTRO Rozgrzewka i problem: zmiany, które giną po odświeżeniu
+Rozgrzewka: Czym różni się ignorowanie odpowiedzi od przerywania żądania? Jak rozpoznać `AbortError`? Po co debounce w wyszukiwaniu?
+
+Problem: odczyt danych działa przez API, ale tworzenie, zamykanie i usuwanie ticketów nadal zmienia tylko lokalny stan. Po odświeżeniu strony zmiany znikają (MSW trzyma dane do odświeżenia, prawdziwy serwer — trwale). Każda **mutacja** (POST, PATCH, DELETE) musi trafić na serwer, a interfejs musi poprawnie pokazać czas oczekiwania, sukces, błąd walidacji z serwera i błąd sieci — bez rozjazdu między tym, co widzi użytkownik, a tym, co jest na serwerze.
+
+#T DEFINITION Trzy strategie aktualizacji UI po mutacji
+1. **Ponowne pobranie (refetch)** — po sukcesie pobierz listę od nowa. Najprostsze i zawsze zgodne z serwerem; koszt: dodatkowe żądanie i chwila oczekiwania.
+2. **Aktualizacja z odpowiedzi** — serwer zwraca zmieniony lub utworzony rekord (np. `201` z nowym ticketem z ID), a Ty wstawiasz go do stanu. Szybkie, zgodne z serwerem, wymaga dobrego kontraktu.
+3. **Aktualizacja optymistyczna** — zmieniasz UI **przed** odpowiedzią serwera, a przy błędzie cofasz zmianę. Natychmiastowa reakcja; wymaga obsługi wycofania (zrobisz to w lekcji 9 z TanStack Query, a w rozdziale 17 z `useOptimistic`).
+
+W każdej strategii mutację wywołujesz w **handlerze zdarzenia** (kliknięcie, wysłanie formularza), a nie w efekcie.
+
+#T CODE_JSX Funkcje mutacji w warstwie API (JSX)
+```
+// api/tickets.js
+async function parseError(res) {
+  try {
+    return await res.json(); // { message, fieldErrors? }
+  } catch {
+    return { message: `Błąd ${res.status}` };
+  }
+}
+
+export async function createTicket(body) {
+  const res = await fetch('/api/tickets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw Object.assign(new Error('Nie udało się utworzyć ticketu'), { status: res.status, details: await parseError(res) });
+  return res.json();
+}
+
+export async function updateTicket(id, changes) {
+  const res = await fetch(`/api/tickets/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  });
+  if (!res.ok) throw Object.assign(new Error('Nie udało się zapisać zmian'), { status: res.status, details: await parseError(res) });
+  return res.json();
+}
+
+export async function deleteTicket(id) {
+  const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 404) throw new Error('Nie udało się usunąć ticketu');
+}
+```
+
+#T CODE_TSX Funkcje mutacji w warstwie API (TSX)
+Własna klasa błędu `ApiRequestError` niesie status i szczegóły z serwera — komponenty mogą rozpoznać błąd walidacji (400) i pokazać komunikaty przy polach.
+```
+// api/tickets.ts
+import type { Ticket } from '../types';
+
+export type CreateTicketBody = Pick<Ticket, 'title' | 'description' | 'priority' | 'assignee'>;
+export type UpdateTicketBody = Partial<Pick<Ticket, 'title' | 'status' | 'priority' | 'assignee'>>;
+export type ApiErrorBody = { message: string; fieldErrors?: Record<string, string[]> };
+
+export class ApiRequestError extends Error {
+  constructor(message: string, public status: number, public details: ApiErrorBody) {
+    super(message);
+  }
+}
+
+async function parseError(res: Response): Promise<ApiErrorBody> {
+  try {
+    return (await res.json()) as ApiErrorBody;
+  } catch {
+    return { message: `Błąd ${res.status}` };
+  }
+}
+
+async function send<T>(url: string, method: 'POST' | 'PATCH', body: unknown, failMessage: string): Promise<T> {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) throw new ApiRequestError(failMessage, res.status, await parseError(res));
+  return (await res.json()) as T;
+}
+
+export const createTicket = (body: CreateTicketBody) => send<Ticket>('/api/tickets', 'POST', body, 'Nie udało się utworzyć ticketu');
+export const updateTicket = (id: number, changes: UpdateTicketBody) => send<Ticket>(`/api/tickets/${id}`, 'PATCH', changes, 'Nie udało się zapisać zmian');
+
+export async function deleteTicket(id: number): Promise<void> {
+  const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 404) throw new ApiRequestError('Nie udało się usunąć ticketu', res.status, await parseError(res));
+}
+```
+
+#T NOTE JSX ↔ TSX — klasa błędu zamiast Object.assign
+W JSX dodatkowe informacje doklejasz do zwykłego `Error` przez `Object.assign` — działa, ale odbiorca musi wiedzieć, że błąd „może mieć” pola `status` i `details`. W TSX klasa `ApiRequestError` z polami w konstruktorze (`public status: number`) daje typ, który da się rozpoznać przez `error instanceof ApiRequestError` — po tym sprawdzeniu `error.details.fieldErrors` jest dostępne z podpowiedziami. Ten sam wzorzec możesz zastosować w JS (klasa działa identycznie), tracisz tylko kontrolę typów.
+
+#T CODE_BASIC Przycisk mutacji ze stanem wysyłania
+Podczas wysyłania przycisk jest zablokowany (chroni przed podwójnym kliknięciem), błąd pojawia się przy przycisku, sukces odświeża dane.
+```
+import { useState } from 'react';
+import { updateTicket } from '../api/tickets';
+
+export function CloseTicketButton({ id, onDone }: { id: number; onDone: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClick() {
+    setPending(true);
+    setError(null);
+    try {
+      await updateTicket(id, { status: 'CLOSED' });
+      onDone(); // np. ponowne pobranie listy
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nieznany błąd');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <>
+      <button type="button" disabled={pending} aria-busy={pending} onClick={handleClick}>
+        {pending ? 'Zamykanie…' : 'Zamknij'}
+      </button>
+      {error && <span role="alert">{error}</span>}
+    </>
+  );
+}
+```
+
+#T CODE_PRACTICAL Błędy walidacji z serwera przy polach formularza
+Serwer jest ostatecznym strażnikiem reguł — nawet z walidacją Zod w przeglądarce (rozdział 05) serwer może odrzucić dane (np. „tytuł już istnieje”). Komunikaty z `fieldErrors` trafiają do pól przez `setError` z React Hook Form.
+```
+import { useForm } from 'react-hook-form';
+import { ApiRequestError, createTicket, type CreateTicketBody } from '../api/tickets';
+
+export function ServerValidatedForm({ onCreated }: { onCreated: () => void }) {
+  const { register, handleSubmit, setError, formState: { errors, isSubmitting } } = useForm<CreateTicketBody>({
+    defaultValues: { title: '', description: '', priority: 'MEDIUM', assignee: null },
+  });
+
+  async function onValid(values: CreateTicketBody) {
+    try {
+      await createTicket(values);
+      onCreated();
+    } catch (e) {
+      if (e instanceof ApiRequestError && e.status === 400 && e.details.fieldErrors) {
+        for (const [field, messages] of Object.entries(e.details.fieldErrors)) {
+          setError(field as keyof CreateTicketBody, { message: messages[0] });
+        }
+      } else {
+        setError('root', { message: e instanceof Error ? e.message : 'Nieznany błąd' });
+      }
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit(onValid)} noValidate>
+      <input aria-label="Tytuł" {...register('title')} />
+      {errors.title && <p role="alert">{errors.title.message}</p>}
+      {errors.root && <p role="alert">{errors.root.message}</p>}
+      <button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Zapisywanie…' : 'Utwórz'}</button>
+    </form>
+  );
+}
+```
+
+#T STEP_BY_STEP Budujemy razem: zapisywanie zmian na serwerze
+1. Uzupełnij `api/tickets` o `createTicket`, `updateTicket`, `deleteTicket` z obsługą błędów (klasa `ApiRequestError` także w wersji JS).
+2. Formularz nowego ticketu wysyła `POST`; po sukcesie zamyka modal, pokazuje toast i wywołuje `retry()` z `useAsync` listy (strategia 1: ponowne pobranie).
+3. Przycisk „Zamknij” w wierszu wysyła `PATCH`, blokuje się na czas żądania; po sukcesie podmień zmieniony ticket w liście danymi z odpowiedzi (strategia 2).
+4. „Usuń” z cofnięciem z rozdziału 08: optymistyczne usunięcie z listy, `deleteTicket` dopiero w `onExpire` toastu, przy błędzie — przywrócenie ticketu i toast z błędem.
+5. Wyślij formularz z tytułem „abc” — błąd 400 z serwera (MSW) pojawia się przy polu tytułu, mimo że walidację klienta tymczasowo wyłączysz.
+6. Ustaw scenariusz błędu dla `PATCH` w MSW (np. co trzecie żądanie zwraca 500) i sprawdź, że UI nie pokazuje fałszywego sukcesu.
+7. Odśwież stronę po każdej akcji — lista zgadza się z „serwerem” (MSW w pamięci do momentu przeładowania pliku).
+
+#T PITFALL Zmiana UI przed odpowiedzią bez obsługi błędu
+`setTickets(prev => prev.map(... status: 'CLOSED'))` i dopiero potem `updateTicket(...)` bez `catch` — przy błędzie serwera użytkownik widzi zamknięty ticket, który na serwerze nadal jest otwarty. Po odświeżeniu „sam się otwiera”. Jeśli aktualizujesz optymistycznie, zawsze zapamiętaj poprzedni stan i przywróć go w `catch`.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Mutacje (POST/PATCH/DELETE) wywołujesz w handlerach, z blokadą podwójnego wysłania i stanem oczekiwania. UI aktualizujesz przez ponowne pobranie, danymi z odpowiedzi albo optymistycznie z wycofaniem przy błędzie. Warstwa API rzuca błąd z kodem statusu i szczegółami serwera, a błędy walidacji (400) trafiają do pól formularza. W TSX klasa `ApiRequestError` pozwala rozpoznać błąd przez `instanceof` i bezpiecznie odczytać `fieldErrors`.
+
+Kryterium akceptacji: tworzenie, zamykanie i usuwanie ticketów zapisuje dane na „serwerze” (MSW), przyciski blokują się podczas żądania, błąd walidacji z serwera pojawia się przy polu tytułu, a błąd 500 nigdy nie zostawia UI w stanie niezgodnym z serwerem.
