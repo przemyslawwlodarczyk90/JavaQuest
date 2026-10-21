@@ -1,0 +1,136 @@
+#T INTRO Rozgrzewka i problem: koszyk szybkich akcji
+Rozgrzewka: Jakie jest pięć rodzajów stanu? Dlaczego kontekst renderuje wszystkich czytelników? Co trafia do magazynu globalnego, a co nie?
+
+Problem: „koszyk szybkich akcji” DevDesk (tickety odkładane z różnych ekranów, z notatką, do późniejszej obsługi) w kontekście renderował cały nagłówek przy każdej zmianie notatki. Do tego chcesz, żeby przetrwał odświeżenie strony i był widoczny w devtools. **Zustand** to najprostsza biblioteka stanu globalnego: jeden plik z magazynem, hook z selektorem, bez providera.
+
+#T DEFINITION Magazyn Zustand
+`create(funkcja)` tworzy magazyn i zwraca **hook**. Funkcja dostaje `set` (zmiana stanu) i `get` (odczyt aktualnego stanu) i zwraca obiekt z danymi oraz akcjami:
+
+`const useCart = create((set) => ({ items: [], add: (id) => set((s) => ({ items: [...s.items, id] })) }))`
+
+W komponencie wywołujesz hook z **selektorem**: `const count = useCart((s) => s.items.length)`. Komponent renderuje się tylko, gdy wynik selektora się zmieni (porównanie `Object.is`). `set` domyślnie łączy podany obiekt z obecnym stanem na pierwszym poziomie (jak `setState` w klasach), więc nie musisz przepisywać pozostałych pól. Instalacja: `npm install zustand`.
+
+#T CODE_JSX Magazyn koszyka szybkich akcji (JSX)
+```
+// quickCartStore.js
+import { create } from 'zustand';
+
+export const useQuickCart = create((set, get) => ({
+  items: [], // [{ ticketId, note, addedAt }]
+
+  add: (ticketId) => {
+    if (get().items.some((i) => i.ticketId === ticketId)) return;
+    set((s) => ({ items: [...s.items, { ticketId, note: '', addedAt: new Date().toISOString() }] }));
+  },
+  remove: (ticketId) => set((s) => ({ items: s.items.filter((i) => i.ticketId !== ticketId) })),
+  setNote: (ticketId, note) =>
+    set((s) => ({ items: s.items.map((i) => (i.ticketId === ticketId ? { ...i, note } : i)) })),
+  clear: () => set({ items: [] }),
+}));
+
+// komponenty:
+// const count = useQuickCart((s) => s.items.length);              // renderuje się tylko przy zmianie liczby
+// const add = useQuickCart((s) => s.add);                         // akcje są stabilne
+// const note = useQuickCart((s) => s.items.find((i) => i.ticketId === id)?.note ?? '');
+```
+
+#T CODE_TSX Magazyn koszyka szybkich akcji (TSX)
+Typ magazynu podajesz jako generyk `create<QuickCartState>()(...)` — zapis z podwójnymi nawiasami jest wymagany przez Zustand, żeby poprawnie wywnioskować typy przy middleware.
+```
+// quickCartStore.ts
+import { create } from 'zustand';
+
+export type QuickItem = { ticketId: number; note: string; addedAt: string };
+
+type QuickCartState = {
+  items: QuickItem[];
+  add: (ticketId: number) => void;
+  remove: (ticketId: number) => void;
+  setNote: (ticketId: number, note: string) => void;
+  clear: () => void;
+};
+
+export const useQuickCart = create<QuickCartState>()((set, get) => ({
+  items: [],
+
+  add: (ticketId) => {
+    if (get().items.some((i) => i.ticketId === ticketId)) return;
+    set((s) => ({ items: [...s.items, { ticketId, note: '', addedAt: new Date().toISOString() }] }));
+  },
+  remove: (ticketId) => set((s) => ({ items: s.items.filter((i) => i.ticketId !== ticketId) })),
+  setNote: (ticketId, note) =>
+    set((s) => ({ items: s.items.map((i) => (i.ticketId === ticketId ? { ...i, note } : i)) })),
+  clear: () => set({ items: [] }),
+}));
+```
+
+#T NOTE JSX ↔ TSX — selektory z typem wyniku
+W TSX selektor `useQuickCart((s) => s.items.length)` ma typ wyniku `number`, a `s` ma pełny typ stanu — literówka `s.itmes` jest błędem, a przy zmianie nazwy pola kompilator wskaże wszystkie selektory. Zapis `create<T>()(...)` (curried) wygląda dziwnie, ale jest potrzebny: pozwala podać typ stanu i jednocześnie zostawić TypeScriptowi wnioskowanie typów middleware (np. `persist`). W JSX magazyn działa identycznie; tracisz tylko kontrolę przy refaktoryzacji.
+
+#T DEFINITION Selektory zwracające obiekty: useShallow
+Selektor zwracający **nowy obiekt lub tablicę** przy każdym wywołaniu (`(s) => ({ count: s.items.length, clear: s.clear })` albo `(s) => s.items.filter(...)`) daje nową referencję przy każdej zmianie magazynu — komponent będzie renderował się zawsze, a w skrajnym przypadku React zgłosi pętlę. Rozwiązania: kilka osobnych selektorów zwracających wartości proste, albo `useShallow` z `zustand/react/shallow`, który porównuje wynik płytko (pole po polu).
+
+#T CODE_BASIC Komponenty korzystające z magazynu
+```
+import { useShallow } from 'zustand/react/shallow';
+import { useQuickCart } from './quickCartStore';
+
+export function QuickCartBadge() {
+  const count = useQuickCart((s) => s.items.length);
+  return <span className="badge" aria-label={`Szybkie akcje: ${count}`}>{count}</span>;
+}
+
+export function AddToQuickCartButton({ ticketId }: { ticketId: number }) {
+  const { inCart, add, remove } = useQuickCart(
+    useShallow((s) => ({ inCart: s.items.some((i) => i.ticketId === ticketId), add: s.add, remove: s.remove })),
+  );
+  return (
+    <button type="button" aria-pressed={inCart} onClick={() => (inCart ? remove(ticketId) : add(ticketId))}>
+      {inCart ? '✓ W szybkich akcjach' : '+ Szybkie akcje'}
+    </button>
+  );
+}
+```
+
+#T CODE_PRACTICAL Middleware: persist i devtools
+`persist` zapisuje magazyn w localStorage (z wersjonowaniem i migracją), `devtools` łączy go z rozszerzeniem Redux DevTools — widać każdą akcję i stan po niej.
+```
+import { create } from 'zustand';
+import { createJSONStorage, devtools, persist } from 'zustand/middleware';
+
+type RecentState = { ids: number[]; visit: (id: number) => void; clear: () => void };
+
+export const useRecentTickets = create<RecentState>()(
+  devtools(
+    persist(
+      (set) => ({
+        ids: [],
+        visit: (id) => set((s) => ({ ids: [id, ...s.ids.filter((x) => x !== id)].slice(0, 10) }), false, 'recent/visit'),
+        clear: () => set({ ids: [] }, false, 'recent/clear'),
+      }),
+      { name: 'devdesk-recent', storage: createJSONStorage(() => localStorage), version: 1 },
+    ),
+    { name: 'RecentTickets' },
+  ),
+);
+```
+
+#T DEFINITION Dostęp do magazynu poza Reactem
+Hook Zustand jest jednocześnie obiektem magazynu: `useQuickCart.getState()` odczytuje stan, `useQuickCart.setState(...)` go zmienia, `useQuickCart.subscribe(listener)` nasłuchuje zmian — także w zwykłym kodzie JS (moduł API, obsługa skrótów klawiszowych, testy). To wygodne, ale używaj tego oszczędnie: komponenty zawsze przez hook z selektorem, żeby renderowały się przy zmianach.
+
+#T STEP_BY_STEP Budujemy razem: Zustand w DevDesk
+1. Zainstaluj `zustand` i utwórz `stores/quickCartStore` (koszyk szybkich akcji) — usuń wersję na kontekście z poprzedniej lekcji.
+2. W wierszu tabeli i na ekranie ticketu dodaj `AddToQuickCartButton`; w nagłówku — `QuickCartBadge`.
+3. Zbuduj panel „Szybkie akcje” (np. w panelu bocznym lub popoverze): lista ticketów z koszyka (dane ticketu z cache TanStack Query po ID!), pole notatki i przycisk usunięcia.
+4. Włącz „Highlight updates” i pisz notatkę — `QuickCartBadge` nie jest podświetlany.
+5. Dodaj `persist` do koszyka — przetrwa odświeżenie strony.
+6. Utwórz `useRecentTickets` z `persist` i `devtools`; wywołuj `visit(id)` w loaderze lub ekranie ticketu, a w menu pokaż 5 ostatnio oglądanych.
+7. Zainstaluj rozszerzenie Redux DevTools i obserwuj akcje `recent/visit`.
+
+#T PITFALL Dane serwera w magazynie Zustand
+Kuszące jest wrzucenie do magazynu ticketów pobranych z API (`set({ tickets: await fetchTickets() })`). Tracisz wtedy wszystko, co daje TanStack Query: cache z kluczami, odświeżanie w tle, unieważnianie po mutacjach, deduplikację. Koszyk szybkich akcji przechowuje **ID** ticketów (stan klienta), a same dane ticketów czyta z cache zapytań.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Zustand: `create((set, get) => ({ ...stan, ...akcje }))` zwraca hook magazynu; komponent subskrybuje fragment selektorem i renderuje się tylko przy jego zmianie. Selektory zwracające obiekty owijasz w `useShallow`. Middleware `persist` zapisuje stan (z wersjonowaniem), `devtools` pokazuje akcje w Redux DevTools; `getState`/`setState` działają poza Reactem. W magazynie trzymasz stan klienta (np. ID), a nie dane serwera. W TSX `create<T>()(...)` typuje stan, akcje i wyniki selektorów.
+
+Kryterium akceptacji: koszyk szybkich akcji działa z każdego ekranu, przetrwa odświeżenie, zmiana notatki nie renderuje licznika w nagłówku, menu pokazuje ostatnio oglądane tickety, a akcje są widoczne w Redux DevTools.
