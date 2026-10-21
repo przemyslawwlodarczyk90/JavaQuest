@@ -1,0 +1,150 @@
+#T INTRO Rozgrzewka i problem: stan rozproszony po kawałkach
+Rozgrzewka: Czym różnią się tagi RTK Query od kluczy TanStack Query? Kiedy thunk ma sens? Dlaczego nie używasz dwóch bibliotek danych serwera naraz?
+
+Problem: DevDesk dostaje kreator raportu: wybór zakresu dat, grupowania, kolumn, filtra osób, a na podstawie tych wyborów — wyliczony podgląd liczby wierszy, szacowany rozmiar pliku i ostrzeżenia. Każdy wybór to mały, niezależny kawałek stanu, a wartości wyliczane zależą od różnych kombinacji. Jeden duży magazyn (Zustand, Redux) zmusza do pisania selektorów; kontekst renderuje wszystko. **Jotai** proponuje inny model: **stan atomowy** — wiele małych atomów i atomy wyliczane z innych atomów, jak komórki arkusza kalkulacyjnego.
+
+#T DEFINITION Atomy i atomy pochodne
+- **Atom** to pojedynczy kawałek stanu: `const groupByAtom = atom('status')`. Komponent czyta i zmienia go hookiem `useAtom(groupByAtom)` — jak `useState`, ale współdzielony w całej aplikacji.
+- **Atom pochodny (tylko do odczytu)**: `atom((get) => ...)` — wyliczany z innych atomów; aktualizuje się automatycznie, gdy zmienią się atomy, które czyta (`get`). To „formuła” w arkuszu.
+- **Atom zapisywalny z logiką**: `atom(null, (get, set, arg) => ...)` — akcja zmieniająca kilka atomów naraz.
+- `useAtomValue(atom)` — tylko odczyt; `useSetAtom(atom)` — tylko zapis (komponent nie renderuje się przy zmianach wartości).
+
+Komponent renderuje się tylko przy zmianie atomów, które sam czyta. Provider nie jest wymagany (domyślny magazyn globalny), ale można go użyć do izolacji (np. dwa niezależne kreatory na jednej stronie, testy). Instalacja: `npm install jotai`.
+
+#T CODE_JSX Atomy kreatora raportu (JSX)
+```
+// reportAtoms.js
+import { atom } from 'jotai';
+
+export const dateFromAtom = atom('2026-10-01');
+export const dateToAtom = atom('2026-10-31');
+export const groupByAtom = atom('status');           // 'status' | 'assignee' | 'priority'
+export const columnsAtom = atom(['id', 'title', 'status']);
+
+// atom pochodny: liczba dni w zakresie
+export const rangeDaysAtom = atom((get) => {
+  const ms = Date.parse(get(dateToAtom)) - Date.parse(get(dateFromAtom));
+  return Math.max(0, Math.round(ms / 86_400_000) + 1);
+});
+
+// atom pochodny: ostrzeżenia
+export const warningsAtom = atom((get) => {
+  const warnings = [];
+  if (get(rangeDaysAtom) > 92) warnings.push('Zakres dłuższy niż kwartał — raport może generować się kilka minut.');
+  if (get(columnsAtom).length > 8) warnings.push('Dużo kolumn — rozważ eksport do CSV.');
+  return warnings;
+});
+
+// atom-akcja: reset wszystkich wyborów
+export const resetReportAtom = atom(null, (_get, set) => {
+  set(dateFromAtom, '2026-10-01');
+  set(dateToAtom, '2026-10-31');
+  set(groupByAtom, 'status');
+  set(columnsAtom, ['id', 'title', 'status']);
+});
+```
+
+#T CODE_TSX Atomy kreatora raportu (TSX)
+Typy atomów wynikają z wartości początkowych; dla unii podajesz generyk. Atom pochodny ma typ zwracanej wartości.
+```
+// reportAtoms.ts
+import { atom } from 'jotai';
+
+export type GroupBy = 'status' | 'assignee' | 'priority';
+export type Column = 'id' | 'title' | 'status' | 'priority' | 'assignee' | 'createdAt' | 'tags' | 'comments' | 'dueAt';
+
+export const dateFromAtom = atom('2026-10-01');
+export const dateToAtom = atom('2026-10-31');
+export const groupByAtom = atom<GroupBy>('status');
+export const columnsAtom = atom<Column[]>(['id', 'title', 'status']);
+
+export const rangeDaysAtom = atom((get) => {
+  const ms = Date.parse(get(dateToAtom)) - Date.parse(get(dateFromAtom));
+  return Math.max(0, Math.round(ms / 86_400_000) + 1);
+});
+
+export const warningsAtom = atom((get) => {
+  const warnings: string[] = [];
+  if (get(rangeDaysAtom) > 92) warnings.push('Zakres dłuższy niż kwartał — raport może generować się kilka minut.');
+  if (get(columnsAtom).length > 8) warnings.push('Dużo kolumn — rozważ eksport do CSV.');
+  return warnings;
+});
+
+export const resetReportAtom = atom(null, (_get, set) => {
+  set(dateFromAtom, '2026-10-01');
+  set(dateToAtom, '2026-10-31');
+  set(groupByAtom, 'status');
+  set(columnsAtom, ['id', 'title', 'status']);
+});
+```
+
+#T NOTE JSX ↔ TSX — typ atomu z wartości lub generyka
+`atom('status')` w TSX ma typ `string` — żeby ograniczyć wartości do unii, piszesz `atom<GroupBy>('status')` (ta sama zasada co przy `useState`). Atomy pochodne wnioskują typ z funkcji, więc `useAtomValue(warningsAtom)` to `string[]`, a `useAtomValue(rangeDaysAtom)` — `number`. Atom-akcja `atom(null, (get, set, arg) => ...)` w TSX może mieć typowany argument (`(get, set, days: number) => ...`), więc `useSetAtom(akcja)(...)` sprawdza przekazywaną wartość. W JSX dowolne wartości trafią do atomów bez ostrzeżenia.
+
+#T CODE_BASIC Komponenty kreatora
+Każdy komponent czyta tylko swoje atomy — zmiana kolumn nie renderuje pól dat.
+```
+import { useAtom, useAtomValue, useSetAtom } from 'jotai';
+import { dateFromAtom, dateToAtom, rangeDaysAtom, resetReportAtom, warningsAtom } from './reportAtoms';
+
+export function DateRange() {
+  const [from, setFrom] = useAtom(dateFromAtom);
+  const [to, setTo] = useAtom(dateToAtom);
+  return (
+    <fieldset>
+      <legend>Zakres</legend>
+      <input type="date" aria-label="Od" value={from} onChange={(e) => setFrom(e.target.value)} />
+      <input type="date" aria-label="Do" value={to} onChange={(e) => setTo(e.target.value)} />
+    </fieldset>
+  );
+}
+
+export function ReportSummary() {
+  const days = useAtomValue(rangeDaysAtom);
+  const warnings = useAtomValue(warningsAtom);
+  const reset = useSetAtom(resetReportAtom);
+  return (
+    <aside aria-live="polite">
+      <p>Zakres: {days} dni</p>
+      {warnings.map((w) => <p key={w} className="warning">{w}</p>)}
+      <button type="button" onClick={() => reset()}>Przywróć domyślne</button>
+    </aside>
+  );
+}
+```
+
+#T CODE_PRACTICAL Atom zapisywany w localStorage i atom asynchroniczny
+`atomWithStorage` z `jotai/utils` synchronizuje atom z localStorage. Atom pochodny może być asynchroniczny (zwracać obietnicę) — czytający go komponent musi być w `Suspense`; dla danych serwera zwykle lepiej zostać przy TanStack Query (istnieje też integracja `jotai-tanstack-query`).
+```
+import { atom } from 'jotai';
+import { atomWithStorage } from 'jotai/utils';
+
+export const savedColumnsAtom = atomWithStorage<string[]>('devdesk-report-columns', ['id', 'title', 'status']);
+
+export const reportPreviewAtom = atom(async (get) => {
+  const columns = get(savedColumnsAtom);
+  const res = await fetch(`/api/reports/preview?columns=${columns.join(',')}`);
+  if (!res.ok) throw new Error('Nie udało się pobrać podglądu');
+  return (await res.json()) as { rows: number; sizeKb: number };
+});
+
+// <Suspense fallback={<p>Liczenie podglądu…</p>}><Preview /></Suspense>
+// function Preview() { const p = useAtomValue(reportPreviewAtom); return <p>{p.rows} wierszy, ~{p.sizeKb} KB</p>; }
+```
+
+#T STEP_BY_STEP Budujemy razem: kreator raportu na Jotai
+1. Zainstaluj `jotai` i utwórz `reportAtoms` z atomami wyborów, atomami pochodnymi i atomem-akcją resetu.
+2. Zbuduj ekran `/reports/new` z komponentami `DateRange`, `GroupBySelect`, `ColumnsPicker` (checkboxy) i `ReportSummary`.
+3. Włącz „Highlight updates” i zmieniaj kolumny — `DateRange` nie jest podświetlany, `ReportSummary` — tak (czyta `warningsAtom`, który zależy od kolumn).
+4. Zamień `columnsAtom` na `atomWithStorage` — wybór kolumn przetrwa odświeżenie.
+5. Dodaj atom pochodny `estimatedRowsAtom` (np. dni × 12 dla grupowania po statusie, × 30 dla osób) i pokaż go w podsumowaniu.
+6. Opakuj kreator w `<Provider>` z Jotai i wyrenderuj dwa kreatory obok siebie (np. porównanie dwóch okresów) — każdy ma niezależny stan.
+7. Porównaj z wersją, którą napisałbyś w Zustand: jeden magazyn z polami i selektorami a sieć atomów.
+
+#T WHEN_TO_USE Jotai, Zustand czy Redux Toolkit
+Jotai: stan złożony z wielu małych, zależnych od siebie kawałków (kreatory, edytory, formularze konfiguracji, narzędzia graficzne), potrzeba izolowanych instancji (Provider). Zustand: jeden spójny magazyn funkcji (koszyk, sesja odtwarzacza), minimum ceremonii. Redux Toolkit: duża aplikacja z rozbudowaną logiką zdarzeń, konwencje zespołu, istniejący kod. Wszystkie trzy mogą współistnieć z TanStack Query — żadna nie zastępuje cache danych serwera.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Jotai to stan atomowy: `atom(wartość)` tworzy kawałek stanu współdzielony w aplikacji, `atom((get) => ...)` — wartość wyliczaną z innych atomów, `atom(null, (get, set) => ...)` — akcję. Hooki `useAtom`, `useAtomValue`, `useSetAtom`; komponent renderuje się tylko przy zmianie atomów, które czyta. `atomWithStorage` zapisuje atom w localStorage, a `Provider` izoluje instancje. W TSX generyk atomu (`atom<GroupBy>(...)`) ogranicza wartości do unii, a atomy pochodne mają wnioskowane typy.
+
+Kryterium akceptacji: kreator raportu działa na atomach Jotai, podsumowanie (dni, szacowana liczba wierszy, ostrzeżenia) wylicza się samo z wyborów, wybór kolumn przetrwa odświeżenie, a dwa kreatory w osobnych Providerach mają niezależny stan.
