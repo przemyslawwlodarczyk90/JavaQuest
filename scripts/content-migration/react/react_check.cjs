@@ -40,7 +40,7 @@ for (const file of files) {
         const text = code.join('\n');
         const isModule = /^\s*(import|export) /m.test(text) && !/^\s*[{[]/.test(text);
         if (type !== 'CODE_WRONG' && isModule && !text.includes('@check-skip')) {
-          const tsx = type === "CODE_TSX" || (type !== "CODE_JSX" && /import type |\): \w|\w\??: (string|number|boolean|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text));
+          const tsx = type === "CODE_TSX" || (type !== "CODE_JSX" && /}: {|}: [A-Z]|import type |\): \w|\w\??: (string|number|boolean|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text));
           const name = `${path.basename(path.dirname(file))}__${path.basename(file, '.txt')}__${++n}.${tsx ? 'tsx' : 'jsx'}`;
           fs.writeFileSync(path.join(work, 'src', 'components', name), text + '\n');
           map.push({ name, file: path.relative(srcRoot, file), heading, tsx });
