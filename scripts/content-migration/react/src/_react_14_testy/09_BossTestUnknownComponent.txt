@@ -1,0 +1,121 @@
+#T INTRO Boss rozdziału 14: testy do cudzego komponentu
+Prawdziwy sprawdzian umiejętności testowania: dostajesz komponent, którego nie pisałeś, bez testów i bez dokumentacji — i masz go zabezpieczyć testami przed refaktoryzacją, którą zaplanował zespół. Musisz najpierw zrozumieć zachowanie (z kodu i z działania), potem opisać je testami, a na koniec udowodnić, że testy łapią błędy. Komponent: **`AssignDialog`** — okno przypisywania ticketu do osoby z wyszukiwaniem.
+
+#T DEFINITION Brief zadania
+Komponent `AssignDialog` (kod poniżej):
+- otwiera się przyciskiem „Przypisz…”, pokazuje pole wyszukiwania osób i listę wyników z API `GET /api/users?q=`,
+- wyszukiwanie ma opóźnienie 250 ms; poniżej 2 znaków pokazuje „Wpisz co najmniej 2 znaki”,
+- kliknięcie osoby albo strzałki + Enter wybiera ją; przycisk „Przypisz” wysyła `PATCH /api/tickets/:id` z `assignee`,
+- podczas zapisu przycisk jest zablokowany; po sukcesie okno się zamyka i wywołuje `onAssigned(login)`; przy błędzie pokazuje komunikat i zostaje otwarte,
+- Escape zamyka okno bez zapisu, a fokus wraca na „Przypisz…”.
+
+Zadanie: napisz zestaw testów, który pozwoli zespołowi bezpiecznie przepisać komponent (np. z ręcznego `fetch` na TanStack Query i z własnej listy na hook headless).
+
+#T CODE_JSX Komponent do przetestowania (JSX)
+```
+// AssignDialog.jsx
+import { useEffect, useRef, useState } from 'react';
+
+export function AssignDialog({ ticketId, onAssigned }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [users, setUsers] = useState([]);
+  const [active, setActive] = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const openerRef = useRef(null);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setUsers([]); return; }
+    const controller = new AbortController();
+    const id = setTimeout(() => {
+      fetch(`/api/users?q=${encodeURIComponent(q.trim())}`, { signal: controller.signal })
+        .then((r) => r.json()).then((list) => { setUsers(list); setActive(0); }).catch(() => {});
+    }, 250);
+    return () => { clearTimeout(id); controller.abort(); };
+  }, [q]);
+
+  function close() { setOpen(false); setQ(''); setSelected(null); setError(null); openerRef.current?.focus(); }
+
+  async function save() {
+    setSaving(true); setError(null);
+    const res = await fetch(`/api/tickets/${ticketId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignee: selected.login }) });
+    setSaving(false);
+    if (!res.ok) { setError('Nie udało się przypisać ticketu.'); return; }
+    onAssigned(selected.login); close();
+  }
+
+  return (
+    <>
+      <button ref={openerRef} type="button" onClick={() => setOpen(true)}>Przypisz…</button>
+      {open && (
+        <div role="dialog" aria-modal="true" aria-label="Przypisz ticket" onKeyDown={(e) => e.key === 'Escape' && close()}>
+          <label htmlFor="assign-q">Szukaj osoby</label>
+          <input id="assign-q" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') setActive((i) => Math.min(i + 1, users.length - 1));
+              if (e.key === 'ArrowUp') setActive((i) => Math.max(i - 1, 0));
+              if (e.key === 'Enter' && users[active]) setSelected(users[active]);
+            }} />
+          {q.trim().length < 2 && <p>Wpisz co najmniej 2 znaki</p>}
+          <ul role="listbox" aria-label="Wyniki">
+            {users.map((u, i) => (
+              <li key={u.login} role="option" aria-selected={selected?.login === u.login} className={i === active ? 'active' : ''} onClick={() => setSelected(u)}>
+                {u.name}
+              </li>
+            ))}
+          </ul>
+          {error && <p role="alert">{error}</p>}
+          <button type="button" disabled={!selected || saving} onClick={save}>{saving ? 'Zapisywanie…' : 'Przypisz'}</button>
+        </div>
+      )}
+    </>
+  );
+}
+```
+
+#T CODE_TSX Komponent do przetestowania — sygnatura (TSX)
+W wersji TS komponent ma te same zachowania; poniżej jego publiczne API (props) i typ danych z API — testy piszesz wobec zachowania, nie wnętrza.
+```
+// AssignDialog.tsx — publiczne API
+export type UserHit = { login: string; name: string };
+
+export type AssignDialogProps = {
+  ticketId: number;
+  onAssigned: (login: string) => void;
+};
+
+// GET  /api/users?q=tekst   → UserHit[]
+// PATCH /api/tickets/:id    body: { assignee: string } → 200 Ticket | 4xx/5xx
+export declare function AssignDialog(props: AssignDialogProps): React.JSX.Element;
+```
+
+#T STEP_BY_STEP Kryteria akceptacji
+1. Testy opisują **zachowanie** z briefu — każde zdanie briefu ma co najmniej jeden test; nazwy testów czytane po kolei tworzą specyfikację komponentu.
+2. Sieć przez MSW (`server.use` dla scenariuszy), czas wyszukiwania przez fałszywe zegary albo `findBy`; bez `vi.mock` na `fetch`.
+3. Zapytania wyłącznie po rolach, etykietach i tekstach; bez `container.querySelector` i bez klasy `active`.
+4. Sprawdzone stany: podpowiedź poniżej 2 znaków, wyniki wyszukiwania, wybór myszą i klawiaturą (strzałki + Enter), blokada przycisku bez wyboru i podczas zapisu, sukces (zamknięcie + `onAssigned` + fokus na „Przypisz…”), błąd (komunikat, okno otwarte), Escape bez zapisu.
+5. Test sprawdza, że **wysłano** `PATCH` z poprawnym ciałem (przechwycenie w handlerze) — i że przy Escape nie wysłano nic.
+6. Test wyścigu: szybkie wpisanie „an” → „ann” z opóźnioną odpowiedzią dla „an” — lista pokazuje wyniki dla „ann”.
+7. Audyt axe dla otwartego okna (i lista znalezionych problemów do zgłoszenia zespołowi, np. brak `aria-activedescendant` przy obsłudze strzałkami).
+8. **Dowód skuteczności**: wprowadź po kolei 5 celowych błędów w komponencie (np. usuń `controller.abort()`, zamień `Math.min` na brak ograniczenia, usuń przywracanie fokusu, pomiń `!res.ok`, zmień tekst podpowiedzi) — każdy musi zostać wykryty przez co najmniej jeden test.
+9. Testy przechodzą bez zmian po refaktoryzacji komponentu na TanStack Query (zrób ją na osobnej gałęzi jako ostatni krok).
+
+#T NOTE Wskazówka 1 — najpierw specyfikacja w nazwach testów
+Zacznij od pustych testów z samymi nazwami (`test.todo('…')`), przepisując zachowania z briefu i z eksperymentów w przeglądarce. Dopiero gdy lista jest kompletna, wypełniaj je kodem. W Vitest `test.todo` pojawia się w raporcie jako niezaimplementowane — widać postęp.
+
+#T NOTE Wskazówka 2 — opóźniona odpowiedź w MSW
+Do testu wyścigu użyj w handlerze `await delay(...)` zależnego od parametru: `const q = new URL(request.url).searchParams.get('q'); await delay(q === 'an' ? 500 : 50); return HttpResponse.json(q === 'an' ? [{ login: 'anna', name: 'Anna Nowak' }, { login: 'andrzej', name: 'Andrzej Lis' }] : [{ login: 'anna', name: 'Anna Nowak' }]);`. Asercja: po odczekaniu lista zawiera dokładnie jedną opcję „Anna Nowak”.
+
+#T PITFALL Typowe błędy w tym zadaniu
+- Testy kopiujące implementację („wywołuje setUsers po 250 ms”) — pękną przy każdej refaktoryzacji.
+- Brak `await` przy user-event albo przy `findBy` — testy przechodzą przypadkiem.
+- Fałszywe zegary bez `advanceTimers` w `userEvent.setup` — wpisywanie „zawiesza się”.
+- Sprawdzanie wyboru przez klasę `active` zamiast `aria-selected` / nazwy wybranej osoby.
+- Test „błędu” bez sprawdzenia, że okno zostało otwarte, a `onAssigned` nie zostało wywołane.
+
+#T SUMMARY Podsumowanie rozdziału 14
+W tym rozdziale poznałeś strategię testów (trofeum, testowanie zachowania, mockowanie na granicy), Vitest (testy jednostkowe, szpiedzy, fałszywe zegary), React Testing Library (zapytania po rolach, `within`, `renderWithProviders`, fabryki danych), user-event (prawdziwe interakcje, asercje dostępności), testy hooków i kontekstów (`renderHook`, wrapper, magazyny bez Reacta), testy asynchroniczne z MSW (scenariusze, sprawdzanie wysłanych danych), Playwright (ścieżki E2E, `storageState`, Trace Viewer) oraz audyty axe, testy wizualne i Storybook. W TSX: typowane szpiegi, fabryki danych z typów, typy kontraktu w mockach.
+
+Boss zaliczony, gdy wszystkie dziewięć kryteriów akceptacji jest spełnionych — w szczególności każdy z pięciu celowych błędów zostaje wykryty, a testy przechodzą po refaktoryzacji komponentu.

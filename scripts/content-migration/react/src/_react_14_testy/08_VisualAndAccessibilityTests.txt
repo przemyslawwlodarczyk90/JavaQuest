@@ -1,0 +1,117 @@
+#T INTRO Rozgrzewka i problem: błędy, których nie łapią asercje
+Rozgrzewka: Czym są lokatory w Playwright i dlaczego nie potrzebujesz `waitForTimeout`? Do czego służy `storageState`? Kiedy użyjesz `page.route`?
+
+Problem: dwie klasy błędów przechodzą przez wszystkie dotychczasowe testy. Pierwsza: **dostępność** — przycisk-ikona bez nazwy, kontrast szarego tekstu na szarym tle, pole bez etykiety, zduplikowane identyfikatory. Testy oparte na rolach łapią część, ale nie wszystko. Druga: **wygląd** — zmiana tokenu odstępów rozjechała tabelę w trybie kompaktowym, a ciemny motyw ma biały pasek pod nagłówkiem. Ta lekcja: automatyczne audyty dostępności (axe) i testy wizualne (zrzuty ekranu), plus Storybook jako miejsce do pracy nad komponentami w izolacji.
+
+#T DEFINITION axe: automatyczny audyt dostępności
+**axe-core** to silnik reguł dostępności (WCAG): sprawdza m.in. nazwy elementów interaktywnych, etykiety pól, kontrast kolorów, poprawność ról i atrybutów ARIA, strukturę nagłówków, unikalność `id`. Integracje:
+- w testach komponentów — `vitest-axe` (lub `jest-axe`): `expect(await axe(container)).toHaveNoViolations()`,
+- w E2E — `@axe-core/playwright`: `new AxeBuilder({ page }).analyze()` na prawdziwej stronie (z prawdziwym CSS, więc z kontrastem).
+
+Ważne: automat wykrywa część problemów (szacunkowo około jednej trzeciej). Nie sprawdzi, czy kolejność fokusu ma sens, czy komunikat jest zrozumiały ani czy da się przejść ścieżkę klawiaturą — to zostaje dla testów interakcji i ręcznego audytu (rozdział 19).
+
+#T CODE_JSX Audyt axe w teście komponentu (JSX)
+```
+// a11y.test.jsx
+import { render } from '@testing-library/react';
+import { axe } from 'vitest-axe';
+import { expect, test } from 'vitest';
+import { NewTicketForm } from './NewTicketForm';
+
+test('formularz nowego ticketu nie ma naruszeń dostępności', async () => {
+  const { container } = render(<NewTicketForm onCreate={() => {}} />);
+  const results = await axe(container);
+  expect(results.violations).toEqual([]);
+});
+```
+
+#T CODE_TSX Audyt axe w E2E na prawdziwej stronie (TSX)
+W przeglądarce axe sprawdza też kontrast (prawdziwe style). Wynik zawiera listę naruszeń z opisem i selektorem elementu — czytelny w raporcie testu.
+```
+// e2e/a11y.spec.ts
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test } from '@playwright/test';
+
+const pages = ['/tickets', '/tickets/42', '/settings', '/settings/security'];
+
+for (const path of pages) {
+  test(`strona ${path} nie ma naruszeń WCAG A/AA`, async ({ page }) => {
+    await page.goto(path);
+    await page.getByRole('main').waitFor();
+    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+    expect(results.violations.map((v) => `${v.id}: ${v.nodes.length} el.`)).toEqual([]);
+  });
+}
+```
+
+#T NOTE JSX ↔ TSX — audyt sprawdza wynik, nie kod
+axe analizuje wyrenderowany DOM, więc działa identycznie dla aplikacji w JSX i TSX. TypeScript pomaga w dostępności tylko pośrednio: typy atrybutów ARIA (`aria-expanded` przyjmuje wartość logiczną, `role` — znane role), wymagane props w Twoich komponentach (`label: string` w `TextField` wymusza etykietę). Reguła `jsx-a11y` w ESLint działa w obu wersjach i łapie część problemów już w edytorze (np. `<img>` bez `alt`, `onClick` na `div` bez obsługi klawiatury).
+
+#T DEFINITION Testy wizualne: porównywanie zrzutów ekranu
+Test wizualny robi zrzut ekranu strony lub komponentu i porównuje go piksel po pikselu z zatwierdzonym wzorcem. Różnica powyżej progu = test nie przechodzi, a raport pokazuje obrazek różnic. W Playwright: `await expect(page).toHaveScreenshot('nazwa.png')` — przy pierwszym uruchomieniu zapisuje wzorzec, potem porównuje; `npx playwright test --update-snapshots` akceptuje zamierzone zmiany.
+
+Testy wizualne są kruche (różne systemy renderują czcionki inaczej) — uruchamiaj je w jednym, stałym środowisku (np. w kontenerze w CI), ukrywaj dane zmienne (daty, losowe ID) i testuj wybrane, stabilne widoki.
+
+#T CODE_BASIC Zrzuty ekranu w dwóch motywach
+```
+import { expect, test } from '@playwright/test';
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`tabela ticketów w motywie ${theme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+    await page.goto('/tickets?status=OPEN');
+    await page.getByRole('table').waitFor();
+    await expect(page.getByRole('table')).toHaveScreenshot(`tickets-${theme}.png`, {
+      mask: [page.locator('time')], // daty zmieniają się codziennie — zamaskuj je
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+}
+```
+
+#T DEFINITION Storybook: komponenty w izolacji
+**Storybook** to osobna aplikacja (uruchamiana obok Twojej), w której każdy komponent ma **historie** (stories) — zapisane stany: `Badge` w każdym tonie, `TicketTable` pusta / z danymi / z ładowaniem, formularz z błędami. Zalety: praca nad komponentem bez klikania przez całą aplikację, żywa dokumentacja dla zespołu (przewodnik stylu z rozdziału 03 w wersji profesjonalnej), dodatki do dostępności (panel axe dla każdej historii), testy interakcji w historii (`play`) i testy wizualne historii. Instalacja: `npx storybook@latest init`.
+
+#T CODE_PRACTICAL Historia komponentu z testem interakcji
+Format CSF (Component Story Format): domyślny eksport opisuje komponent, nazwane eksporty to historie. Funkcja `play` wykonuje interakcję — Storybook pokazuje jej przebieg i może ją uruchomić jako test.
+```
+// StatusBadge.stories.tsx
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent, within } from 'storybook/test';
+import { StatusBadge } from './StatusBadge';
+import { WatchToggle } from './WatchToggle';
+
+const meta = { title: 'DevDesk/StatusBadge', component: StatusBadge } satisfies Meta<typeof StatusBadge>;
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+export const Open: Story = { args: { status: 'OPEN' } };
+export const InProgress: Story = { args: { status: 'IN_PROGRESS' } };
+export const Closed: Story = { args: { status: 'CLOSED' } };
+
+export const WatchInteraction: StoryObj = {
+  render: () => <WatchToggle />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: /obserwuj/i }));
+    await expect(canvas.getByRole('button', { name: /obserwujesz/i })).toBeInTheDocument();
+  },
+};
+```
+
+#T STEP_BY_STEP Budujemy razem: dostępność i wygląd pod kontrolą
+1. Zainstaluj `vitest-axe` i dodaj test axe dla formularza nowego ticketu, modala, tabeli i panelu ustawień.
+2. Celowo usuń `aria-label` z przycisku „✕” w toaście — test axe powinien zgłosić naruszenie `button-name`.
+3. Zainstaluj `@axe-core/playwright` i dodaj audyt czterech głównych stron w E2E (z kontrastem); popraw znalezione problemy (najczęściej kontrast `--text-muted`).
+4. Dodaj testy wizualne tabeli i karty ticketu w obu motywach z maskowaniem dat; zatwierdź wzorce.
+5. Zmień token `--space-3` i zobacz raport różnic; cofnij zmianę albo zaakceptuj ją `--update-snapshots`.
+6. Zainstaluj Storybook i dodaj historie dla `Badge`, `StatusBadge`, `Button` (wszystkie warianty i stan `loading`) oraz `TicketTable` (pusto, z danymi); włącz dodatek dostępności i sprawdź panel axe.
+
+#T PITFALL Wyłączanie reguł, żeby test przeszedł
+`new AxeBuilder({ page }).disableRules(['color-contrast'])` albo `toHaveScreenshot` z progiem 30% sprawiają, że test zawsze przechodzi i niczego już nie pilnuje. Wyłączaj regułę tylko punktowo (konkretny element z uzasadnieniem w komentarzu, np. logo partnera), a próg różnic trzymaj niski i stabilizuj środowisko zamiast podnosić tolerancję.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+axe-core automatycznie wykrywa część problemów dostępności: w testach komponentów (`vitest-axe`) i na prawdziwych stronach w E2E (`@axe-core/playwright`, także kontrast). Testy wizualne porównują zrzuty ekranu ze wzorcem (`toHaveScreenshot`) — w stałym środowisku, z maskowaniem danych zmiennych. Storybook pozwala pracować nad komponentami w izolacji, dokumentować warianty i uruchamiać w historiach testy interakcji, dostępności i wizualne. Automat nie zastąpi ręcznego audytu klawiaturą i czytnikiem ekranu.
+
+Kryterium akceptacji: główne komponenty i strony DevDesk przechodzą audyt axe (w tym kontrast na prawdziwych stronach), tabela i karta mają testy wizualne w obu motywach, a Storybook zawiera historie plakietek, przycisków i tabeli z działającym panelem dostępności.

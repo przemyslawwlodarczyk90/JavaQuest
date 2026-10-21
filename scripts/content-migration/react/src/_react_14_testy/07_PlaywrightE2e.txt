@@ -1,0 +1,139 @@
+#T INTRO Rozgrzewka i problem: wszystkie testy zielone, a aplikacja nie działa
+Rozgrzewka: Dlaczego w testach mockujesz sieć przez MSW, a nie funkcje API? Co robi `onUnhandledFrame: 'error'`? Jak przetestować aktualizację optymistyczną?
+
+Problem: testy komponentów przechodzą, ale po wdrożeniu logowanie nie działa — bo proxy, ciasteczka i przekierowania routera sprawdza się tylko w prawdziwej przeglądarce z prawdziwym (albo prawie prawdziwym) backendem. Testy w jsdom nie widzą CSS (element może być zasłonięty), prawdziwej nawigacji, service workera ani zachowania wielu kart. Do tego służą **testy end-to-end** — w DevDesk napiszesz je w **Playwright**: prawdziwa przeglądarka (Chromium, Firefox, WebKit) sterowana z kodu testu.
+
+#T DEFINITION Playwright w pigułce
+- **Test** `test('opis', async ({ page }) => {...})` dostaje obiekt `page` — kartę przeglądarki.
+- **Nawigacja**: `await page.goto('/tickets')` (względem `baseURL` z konfiguracji).
+- **Lokatory** — jak w Testing Library, po roli i etykiecie: `page.getByRole('button', { name: 'Utwórz' })`, `page.getByLabel('Tytuł')`, `page.getByText(...)`. Lokator jest leniwy: szuka elementu dopiero przy akcji.
+- **Akcje**: `click()`, `fill('tekst')`, `press('Enter')`, `selectOption(...)`, `check()`, `setInputFiles(...)`.
+- **Auto-waiting**: przed akcją Playwright czeka, aż element będzie widoczny, aktywny, stabilny i nie zasłonięty — nie piszesz ręcznych `sleep`.
+- **Asercje z ponawianiem**: `await expect(lokator).toBeVisible()`, `toHaveText`, `toHaveURL`, `toHaveCount` — ponawiane do skutku (domyślnie 5 s).
+
+Instalacja: `npm init playwright@latest` (tworzy konfigurację, katalog testów i pobiera przeglądarki).
+
+#T CODE_BASIC Konfiguracja: uruchamianie aplikacji przed testami
+```
+// playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './e2e',
+  use: {
+    baseURL: 'http://localhost:5173',
+    trace: 'on-first-retry',      // zapis śladu przy ponowionym teście
+  },
+  retries: process.env.CI ? 2 : 0,
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:5173',
+    reuseExistingServer: !process.env.CI,
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+  ],
+});
+```
+
+#T CODE_JSX Ścieżka: utworzenie ticketu (JSX)
+Pliki testów Playwright mogą być w JS. Test opisuje pełną ścieżkę użytkownika.
+```
+// e2e/create-ticket.spec.js
+import { expect, test } from '@playwright/test';
+
+test('użytkownik tworzy ticket i widzi go na liście oraz w szczegółach', async ({ page }) => {
+  await page.goto('/tickets');
+
+  await page.getByRole('button', { name: '+ Nowy ticket' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Nowy ticket' });
+  await dialog.getByLabel('Tytuł').fill('Eksport CSV ucina polskie znaki');
+  await dialog.getByLabel('Priorytet').selectOption('HIGH');
+  await dialog.getByRole('button', { name: 'Utwórz' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText(/Utworzono ticket #\d+/);
+
+  await page.getByRole('link', { name: 'Eksport CSV ucina polskie znaki' }).click();
+  await expect(page).toHaveURL(/\/tickets\/\d+$/);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Eksport CSV ucina polskie znaki');
+});
+```
+
+#T CODE_TSX Ścieżka: utworzenie ticketu (TSX)
+Playwright jest pisany w TypeScripcie i domyślnie generuje testy w TS. Kod identyczny; typy `Page` i `Locator` dają podpowiedzi metod.
+```
+// e2e/create-ticket.spec.ts
+import { expect, test } from '@playwright/test';
+
+test('użytkownik tworzy ticket i widzi go na liście oraz w szczegółach', async ({ page }) => {
+  await page.goto('/tickets');
+
+  await page.getByRole('button', { name: '+ Nowy ticket' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Nowy ticket' });
+  await dialog.getByLabel('Tytuł').fill('Eksport CSV ucina polskie znaki');
+  await dialog.getByLabel('Priorytet').selectOption('HIGH');
+  await dialog.getByRole('button', { name: 'Utwórz' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText(/Utworzono ticket #\d+/);
+
+  await page.getByRole('link', { name: 'Eksport CSV ucina polskie znaki' }).click();
+  await expect(page).toHaveURL(/\/tickets\/\d+$/);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Eksport CSV ucina polskie znaki');
+});
+```
+
+#T NOTE JSX ↔ TSX — testy E2E nie zależą od języka aplikacji
+Testy Playwright sterują przeglądarką z zewnątrz — nie importują komponentów, więc aplikacja może być w JSX, a testy w TS (to częsta i dobra konfiguracja: Playwright generuje testy w TS, a typy `Page`, `Locator`, fikstur dają podpowiedzi). Różnica JSX/TSX w aplikacji nie ma tu znaczenia; ważne jest tylko, żeby elementy miały role i nazwy dostępności — te same, których używały testy komponentów.
+
+#T DEFINITION Stan startowy: logowanie raz, MSW lub prawdziwy backend
+Dwa podejścia do danych w E2E:
+1. **Prawdziwy backend** (Spring Boot z testową bazą) — sprawdza całą integrację; wymaga przygotowania danych (endpoint resetujący bazę, skrypty) i jest wolniejszy.
+2. **MSW w przeglądarce** (tryb deweloperski z mockami) — szybkie i powtarzalne, ale nie testuje backendu.
+
+Logowanie przed każdym testem przez formularz jest wolne. Playwright pozwala zalogować się raz w projekcie „setup”, zapisać stan przeglądarki (`storageState` — ciasteczka i localStorage) i użyć go w pozostałych testach.
+
+#T CODE_PRACTICAL Logowanie raz i ponowne użycie sesji
+```
+// e2e/auth.setup.ts
+import { expect, test as setup } from '@playwright/test';
+
+const authFile = 'playwright/.auth/agent.json';
+
+setup('logowanie agenta', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Login').fill('anna');
+  await page.getByLabel('Hasło').fill(process.env.E2E_PASSWORD ?? 'test-haslo');
+  await page.getByRole('button', { name: 'Zaloguj' }).click();
+  await expect(page.getByRole('button', { name: /Wyloguj/ })).toBeVisible();
+  await page.context().storageState({ path: authFile });
+});
+
+// playwright.config.ts → projects:
+//   { name: 'setup', testMatch: /.*\.setup\.ts/ },
+//   { name: 'chromium', use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/agent.json' }, dependencies: ['setup'] },
+```
+
+#T DEFINITION Trace Viewer, tryb UI i generator testów
+- `npx playwright test --ui` — tryb interaktywny: lista testów, podgląd przeglądarki, oś czasu kroków, uruchamianie pojedynczych testów.
+- **Trace Viewer** (`npx playwright show-trace trace.zip` albo raport HTML) — dla każdego kroku: zrzut DOM przed i po, żądania sieciowe, logi konsoli. Najlepsze narzędzie do zrozumienia, dlaczego test padł w CI.
+- `npx playwright codegen http://localhost:5173` — nagrywa Twoje kliknięcia jako kod testu (dobry punkt startu, ale lokatory warto potem uporządkować do ról i etykiet).
+- `page.route('**/api/tickets', ...)` — przechwycenie żądań w samym Playwright (np. wymuszenie błędu 500 w jednym teście E2E).
+
+#T STEP_BY_STEP Budujemy razem: E2E dla DevDesk
+1. Uruchom `npm init playwright@latest`, wybierz katalog `e2e` i TS; ustaw `webServer` na `npm run dev` i `baseURL`.
+2. Dodaj projekt `setup` z logowaniem i zapisem `storageState`; dodaj `playwright/.auth` do `.gitignore`.
+3. Napisz 4 ścieżki: utworzenie ticketu (jak w przykładzie), wyszukiwanie z filtrem w adresie (`/tickets?status=OPEN&q=api` po odświeżeniu pokazuje to samo), zamknięcie ticketu z karty szczegółów, usunięcie z cofnięciem.
+4. Dodaj test błędu przez `page.route`: `GET /api/tickets` zwraca 500 → widać kartę błędu, „Spróbuj ponownie” (po zdjęciu przechwycenia) ładuje dane.
+5. Uruchom `npx playwright test --ui`, zepsuj celowo etykietę pola „Tytuł” i obejrzyj w Trace Viewer, w którym kroku i dlaczego test padł.
+6. Dodaj skrypt `"test:e2e": "playwright test"` i uruchom testy w Chromium i Firefox.
+
+#T PITFALL Ręczne czekanie i kruche selektory
+`await page.waitForTimeout(2000)` i selektory typu `page.locator('#root > div > div:nth-child(3) button')` to dwa najczęstsze źródła testów E2E, które „czasem przechodzą”. Auto-waiting lokatorów i asercje z ponawianiem (`await expect(...).toBeVisible()`) zastępują ręczne czekanie, a lokatory po roli i etykiecie przetrwają zmiany układu. Jeśli element trudno znaleźć po roli — popraw jego dostępność.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Testy E2E w Playwright sterują prawdziwą przeglądarką: `page.goto`, lokatory po roli i etykiecie, akcje z auto-waiting i asercje z ponawianiem. `webServer` uruchamia aplikację przed testami, projekt `setup` loguje raz i zapisuje `storageState`, a `page.route` pozwala wymusić scenariusze sieciowe. Tryb `--ui`, Trace Viewer i `codegen` pomagają pisać i debugować testy. E2E zostaw dla kilku kluczowych ścieżek — resztę pokrywają testy komponentów. Testy mogą być w TS niezależnie od języka aplikacji.
+
+Kryterium akceptacji: DevDesk ma 5 testów Playwright (tworzenie, filtr w adresie po odświeżeniu, zamknięcie, usunięcie z cofnięciem, błąd serwera z ponowieniem), logowanie wykonywane raz przez `storageState`, a celowo zepsuty test da się zdiagnozować w Trace Viewer.
