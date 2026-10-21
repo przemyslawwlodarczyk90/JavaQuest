@@ -49,7 +49,7 @@ function seedLesson(dir) {
 function isTsx(type, text) {
   if (type === 'CODE_TSX') return true;
   if (type === 'CODE_JSX') return false;
-  return /}: {|}: [A-Z]|import type |\): \w|\w\??: (string|number|boolean|unknown|any|void|never|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text);
+  return /}: {|}: [A-Z]|import type |\): \w|\w\??: (string|number|boolean|unknown|any|void|never|[A-Z]\w*)\b|<[A-Z]\w*(\[\])?>\(|\w<['"][\w-]+['"]>\(|\bdeclare |\bas const\b|^\s*(export )?type [A-Z]|\binterface [A-Z]/m.test(text);
 }
 
 const map = [];
