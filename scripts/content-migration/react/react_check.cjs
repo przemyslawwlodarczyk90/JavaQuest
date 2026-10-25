@@ -113,16 +113,22 @@ for (let pass = 0; pass < 2; pass++) {
   }
 }
 
-fs.writeFileSync(path.join(work, 'tsconfig.json'), JSON.stringify({
-  compilerOptions: { target: 'ES2023', lib: ['ES2023', 'DOM', 'DOM.Iterable'], module: 'ESNext', moduleResolution: 'bundler',
-    jsx: 'react-jsx', strict: true, noEmit: true, skipLibCheck: true, allowJs: true, checkJs: false,
-    allowImportingTsExtensions: true, isolatedModules: true, moduleDetection: 'force', typeRoots: [path.join(harness, 'node_modules', '@types')] },
-  include: ['src'],
-}, null, 2));
+// Lekcje z React Native / Expo sprawdzamy osobnym programem: typy react-native nadpisuja globalne typy DOM
+// (np. FormData bez get), co psuloby sprawdzanie lekcji przegladarkowych w tym samym programie.
+const NATIVE = /from '(react-native|expo-[\w-]+)'/;
+const nativeDirs = [...new Set(map.filter((s) => NATIVE.test(fs.readFileSync(path.join(s.lessonDir, s.rel), 'utf8')))
+  .map((s) => path.relative(work, s.lessonDir).split(path.sep).join('/')))];
+const compilerOptions = { target: 'ES2023', lib: ['ES2023', 'DOM', 'DOM.Iterable'], module: 'ESNext', moduleResolution: 'bundler',
+  jsx: 'react-jsx', strict: true, noEmit: true, skipLibCheck: true, allowJs: true, checkJs: false,
+  allowImportingTsExtensions: true, isolatedModules: true, moduleDetection: 'force', typeRoots: [path.join(harness, 'node_modules', '@types')] };
+fs.writeFileSync(path.join(work, 'tsconfig.json'), JSON.stringify({ compilerOptions, include: ['src'], exclude: nativeDirs }, null, 2));
+fs.writeFileSync(path.join(work, 'tsconfig.native.json'), JSON.stringify({ compilerOptions, include: ['src/*.ts', ...nativeDirs] }, null, 2));
 let out = '';
-try {
-  execFileSync(process.execPath, [path.join(harness, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', work], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-} catch (e) { out = e.stdout; }
+for (const project of nativeDirs.length ? ['tsconfig.json', 'tsconfig.native.json'] : ['tsconfig.json']) {
+  try {
+    execFileSync(process.execPath, [path.join(harness, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', path.join(work, project)], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  } catch (e) { out += e.stdout; }
+}
 const errors = out.split('\n').filter((l) => /error TS/.test(l) && !/TS2307|TS2875|TS6133|TS6196/.test(l));
 for (const e of errors) {
   const normalized = e.split('\\').join('/');
