@@ -1,0 +1,214 @@
+#T INTRO Rozgrzewka i problem: technik w piwnicy bez zasięgu
+Rozgrzewka: Dlaczego CI dla projektu TSX musi mieć krok `tsc --noEmit`? Co blokuje scalenie czerwonego pull requesta? Dlaczego workflow z forka nie dostaje sekretów?
+
+Problem: część użytkowników DevDesk to technicy w terenie — serwerownie, piwnice, pociągi. Gdy tracą zasięg, aplikacja pokazuje dinozaura przeglądarki, a notatka wpisana do ticketu znika. Chcą też „ikonkę na pulpicie”, która otwiera DevDesk jak zwykłą aplikację, bez paska przeglądarki. W tej lekcji zamienisz DevDesk w **PWA** (Progressive Web App): manifest do instalacji, service worker z pamięcią podręczną, komunikat o nowej wersji, wskaźnik braku sieci i kolejkę zmian wysyłanych po powrocie połączenia.
+
+#T DEFINITION Manifest i service worker
+**PWA** to zwykła aplikacja webowa z dwoma dodatkami:
+- **Manifest aplikacji** (`manifest.webmanifest`) — nazwa, ikony, kolor motywu, adres startowy, tryb wyświetlania (`display: 'standalone'` — okno bez paska adresu). Z manifestem (i HTTPS) przeglądarka pozwala **zainstalować** aplikację na pulpicie lub ekranie telefonu.
+- **Service worker** — skrypt działający w tle, poza stroną, który przechwytuje żądania sieciowe aplikacji (`fetch`) i może odpowiadać z **pamięci podręcznej** (Cache Storage). Dzięki niemu aplikacja uruchamia się bez sieci i ładuje się błyskawicznie przy kolejnych wizytach.
+
+Cykl życia service workera: **instalacja** (pobranie i zapisanie plików aplikacji w cache — precache), **oczekiwanie** (nowa wersja czeka, aż zamkniesz wszystkie karty starej), **aktywacja** (przejęcie kontroli, usunięcie starego cache). Ten etap oczekiwania to źródło najczęstszego pytania: „dlaczego po wdrożeniu widzę starą wersję?”.
+
+#T CODE_BASIC Konfiguracja vite-plugin-pwa
+Wtyczka `vite-plugin-pwa` (oparta na Workbox) generuje manifest i service worker przy buildzie: precache wszystkich plików z `dist/` oraz reguły pamięci podręcznej dla żądań w czasie działania.
+```
+// vite.config.ts
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'prompt', // nowa wersja czeka na zgodę użytkownika
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      manifest: {
+        name: 'DevDesk — panel zgłoszeń',
+        short_name: 'DevDesk',
+        start_url: '/',
+        display: 'standalone',
+        theme_color: '#0e7490',
+        background_color: '#ffffff',
+        icons: [
+          { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'pwa-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        navigateFallback: '/index.html',          // fallback SPA także offline
+        navigateFallbackDenylist: [/^\/api\//],
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/tickets'),
+            handler: 'NetworkFirst',               // świeże dane, a bez sieci — ostatnie znane
+            options: { cacheName: 'api-tickets', networkTimeoutSeconds: 4, expiration: { maxEntries: 200, maxAgeSeconds: 86_400 } },
+          },
+          {
+            urlPattern: ({ request }) => request.destination === 'image',
+            handler: 'CacheFirst',
+            options: { cacheName: 'images', expiration: { maxEntries: 100, maxAgeSeconds: 30 * 86_400 } },
+          },
+        ],
+      },
+    }),
+  ],
+});
+```
+
+#T DEFINITION Strategie pamięci podręcznej
+- **Precache** — pliki aplikacji (HTML, JS, CSS z hashem) zapisane przy instalacji. Aplikacja startuje offline.
+- **NetworkFirst** — najpierw sieć, przy braku sieci (lub przekroczeniu limitu czasu) — cache. Dla danych, które mają być aktualne, ale mogą być „ostatnie znane” offline: lista ticketów.
+- **CacheFirst** — najpierw cache, sieć tylko przy braku. Dla rzadko zmienianych zasobów: obrazy, czcionki, awatary.
+- **StaleWhileRevalidate** — natychmiast z cache, a w tle pobranie świeżej wersji na następny raz. Dla danych, gdzie lekko nieaktualna wartość jest w porządku: słowniki, ustawienia.
+- **NetworkOnly** — zawsze sieć. Dla operacji zapisujących (POST, PATCH) i danych wrażliwych.
+
+Dane prywatne użytkownika w cache service workera przetrwają wylogowanie — przy wylogowaniu czyść odpowiednie cache (`caches.delete('api-tickets')`).
+
+#T CODE_JSX Komunikat o nowej wersji i gotowości offline (JSX)
+Hook `useRegisterSW` z wirtualnego modułu wtyczki informuje, że nowa wersja czeka (`needRefresh`) albo że aplikacja jest gotowa do pracy offline (`offlineReady`). Aktualizacja następuje dopiero po kliknięciu — nie przerywasz użytkownikowi pracy.
+```
+// app/UpdatePrompt.jsx
+import { useRegisterSW } from 'virtual:pwa-register/react';
+
+export function UpdatePrompt() {
+  const {
+    needRefresh: [needRefresh, setNeedRefresh],
+    offlineReady: [offlineReady, setOfflineReady],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegisteredSW(url, registration) {
+      // sprawdzaj aktualizacje co godzinę — aplikacja bywa otwarta cały dzień
+      if (registration) setInterval(() => registration.update(), 60 * 60 * 1000);
+    },
+  });
+
+  if (!needRefresh && !offlineReady) return null;
+
+  return (
+    <div role="status" className="banner">
+      {needRefresh ? 'Dostępna jest nowa wersja DevDesk.' : 'DevDesk działa teraz także bez internetu.'}
+      {needRefresh && <button type="button" onClick={() => updateServiceWorker(true)}>Odśwież</button>}
+      <button type="button" onClick={() => { setNeedRefresh(false); setOfflineReady(false); }}>Zamknij</button>
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Komunikat o nowej wersji i gotowości offline (TSX)
+Typy wirtualnego modułu dodajesz w `vite-env.d.ts`: `/// <reference types="vite-plugin-pwa/react" />` — wtedy `useRegisterSW` i jego opcje są w pełni typowane.
+```
+// app/UpdatePrompt.tsx
+import { useRegisterSW } from 'virtual:pwa-register/react';
+
+export function UpdatePrompt() {
+  const {
+    needRefresh: [needRefresh, setNeedRefresh],
+    offlineReady: [offlineReady, setOfflineReady],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegisteredSW(_url: string, registration: ServiceWorkerRegistration | undefined) {
+      // sprawdzaj aktualizacje co godzinę — aplikacja bywa otwarta cały dzień
+      if (registration) setInterval(() => registration.update(), 60 * 60 * 1000);
+    },
+  });
+
+  if (!needRefresh && !offlineReady) return null;
+
+  return (
+    <div role="status" className="banner">
+      {needRefresh ? 'Dostępna jest nowa wersja DevDesk.' : 'DevDesk działa teraz także bez internetu.'}
+      {needRefresh && <button type="button" onClick={() => updateServiceWorker(true)}>Odśwież</button>}
+      <button type="button" onClick={() => { setNeedRefresh(false); setOfflineReady(false); }}>Zamknij</button>
+    </div>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — moduły wirtualne
+`virtual:pwa-register/react` nie istnieje na dysku — tworzy go wtyczka Vite podczas budowania. W JSX import po prostu działa. W TSX kompilator zgłosi „Cannot find module”, dopóki nie dodasz referencji typów wtyczki (`/// <reference types="vite-plugin-pwa/react" />`) w `vite-env.d.ts`. Ta sama zasada dotyczy innych modułów wirtualnych i importów zasobów (`*.svg?react`, `*.css?inline`) — typy dostarcza wtyczka albo piszesz deklarację `declare module` sam.
+
+#T CODE_JSX Wskaźnik braku sieci (JSX)
+Stan połączenia to zewnętrzne źródło danych — idealne dla `useSyncExternalStore` (rozdział 07). `navigator.onLine === false` na pewno oznacza brak sieci; `true` oznacza tylko, że jest jakieś połączenie (może bez internetu) — dlatego ostateczną prawdą są błędy żądań.
+```
+// shared/useOnlineStatus.jsx
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback) {
+  window.addEventListener('online', callback);
+  window.addEventListener('offline', callback);
+  return () => {
+    window.removeEventListener('online', callback);
+    window.removeEventListener('offline', callback);
+  };
+}
+
+export function useOnlineStatus() {
+  return useSyncExternalStore(subscribe, () => navigator.onLine, () => true);
+}
+
+export function OfflineBanner() {
+  const online = useOnlineStatus();
+  if (online) return null;
+  return (
+    <div role="status" className="banner banner--warning">
+      Brak połączenia. Pokazujemy ostatnio pobrane dane, a zmiany wyślemy po powrocie sieci.
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Wskaźnik braku sieci (TSX)
+```
+// shared/useOnlineStatus.tsx
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback: () => void): () => void {
+  window.addEventListener('online', callback);
+  window.addEventListener('offline', callback);
+  return () => {
+    window.removeEventListener('online', callback);
+    window.removeEventListener('offline', callback);
+  };
+}
+
+export function useOnlineStatus(): boolean {
+  return useSyncExternalStore(subscribe, () => navigator.onLine, () => true);
+}
+
+export function OfflineBanner() {
+  const online = useOnlineStatus();
+  if (online) return null;
+  return (
+    <div role="status" className="banner banner--warning">
+      Brak połączenia. Pokazujemy ostatnio pobrane dane, a zmiany wyślemy po powrocie sieci.
+    </div>
+  );
+}
+```
+
+#T USAGE Zmiany wprowadzone offline
+Odczyt offline daje service worker. **Zapis** offline to osobny problem — żądanie POST bez sieci po prostu się nie uda. Typowe rozwiązania:
+- **TanStack Query** — mutacje w trybie `networkMode: 'offlineFirst'` są wstrzymywane bez sieci i wznawiane po jej powrocie; z `persistQueryClient` (zapis cache i kolejki mutacji w IndexedDB) przetrwają nawet zamknięcie karty. Interfejs od razu pokazuje zmianę (aktualizacja optymistyczna) z oznaczeniem „oczekuje na wysłanie”.
+- **Background Sync** (Workbox `backgroundSync`) — service worker sam ponawia nieudane żądania, gdy wróci sieć, nawet po zamknięciu aplikacji (obsługa zależy od przeglądarki).
+- **Konflikty**: gdy dwie osoby zmieniły ten sam ticket offline, serwer musi wykryć konflikt (np. numer wersji, `If-Match` z ETag) i odrzucić nieaktualną zmianę, a interfejs — pokazać to użytkownikowi. Ostatni zapis nie może po cichu wygrywać.
+
+#T STEP_BY_STEP Budujemy razem: DevDesk offline
+1. Zainstaluj `vite-plugin-pwa`, przygotuj ikony (192, 512, wersja `maskable`) i manifest.
+2. Skonfiguruj precache, `navigateFallback` i strategie: `NetworkFirst` dla `/api/tickets`, `CacheFirst` dla obrazów, bez cache dla zapisów.
+3. Dodaj `UpdatePrompt` i sprawdź scenariusz: build → wdrożenie → nowa wersja → komunikat → „Odśwież”.
+4. Dodaj `OfflineBanner` na `useSyncExternalStore`.
+5. Ustaw mutację dodawania notatki z `networkMode: 'offlineFirst'`; oznacz notatki oczekujące na wysłanie.
+6. Przy wylogowaniu usuń cache z danymi użytkownika.
+7. Przetestuj w DevTools: Application → Service Workers (Update on reload, Offline), Application → Cache Storage, Network → Offline. Zainstaluj aplikację z paska adresu i uruchom ją bez sieci.
+8. Uruchom audyt Lighthouse (kategoria PWA / instalowalność) i popraw zgłoszone braki.
+
+#T PITFALL Service worker, który trzyma starą wersję na zawsze
+Źle skonfigurowany service worker potrafi serwować starą aplikację tygodniami: plik `sw.js` cache'owany przez serwer (musi mieć `Cache-Control: no-cache`, jak `index.html`), `registerType: 'autoUpdate'` bez przeładowania strony, użytkownik, który nigdy nie zamyka karty. Zasady: nagłówek `no-cache` dla `sw.js` i `manifest.webmanifest`, okresowe `registration.update()`, komunikat o nowej wersji i — na wypadek katastrofy — przygotowany „wyłącznik” (service worker, który wyrejestrowuje sam siebie i czyści cache). Druga pułapka: cache'owanie odpowiedzi API z nagłówkiem autoryzacji i bez rozróżnienia użytkowników — na wspólnym komputerze kolejna osoba zobaczy dane poprzedniej.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+PWA to aplikacja z manifestem (instalacja, ikona, tryb `standalone`) i service workerem (przechwytywanie żądań i pamięć podręczna). `vite-plugin-pwa` generuje oba przy buildzie: precache plików aplikacji, fallback nawigacji i strategie w czasie działania (`NetworkFirst` dla danych, `CacheFirst` dla obrazów, bez cache dla zapisów). Nowa wersja czeka w stanie oczekiwania — `useRegisterSW` pozwala zaproponować odświeżenie. Stan sieci czytasz przez `useSyncExternalStore`, a zapisy offline kolejkujesz (TanStack Query `offlineFirst`, Background Sync) z obsługą konfliktów po stronie serwera. W TSX typy modułu wirtualnego dodajesz referencją w `vite-env.d.ts`.
+
+Kryterium akceptacji: DevDesk instaluje się jako aplikacja i uruchamia bez sieci z ostatnio pobraną listą ticketów; brak sieci jest sygnalizowany; notatka dodana offline wysyła się po powrocie połączenia; po wdrożeniu użytkownik dostaje propozycję odświeżenia; po wylogowaniu w Cache Storage nie ma danych użytkownika; audyt Lighthouse nie zgłasza problemów z instalowalnością.
