@@ -152,6 +152,9 @@ export function getMastery(track) {
 }
 
 export const getLearningSummary = () => getJson('/api/mastery/summary')
+export const getPointsRules = () => getJson('/api/mastery/rules')
+export const getExpiringLessons = () => getJson('/api/mastery/expiring')
+export const getMotivationalQuote = (previousId) => getJson(`/api/mastery/quote${previousId ? `?exclude=${encodeURIComponent(previousId)}` : ''}`)
 
 export function getMasteryReviews(track) {
   return getJson(track ? `/api/mastery/reviews?track=${encodeURIComponent(track)}` : '/api/mastery/reviews')

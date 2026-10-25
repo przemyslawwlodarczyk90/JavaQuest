@@ -4,6 +4,7 @@ import ChapterListPage from './pages/ChapterListPage'
 import LessonListPage from './pages/LessonListPage'
 import LessonDetailPage from './pages/LessonDetailPage'
 import CriticalTopicsPage from './pages/CriticalTopicsPage'
+import ExpiringLessonsPage from './pages/ExpiringLessonsPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ConfirmPage from './pages/ConfirmPage'
@@ -96,6 +97,7 @@ function App() {
             <Route path="/linux" element={<ChapterListPage track="LINUX" />} />
             <Route path="/ocp" element={<ChapterListPage track="OCP" />} />
             <Route path="/krytyczne" element={<CriticalTopicsPage />} />
+            <Route path="/powtorki" element={<ExpiringLessonsPage />} />
             <Route path="/rozdzial/:chapterSlug" element={<LessonListPage />} />
             <Route path="/rozdzial/:chapterSlug/:lessonSlug" element={<LessonDetailPage />} />
           </Route>
