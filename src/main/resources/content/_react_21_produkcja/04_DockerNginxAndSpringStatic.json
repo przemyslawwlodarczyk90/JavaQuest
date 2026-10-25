@@ -1,5 +1,87 @@
 {
-  "theory": [],
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Rozgrzewka i problem: wdrożenie na własnym serwerze",
+      "body": "Rozgrzewka: Dlaczego `index.html` nie może być cache'owany? Co robi fallback SPA? Jak aplikacja przeżywa usunięcie starych plików `assets/` po wdrożeniu?\n\nProblem: firma nie korzysta z platform typu Vercel — wszystko działa na własnych serwerach w kontenerach, obok backendu Spring Boot z rozdziału 11. Administrator prosi o obraz Dockera z frontendem, który da się uruchomić jednym poleceniem i skonfigurować zmiennymi środowiskowymi. Drugi zespół woli prostszy wariant: jeden plik JAR, w którym Spring Boot serwuje i API, i frontend. W tej lekcji przygotujesz oba: wieloetapowy obraz Dockera z Nginx (fallback SPA, cache, kompresja, proxy do API) oraz frontend wbudowany w aplikację Spring Boot."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Wieloetapowy obraz Dockera",
+      "body": "Do zbudowania frontendu potrzebujesz Node i `node_modules` (setki MB), do serwowania — tylko statycznych plików i lekkiego serwera. **Budowanie wieloetapowe** (multi-stage) rozdziela te kroki w jednym `Dockerfile`:\n1. **etap build** — obraz `node`, kopiowanie `package.json` i `package-lock.json`, `npm ci`, kopiowanie źródeł, `npm run build`,\n2. **etap runtime** — obraz `nginx:alpine` (kilkadziesiąt MB), kopiowanie **tylko** `dist/` z poprzedniego etapu i konfiguracji Nginx.\n\nKońcowy obraz nie zawiera Node, kodu źródłowego ani zależności deweloperskich. Kolejność kroków ma znaczenie dla cache warstw: `package*.json` i `npm ci` przed skopiowaniem kodu sprawiają, że zmiana w komponencie nie powoduje ponownej instalacji zależności."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Dockerfile frontendu",
+      "body": "",
+      "code": "# Dockerfile\n# --- etap 1: budowanie ---\nFROM node:22-alpine AS build\nWORKDIR /app\nCOPY package.json package-lock.json ./\nRUN npm ci\nCOPY . .\nARG VITE_APP_VERSION=dev\nENV VITE_APP_VERSION=$VITE_APP_VERSION\nRUN npm run build\n\n# --- etap 2: serwowanie ---\nFROM nginx:1.27-alpine\nCOPY nginx.conf /etc/nginx/conf.d/default.conf\nCOPY --from=build /app/dist /usr/share/nginx/html\n# Szablon konfiguracji czasu działania (lekcja 02): config.json generowany ze zmiennych kontenera przy starcie\nCOPY docker/config.template.json /etc/nginx/templates/config.json.template\nEXPOSE 80\nHEALTHCHECK CMD wget -qO- http://localhost/healthz || exit 1\n\n# .dockerignore (obok Dockerfile): node_modules, dist, .git, .env*.local, coverage"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Konfiguracja Nginx dla SPA",
+      "body": "",
+      "code": "# nginx.conf\nserver {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n\n  gzip on;\n  gzip_types text/css application/javascript application/json image/svg+xml;\n  gzip_min_length 1024;\n\n  # Pliki z hashem w nazwie — cache na rok\n  location /assets/ {\n    add_header Cache-Control \"public, max-age=31536000, immutable\";\n    try_files $uri =404;\n  }\n\n  # API przekazywane do backendu Spring Boot (nazwa usługi z docker compose)\n  location /api/ {\n    proxy_pass http://backend:8080;\n    proxy_set_header Host $host;\n    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n    proxy_set_header X-Forwarded-Proto $scheme;\n  }\n\n  location = /healthz {\n    access_log off;\n    return 200 \"ok\";\n  }\n\n  # Fallback SPA: istniejący plik albo index.html — bez cache\n  location / {\n    add_header Cache-Control \"no-cache\";\n    add_header X-Content-Type-Options \"nosniff\";\n    add_header Referrer-Policy \"strict-origin-when-cross-origin\";\n    try_files $uri $uri/ /index.html;\n  }\n}"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "docker compose: frontend, backend i baza",
+      "body": "",
+      "code": "# compose.yaml\nservices:\n  frontend:\n    build:\n      context: ./frontend\n      args:\n        VITE_APP_VERSION: ${APP_VERSION:-dev}\n    ports:\n      - \"8081:80\"\n    environment:\n      API_URL: /api\n      SENTRY_DSN: ${SENTRY_DSN:-}\n    depends_on:\n      - backend\n\n  backend:\n    build: ./backend\n    environment:\n      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/devdesk\n      SPRING_DATASOURCE_USERNAME: devdesk\n      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}\n    depends_on:\n      - db\n\n  db:\n    image: postgres:17-alpine\n    environment:\n      POSTGRES_DB: devdesk\n      POSTGRES_USER: devdesk\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes:\n      - db-data:/var/lib/postgresql/data\n\nvolumes:\n  db-data:"
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Dlaczego proxy, a nie CORS",
+      "body": "Gdy Nginx serwuje frontend i przekazuje `/api/` do backendu, przeglądarka widzi **jedno źródło** (ten sam schemat, host i port) — nie ma żądań cross-origin, więc nie trzeba konfigurować CORS, a ciasteczka sesji (`HttpOnly`, `SameSite=Lax`, rozdział 11) działają bez dodatkowych ustawień. To ten sam układ, który w trybie deweloperskim daje proxy Vite. Nagłówki `X-Forwarded-*` przekazują backendowi prawdziwy adres i protokół klienta — Spring Boot czyta je po ustawieniu `server.forward-headers-strategy=framework`."
+    },
+    {
+      "type": "CODE_JSX",
+      "heading": "Odczyt konfiguracji czasu działania (JSX)",
+      "body": "Nginx przy starcie kontenera zamienia `${API_URL}` w szablonie na wartość zmiennej (mechanizm `envsubst` w oficjalnym obrazie). Aplikacja pobiera `config.json` przed renderem — jeden obraz działa w każdym środowisku.",
+      "code": "// main.jsx\nimport { createRoot } from 'react-dom/client';\nimport { App } from './app/App';\nimport { setRuntimeConfig } from './shared/config';\n\nasync function start() {\n  const res = await fetch('/config.json', { cache: 'no-store' });\n  const runtime = res.ok ? await res.json() : {};\n  setRuntimeConfig(runtime); // walidacja schematem jak w lekcji 02\n\n  createRoot(document.getElementById('root')).render(<App />);\n}\n\nstart();\n\n// docker/config.template.json:\n// { \"apiUrl\": \"${API_URL}\", \"sentryDsn\": \"${SENTRY_DSN}\" }"
+    },
+    {
+      "type": "CODE_TSX",
+      "heading": "Odczyt konfiguracji czasu działania (TSX)",
+      "body": "",
+      "code": "// main.tsx\nimport { createRoot } from 'react-dom/client';\nimport { App } from './app/App';\nimport { setRuntimeConfig } from './shared/config';\n\nasync function start(): Promise<void> {\n  const res = await fetch('/config.json', { cache: 'no-store' });\n  const runtime: unknown = res.ok ? await res.json() : {};\n  setRuntimeConfig(runtime); // walidacja schematem jak w lekcji 02 — stąd unknown, a nie rzutowanie\n\n  createRoot(document.getElementById('root')!).render(<App />);\n}\n\nvoid start();\n\n// docker/config.template.json:\n// { \"apiUrl\": \"${API_URL}\", \"sentryDsn\": \"${SENTRY_DSN}\" }"
+    },
+    {
+      "type": "NOTE",
+      "heading": "JSX ↔ TSX — dane z zewnątrz jako unknown",
+      "body": "W TSX wynik `res.json()` przypisujesz do `unknown`, a nie rzutujesz na `RuntimeConfig` — plik generowany przez serwer może być pusty, nieaktualny albo mieć literówkę w nazwie zmiennej, i tylko walidacja schematem to wychwyci. `void start()` sygnalizuje linterowi (`no-floating-promises`), że świadomie nie czekasz na Promise. W JSX kod jest identyczny, ale nic nie zmusza do walidacji — tym bardziej trzymaj ją w `setRuntimeConfig`."
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Wariant drugi: frontend wewnątrz aplikacji Spring Boot",
+      "body": "Spring Boot serwuje automatycznie wszystko, co leży w `src/main/resources/static/` (w JAR: `classpath:/static/`). Jeśli skopiujesz tam zawartość `dist/`, jeden plik JAR zawiera API i frontend:\n- **budowanie**: wtyczka Maven `frontend-maven-plugin` instaluje Node, uruchamia `npm ci` i `npm run build` w fazie `generate-resources`, a `maven-resources-plugin` kopiuje `dist/` do `target/classes/static/` — `mvn package` daje kompletny JAR,\n- **fallback SPA**: Spring zwróci 404 dla `/tickets/42`, bo takiego pliku nie ma — potrzebny jest resolver, który dla nieistniejących ścieżek (poza `/api/`) zwraca `index.html`,\n- **cache**: `spring.web.resources.cache.cachecontrol.max-age` dla zasobów oraz osobna obsługa `index.html` (bez cache).\n\nZalety: jedno wdrożenie, jedno źródło, zero CORS. Wady: każda zmiana frontendu wymaga zbudowania i wdrożenia backendu, a frontend nie może być serwowany z CDN niezależnie."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Fallback SPA w Spring Boot",
+      "body": "Resolver zasobów zwraca istniejący plik, a dla pozostałych ścieżek — `index.html`. Ścieżki `api/` są wyłączone, żeby brakujący endpoint dawał prawdziwe 404, a nie stronę aplikacji.",
+      "code": "// SpaConfig.java (pakiet config; klasy z org.springframework.web.servlet.config.annotation, .resource, .core.io, .http)\n\n@Configuration\npublic class SpaConfig implements WebMvcConfigurer {\n\n    @Override\n    public void addResourceHandlers(ResourceHandlerRegistry registry) {\n        registry.addResourceHandler(\"/assets/**\")\n                .addResourceLocations(\"classpath:/static/assets/\")\n                .setCacheControl(CacheControl.maxAge(Duration.ofDays(365)).cachePublic().immutable());\n\n        registry.addResourceHandler(\"/**\")\n                .addResourceLocations(\"classpath:/static/\")\n                .setCacheControl(CacheControl.noCache())\n                .resourceChain(true)\n                .addResolver(new PathResourceResolver() {\n                    @Override\n                    protected Resource getResource(String resourcePath, Resource location) throws IOException {\n                        Resource requested = location.createRelative(resourcePath);\n                        if (requested.exists() && requested.isReadable()) return requested;\n                        if (resourcePath.startsWith(\"api/\")) return null; // brakujący endpoint = prawdziwe 404\n                        return new ClassPathResource(\"/static/index.html\");\n                    }\n                });\n    }\n}"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Który wariant wybrać",
+      "body": "- **Platforma statyczna (Cloudflare, Vercel)** — najmniej pracy, CDN na całym świecie, podglądy dla pull requestów; frontend i backend wdrażane niezależnie (wymaga CORS albo proxy po stronie platformy).\n- **Kontener Nginx** — własna infrastruktura (Kubernetes, serwery firmy), pełna kontrola nad nagłówkami i proxy, niezależne wdrażanie frontendu i backendu, jeden obraz dla wszystkich środowisk z konfiguracją czasu działania.\n- **Frontend w JAR Spring Boot** — mały zespół, jedna aplikacja, proste wdrożenie jednego artefaktu; akceptujesz wspólny cykl wydań frontendu i backendu."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Budujemy razem: DevDesk w kontenerach",
+      "body": "1. Dodaj `.dockerignore` i wieloetapowy `Dockerfile`; zbuduj obraz i sprawdź jego rozmiar (`docker images`) — powinien mieć kilkadziesiąt MB.\n2. Dodaj `nginx.conf` z fallbackiem, cache, kompresją, `/healthz` i proxy `/api/`.\n3. Uruchom `docker compose up` z frontendem, backendem Spring Boot i bazą; zaloguj się i sprawdź, że ciasteczko sesji działa bez CORS.\n4. Odśwież `/tickets/42` i sprawdź nagłówki `assets/*` oraz `index.html` w DevTools.\n5. Dodaj szablon `config.json` i odczyt w `main` — uruchom ten sam obraz z innym `API_URL` i sprawdź, że aplikacja go używa.\n6. Wariant drugi: skonfiguruj `frontend-maven-plugin` w backendzie, dodaj `SpaConfig` i zbuduj jeden JAR (`mvn package`); uruchom `java -jar` i przetestuj odświeżanie tras i brakujący endpoint `/api/nie-ma`."
+    },
+    {
+      "type": "PITFALL",
+      "heading": "try_files kierujące wszystko do index.html",
+      "body": "Konfiguracja `location / { try_files $uri /index.html; }` **bez** osobnych bloków dla `/assets/` i `/api/` sprawia, że brakujący plik JS (np. po wdrożeniu) i nieistniejący endpoint API dostają w odpowiedzi `index.html` ze statusem 200. Objawy: „Unexpected token '<'” w konsoli, klient API próbuje parsować HTML jako JSON, monitoring nie widzi błędów 404. Pliki z `assets/` mają zwracać prawdziwe 404 (`try_files $uri =404`), a `/api/` ma trafiać do backendu. Druga pułapka: `add_header` w zagnieżdżonym bloku `location` w Nginx **zastępuje** nagłówki z bloku nadrzędnego — nagłówki bezpieczeństwa powtarzaj w każdym bloku albo dołączaj wspólnym plikiem (`include`)."
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Kryterium akceptacji i podsumowanie",
+      "body": "Wieloetapowy `Dockerfile` buduje frontend w obrazie Node, a serwuje go z lekkiego obrazu Nginx zawierającego tylko `dist/`. Nginx obsługuje fallback SPA (`try_files … /index.html`), cache (`assets/` na rok, `index.html` bez cache), kompresję i proxy `/api/` do backendu — jedno źródło eliminuje CORS. Konfiguracja czasu działania (`config.json` z szablonu i zmiennych kontenera) pozwala używać jednego obrazu w wielu środowiskach. Alternatywnie frontend wbudowujesz w JAR Spring Boot (`static/`) z resolverem zwracającym `index.html` dla tras aplikacji.\n\nKryterium akceptacji: obraz frontendu ma kilkadziesiąt MB i nie zawiera kodu źródłowego; `docker compose up` uruchamia działający DevDesk z logowaniem; odświeżenie tras działa, a brakujący plik z `assets/` i nieistniejący endpoint API zwracają 404; ten sam obraz łączy się z różnymi API zależnie od zmiennej środowiskowej; wariant JAR serwuje aplikację i API z jednego procesu."
+    }
+  ],
   "exercises": [],
   "quiz": []
 }
