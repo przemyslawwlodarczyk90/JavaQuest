@@ -72,4 +72,54 @@ class LearningSummaryServiceTest {
         assertThat(service(now.plusDays(60)).forUser(alice).points()).isEqualTo(7);
         assertThat(service(now.plusDays(60).plusNanos(1)).forUser(alice).points()).isEqualTo(5);
     }
+
+    private LessonRepository.PracticedTitle title(String chapter, String slug) {
+        var title = mock(LessonRepository.PracticedTitle.class);
+        when(title.getChapterSlug()).thenReturn(chapter);
+        when(title.getLessonSlug()).thenReturn(slug);
+        when(title.getTitle()).thenReturn("Tytuł " + slug);
+        when(title.getChapterTitle()).thenReturn(chapter);
+        when(title.getTrack()).thenReturn(CourseTrack.valueOf(chapter));
+        return title;
+    }
+
+    @Test void expiringLessonsArePrivateSortedByActualBoundaryAndExcludePermanentPoints() {
+        when(attempts.findPassedAttempts(alice, 10)).thenReturn(history());
+        var titles = List.of(title("JAVA", "a"), title("JAVASCRIPT", "a"), title("LINUX", "a"));
+        when(lessons.findPracticedTitles(alice)).thenReturn(titles);
+        var result = service(now).expiringLessons(alice);
+        assertThat(result).extracting(LearningSummaryService.ExpiringLesson::chapterSlug)
+                .containsExactly("LINUX", "JAVA");
+        assertThat(result).extracting(LearningSummaryService.ExpiringLesson::daysRemaining)
+                .containsExactly(1L, 2L);
+        assertThat(result).extracting(LearningSummaryService.ExpiringLesson::pointsAtRisk)
+                .containsExactly(1, 1);
+        assertThat(service(now).expiringLessons(bob)).isEmpty();
+        verify(lessons, never()).findPracticedTitles(bob);
+    }
+
+    @Test void exactHorizonIsNotYetExpiredAndDecayUsesTheRemainingLevelsBoundary() {
+        when(attempts.findPassedAttempts(alice, 10)).thenReturn(history());
+        var titles = List.of(title("JAVA", "a"), title("LINUX", "a"));
+        when(lessons.findPracticedTitles(alice)).thenReturn(titles);
+        assertThat(service(now.minusDays(5)).expiringLessons(alice))
+                .extracting(LearningSummaryService.ExpiringLesson::chapterSlug).containsExactly("LINUX");
+        assertThat(service(now.plusDays(30)).expiringLessons(alice))
+                .extracting(LearningSummaryService.ExpiringLesson::chapterSlug).containsExactly("LINUX");
+        assertThat(service(now.plusDays(30)).expiringLessons(alice).getFirst().daysRemaining()).isEqualTo(1);
+    }
+
+    @Test void extendedRetentionKeepsTwoStarsForSixtyAndThreeForOneHundredTwentyDays() {
+        var extended = new MasteryProperties(10, Duration.ofHours(20), Duration.ofDays(6),
+                Duration.ofDays(30), Duration.ofDays(60), Duration.ofDays(120));
+        var policy = new MasteryPolicy(extended);
+        var two = new MasteryPolicy.State(2, now);
+        var three = new MasteryPolicy.State(3, now);
+        assertThat(policy.effectiveLevel(two, now.plusDays(60))).isEqualTo(2);
+        assertThat(policy.effectiveLevel(two, now.plusDays(60).plusNanos(1))).isEqualTo(1);
+        assertThat(policy.effectiveLevel(three, now.plusDays(120))).isEqualTo(3);
+        assertThat(policy.effectiveLevel(three, now.plusDays(120).plusNanos(1))).isEqualTo(2);
+        assertThat(policy.nextExpiry(three, now.plusDays(121))).isEqualTo(now.plusDays(180));
+        assertThat(policy.nextExpiry(two, now.plusDays(61))).isNull();
+    }
 }

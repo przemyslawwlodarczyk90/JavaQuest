@@ -14,6 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 /** Read-only aggregation of existing Mastery; one star equals one valid point. */
 @Service
 public class LearningSummaryService {
+    public static final int WARNING_DAYS = 7;
+    public record ExpiringLesson(String chapterSlug, String lessonSlug, String title, String chapterTitle,
+                                 CourseTrack track, int stars, int pointsAtRisk, long daysRemaining) {}
+    private record Expiry(LocalDateTime boundary, int stars, int pointsAtRisk) {}
     public record CourseSummary(CourseTrack track, long points, long completedLessons, long totalLessons) {}
     public record Summary(long points, long expiringSoon, long completedLessons, long totalLessons,
                           List<CourseSummary> courses) {}
@@ -68,12 +72,45 @@ public class LearningSummaryService {
             var state = policy.replay(entry.getValue());
             int points = policy.effectiveLevel(state, now);
             totals.get(tracks.get(entry.getKey().getFirst()))[0] += points;
-            expiring += points - policy.effectiveLevel(state, now.plusDays(7));
+            expiring += points - policy.effectiveLevel(state, now.plusDays(WARNING_DAYS));
         }
         var courses = totals.entrySet().stream().map(e -> new CourseSummary(e.getKey(),
                 e.getValue()[0], e.getValue()[1], e.getValue()[2])).toList();
         return new Summary(courses.stream().mapToLong(CourseSummary::points).sum(), expiring,
                 courses.stream().mapToLong(CourseSummary::completedLessons).sum(),
                 courses.stream().mapToLong(CourseSummary::totalLessons).sum(), courses);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ExpiringLesson> expiringLessons(User user) {
+        var now = LocalDateTime.now(clock);
+        var horizon = now.plusDays(WARNING_DAYS);
+        var history = new HashMap<List<String>, List<LocalDateTime>>();
+        for (var attempt : attempts.findPassedAttempts(user, properties.minQuestions())) {
+            history.computeIfAbsent(List.of(attempt.chapterSlug(), attempt.lessonSlug()), key -> new ArrayList<>())
+                    .add(attempt.finishedAt());
+        }
+        var expiring = new HashMap<List<String>, Expiry>();
+        for (var entry : history.entrySet()) {
+            var state = policy.replay(entry.getValue());
+            int stars = policy.effectiveLevel(state, now);
+            int lost = stars - policy.effectiveLevel(state, horizon);
+            if (lost > 0) expiring.put(entry.getKey(), new Expiry(policy.nextExpiry(state, now), stars, lost));
+        }
+        if (expiring.isEmpty()) return List.of();
+        // One metadata projection, never lesson bodies or a query per row.
+        return lessons.findPracticedTitles(user).stream()
+                .filter(l -> expiring.containsKey(List.of(l.getChapterSlug(), l.getLessonSlug())))
+                .sorted(Comparator.comparing((LessonRepository.PracticedTitle l) ->
+                                expiring.get(List.of(l.getChapterSlug(), l.getLessonSlug())).boundary())
+                        .thenComparing(LessonRepository.PracticedTitle::getChapterSlug)
+                        .thenComparing(LessonRepository.PracticedTitle::getLessonSlug))
+                .map(l -> {
+                    var expiry = expiring.get(List.of(l.getChapterSlug(), l.getLessonSlug()));
+                    long seconds = java.time.Duration.between(now, expiry.boundary()).getSeconds();
+                    long days = Math.max(0, (seconds + 86399) / 86400);
+                    return new ExpiringLesson(l.getChapterSlug(), l.getLessonSlug(), l.getTitle(), l.getChapterTitle(),
+                            l.getTrack(), expiry.stars(), expiry.pointsAtRisk(), days);
+                }).toList();
     }
 }

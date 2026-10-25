@@ -45,6 +45,7 @@ import org.springframework.web.server.ResponseStatusException;
                         + "org.springframework.boot.actuate.autoconfigure.tracing.zipkin.ZipkinAutoConfiguration"
         })
 @ActiveProfiles("h2")
+@org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc(print = org.springframework.boot.test.autoconfigure.web.servlet.MockMvcPrint.NONE)
 class QuizMasteryIntegrationTest {
 
     private static final String CHAPTER = "_03_collections";
@@ -86,6 +87,8 @@ class QuizMasteryIntegrationTest {
     @Autowired
     private QuizService quizService;
     @Autowired
+    private org.springframework.test.web.servlet.MockMvc mvc;
+    @Autowired
     private com.example.javaquest.platform.mastery.LearningSummaryService summaryService;
     @Autowired
     private com.example.javaquest.platform.progress.LessonProgressRepository progressRepository;
@@ -101,6 +104,32 @@ class QuizMasteryIntegrationTest {
     private MutableClock clock;
     @Autowired
     private TransactionTemplate transactionTemplate;
+
+    @Test
+    void dashboardEndpointsProtectAccountsAndShowUpcomingExpiryWithConfiguredRules() throws Exception {
+        String email = newUser();
+        solve(email, 20);
+        clock.advance(Duration.ofDays(1));
+        solve(email, 20);
+        clock.advance(Duration.ofDays(54));
+        var requestUser = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(email);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/mastery/expiring"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/mastery/expiring").with(requestUser))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].chapterSlug").value(CHAPTER))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].daysRemaining").value(6))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].boundary").doesNotExist());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/mastery/expiring")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(newUser())))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.length()").value(0));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/mastery/rules").with(requestUser))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.twoStarDays").value(60))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.threeStarDays").value(120));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/mastery/quote?exclude=5").with(requestUser))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value(org.hamcrest.Matchers.not(5)))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.sourceText").isNotEmpty());
+    }
 
     private String newUser() {
         String email = UUID.randomUUID() + "@example.com";
@@ -170,7 +199,7 @@ class QuizMasteryIntegrationTest {
         assertThat(spaced.masteryAfter()).isEqualTo(2);
         assertThat(quizService.getStatus(email, CHAPTER, LESSON).mastery().stars()).isEqualTo(2);
         assertThat(summaryService.forUser(user).points()).isEqualTo(2);
-        clock.advance(Duration.ofDays(31));
+        clock.advance(Duration.ofDays(61));
         assertThat(summaryService.forUser(user).points()).isEqualTo(1);
     }
 

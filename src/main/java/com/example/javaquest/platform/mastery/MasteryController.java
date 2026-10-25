@@ -25,11 +25,36 @@ class MasteryController {
     private final MasteryService masteryService;
     private final UserRepository userRepository;
     private final LearningSummaryService summaryService;
+    private final MasteryProperties properties;
+    private final int passPercent;
 
-    MasteryController(MasteryService masteryService, UserRepository userRepository, LearningSummaryService summaryService) {
+    MasteryController(MasteryService masteryService, UserRepository userRepository, LearningSummaryService summaryService,
+                      MasteryProperties properties, @org.springframework.beans.factory.annotation.Value("${platform.quiz.pass-percent:80}") int passPercent) {
         this.masteryService = masteryService;
         this.userRepository = userRepository;
         this.summaryService = summaryService;
+        this.properties = properties;
+        this.passPercent = passPercent;
+    }
+
+    record PointsRules(int minQuestions, int passPercent, long firstReviewHours, long secondReviewDays,
+                       long renewalDays, long twoStarDays, long threeStarDays, int warningDays) {}
+
+    @GetMapping("/rules")
+    PointsRules rules() {
+        return new PointsRules(properties.minQuestions(), passPercent, properties.spacingLevel1().toHours(),
+                properties.spacingLevel2().toDays(), properties.spacingLevel3().toDays(),
+                properties.retentionLevel2().toDays(), properties.retentionLevel3().toDays(), LearningSummaryService.WARNING_DAYS);
+    }
+
+    @GetMapping("/expiring")
+    List<LearningSummaryService.ExpiringLesson> expiring(Authentication authentication) {
+        return summaryService.expiringLessons(currentUser(authentication));
+    }
+
+    @GetMapping("/quote")
+    com.example.javaquest.platform.Utill.MotivationalQuotes.Quote quote(@RequestParam(required = false) Integer exclude) {
+        return com.example.javaquest.platform.Utill.MotivationalQuotes.randomExcluding(exclude);
     }
 
     @GetMapping("/summary")

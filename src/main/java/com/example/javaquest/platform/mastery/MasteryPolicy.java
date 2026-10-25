@@ -88,6 +88,17 @@ public final class MasteryPolicy {
         return level;
     }
 
+    /** Boundary after which the next star is lost; level one never expires. */
+    public LocalDateTime nextExpiry(State state, LocalDateTime now) {
+        int effective = effectiveLevel(state, now);
+        if (effective < 2) return null;
+        LocalDateTime boundary = state.lastConfirmedAt();
+        for (int level = state.level(); level >= effective; level--) {
+            boundary = boundary.plus(properties.retention(level));
+        }
+        return boundary;
+    }
+
     /** Czy zaliczenie quizu TERAZ zmieniloby stan (nowa gwiazdka, odzyskanie albo odswiezenie 3 gwiazdek). */
     public boolean reviewSuggested(State state, LocalDateTime now) {
         int effective = effectiveLevel(state, now);

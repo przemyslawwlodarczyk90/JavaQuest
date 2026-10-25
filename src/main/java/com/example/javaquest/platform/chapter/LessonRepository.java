@@ -7,6 +7,20 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 public interface LessonRepository extends JpaRepository<Lesson, Long> {
+    interface PracticedTitle {
+        String getChapterSlug();
+        String getLessonSlug();
+        String getTitle();
+        String getChapterTitle();
+        CourseTrack getTrack();
+    }
+
+    @Query("select l.chapter.slug as chapterSlug, l.slug as lessonSlug, l.title as title, "
+            + "l.chapter.title as chapterTitle, l.chapter.track as track from Lesson l where exists "
+            + "(select a.id from QuizAttempt a where a.user = :user and a.passed = true "
+            + "and a.chapterSlug = l.chapter.slug and a.lessonSlug = l.slug)")
+    List<PracticedTitle> findPracticedTitles(@org.springframework.data.repository.query.Param("user")
+            com.example.javaquest.platform.user.User user);
     interface ChapterCount {
         String getChapterSlug();
         long getTotal();

@@ -27,8 +27,8 @@ public record MasteryProperties(
         @DefaultValue("20h") Duration spacingLevel1,
         @DefaultValue("6d") Duration spacingLevel2,
         @DefaultValue("30d") Duration spacingLevel3,
-        @DefaultValue("30d") Duration retentionLevel2,
-        @DefaultValue("60d") Duration retentionLevel3) {
+        @DefaultValue("60d") Duration retentionLevel2,
+        @DefaultValue("120d") Duration retentionLevel3) {
 
     public MasteryProperties {
         requirePositive("spacing-level1", spacingLevel1);
