@@ -608,7 +608,8 @@ public final class ChapterSeedData {
             new ChapterSeed("_react_02_komponenty", "React - komponenty i JSX", List.of(
                     "01_AppShellAndFirstComponent", "02_JsxInDepth", "03_ConditionalRendering",
                     "04_PropsBasics", "05_PropsVariantsAndBadges", "06_ListsAndKeys",
-                    "07_CompositionAndChildren", "08_PureComponentsAndRenderRules", "09_BossUserDashboard"
+                    "07_CompositionAndChildren", "08_PureComponentsAndRenderRules",
+                    "09_DrillJsxPropsChildren", "10_BossUserDashboard"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_03_stylowanie", "React - stylowanie komponentów", List.of(
@@ -619,33 +620,36 @@ public final class ChapterSeedData {
             new ChapterSeed("_react_04_state_i_tabela", "React - interakcja, state i tabela", List.of(
                     "01_EventsInReact", "02_UseStateBasics", "03_StateAsSnapshotAndBatching",
                     "04_UpdatingObjectsAndArrays", "05_ControlledSearchInput", "06_DerivedDataFiltering",
-                    "07_SortableColumns", "08_LocalPagination", "09_BossProductCatalog"
+                    "07_SortableColumns", "08_LocalPagination", "09_DrillEventsAndUseState",
+                    "10_DrillImmutableUpdatesAndDerivedData", "11_BossProductCatalog"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_05_formularze", "React - formularze i walidacja", List.of(
                     "01_FirstControlledForm", "02_SelectCheckboxRadioTextarea",
                     "03_UncontrolledInputsAndFormData", "04_ValidationAndErrors", "05_SubmitAndReset",
                     "06_EditFormAndStateReset", "07_ReactHookForm", "08_SchemaValidationWithZod",
-                    "09_FormActionsReact19", "10_BossRegistrationForm"
+                    "09_FormActionsReact19", "10_DrillControlledFields", "11_BossRegistrationForm"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_06_architektura_stanu", "React - architektura stanu", List.of(
                     "01_ThinkingInReact", "02_LiftingStateUp", "03_SingleSourceOfTruth",
                     "04_PreservingAndResettingState", "05_UseReducer", "06_ContextForPreferences",
-                    "07_ContextWithReducerAtScale", "08_CustomHooks", "09_BossBulkOrderActions"
+                    "07_ContextWithReducerAtScale", "08_CustomHooks", "09_DrillLiftingStateKeyAndReducer",
+                    "10_DrillContextAndCustomHooks", "11_BossBulkOrderActions"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_07_efekty", "React - efekty i cykl życia", List.of(
                     "01_ComponentLifecycleMentalModel", "02_UseEffectSynchronization",
                     "03_DependenciesAndStaleClosures", "04_CleanupAndStrictMode",
                     "05_YouMightNotNeedAnEffect", "06_UseEffectEventAndUseLayoutEffect",
-                    "07_UseSyncExternalStore", "08_BossEffectRefactor"
+                    "07_UseSyncExternalStore", "08_DrillUseEffect", "09_BossEffectRefactor"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_08_refs_i_wzorce_ui", "React - refs, DOM i wzorce interfejsu", List.of(
                     "01_RefsBasics", "02_RefsToDomElements", "03_UseImperativeHandle", "04_TabsComponent",
                     "05_PortalAndModal", "06_FocusManagementAndKeyboard", "07_ToastAndUndo",
-                    "08_DropdownsPopoversAndTooltips", "09_BossAccessibleProfileModal"
+                    "08_DropdownsPopoversAndTooltips", "09_DrillRefsAndPortals",
+                    "10_BossAccessibleProfileModal"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_09_wzorce_komponentow", "React - zaawansowane wzorce komponentów", List.of(
@@ -691,15 +695,15 @@ public final class ChapterSeedData {
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_16_wydajnosc", "React - wydajność", List.of(
-                    "01_RenderModelAndProfiler", "02_Memoization", "03_ReactCompiler", "04_LazyAndSuspense",
-                    "05_TransitionsAndDeferredValues", "06_VirtualizingLongLists",
-                    "07_BundleAnalysisAndCodeSplitting", "08_WebVitalsAndAssets", "09_BossFindTheBottleneck"
+                    "01_RenderModelAndProfiler", "02_Memoization", "03_ReactCompiler", "04_DrillMemoization",
+                    "05_LazyAndSuspense", "06_TransitionsAndDeferredValues", "07_VirtualizingLongLists",
+                    "08_BundleAnalysisAndCodeSplitting", "09_WebVitalsAndAssets", "10_BossFindTheBottleneck"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_17_react_19", "React - nowoczesny React 19", List.of(
                     "01_UseHookAndPromises", "02_SuspenseForData", "03_UseOptimistic",
                     "04_ActionsAndTransitions", "05_DocumentMetadataAndResources",
-                    "06_ActivityAndViewTransitions", "07_ServerComponentsConcept"
+                    "06_ActivityAndViewTransitions", "07_ServerComponentsConcept", "08_DrillReact19Hooks"
             ), CourseTrack.REACT),
 
             new ChapterSeed("_react_18_frameworki", "React - frameworki i renderowanie na serwerze", List.of(

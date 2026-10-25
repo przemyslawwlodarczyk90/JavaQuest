@@ -68,7 +68,7 @@ class ReactCourseApiRegressionTest {
             assertThat(chapter.path("lessonCount").asInt()).isEqualTo(list.size());
             lessons += list.size();
         }
-        assertThat(lessons).isEqualTo(174);
+        assertThat(lessons).isEqualTo(184);
     }
 
     private JsonNode read(String url, String token) throws Exception {
