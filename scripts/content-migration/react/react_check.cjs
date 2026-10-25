@@ -23,7 +23,7 @@ fs.writeFileSync(path.join(work, 'src', 'env.d.ts'), [
   "declare module '*.svg' { const src: string; export default src; }",
   "declare module '*.css';",
   "declare module '*.module.css' { const classes: Record<string, string>; export default classes; }",
-  'interface ImportMetaEnv { readonly [key: string]: string | boolean | undefined; readonly DEV: boolean; readonly PROD: boolean; readonly MODE: string; readonly VITE_API_URL?: string }',
+  'interface ImportMetaEnv { readonly [key: string]: string | boolean | undefined; readonly DEV: boolean; readonly PROD: boolean; readonly MODE: string; readonly VITE_API_URL?: string; readonly VITE_SENTRY_DSN?: string; readonly VITE_APP_VERSION?: string }',
   'interface ImportMeta { readonly env: ImportMetaEnv }',
 ].join('\n') + '\n');
 // Dopasowania jest-dom (toBeInTheDocument, toBeDisabled...) dla przykladow testow - jak plik setup w projekcie.

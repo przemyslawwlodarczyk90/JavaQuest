@@ -1,0 +1,282 @@
+#T INTRO Rozgrzewka i problem: biały ekran po jednym złym tickecie
+Rozgrzewka: Przed czym React chroni automatycznie przy wstawianiu tekstu w JSX? Dlaczego `dangerouslySetInnerHTML` wymaga sanityzacji? Gdzie trzymać token sesji?
+
+Problem: jeden ticket z API ma `assignee: null` zamiast obiektu, a komponent `AssigneeCard` czyta `ticket.assignee.name`. Wynik: `TypeError` w renderze i **cała aplikacja znika** — biały ekran, bez komunikatu, bez możliwości powrotu. Co gorsza, nikt w zespole się o tym nie dowie, dopóki użytkownik nie napisze maila. W tej lekcji ograniczysz zasięg awarii granicami błędów (error boundaries), dasz użytkownikowi sensowny ekran błędu z ponowieniem i podłączysz raportowanie błędów (Sentry), żeby dowiadywać się o problemach z produkcji przed użytkownikami.
+
+#T DEFINITION Granica błędu: co łapie, a czego nie
+Gdy komponent rzuci wyjątek podczas renderu, React odmontowuje **całe drzewo** — uznaje, że lepiej nie pokazać nic niż pokazać zepsuty interfejs. Granica błędu (error boundary) to komponent, który łapie błędy w swoim poddrzewie i zamiast niego renderuje interfejs zastępczy (fallback). Reszta aplikacji działa dalej.
+
+Granica łapie błędy rzucone:
+- podczas renderu komponentów potomnych,
+- w metodach cyklu życia i w Effectach (ciele i sprzątaniu),
+- przez `use(promise)` z odrzuconym Promise,
+- w akcjach (`useActionState`, `<form action>`, `startTransition`) — błąd wyrzucony z akcji trafia do najbliższej granicy.
+
+Granica **nie** łapie błędów:
+- w handlerach zdarzeń (`onClick`) — kod działa poza renderem; obsługujesz je `try/catch` albo przekazujesz do granicy (`showBoundary`),
+- w kodzie asynchronicznym poza Reactem (`setTimeout`, `fetch().then` w handlerze),
+- w samej granicy (łapie ją dopiero granica wyżej),
+- podczas renderu na serwerze.
+
+Granicę błędu można napisać tylko jako komponent klasowy (`getDerivedStateFromError`, `componentDidCatch`) — w praktyce używasz gotowej biblioteki `react-error-boundary`.
+
+#T CODE_WRONG Jedna awaria kładzie całą aplikację
+Brak granicy: błąd w jednej karcie na liście odmontowuje nagłówek, menu i wszystkie pozostałe tickety.
+```
+// App.jsx — bez granic błędów
+export function App({ tickets }) {
+  return (
+    <Layout>
+      <TicketList>
+        {tickets.map((t) => (
+          <AssigneeCard key={t.id} ticket={t} /> // ticket.assignee.name przy assignee: null → TypeError
+        ))}
+      </TicketList>
+    </Layout>
+  );
+}
+```
+
+#T CODE_JSX Własna granica błędu jako klasa (JSX)
+Raz w życiu warto napisać granicę ręcznie, żeby zrozumieć mechanizm: `getDerivedStateFromError` przełącza stan na „błąd” (w fazie renderu), a `componentDidCatch` służy do efektów ubocznych, np. raportowania.
+```
+// ErrorBoundary.jsx
+import { Component } from 'react';
+
+export class ErrorBoundary extends Component {
+  state = { error: null };
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    // info.componentStack — ścieżka komponentów, w których wystąpił błąd
+    this.props.onError?.(error, info.componentStack);
+  }
+
+  reset = () => this.setState({ error: null });
+
+  render() {
+    if (this.state.error) {
+      return this.props.fallback({ error: this.state.error, reset: this.reset });
+    }
+    return this.props.children;
+  }
+}
+```
+
+#T CODE_TSX Własna granica błędu jako klasa (TSX)
+W TSX klasa dostaje typy props i stanu: `Component<Props, State>`. Błąd ma typ `unknown`, bo rzucić można cokolwiek — nie tylko `Error`.
+```
+// ErrorBoundary.tsx
+import { Component, type ErrorInfo, type ReactNode } from 'react';
+
+type FallbackArgs = { error: unknown; reset: () => void };
+type Props = {
+  children: ReactNode;
+  fallback: (args: FallbackArgs) => ReactNode;
+  onError?: (error: unknown, componentStack?: string | null) => void;
+};
+type State = { error: unknown };
+
+export class ErrorBoundary extends Component<Props, State> {
+  state: State = { error: null };
+
+  static getDerivedStateFromError(error: unknown): State {
+    return { error };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    // info.componentStack — ścieżka komponentów, w których wystąpił błąd
+    this.props.onError?.(error, info.componentStack);
+  }
+
+  reset = () => this.setState({ error: null });
+
+  render() {
+    if (this.state.error) {
+      return this.props.fallback({ error: this.state.error, reset: this.reset });
+    }
+    return this.props.children;
+  }
+}
+```
+
+#T NOTE JSX ↔ TSX — błąd typu unknown
+W TSX `error` ma typ `unknown`, więc przed odczytem `error.message` musisz sprawdzić `error instanceof Error`. To nie formalność: `throw 'tekst'` albo `throw { code: 404 }` to w JavaScripcie poprawny kod, a biblioteki potrafią rzucać obiekty, które nie są `Error`. W JSX `error.message` przy rzuconym napisie da `undefined` i fallback pokaże pusty komunikat. Pisząc własny kod, zawsze rzucaj `new Error(…)` (albo własną klasę dziedziczącą po `Error`).
+
+#T CODE_JSX react-error-boundary: granica, fallback i reset (JSX)
+Biblioteka daje gotową granicę z resetem, `resetKeys` (automatyczny reset po zmianie danych) i hookiem `useErrorBoundary` do przekazania błędu z handlera.
+```
+// TicketPanel.jsx
+import { ErrorBoundary, useErrorBoundary } from 'react-error-boundary';
+
+function TicketError({ error, resetErrorBoundary }) {
+  return (
+    <div role="alert" className="error-card">
+      <p>Nie udało się wyświetlić ticketu.</p>
+      <details><summary>Szczegóły</summary><code>{error.message}</code></details>
+      <button type="button" onClick={resetErrorBoundary}>Spróbuj ponownie</button>
+    </div>
+  );
+}
+
+function AssigneeCard({ ticket }) {
+  const { showBoundary } = useErrorBoundary();
+
+  async function handleReassign() {
+    try {
+      const res = await fetch(`/api/tickets/${ticket.id}/assignee`, { method: 'POST' });
+      if (!res.ok) throw new Error(`Serwer zwrócił ${res.status}`);
+    } catch (err) {
+      showBoundary(err); // błąd z handlera trafia do najbliższej granicy
+    }
+  }
+
+  return (
+    <article>
+      <p>Przypisany: {ticket.assignee.name}</p> {/* przy assignee: null rzuci TypeError — granica pokaże TicketError */}
+      <button type="button" onClick={handleReassign}>Przypisz ponownie</button>
+    </article>
+  );
+}
+
+export function TicketPanel({ ticket, onRetry }) {
+  return (
+    <ErrorBoundary FallbackComponent={TicketError} onReset={onRetry} resetKeys={[ticket.id]}>
+      <AssigneeCard ticket={ticket} />
+    </ErrorBoundary>
+  );
+}
+```
+
+#T CODE_TSX react-error-boundary: granica, fallback i reset (TSX)
+`FallbackProps` opisuje props komponentu zastępczego. W TSX błąd `ticket.assignee.name` przy `assignee: Assignee | null` zgłosiłby już kompilator — granica łapie to, czego typy nie przewidziały (np. niezgodną odpowiedź API).
+```
+// TicketPanel.tsx
+import { ErrorBoundary, useErrorBoundary, type FallbackProps } from 'react-error-boundary';
+
+type Assignee = { id: number; name: string };
+type TicketWithAssignee = { id: number; title: string; assignee: Assignee | null };
+
+function TicketError({ error, resetErrorBoundary }: FallbackProps) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    <div role="alert" className="error-card">
+      <p>Nie udało się wyświetlić ticketu.</p>
+      <details><summary>Szczegóły</summary><code>{message}</code></details>
+      <button type="button" onClick={resetErrorBoundary}>Spróbuj ponownie</button>
+    </div>
+  );
+}
+
+function AssigneeCard({ ticket }: { ticket: TicketWithAssignee }) {
+  const { showBoundary } = useErrorBoundary();
+
+  async function handleReassign() {
+    try {
+      const res = await fetch(`/api/tickets/${ticket.id}/assignee`, { method: 'POST' });
+      if (!res.ok) throw new Error(`Serwer zwrócił ${res.status}`);
+    } catch (err) {
+      showBoundary(err); // błąd z handlera trafia do najbliższej granicy
+    }
+  }
+
+  return (
+    <article>
+      <p>Przypisany: {ticket.assignee?.name ?? 'nikt'}</p>
+      <button type="button" onClick={handleReassign}>Przypisz ponownie</button>
+    </article>
+  );
+}
+
+export function TicketPanel({ ticket, onRetry }: { ticket: TicketWithAssignee; onRetry: () => void }) {
+  return (
+    <ErrorBoundary FallbackComponent={TicketError} onReset={onRetry} resetKeys={[ticket.id]}>
+      <AssigneeCard ticket={ticket} />
+    </ErrorBoundary>
+  );
+}
+```
+
+#T VISUAL_EXAMPLE Gdzie stawiać granice
+App
+├── ErrorBoundary „cała aplikacja”     ← ostatnia linia obrony: „Coś poszło nie tak, odśwież stronę”
+│   ├── Header / Sidebar               ← poza granicami tras: menu działa, nawet gdy strona padnie
+│   └── ErrorBoundary „trasa”          ← errorElement routera (rozdział 12): błąd strony, menu zostaje
+│       └── TicketDetails
+│           ├── ErrorBoundary „widżet” ← komentarze padają, szczegóły ticketu zostają
+│           │   └── Comments
+│           └── ErrorBoundary „wiersz” ← jeden zły ticket na liście nie zabiera pozostałych
+│               └── AssigneeCard
+
+Zasada: granica tam, gdzie awaria ma sensowną „wyspę” do odcięcia i sensowny komunikat zastępczy. Granica wokół każdego przycisku to przesada; jedna granica na całą aplikację — za mało.
+
+#T DEFINITION Obsługa błędów na poziomie korzenia (React 19)
+`createRoot` przyjmuje w React 19 trzy opcje do centralnej obsługi błędów:
+- `onCaughtError(error, info)` — błąd złapany przez granicę (użytkownik widzi fallback),
+- `onUncaughtError(error, info)` — błąd, którego nie złapała żadna granica (aplikacja została odmontowana),
+- `onRecoverableError(error, info)` — błąd, z którego React sam się podniósł (np. niezgodność hydratacji).
+
+To jedno miejsce, w którym wysyłasz **wszystkie** błędy Reacta do systemu monitoringu — bez dopisywania `onError` w każdej granicy. `info.componentStack` zawiera ścieżkę komponentów, co bardzo ułatwia znalezienie przyczyny.
+
+#T CODE_PRACTICAL Monitoring z Sentry
+Sentry zbiera błędy z przeglądarek użytkowników razem ze stosem wywołań, ścieżką komponentów, przeglądarką i krokami, które poprzedziły błąd (breadcrumbs). `reactErrorHandler` podłącza się do opcji korzenia z React 19.
+```
+// main.tsx
+import * as Sentry from '@sentry/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN, // DSN nie jest sekretem — identyfikuje projekt, nie daje dostępu do danych
+  environment: import.meta.env.MODE,
+  release: import.meta.env.VITE_APP_VERSION,
+  integrations: [Sentry.browserTracingIntegration()],
+  tracesSampleRate: 0.1, // 10% sesji z pomiarem wydajności
+  // Danych osobowych (IP, ciasteczka) domyślnie nie wysyłaj — opcje ich zbierania zależą od wersji SDK, sprawdź dokumentację.
+  beforeSend(event) {
+    // usuń z adresów parametry, które mogą zawierać dane osobowe
+    if (event.request?.url) event.request.url = event.request.url.replace(/email=[^&]+/, 'email=[ukryte]');
+    return event;
+  },
+});
+
+createRoot(document.getElementById('root')!, {
+  onUncaughtError: Sentry.reactErrorHandler((error, info) => {
+    console.error('Nieobsłużony błąd', error, info.componentStack);
+  }),
+  onCaughtError: Sentry.reactErrorHandler(),
+  onRecoverableError: Sentry.reactErrorHandler(),
+}).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+```
+
+#T USAGE Kontekst błędu: użytkownik, tagi i ślady
+Sam stos wywołań często nie wystarcza. Dodaj kontekst, który pozwoli odtworzyć sytuację:
+- `Sentry.setUser({ id: user.id })` po zalogowaniu (samo ID, bez e-maila — chyba że polityka prywatności na to pozwala), `Sentry.setUser(null)` po wylogowaniu,
+- `Sentry.setTag('ticketId', id)` na stronie szczegółów — filtrujesz błędy po tickecie,
+- `Sentry.addBreadcrumb({ category: 'action', message: 'Zmieniono status na CLOSED' })` przy ważnych akcjach,
+- **mapy źródeł** (source maps) wysyłane do Sentry przy buildzie (wtyczka `@sentry/vite-plugin`) — bez nich stos z produkcji to zminifikowane `a.b is undefined` w pliku `index-3f2a.js`; mapy wysyłasz do Sentry, ale **nie** publikujesz ich na serwerze.
+
+#T STEP_BY_STEP Budujemy razem: odporny DevDesk
+1. Wywołaj błąd celowo: w `AssigneeCard` czytaj `ticket.assignee.name` i dodaj w MSW ticket z `assignee: null`. Zobacz biały ekran.
+2. Dodaj granicę wokół każdego wiersza listy ticketów — zły ticket pokazuje kartę „Nie udało się wyświetlić”, pozostałe działają.
+3. Dodaj granicę widżetu wokół komentarzy w szczegółach ticketu, z przyciskiem „Spróbuj ponownie” i `resetKeys={[ticketId]}`.
+4. Przenieś obsługę błędu zapisu z handlera do granicy przez `showBoundary` — tylko dla błędów, których użytkownik nie naprawi (500); błędy walidacji (400) zostają w formularzu.
+5. Dodaj granicę „cała aplikacja” z przyciskiem „Odśwież stronę” i linkiem do strony głównej.
+6. Podłącz Sentry z `reactErrorHandler` w `createRoot`, ustaw `release` i `environment`; w trybie deweloperskim wyłącz wysyłkę (`enabled: import.meta.env.PROD`).
+7. Zbuduj aplikację z mapami źródeł, wywołaj błąd na buildzie produkcyjnym i sprawdź w Sentry, że stos wskazuje plik `AssigneeCard.tsx` i właściwą linię.
+
+#T PITFALL Granica, która ukrywa błędy
+Granica z fallbackiem `() => null` albo z `onError`, który nic nie robi, zamienia awarię w cichą dziurę w interfejsie: użytkownik nie widzi treści, nie wie dlaczego, a zespół nie dostaje raportu. Każdy fallback ma powiedzieć użytkownikowi, co się stało i co może zrobić (ponów, odśwież, wróć), a każdy złapany błąd ma trafić do monitoringu. Druga pułapka: granica nie zastępuje obsługi przewidywalnych błędów — brak wyników, 404, błędy walidacji czy brak sieci to normalne stany interfejsu, które obsługujesz w komponencie, a nie wyjątki do łapania.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Granica błędu łapie wyjątki z renderu, Effectów, `use(promise)` i akcji w swoim poddrzewie i zastępuje je fallbackiem; nie łapie błędów z handlerów i asynchronicznego kodu poza Reactem — te przekazujesz przez `showBoundary` albo obsługujesz `try/catch`. Granice stawiasz warstwowo: aplikacja, trasa, widżet, wiersz listy. `react-error-boundary` daje reset, `resetKeys` i `useErrorBoundary`, a opcje `onCaughtError`, `onUncaughtError` i `onRecoverableError` w `createRoot` to centralne miejsce do wysyłania błędów do Sentry — razem z kontekstem (użytkownik, tagi, ślady) i mapami źródeł. W TSX błąd ma typ `unknown` i sprawdzasz go przed odczytem.
+
+Kryterium akceptacji: ticket z `assignee: null` psuje tylko swój wiersz; komentarze można ponowić bez przeładowania strony; błąd z produkcyjnego buildu pojawia się w Sentry ze stosem wskazującym plik źródłowy i ścieżką komponentów, bez danych osobowych.
