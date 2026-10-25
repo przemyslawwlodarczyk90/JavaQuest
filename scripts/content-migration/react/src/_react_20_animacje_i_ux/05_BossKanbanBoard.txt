@@ -1,0 +1,237 @@
+#T INTRO Boss rozdziału 20: tablica Kanban dla ticketów
+Ostatnie zadanie rozdziału łączy wszystko, co poznałeś o bogatym interfejsie: przeciąganie (dnd-kit), animacje (CSS i Motion), szacunek dla ustawienia „ogranicz ruch”, dostępność gestów i — z wcześniejszych rozdziałów — optymistyczny zapis zmian na serwerze. Budujesz widok `/board`: tickety DevDesk w kolumnach według statusu, przenoszone myszą, palcem i klawiaturą, z natychmiastową reakcją interfejsu i bezpiecznym wycofaniem zmian przy błędzie serwera. Tym razem nie ma gotowej struktury komponentów — dostajesz model danych, czystą funkcję przenoszenia i szkielet tablicy.
+
+#T DEFINITION Brief zadania
+Tablica ma trzy kolumny: **Otwarte** (`OPEN`), **W toku** (`IN_PROGRESS`), **Zamknięte** (`CLOSED`). Wymagania funkcjonalne:
+1. Karta ticketu pokazuje tytuł, priorytet (plakietka) i osobę przypisaną; kliknięcie tytułu otwiera szczegóły (`/tickets/:id`).
+2. Karty można przestawiać w kolumnie i przenosić między kolumnami — myszą, dotykiem i klawiaturą; przeniesienie do innej kolumny zmienia status ticketu.
+3. Kolumna „W toku” ma **limit 5 kart** (limit WIP): upuszczenie szóstej jest odrzucane — karta wraca na miejsce, a komunikat wyjaśnia dlaczego.
+4. Zmiana zapisuje się w API (`PATCH /api/tickets/:id` z `{ status, position }`) **optymistycznie**: interfejs zmienia się od razu, a przy błędzie wraca do stanu sprzed zmiany i pokazuje toast.
+5. Każda karta ma menu „Przenieś do…” (alternatywa bez przeciągania) z listą kolumn.
+6. Filtr „Tylko moje” ukrywa cudze karty bez psucia kolejności w danych.
+7. Animacje: karta podniesiona jest lekko powiększona z cieniem, nowa karta wchodzi płynnie, liczniki kolumn zmieniają się z krótką animacją; przy „ogranicz ruch” — bez przesunięć i skalowania.
+8. Czytnik ekranu ogłasza po polsku podniesienie, przesunięcie i upuszczenie, w tym odrzucenie z powodu limitu.
+
+#T STEP_BY_STEP Kryteria akceptacji
+1. Funkcja `moveTicket(board, ticketId, toColumn, toIndex)` jest czysta, niemutowalna i ma testy: przeniesienie w kolumnie, między kolumnami, na koniec pustej kolumny, odrzucenie przy limicie WIP (zwraca **ten sam** obiekt planszy).
+2. Kliknięcie tytułu karty otwiera szczegóły — zwykłe kliknięcie nie rozpoczyna przeciągania (próg aktywacji), a na telefonie lista przewija się palcem.
+3. Przeniesienie klawiaturą: Tab do uchwytu, spacja, strzałki (także między kolumnami), spacja; Escape anuluje i karta wraca na miejsce.
+4. Wyłączenie sieci w DevTools (lub błąd 500 z MSW) podczas przenoszenia: karta wraca, pojawia się toast „Nie udało się przenieść ticketu”, a stan jest identyczny jak przed próbą.
+5. Szósta karta upuszczona na „W toku” wraca, a w regionie `aria-live` pojawia się komunikat o limicie.
+6. Menu „Przenieś do…” działa bez myszy i respektuje limit WIP (pozycja „W toku” wyłączona, gdy kolumna jest pełna).
+7. Filtr „Tylko moje” nie zmienia pozycji ukrytych kart po ich ponownym pokazaniu.
+8. Przy „ogranicz ruch” brak przesunięć i skalowania; podgląd przeciągania (`DragOverlay`) bez animacji powrotu.
+9. Wszystko działa w wersji JSX i TSX; w TSX statusy są unią, a zdarzenia dnd-kit mają typy biblioteki.
+
+#T NOTE Wskazówka 1 — model danych planszy
+Trzymaj planszę jako `{ OPEN: id[], IN_PROGRESS: id[], CLOSED: id[] }` (kolejność kart = kolejność ID), a dane ticketów osobno, w słowniku po ID albo w cache TanStack Query. Przenoszenie zmienia wtedy tylko małe tablice ID, a filtrowanie „Tylko moje” to wyliczenie widocznych ID w renderze (`ids.filter(…)`), które nie dotyka danych. Status ticketu wynika z kolumny — nie przechowuj go w dwóch miejscach.
+
+#T CODE_JSX Czysta funkcja przenoszenia (JSX)
+```
+// board.js
+export const COLUMNS = ['OPEN', 'IN_PROGRESS', 'CLOSED'];
+export const WIP_LIMITS = { IN_PROGRESS: 5 };
+
+export function findColumn(board, ticketId) {
+  return COLUMNS.find((column) => board[column].includes(ticketId));
+}
+
+export function moveTicket(board, ticketId, toColumn, toIndex) {
+  const fromColumn = findColumn(board, ticketId);
+  if (!fromColumn) return board;
+
+  const limit = WIP_LIMITS[toColumn];
+  if (fromColumn !== toColumn && limit !== undefined && board[toColumn].length >= limit) return board;
+
+  const without = board[fromColumn].filter((id) => id !== ticketId);
+  const target = fromColumn === toColumn ? without : board[toColumn];
+  const index = Math.max(0, Math.min(toIndex, target.length));
+
+  return {
+    ...board,
+    [fromColumn]: without,
+    [toColumn]: target.toSpliced(index, 0, ticketId),
+  };
+}
+
+export function canDrop(board, ticketId, toColumn) {
+  const limit = WIP_LIMITS[toColumn];
+  return findColumn(board, ticketId) === toColumn || limit === undefined || board[toColumn].length < limit;
+}
+```
+
+#T CODE_TSX Czysta funkcja przenoszenia (TSX)
+`Record<TicketStatus, number[]>` wymusza obecność wszystkich trzech kolumn, a `Partial<Record<…>>` dla limitów pozwala ustawić limit tylko części z nich.
+```
+// board.ts
+import type { TicketStatus } from '../types';
+
+export type Board = Record<TicketStatus, number[]>;
+
+export const COLUMNS: TicketStatus[] = ['OPEN', 'IN_PROGRESS', 'CLOSED'];
+export const WIP_LIMITS: Partial<Record<TicketStatus, number>> = { IN_PROGRESS: 5 };
+
+export function findColumn(board: Board, ticketId: number): TicketStatus | undefined {
+  return COLUMNS.find((column) => board[column].includes(ticketId));
+}
+
+export function moveTicket(board: Board, ticketId: number, toColumn: TicketStatus, toIndex: number): Board {
+  const fromColumn = findColumn(board, ticketId);
+  if (!fromColumn) return board;
+
+  const limit = WIP_LIMITS[toColumn];
+  if (fromColumn !== toColumn && limit !== undefined && board[toColumn].length >= limit) return board;
+
+  const without = board[fromColumn].filter((id) => id !== ticketId);
+  const target = fromColumn === toColumn ? without : board[toColumn];
+  const index = Math.max(0, Math.min(toIndex, target.length));
+
+  return {
+    ...board,
+    [fromColumn]: without,
+    [toColumn]: target.toSpliced(index, 0, ticketId),
+  };
+}
+
+export function canDrop(board: Board, ticketId: number, toColumn: TicketStatus): boolean {
+  const limit = WIP_LIMITS[toColumn];
+  return findColumn(board, ticketId) === toColumn || limit === undefined || board[toColumn].length < limit;
+}
+```
+
+#T NOTE Wskazówka 2 — optymistyczny zapis z wycofaniem
+Użyj `useMutation` z TanStack Query (rozdział 10): w `onMutate` zapamiętaj poprzednią planszę (`getQueryData`), ustaw nową (`setQueryData` z wynikiem `moveTicket`) i zwróć poprzednią jako kontekst; w `onError` przywróć ją z kontekstu i pokaż toast; w `onSettled` unieważnij zapytanie, żeby zsynchronizować się z serwerem. Dzięki temu ten sam kod obsłuży przeciąganie i menu „Przenieś do…”. Pamiętaj, że przy przeciąganiu między kolumnami plansza zmienia się już w `onDragOver` (podgląd) — zapis do API wysyłasz dopiero w `onDragEnd`, a `onDragCancel` musi przywrócić stan sprzed podniesienia karty.
+
+#T CODE_JSX Szkielet tablicy (JSX)
+Szkielet łączy kontekst przeciągania, kolumny i podgląd. Uzupełnij: kolumny z `useDroppable` i `SortableContext`, karty z `useSortable` i uchwytem, `onDragOver`, menu „Przenieś do…”, mutację z wycofaniem i komunikaty.
+```
+// KanbanBoard.jsx
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, useSensor, useSensors } from '@dnd-kit/core';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { MotionConfig } from 'motion/react';
+import { useRef, useState } from 'react';
+import { COLUMNS, canDrop, findColumn, moveTicket } from './board';
+
+export function KanbanBoard({ board, tickets, onCommit, renderColumn, renderCard }) {
+  const [preview, setPreview] = useState(board);     // plansza w trakcie przeciągania
+  const [activeId, setActiveId] = useState(null);
+  const before = useRef(board);                       // stan sprzed podniesienia — do anulowania
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const shown = activeId === null ? board : preview;
+
+  function handleDragStart({ active }) {
+    before.current = board;
+    setPreview(board);
+    setActiveId(active.id);
+  }
+
+  function handleDragEnd({ active, over }) {
+    setActiveId(null);
+    if (!over) return;
+    const toColumn = COLUMNS.includes(over.id) ? over.id : findColumn(preview, over.id);
+    if (!toColumn || !canDrop(before.current, active.id, toColumn)) return; // TODO: komunikat o limicie
+    const toIndex = COLUMNS.includes(over.id) ? preview[toColumn].length : preview[toColumn].indexOf(over.id);
+    const next = moveTicket(before.current, active.id, toColumn, toIndex);
+    if (next !== before.current) onCommit(next, { ticketId: active.id, status: toColumn, position: toIndex });
+  }
+
+  return (
+    <MotionConfig reducedMotion="user">
+      <DndContext sensors={sensors} collisionDetection={closestCorners}
+        onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveId(null)}
+        /* TODO: onDragOver — podgląd przeniesienia między kolumnami w setPreview */>
+        <div className="board">
+          {COLUMNS.map((column) => renderColumn(column, shown[column]))}
+        </div>
+        <DragOverlay>{activeId !== null ? renderCard(tickets[activeId], { overlay: true }) : null}</DragOverlay>
+      </DndContext>
+    </MotionConfig>
+  );
+}
+```
+
+#T CODE_TSX Szkielet tablicy (TSX)
+```
+// KanbanBoard.tsx
+import {
+  DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, useSensor, useSensors,
+  type DragEndEvent, type DragStartEvent, type UniqueIdentifier,
+} from '@dnd-kit/core';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { MotionConfig } from 'motion/react';
+import { useRef, useState, type ReactNode } from 'react';
+import type { Ticket, TicketStatus } from '../types';
+import { COLUMNS, canDrop, findColumn, moveTicket, type Board } from './board';
+
+type Move = { ticketId: number; status: TicketStatus; position: number };
+type KanbanBoardProps = {
+  board: Board;
+  tickets: Record<number, Ticket>;
+  onCommit: (next: Board, move: Move) => void;
+  renderColumn: (column: TicketStatus, ids: number[]) => ReactNode;
+  renderCard: (ticket: Ticket, options: { overlay: boolean }) => ReactNode;
+};
+
+const isColumn = (id: UniqueIdentifier): id is TicketStatus => COLUMNS.includes(id as TicketStatus);
+
+export function KanbanBoard({ board, tickets, onCommit, renderColumn, renderCard }: KanbanBoardProps) {
+  const [preview, setPreview] = useState(board);     // plansza w trakcie przeciągania
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const before = useRef(board);                       // stan sprzed podniesienia — do anulowania
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const shown = activeId === null ? board : preview;
+
+  function handleDragStart({ active }: DragStartEvent) {
+    before.current = board;
+    setPreview(board);
+    setActiveId(Number(active.id));
+  }
+
+  function handleDragEnd({ active, over }: DragEndEvent) {
+    setActiveId(null);
+    if (!over) return;
+    const ticketId = Number(active.id);
+    const toColumn = isColumn(over.id) ? over.id : findColumn(preview, Number(over.id));
+    if (!toColumn || !canDrop(before.current, ticketId, toColumn)) return; // TODO: komunikat o limicie
+    const toIndex = isColumn(over.id) ? preview[toColumn].length : preview[toColumn].indexOf(Number(over.id));
+    const next = moveTicket(before.current, ticketId, toColumn, toIndex);
+    if (next !== before.current) onCommit(next, { ticketId, status: toColumn, position: toIndex });
+  }
+
+  return (
+    <MotionConfig reducedMotion="user">
+      <DndContext sensors={sensors} collisionDetection={closestCorners}
+        onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveId(null)}
+        /* TODO: onDragOver — podgląd przeniesienia między kolumnami w setPreview */>
+        <div className="board">
+          {COLUMNS.map((column) => renderColumn(column, shown[column]))}
+        </div>
+        <DragOverlay>{activeId !== null ? renderCard(tickets[activeId], { overlay: true }) : null}</DragOverlay>
+      </DndContext>
+    </MotionConfig>
+  );
+}
+```
+
+#T NOTE Wskazówka 3 — animacje bez konfliktu z dnd-kit
+dnd-kit sam przesuwa karty transformacją (`useSortable` zwraca `transform` i `transition`), więc **nie** dawaj kartom sortowanym `layout` z Motion — dwie biblioteki będą walczyć o ten sam `transform` i karty zaczną drgać. Podział ról: dnd-kit animuje przesuwanie podczas przeciągania, Motion — wejście nowej karty (`initial` / `animate` na wewnętrznym elemencie karty, nie na elemencie z `setNodeRef`), wygląd podniesionej karty w `DragOverlay` (`animate={{ scale: 1.03 }}`) i liczniki kolumn. CSS zostaje dla prostych stanów (`:hover`, podświetlenie kolumny `column--over`).
+
+#T PITFALL Typowe błędy w tym zadaniu
+- Zapis do API w `onDragOver` — każde przesunięcie nad inną kolumną wysyła żądanie; zapisuj tylko w `onDragEnd`.
+- Brak przywrócenia stanu w `onDragCancel` — po Escape karta zostaje w kolumnie, nad którą akurat była.
+- Status przechowywany i w karcie, i w kolumnie — po przeniesieniu jedno z dwóch się rozjeżdża; status wynika z kolumny.
+- Limit WIP sprawdzany tylko w interfejsie przeciągania, a nie w menu „Przenieś do…” (i nie na backendzie — tam też musi być).
+- Filtr „Tylko moje” zaimplementowany przez usuwanie kart z planszy — po wyłączeniu filtra kolejność jest utracona.
+- Pozycja liczona w widoku przefiltrowanym i wysłana do API jako pozycja w pełnej kolumnie — przy aktywnym filtrze karty lądują w złym miejscu.
+- `id` kart i kolumn w tej samej przestrzeni nazw (ticket `5` i kolumna `'5'`) — używaj unii statusów dla kolumn i liczb dla ticketów albo prefiksów.
+
+#T SUMMARY Podsumowanie rozdziału 20
+W tym rozdziale nauczyłeś się dodawać do interfejsu ruch, który pomaga, a nie przeszkadza: przejścia i animacje CSS sterowane stanem (z animacją wyjścia przez stan pośredni i `@starting-style`), deklaratywne animacje Motion (`AnimatePresence`, `layout`, `layoutId`, warianty, gesty), przeciąganie z dnd-kit (sortowanie, przenoszenie między kolumnami, czujniki, `DragOverlay`, dostępność i alternatywa bez gestu) oraz wykresy z Recharts oparte na danych przygotowanych w czystych funkcjach. Wspólny mianownik wszystkich lekcji: animacja to warstwa prezentacji nad stanem, który zmienia się natychmiast; każdy gest ma alternatywę dla klawiatury i czytnika ekranu; ustawienie „ogranicz ruch” jest respektowane wszędzie.
+
+Kryterium zaliczenia bossa: wszystkie dziewięć kryteriów akceptacji spełnione, testy `moveTicket` przechodzą, a scenariusz „przenieś kartę przy wyłączonej sieci” kończy się stanem identycznym jak przed próbą.
