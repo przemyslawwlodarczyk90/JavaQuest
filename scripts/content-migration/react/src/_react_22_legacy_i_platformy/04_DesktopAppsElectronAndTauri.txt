@@ -1,0 +1,205 @@
+#T INTRO Rozgrzewka i problem: DevDesk w zasobniku systemowym
+Rozgrzewka: Dlaczego w React Native każdy tekst musi być w `<Text>`? Które części DevDesk da się współdzielić między wersją webową a mobilną? Gdzie w aplikacji mobilnej przechowujesz token?
+
+Problem: koordynatorzy zmian w zespole wsparcia mają DevDesk otwarty cały dzień i chcą, żeby działał jak program: osobne okno i ikona w zasobniku systemowym, natywne powiadomienia o krytycznych ticketach, skrót klawiszowy działający globalnie, eksport raportu do pliku w wybranym folderze, praca z lokalnymi plikami logów. Przeglądarka tego nie da (albo da tylko częściowo). W tej lekcji zobaczysz, jak opakować istniejącą aplikację React w aplikację desktopową — w **Electronie** albo **Tauri** — i jak bezpiecznie połączyć interfejs z funkcjami systemu operacyjnego.
+
+#T DEFINITION Dwa podejścia: Electron i Tauri
+Oba narzędzia robią to samo z perspektywy Reacta: Twój interfejs (zbudowany Vite) działa w oknie przeglądarki osadzonym w aplikacji, a dostęp do systemu operacyjnego daje osobny proces „backendowy”, z którym rozmawiasz przez wiadomości (IPC).
+- **Electron** — do aplikacji dołączony jest cały Chromium i Node.js. **Proces główny** (main, Node) tworzy okna, menu, zasobnik, obsługuje pliki i system; **proces renderujący** (renderer) to Twój React; **skrypt preload** udostępnia rendererowi wąskie, bezpieczne API. Zalety: dojrzały ekosystem, ten sam silnik na każdym systemie, Node w procesie głównym. Wady: duże pliki instalacyjne (100+ MB) i zużycie pamięci. Przykłady: VS Code, Slack, Discord.
+- **Tauri** — używa **systemowego WebView** (WebView2 na Windows, WebKit na macOS i Linux), a backend pisany jest w **Rust**. Zalety: małe aplikacje (kilka MB), mniejsze zużycie pamięci, model uprawnień (capabilities) domyślnie zamknięty. Wady: różne silniki WebView na różnych systemach (testuj na każdym), backend w Rust. Tauri 2 obsługuje także Androida i iOS.
+
+W obu przypadkach React nie wie, że działa „na desktopie” — wie tylko o API, które mu udostępnisz.
+
+#T CODE_BASIC Electron: proces główny i bezpieczny preload
+Proces główny tworzy okno z bezpiecznymi ustawieniami i obsługuje żądania z interfejsu (`ipcMain.handle`). Preload przez `contextBridge` wystawia do `window` **tylko** konkretne funkcje — nie cały `ipcRenderer` ani Node.
+```
+// electron/main.js (proces główny, Node)
+const { app, BrowserWindow, ipcMain, dialog, Notification } = require('electron');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,   // preload i strona w osobnych kontekstach JS
+      nodeIntegration: false,   // strona nie ma dostępu do require/Node
+      sandbox: true,
+    },
+  });
+  if (app.isPackaged) win.loadFile(path.join(__dirname, '../dist/index.html'));
+  else win.loadURL('http://localhost:5173'); // serwer Vite w trybie deweloperskim
+}
+
+ipcMain.handle('report:save', async (_event, csv) => {
+  if (typeof csv !== 'string' || csv.length > 5_000_000) throw new Error('Nieprawidłowe dane raportu');
+  const { canceled, filePath } = await dialog.showSaveDialog({ defaultPath: 'raport.csv' });
+  if (canceled || !filePath) return null;
+  await fs.writeFile(filePath, csv, 'utf8');
+  return filePath;
+});
+
+ipcMain.handle('notify', (_event, title, body) => {
+  new Notification({ title: String(title), body: String(body) }).show();
+});
+
+app.whenReady().then(createWindow);
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+// electron/preload.js — jedyny most między stroną a procesem głównym
+// const { contextBridge, ipcRenderer } = require('electron');
+// contextBridge.exposeInMainWorld('desktop', {
+//   saveReport: (csv) => ipcRenderer.invoke('report:save', csv),
+//   notify: (title, body) => ipcRenderer.invoke('notify', title, body),
+// });
+```
+
+#T CODE_JSX Interfejs React korzysta z API pulpitu (JSX)
+Komponent sprawdza, czy działa w aplikacji desktopowej (`window.desktop` istnieje), i wybiera ścieżkę: natywne okno zapisu albo zwykłe pobranie pliku w przeglądarce. Ten sam kod działa w obu środowiskach.
+```
+// features/reports/ExportButton.jsx
+import { useState } from 'react';
+
+function downloadInBrowser(csv) {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const link = Object.assign(document.createElement('a'), { href: url, download: 'raport.csv' });
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export function ExportButton({ buildCsv }) {
+  const [status, setStatus] = useState('');
+
+  async function handleExport() {
+    const csv = buildCsv();
+    if (window.desktop) {
+      const path = await window.desktop.saveReport(csv);
+      setStatus(path ? `Zapisano: ${path}` : 'Anulowano zapis');
+      if (path) await window.desktop.notify('DevDesk', 'Raport zapisany');
+    } else {
+      downloadInBrowser(csv);
+      setStatus('Pobieranie rozpoczęte');
+    }
+  }
+
+  return (
+    <div>
+      <button type="button" onClick={handleExport}>Eksportuj CSV</button>
+      <span role="status">{status}</span>
+    </div>
+  );
+}
+```
+
+#T CODE_TSX Interfejs React korzysta z API pulpitu (TSX)
+W TSX deklarujesz kształt API wystawionego przez preload (`declare global`) — opcjonalne pole `desktop?` wymusza sprawdzenie, czy aplikacja działa w Electronie.
+```
+// features/reports/ExportButton.tsx
+import { useState } from 'react';
+
+declare global {
+  interface Window {
+    desktop?: {
+      saveReport: (csv: string) => Promise<string | null>;
+      notify: (title: string, body: string) => Promise<void>;
+    };
+  }
+}
+
+function downloadInBrowser(csv: string) {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const link = Object.assign(document.createElement('a'), { href: url, download: 'raport.csv' });
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export function ExportButton({ buildCsv }: { buildCsv: () => string }) {
+  const [status, setStatus] = useState('');
+
+  async function handleExport() {
+    const csv = buildCsv();
+    if (window.desktop) {
+      const path = await window.desktop.saveReport(csv);
+      setStatus(path ? `Zapisano: ${path}` : 'Anulowano zapis');
+      if (path) await window.desktop.notify('DevDesk', 'Raport zapisany');
+    } else {
+      downloadInBrowser(csv);
+      setStatus('Pobieranie rozpoczęte');
+    }
+  }
+
+  return (
+    <div>
+      <button type="button" onClick={handleExport}>Eksportuj CSV</button>
+      <span role="status">{status}</span>
+    </div>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — kontrakt mostu między procesami
+Most IPC to granica między dwoma programami — jak API HTTP. W TSX jeden plik z typami (`desktop-api.d.ts`) współdzielony przez preload i interfejs sprawia, że zmiana nazwy kanału albo argumentu jest błędem kompilacji po obu stronach. W JSX literówka w `window.desktop.saveRaport` da `TypeError` dopiero po kliknięciu. Niezależnie od typów proces główny **musi walidować** argumenty (jak backend waliduje żądania), bo typy TS nie istnieją w czasie działania, a złośliwy skrypt na stronie może wywołać most z dowolnymi danymi.
+
+#T CODE_PRACTICAL Tauri: polecenie w Rust i wywołanie z Reacta
+W Tauri funkcje systemu pisze się jako **polecenia** (commands) w Rust, a interfejs wywołuje je funkcją `invoke` z pakietu `@tauri-apps/api`. Uprawnienia (np. dostęp do okna zapisu czy powiadomień) deklarujesz w plikach capabilities — bez nich wywołanie jest odrzucane.
+```
+// src-tauri/src/lib.rs (backend w Rust)
+// #[tauri::command]
+// fn count_errors(log: String) -> usize {
+//     log.lines().filter(|line| line.contains("ERROR")).count()
+// }
+//
+// pub fn run() {
+//     tauri::Builder::default()
+//         .plugin(tauri_plugin_notification::init())
+//         .invoke_handler(tauri::generate_handler![count_errors])
+//         .run(tauri::generate_context!())
+//         .expect("błąd uruchomienia aplikacji");
+// }
+
+// features/logs/useLogStats.ts (interfejs React)
+import { invoke } from '@tauri-apps/api/core';
+import { useState } from 'react';
+
+export function useLogStats() {
+  const [errors, setErrors] = useState<number | null>(null);
+
+  async function analyze(log: string) {
+    const count = await invoke<number>('count_errors', { log });
+    setErrors(count);
+  }
+
+  return { errors, analyze };
+}
+```
+
+#T DEFINITION Bezpieczeństwo aplikacji desktopowej
+Aplikacja desktopowa ma dostęp do plików i systemu użytkownika, więc XSS (rozdział 19) przestaje być „tylko” kradzieżą sesji — może oznaczać wykonanie kodu na komputerze. Zasady:
+- **Electron**: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`; preload wystawia wąskie funkcje, nigdy `ipcRenderer` w całości; proces główny waliduje każdy argument; `webContents.setWindowOpenHandler` i blokada nawigacji do obcych stron; ładowanie zdalnych treści tylko przez HTTPS z CSP.
+- **Tauri**: minimalne capabilities (tylko potrzebne uprawnienia, z zakresem — np. zapis tylko do folderu dokumentów), CSP w konfiguracji, polecenia Rust walidujące dane.
+- **Aktualizacje**: podpisane instalatory (Windows, macOS — notaryzacja) i automatyczne aktualizacje (`electron-updater`, wtyczka updater w Tauri) — luka w starym Chromium dołączonym do aplikacji to luka u wszystkich użytkowników.
+
+#T WHEN_TO_USE Kiedy aplikacja desktopowa ma sens
+- **Tak**: potrzebne funkcje systemu (pliki, zasobnik, globalne skróty, praca w tle, urządzenia), długie sesje pracy w jednym narzędziu, dystrybucja wewnątrz firmy na zarządzanych komputerach, praca offline z lokalnymi danymi.
+- **Electron**, gdy zespół zna JS/Node, potrzebujesz identycznego silnika na każdym systemie albo bogatego ekosystemu bibliotek.
+- **Tauri**, gdy liczy się rozmiar i zużycie pamięci, model uprawnień, albo chcesz tego samego kodu także na urządzeniach mobilnych — i zespół jest gotów na trochę Rusta.
+- **Nie**: gdy wystarcza PWA (instalacja, powiadomienia, offline) — mniej pracy, brak instalatorów i podpisywania.
+
+#T STEP_BY_STEP Budujemy razem: DevDesk Desktop
+1. Dodaj do projektu Electron (np. `electron-vite` albo Electron Forge z szablonem Vite) — renderer to istniejący DevDesk.
+2. Skonfiguruj okno z `contextIsolation`, bez `nodeIntegration`, z `sandbox`; w trybie deweloperskim ładuj serwer Vite, w produkcji — `dist/index.html`.
+3. Napisz preload z `contextBridge` i dwiema funkcjami: `saveReport`, `notify`; w TSX — wspólny plik typów.
+4. Użyj API w `ExportButton` z rozgałęzieniem web/desktop; sprawdź oba środowiska.
+5. Dodaj ikonę w zasobniku i natywne powiadomienie o nowym krytycznym tickecie (zdarzenie z SSE, rozdział 11).
+6. Zbuduj instalator (`electron-builder` / Forge) i sprawdź jego rozmiar.
+7. Dla porównania: zrób to samo w Tauri (`npm create tauri-app`, istniejący frontend Vite), z jednym poleceniem w Rust i wtyczką powiadomień; porównaj rozmiar instalatora i zużycie pamięci.
+
+#T PITFALL nodeIntegration „żeby było prościej”
+Najgroźniejszy skrót w Electronie: `nodeIntegration: true` i `contextIsolation: false`, „bo wtedy w komponencie React mogę od razu zrobić `require('fs')`”. Wtedy **każdy** skrypt na stronie — także wstrzyknięty przez XSS albo załadowany z zewnętrznego CDN — może czytać i zapisywać pliki użytkownika oraz uruchamiać programy. Podobnie preload wystawiający `ipcRenderer` w całości (`exposeInMainWorld('ipc', ipcRenderer)`) — strona może wtedy wywołać dowolny kanał. Wystawiaj tylko konkretne funkcje z walidacją w procesie głównym i traktuj renderer jak niezaufaną stronę internetową.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+React w aplikacji desktopowej to ten sam interfejs zbudowany Vite, osadzony w oknie z mostem do systemu. Electron dołącza Chromium i Node (proces główny, renderer, preload z `contextBridge`, IPC przez `invoke`/`handle`), Tauri używa systemowego WebView i backendu w Rust (polecenia, `invoke`, capabilities). Bezpieczeństwo wymaga izolacji kontekstu, braku Node w rendererze, wąskiego API i walidacji po stronie procesu głównego, a także podpisanych aktualizacji. W TSX wspólny plik typów mostu chroni kontrakt między procesami, a opcjonalne `window.desktop?` pozwala temu samemu kodowi działać w przeglądarce i na pulpicie.
+
+Kryterium akceptacji: DevDesk działa jako aplikacja desktopowa z bezpiecznymi ustawieniami okna, eksport raportu otwiera natywne okno zapisu (a w przeglądarce — zwykłe pobieranie), powiadomienia o krytycznych ticketach są natywne, a renderer nie ma dostępu do Node ani do surowego IPC.
