@@ -1,0 +1,148 @@
+#T INTRO Rozgrzewka i problem: adres API wpisany na sztywno
+Rozgrzewka: Jaki jest kierunek zależności między `app`, `features` i `shared`? Po co funkcji publiczne API? Jak wykryć import cykliczny?
+
+Problem: w kodzie DevDesk adres API to `http://localhost:8080/api`, klucz Sentry jest wklejony w `main.tsx`, a flaga „pokaż tablicę Kanban” to `const SHOW_BOARD = true`. Żeby wdrożyć wersję testową, ktoś ręcznie zmienia trzy pliki i — oczywiście — raz zapomina, i produkcja łączy się z lokalnym API. Co gorsza, ktoś zaproponował, żeby klucz do zewnętrznego serwisu płatności też dodać do zmiennych Vite. W tej lekcji przeniesiesz konfigurację do zmiennych środowiskowych, poznasz tryby Vite, zwalidujesz konfigurację przy starcie i — najważniejsze — zrozumiesz, dlaczego **w kodzie przeglądarki nie ma sekretów**.
+
+#T DEFINITION Zmienne środowiskowe w Vite
+Vite wczytuje zmienne z plików `.env` w katalogu projektu i udostępnia je w kodzie jako `import.meta.env`:
+- **`.env`** — wspólne dla wszystkich trybów, **`.env.local`** — lokalne nadpisania (w `.gitignore`), **`.env.[tryb]`** i **`.env.[tryb].local`** — dla konkretnego trybu (`development`, `production`, `staging`).
+- Do kodu klienta trafiają **tylko** zmienne z prefiksem **`VITE_`** (`VITE_API_URL`). Pozostałe (`DB_PASSWORD`) są widoczne jedynie w konfiguracji Vite — to zabezpieczenie przed przypadkowym ujawnieniem.
+- Wbudowane: `import.meta.env.MODE` (nazwa trybu), `DEV` i `PROD` (wartości logiczne), `BASE_URL`.
+- **Tryb** wybierasz flagą: `vite build --mode staging` wczytuje `.env.staging`. `npm run dev` to domyślnie `development`, `npm run build` — `production`.
+
+Wartości są **wstawiane do kodu podczas budowania** — w gotowym pliku JS stoi dosłownie `"https://api.devdesk.pl"`. Zmiana zmiennej wymaga ponownego builda.
+
+#T CODE_BASIC Pliki .env dla trzech środowisk
+```
+# .env — wartości wspólne i domyślne (w repozytorium)
+VITE_APP_NAME=DevDesk
+VITE_FEATURE_BOARD=false
+
+# .env.development — lokalnie: proxy Vite do Spring Boot (rozdział 11)
+VITE_API_URL=/api
+VITE_FEATURE_BOARD=true
+
+# .env.staging — środowisko testowe
+VITE_API_URL=https://api.staging.devdesk.pl
+VITE_SENTRY_DSN=https://abc123@o1.ingest.sentry.io/42
+VITE_FEATURE_BOARD=true
+
+# .env.production
+VITE_API_URL=https://api.devdesk.pl
+VITE_SENTRY_DSN=https://abc123@o1.ingest.sentry.io/42
+
+# .env.local — NIE w repozytorium: Twoje lokalne nadpisania
+# VITE_API_URL=http://192.168.1.20:8080/api
+```
+
+#T CODE_JSX Jeden moduł konfiguracji z walidacją (JSX)
+Zamiast czytać `import.meta.env` w dwudziestu miejscach, masz jeden moduł `config`, który waliduje zmienne przy starcie (Zod, rozdział 05) i eksportuje gotowy obiekt. Brakująca albo błędna zmienna zatrzymuje aplikację od razu z czytelnym komunikatem — a nie po godzinie, gdy ktoś kliknie rzadko używaną funkcję.
+```
+// shared/config.js
+import { z } from 'zod';
+
+const schema = z.object({
+  VITE_APP_NAME: z.string().default('DevDesk'),
+  VITE_API_URL: z.string().min(1, 'Brak VITE_API_URL'),
+  VITE_SENTRY_DSN: z.string().url().optional(),
+  VITE_FEATURE_BOARD: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+});
+
+const parsed = schema.safeParse(import.meta.env);
+if (!parsed.success) {
+  throw new Error(`Błędna konfiguracja aplikacji:\n${parsed.error.issues.map((i) => `- ${i.path.join('.')}: ${i.message}`).join('\n')}`);
+}
+
+export const config = Object.freeze({
+  appName: parsed.data.VITE_APP_NAME,
+  apiUrl: parsed.data.VITE_API_URL,
+  sentryDsn: parsed.data.VITE_SENTRY_DSN,
+  features: { board: parsed.data.VITE_FEATURE_BOARD },
+  mode: import.meta.env.MODE,
+  isProd: import.meta.env.PROD,
+});
+```
+
+#T CODE_TSX Jeden moduł konfiguracji z walidacją (TSX)
+Typ `config` wynika ze schematu — `config.features.board` to `boolean`, a nie tekst `'true'`. Wszędzie w aplikacji importujesz `config`, a nie surowe `import.meta.env`.
+```
+// shared/config.ts
+import { z } from 'zod';
+
+const schema = z.object({
+  VITE_APP_NAME: z.string().default('DevDesk'),
+  VITE_API_URL: z.string().min(1, 'Brak VITE_API_URL'),
+  VITE_SENTRY_DSN: z.string().url().optional(),
+  VITE_FEATURE_BOARD: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+});
+
+const parsed = schema.safeParse(import.meta.env);
+if (!parsed.success) {
+  throw new Error(`Błędna konfiguracja aplikacji:\n${parsed.error.issues.map((i) => `- ${i.path.join('.')}: ${i.message}`).join('\n')}`);
+}
+
+export const config = Object.freeze({
+  appName: parsed.data.VITE_APP_NAME,
+  apiUrl: parsed.data.VITE_API_URL,
+  sentryDsn: parsed.data.VITE_SENTRY_DSN,
+  features: { board: parsed.data.VITE_FEATURE_BOARD },
+  mode: import.meta.env.MODE,
+  isProd: import.meta.env.PROD,
+});
+
+export type AppConfig = typeof config;
+```
+
+#T CODE_PRACTICAL Typowanie import.meta.env
+Bez deklaracji `import.meta.env.VITE_API_URL` ma w TS ogólny typ, a literówka (`VITE_API_ULR`) nie jest błędem. Rozszerzenie interfejsu `ImportMetaEnv` w pliku `vite-env.d.ts` daje podpowiedzi i sprawdzanie nazw. W JSX ten plik nie ma znaczenia — dlatego tym ważniejsza jest walidacja w module `config`.
+```
+// src/vite-env.d.ts
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_APP_NAME?: string;
+  readonly VITE_API_URL: string;
+  readonly VITE_SENTRY_DSN?: string;
+  readonly VITE_FEATURE_BOARD?: 'true' | 'false';
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+```
+
+#T NOTE JSX ↔ TSX — dwie warstwy ochrony
+`vite-env.d.ts` chroni tylko przed literówką **w kodzie** — nie sprawdza, czy zmienna faktycznie istnieje w pliku `.env` ani czy ma poprawną wartość (wszystkie zmienne środowiskowe to teksty: `'false'` jest prawdą w warunku `if`!). Walidacja schematem chroni przed błędami **konfiguracji** w obu wersjach. W TSX masz obie warstwy, w JSX — tylko drugą, więc w projekcie JS moduł `config` jest jedynym miejscem, które łapie błędy zmiennych.
+
+#T DEFINITION W przeglądarce nie ma sekretów
+Wszystko, co trafia do paczki JS, jest **publiczne**: każdy może otworzyć DevTools → Sources albo pobrać plik i wyszukać tekst. Zmienne `VITE_*` są wpisane w kod wprost, minifikacja niczego nie ukrywa. Dlatego:
+- **Można** w kliencie: adres API, publiczne identyfikatory (DSN Sentry, klucz publiczny map, ID analityki, publiczny klucz płatności „publishable”), flagi funkcji, nazwę środowiska.
+- **Nie wolno** w kliencie: hasła do baz, klucze prywatne API (płatności, e-mail, AI), sekrety JWT, tokeny dostępu do repozytoriów czy chmury.
+
+Jeśli funkcja wymaga sekretu (np. wywołanie płatnego API), wywołanie robi **backend** (Spring Boot), a przeglądarka woła backend. Sekret żyje w zmiennych środowiskowych serwera albo w menedżerze sekretów, nigdy w repozytorium frontendu.
+
+#T USAGE Konfiguracja w czasie działania zamiast w czasie budowania
+Wartości `VITE_*` są „zapieczone” w buildzie, więc jeden build = jedno środowisko. Gdy chcesz **jednego** obrazu Dockera dla testów i produkcji (lekcja 04 tego rozdziału), konfigurację wczytujesz przy starcie aplikacji:
+- serwer (Nginx, Spring Boot) serwuje plik `/config.json` generowany ze zmiennych środowiskowych kontenera,
+- `main.tsx` przed renderem robi `const runtime = await fetch('/config.json').then((r) => r.json())`, waliduje go schematem i przekazuje do modułu `config`,
+- zmiana adresu API to restart kontenera z inną zmienną, bez ponownego budowania.
+
+Kosztem jest dodatkowe żądanie przy starcie — dlatego mały plik, z nagłówkiem `Cache-Control: no-cache`, i ewentualnie wstrzykiwany bezpośrednio do `index.html` przez serwer.
+
+#T STEP_BY_STEP Budujemy razem: konfiguracja DevDesk
+1. Wyszukaj w kodzie twarde wartości (`localhost`, adresy, klucze, flagi) — `grep -rn "localhost\|http" src/`.
+2. Utwórz `.env`, `.env.development`, `.env.staging`, `.env.production`; dodaj `.env*.local` do `.gitignore`.
+3. Napisz `shared/config` ze schematem Zod; zamień wszystkie odczyty `import.meta.env` na `config`.
+4. W TSX dodaj deklaracje w `vite-env.d.ts`.
+5. Dodaj skrypt `"build:staging": "vite build --mode staging"` i zbuduj obie wersje; sprawdź w `dist/`, że adresy API się różnią.
+6. Ukryj tablicę Kanban za flagą `config.features.board` — w menu i w routerze.
+7. Przeszukaj gotową paczkę: `grep -r "secret\|password\|sk_live" dist/` — wynik ma być pusty.
+8. Przygotuj `.env.example` z listą wszystkich zmiennych i opisami (bez prawdziwych wartości) dla nowych osób w zespole.
+
+#T PITFALL Sekret „ukryty” w zmiennej VITE_
+Najczęstszy i najgroźniejszy błąd: klucz prywatny API dodany jako `VITE_PAYMENTS_SECRET`, „bo przecież jest w `.env`, a nie w kodzie”. Prefiks `VITE_` oznacza dokładnie odwrotność ukrycia — zmienna zostanie **wpisana w publiczną paczkę JS** i każdy może jej użyć na Twój koszt. Jeśli sekret raz trafił do builda albo do historii repozytorium, uznaj go za ujawniony: unieważnij go i wygeneruj nowy (usunięcie z kodu nie wystarczy — kopie są w cache przeglądarek, CDN i historii git). Drugi błąd: plik `.env.local` z prawdziwymi danymi dodany do repozytorium — sprawdzaj `.gitignore` i włącz skanowanie sekretów w repozytorium (np. GitHub secret scanning).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Vite czyta zmienne z plików `.env`, `.env.[tryb]` i ich wersji `.local`, a do kodu przeglądarki przepuszcza tylko te z prefiksem `VITE_`, wpisując je w paczkę podczas budowania. Tryb (`--mode`) wybiera zestaw plików. Konfigurację czytasz w jednym module, walidujesz schematem przy starcie i eksportujesz jako typowany obiekt; w TSX dodatkowo deklarujesz `ImportMetaEnv`. Sekrety nie trafiają do klienta nigdy — wywołania wymagające kluczy prywatnych wykonuje backend. Gdy jeden build ma obsłużyć wiele środowisk, wczytujesz konfigurację w czasie działania (`/config.json`).
+
+Kryterium akceptacji: w kodzie nie ma adresów ani kluczy wpisanych na sztywno; build `staging` i `production` różnią się adresem API; brak wymaganej zmiennej zatrzymuje aplikację czytelnym błędem; tablica Kanban jest sterowana flagą; przeszukanie `dist/` nie znajduje żadnych sekretów; w repozytorium jest `.env.example`, a nie ma plików `.env*.local`.
