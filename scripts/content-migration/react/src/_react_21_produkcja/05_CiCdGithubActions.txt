@@ -1,0 +1,187 @@
+#T INTRO Rozgrzewka i problem: zepsuty main w piątek po południu
+Rozgrzewka: Co zawiera końcowy obraz w budowaniu wieloetapowym? Dlaczego proxy `/api/` w Nginx eliminuje CORS? Kiedy frontend w JAR Spring Boot ma sens?
+
+Problem: ktoś scalił pull request z błędem typów i niedziałającym testem — „u mnie przechodziło”, bo nie uruchomił ani `tsc`, ani testów. Główna gałąź się nie buduje, wdrożenie wisi, a wszyscy szukają, kto co zepsuł. Wdrażanie odbywa się ręcznie z laptopa jednej osoby, która akurat jest na urlopie. W tej lekcji zautomatyzujesz kontrolę jakości i wdrożenie: **CI** (ciągła integracja) sprawdza każdy pull request — lint, typy, testy, build, testy E2E — a **CD** (ciągłe wdrażanie) wdraża zielony `main` bez udziału człowieka.
+
+#T DEFINITION GitHub Actions: workflow, job, step
+- **Workflow** — plik YAML w `.github/workflows/`, uruchamiany przez zdarzenie (`on: pull_request`, `on: push` do `main`, harmonogram, ręcznie).
+- **Job** — zestaw kroków wykonywany na jednej maszynie (`runs-on: ubuntu-latest`). Joby działają **równolegle**, chyba że zależą od siebie (`needs: build`).
+- **Step** — pojedyncze polecenie (`run: npm ci`) albo gotowa akcja (`uses: actions/setup-node@v4`).
+- **Artefakt** — plik przekazywany między jobami lub zachowany po przebiegu (np. `dist/`, raport Playwright).
+- **Sekrety i zmienne** — ustawiane w repozytorium/środowisku (`Settings → Secrets and variables`), dostępne jako `${{ secrets.NAZWA }}`; nie pojawiają się w logach.
+- **Środowisko (environment)** — np. `production` z regułami ochrony: wymagane zatwierdzenie, tylko gałąź `main`, własne sekrety.
+
+Zasada szybkiego CI: najtańsze sprawdzenia najpierw (lint, typy — sekundy), droższe później (testy jednostkowe, build), najdroższe na końcu albo równolegle (E2E).
+
+#T CODE_BASIC Workflow CI dla pull requestów
+```
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true # nowy commit w PR przerywa poprzedni przebieg
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit -p tsconfig.app.json   # tylko w projekcie TS
+      - run: npx vitest run --coverage
+      - run: npm run build
+        env:
+          VITE_API_URL: /api
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
+
+  e2e:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: npx playwright test   # webServer w playwright.config uruchamia "npm run preview" z MSW
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+```
+
+#T NOTE JSX ↔ TSX — krok sprawdzania typów
+Vite **nie sprawdza typów** podczas budowania (usuwa je, rozdział 00), więc projekt TSX może się zbudować mimo błędów kompilatora. Dlatego w CI osobny krok `tsc --noEmit` jest obowiązkowy — to on zatrzymuje pull request z błędem typów. W projekcie JSX tego kroku nie ma; jego rolę częściowo przejmują ESLint i testy, a jeśli używasz JSDoc z `// @ts-check` albo `checkJs: true`, możesz uruchomić `tsc --noEmit` także dla JavaScriptu i dostać część tych korzyści.
+
+#T CODE_BASIC Workflow wdrożenia z głównej gałęzi
+Wdrożenie uruchamia się po zielonym CI na `main`. Środowisko `production` może wymagać zatwierdzenia przez wskazane osoby, a sekrety platformy są dostępne tylko w tym środowisku.
+```
+# .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://devdesk.pl
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_API_URL: ${{ vars.API_URL }}
+          VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+          VITE_APP_VERSION: ${{ github.event.workflow_run.head_sha }}
+      - name: Wdrożenie na Cloudflare Pages
+        run: npx wrangler pages deploy dist --project-name=devdesk --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Wysłanie map źródeł do Sentry
+        run: npx @sentry/cli sourcemaps upload --release=${{ github.event.workflow_run.head_sha }} dist
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+```
+
+#T CODE_BASIC Wariant: obraz Dockera do rejestru
+Gdy wdrażasz kontenery (lekcja 04), job buduje obraz z tagiem równym SHA commita i wysyła go do rejestru (tu GitHub Container Registry). Wdrożenie na serwer to aktualizacja tagu obrazu w konfiguracji klastra.
+```
+# fragment .github/workflows/deploy.yml
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}
+          build-args: VITE_APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+#T DEFINITION Ochrona głównej gałęzi
+Workflow sam niczego nie blokuje — robią to **reguły ochrony gałęzi** (branch protection / rulesets) w ustawieniach repozytorium:
+- wymagane statusy przed scaleniem: `CI / check` i `CI / e2e` muszą być zielone,
+- wymagany przegląd kodu (co najmniej jedna akceptacja),
+- gałąź musi być aktualna względem `main` (albo kolejka scalania — merge queue),
+- zakaz bezpośredniego `push` do `main` i zakaz `force push`.
+
+Dzięki temu `main` jest zawsze zielony, a automatyczne wdrożenie z `main` jest bezpieczne. Uzupełnieniem są **Dependabot** (automatyczne pull requesty z aktualizacjami zależności i łatkami bezpieczeństwa — przechodzą przez to samo CI) i skanowanie sekretów.
+
+#T USAGE Szybkie i stabilne CI
+- **Cache**: `setup-node` z `cache: npm` przyspiesza `npm ci`; przeglądarki Playwright cache'uj osobno albo instaluj tylko `chromium`.
+- **`npm ci`**, nie `npm install` — instaluje dokładnie wersje z `package-lock.json`.
+- **Wersja Node** z pliku `.nvmrc` — ta sama lokalnie i w CI.
+- **Równoległość**: lint, typy i testy jednostkowe w osobnych jobach albo `vitest --shard`, E2E — `playwright test --shard=1/3` w macierzy.
+- **Niestabilne testy** (flaky) to dług: nie dodawaj ślepych ponowień; znajdź przyczynę (brak `await`, zależność od czasu, kolejność testów) — inaczej zespół przestanie ufać czerwonemu CI.
+- **Lokalnie to samo**: skrypt `npm run verify` (lint + typy + testy + build), a hook przed `push` (np. przez `lefthook` lub `husky`) uruchamia jego szybką część.
+
+#T STEP_BY_STEP Budujemy razem: potok DevDesk
+1. Dodaj `.nvmrc` i skrypty w `package.json`: `lint`, `typecheck` (TSX), `test`, `build`, `verify`.
+2. Utwórz `.github/workflows/ci.yml` z jobami `check` i `e2e`; otwórz pull request i obejrzyj przebieg.
+3. Celowo zepsuj typ albo test w gałęzi — sprawdź, że CI jest czerwone i wskazuje błąd.
+4. Ustaw reguły ochrony `main`: wymagane `check` i `e2e`, przegląd kodu, zakaz bezpośredniego `push`.
+5. Dodaj środowisko `production` z sekretami platformy i zatwierdzaniem; utwórz `deploy.yml` uruchamiany po zielonym CI na `main`.
+6. Dodaj wysyłanie map źródeł do Sentry z wersją równą SHA commita.
+7. Włącz Dependabot (`.github/dependabot.yml`) dla `npm` i `github-actions` w cyklu tygodniowym.
+8. Zmierz czas przebiegu CI i skróć go: cache, równoległe joby, tylko `chromium` w E2E.
+
+#T PITFALL Sekrety w pull requestach z forków i w logach
+Workflow uruchamiany przez `pull_request` z **forka** nie dostaje sekretów — i dobrze, bo obcy kod mógłby je wykraść. Nie obchodź tego zdarzeniem `pull_request_target` z checkoutem kodu z PR: wtedy cudzy kod działa z dostępem do sekretów repozytorium. Drugi błąd: wypisywanie zmiennych w logach (`run: echo $VITE_API_URL $TOKEN` albo `env` dla debugowania) — GitHub maskuje znane sekrety, ale nie wartości pochodne (np. zakodowane w base64). Trzeci: `permissions` domyślnie szerokie — ustawiaj minimalne uprawnienia tokenu dla każdego workflow (`contents: read`), a dodatkowe nadawaj tylko jobom, które ich potrzebują.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+GitHub Actions uruchamia workflow (pliki YAML) złożone z jobów i kroków. CI dla każdego pull requesta wykonuje `npm ci`, lint, sprawdzanie typów (`tsc --noEmit` — konieczne w TSX, bo Vite nie sprawdza typów), testy, build i testy E2E, a reguły ochrony gałęzi nie pozwalają scalić czerwonego PR. CD wdraża zielony `main` automatycznie: na platformę statyczną albo jako obraz Dockera do rejestru, z sekretami w chronionym środowisku `production` i mapami źródeł wysłanymi do Sentry. Szybkość zapewniają cache, równoległe joby i jedna wersja Node lokalnie i w CI.
+
+Kryterium akceptacji: pull request z błędem typów, lintera albo testu ma czerwony status i nie da się go scalić; zielony `main` wdraża się sam (z zatwierdzeniem, jeśli je ustawiono); wdrożona wersja ma w Sentry mapy źródeł z wersją równą SHA commita; Dependabot otwiera pull requesty z aktualizacjami, które przechodzą przez to samo CI.
