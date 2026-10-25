@@ -1,0 +1,247 @@
+#T INTRO Rozgrzewka i problem: moduł raportów do przepisania
+Rozgrzewka: Czym różni się `setState` w klasie od settera `useState`? Kiedy wywoływany jest `componentDidUpdate`? Dlaczego handler zwykłej metody traci `this`?
+
+Problem: moduł raportów z poprzedniej lekcji działa, ale każda zmiana jest droga: logika pobierania danych jest rozrzucona po `componentDidMount`, `componentDidUpdate` i `componentWillUnmount`, timer obsługują trzy metody, a ta sama logika „pobierz raport z anulowaniem” jest skopiowana w czterech klasach (bo między klasami nie da się jej łatwo współdzielić — stąd HOC-i i render props). Zespół chce przepisać moduł na komponenty funkcyjne z hookami, ale bez zatrzymywania prac i bez regresji. W tej lekcji poznasz mapowanie klas na hooki, przepiszesz `ReportPanel` krok po kroku, zamienisz HOC-i i render props na własne hooki i zaplanujesz stopniową migrację.
+
+#T DEFINITION Mapowanie: klasa → hooki
+- `this.state = { a, b, c }` → osobne `useState` dla niezależnych wartości (albo `useReducer`, gdy zmieniają się razem). Pamiętaj: setter **zastępuje** wartość, nie scala jak `setState`.
+- `this.setState(prev => …)` → `setX(prev => …)`.
+- `componentDidMount` + `componentWillUnmount` (podłącz/odłącz) → **jeden** `useEffect` z funkcją sprzątającą.
+- `componentDidUpdate(prevProps)` z `if (prevProps.id !== this.props.id)` → `useEffect` z `[id]` w zależnościach — porównanie robi React.
+- Pola instancji (`this.timer`, `this.cancelled`) → `useRef` (albo zmienna lokalna w Effecie, jeśli żyje tylko tam).
+- `shouldComponentUpdate` / `PureComponent` → `memo` (i tylko po pomiarze, rozdział 16).
+- `getDerivedStateFromProps` → obliczenie w renderze, reset przez `key` albo — wyjątkowo — aktualizacja stanu w trakcie renderu z porównaniem poprzedniej wartości.
+- `createRef` → `useRef`; `this.context` / `static contextType` → `useContext`.
+- `getSnapshotBeforeUpdate` → `useLayoutEffect` (pomiar przed malowaniem).
+- `componentDidCatch` / `getDerivedStateFromError` → **brak odpowiednika** — granica błędów zostaje klasą albo używasz `react-error-boundary`.
+
+Najważniejsza zmiana myślenia: klasa grupuje kod według **momentu** (montowanie, aktualizacja, odmontowanie), hooki — według **celu** (synchronizacja z timerem, pobieranie danych). Jeden Effect zastępuje fragmenty trzech metod cyklu życia.
+
+#T CODE_JSX ReportPanel po migracji (JSX)
+Porównaj z wersją klasową z poprzedniej lekcji: pobieranie danych to jeden Effect zależny od `reportId` (z poprawnie obsłużonym wyścigiem), timer — drugi Effect zależny od `autoRefresh`. Każdy cel ma swój Effect, a sprzątanie jest obok podłączenia.
+```
+// ReportPanel.jsx
+import { useEffect, useState } from 'react';
+
+export function ReportPanel({ reportId }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [version, setVersion] = useState(0); // zmiana wymusza ponowne pobranie
+
+  useEffect(() => {
+    let ignore = false;
+    setError(null);
+    fetch(`/api/reports/${reportId}`)
+      .then((res) => res.json())
+      .then((json) => { if (!ignore) setData(json); })
+      .catch((err) => { if (!ignore) setError(err); });
+    return () => { ignore = true; };
+  }, [reportId, version]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(() => setVersion((v) => v + 1), 30_000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  if (error) return <p role="alert">Nie udało się wczytać raportu.</p>;
+  if (!data) return <p>Ładowanie raportu…</p>;
+  return (
+    <section>
+      <h2>{data.title}</h2>
+      <label>
+        <input type="checkbox" checked={autoRefresh} onChange={() => setAutoRefresh((a) => !a)} /> Odświeżaj co 30 s
+      </label>
+      <p>Zgłoszeń: {data.count}</p>
+    </section>
+  );
+}
+```
+
+#T CODE_TSX ReportPanel po migracji (TSX)
+Typy stanu rozbijają się na proste generyki `useState`; nie ma już typu `State` ani deklaracji pól instancji.
+```
+// ReportPanel.tsx
+import { useEffect, useState } from 'react';
+
+type Report = { title: string; count: number };
+
+export function ReportPanel({ reportId }: { reportId: number }) {
+  const [data, setData] = useState<Report | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [version, setVersion] = useState(0); // zmiana wymusza ponowne pobranie
+
+  useEffect(() => {
+    let ignore = false;
+    setError(null);
+    fetch(`/api/reports/${reportId}`)
+      .then((res) => res.json() as Promise<Report>)
+      .then((json) => { if (!ignore) setData(json); })
+      .catch((err: unknown) => { if (!ignore) setError(err); });
+    return () => { ignore = true; };
+  }, [reportId, version]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(() => setVersion((v) => v + 1), 30_000);
+    return () => clearInterval(id);
+  }, [autoRefresh]);
+
+  if (error) return <p role="alert">Nie udało się wczytać raportu.</p>;
+  if (!data) return <p>Ładowanie raportu…</p>;
+  return (
+    <section>
+      <h2>{data.title}</h2>
+      <label>
+        <input type="checkbox" checked={autoRefresh} onChange={() => setAutoRefresh((a) => !a)} /> Odświeżaj co 30 s
+      </label>
+      <p>Zgłoszeń: {data.count}</p>
+    </section>
+  );
+}
+```
+
+#T NOTE JSX ↔ TSX — mniej typów po migracji
+W klasie TSX trzeba było zadeklarować `Props`, `State` i pola instancji (`private timer`). Po migracji typy często **znikają**: `useState(false)` sam ma typ `boolean`, a zmienne lokalne Effectu (`ignore`, `id`) nie potrzebują deklaracji. Zostają tylko typy props i generyki tam, gdzie wartość startowa nie mówi wszystkiego (`useState<Report | null>(null)`). To dobry moment, by usunąć `PropTypes` z wersji JSX — React 19 już ich nie sprawdza; jeśli potrzebujesz sprawdzania, przejdź na TS albo waliduj dane wejściowe schematem.
+
+#T DEFINITION HOC i render props → własne hooki
+W erze klas logikę współdzieloną między komponentami wyciągano do:
+- **HOC** (komponent wyższego rzędu) — `withReport(Component)` zwraca nowy komponent, który pobiera dane i przekazuje je w props,
+- **render props** — `<ReportLoader id={1}>{(report) => <View report={report} />}</ReportLoader>`.
+
+Oba działają, ale zagnieżdżają drzewo („wrapper hell” — w DevTools pięć warstw opakowań wokół jednego komponentu), ukrywają, skąd pochodzą props, i grożą kolizją nazw props. **Własny hook** robi to samo bez dodatkowych komponentów: `const report = useReport(id)`. Migracja: logikę z HOC przenosisz do hooka, a HOC zostawiasz na czas przejścia jako cienką nakładkę nad hookiem (dla klas, które jeszcze go używają).
+
+#T CODE_JSX Z HOC do hooka, z nakładką na czas migracji (JSX)
+```
+// useReport.jsx
+import { useEffect, useState } from 'react';
+
+export function useReport(reportId) {
+  const [state, setState] = useState({ data: null, error: null });
+
+  useEffect(() => {
+    let ignore = false;
+    setState({ data: null, error: null });
+    fetch(`/api/reports/${reportId}`)
+      .then((res) => res.json())
+      .then((data) => { if (!ignore) setState({ data, error: null }); })
+      .catch((error) => { if (!ignore) setState({ data: null, error }); });
+    return () => { ignore = true; };
+  }, [reportId]);
+
+  return state;
+}
+
+// Nakładka zgodna ze starym API — klasy nadal mogą używać withReport, dopóki ich nie przepiszesz.
+export function withReport(WrappedComponent) {
+  function WithReport(props) {
+    const report = useReport(props.reportId);
+    return <WrappedComponent {...props} report={report} />;
+  }
+  WithReport.displayName = `withReport(${WrappedComponent.displayName ?? WrappedComponent.name})`;
+  return WithReport;
+}
+```
+
+#T CODE_TSX Z HOC do hooka, z nakładką na czas migracji (TSX)
+Typowanie HOC to najtrudniejsza część kodu klasowego (rozdział 09) — po migracji na hook zostaje prosta sygnatura funkcji.
+```
+// useReport.tsx
+import { useEffect, useState, type ComponentType } from 'react';
+
+type Report = { title: string; count: number };
+export type ReportState = { data: Report | null; error: unknown };
+
+export function useReport(reportId: number): ReportState {
+  const [state, setState] = useState<ReportState>({ data: null, error: null });
+
+  useEffect(() => {
+    let ignore = false;
+    setState({ data: null, error: null });
+    fetch(`/api/reports/${reportId}`)
+      .then((res) => res.json() as Promise<Report>)
+      .then((data) => { if (!ignore) setState({ data, error: null }); })
+      .catch((error: unknown) => { if (!ignore) setState({ data: null, error }); });
+    return () => { ignore = true; };
+  }, [reportId]);
+
+  return state;
+}
+
+// Nakładka zgodna ze starym API — klasy nadal mogą używać withReport, dopóki ich nie przepiszesz.
+export function withReport<P extends { report: ReportState }>(WrappedComponent: ComponentType<P>) {
+  function WithReport(props: Omit<P, 'report'> & { reportId: number }) {
+    const report = useReport(props.reportId);
+    return <WrappedComponent {...(props as unknown as P)} report={report} />;
+  }
+  WithReport.displayName = `withReport(${WrappedComponent.displayName ?? WrappedComponent.name})`;
+  return WithReport;
+}
+```
+
+#T CODE_PRACTICAL Pułapki tłumaczenia jeden do jednego
+Przepisywanie metoda po metodzie prowadzi do typowych błędów. Komentarze „ŹLE” pokazują dosłowne tłumaczenie, a kod pod nimi — poprawną wersję.
+```
+// MigrationPitfalls.tsx
+import { useEffect, useRef, useState } from 'react';
+
+type Filters = { status: string; query: string };
+
+export function MigrationPitfalls({ userId, onSaved }: { userId: number; onSaved: () => void }) {
+  // 1. setState scalał obiekt — setter nie scala.
+  //    ŹLE:  setFilters({ status: 'OPEN' })  → znika query
+  const [filters, setFilters] = useState<Filters>({ status: 'ALL', query: '' });
+  const setStatus = (status: string) => setFilters((f) => ({ ...f, status }));
+
+  // 2. componentDidMount z pustą tablicą zależności, choć Effect czyta props.
+  //    ŹLE:  useEffect(() => subscribe(userId), [])  → po zmianie userId nadal stara subskrypcja
+  useEffect(() => {
+    console.log('subscribe', userId);
+    return () => console.log('unsubscribe', userId);
+  }, [userId]);
+
+  // 3. this.setState(x, callback) przetłumaczone na Effect „po zmianie” — zwykle wystarczy handler.
+  //    ŹLE:  useEffect(() => { if (saved) onSaved(); }, [saved])
+  function handleSave() {
+    onSaved(); // logika zdarzenia w handlerze zdarzenia
+  }
+
+  // 4. Pole instancji przetłumaczone na stan — niepotrzebne rendery.
+  //    ŹLE:  const [lastClick, setLastClick] = useState(0) dla wartości, której nie ma na ekranie
+  const lastClick = useRef(0);
+
+  return (
+    <div>
+      <button type="button" onClick={() => { lastClick.current = Date.now(); setStatus('OPEN'); }}>Otwarte</button>
+      <input value={filters.query} onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))} aria-label="Szukaj" />
+      <button type="button" onClick={handleSave}>Zapisz</button>
+    </div>
+  );
+}
+```
+
+#T WHEN_TO_USE Kiedy migrować, a kiedy zostawić klasę
+- **Migruj**, gdy i tak zmieniasz komponent (nowa funkcja, poprawka błędu), gdy logika jest kopiowana między klasami (hook ją uwspólni), gdy chcesz użyć nowych narzędzi opartych na hookach (TanStack Query, React Router w trybie danych, `useActionState`).
+- **Zostaw**, gdy komponent jest stabilny, przetestowany i nikt go nie dotyka — migracja bez powodu to ryzyko bez zysku. Klasy i funkcje współpracują bez problemu w jednym drzewie.
+- **Zawsze klasa (albo biblioteka)**: granica błędów.
+
+Strategia: od liści do korzenia (małe komponenty prezentacyjne najpierw), testy zachowania przed migracją (testy oparte na tym, co widzi użytkownik — RTL — przeżyją zmianę implementacji, a testy enzymowe sprawdzające `state()` instancji — nie), jeden komponent na pull request.
+
+#T STEP_BY_STEP Budujemy razem: migracja modułu raportów
+1. Napisz testy zachowania `ReportPanel` w Testing Library (ładowanie, dane, błąd, zmiana `reportId`, automatyczne odświeżanie z fałszywymi timerami) — na **wersji klasowej**.
+2. Przepisz `ReportPanel` na funkcję z dwoma Effectami; testy mają przejść bez zmian.
+3. Wydziel `useReport` i zastąp nim kod skopiowany w pozostałych trzech klasach — najpierw przez nakładkę `withReport`, potem przepisując klasy.
+4. Zamień render props `ReportLoader` na hook; usuń komponent, gdy nikt go już nie używa.
+5. Usuń `PropTypes` (w wersji JSX — zastąp walidacją danych z API) i `displayName` tam, gdzie zbędne.
+6. Rozważ zastąpienie ręcznego pobierania przez TanStack Query (`useQuery` z `refetchInterval` zamiast własnego timera).
+7. Porównaj liczbę linii i liczbę miejsc, w których obsługiwany jest timer, przed i po migracji.
+
+#T PITFALL Testy, które nie przeżyją migracji
+Stare projekty często mają testy w bibliotece Enzyme, które sięgają do wnętrza komponentu: `wrapper.state('loading')`, `wrapper.instance().load()`, `wrapper.setState(…)`. Po migracji na hooki **nie ma** instancji ani `this.state` — wszystkie takie testy padają, choć aplikacja działa poprawnie, i zespół traci zaufanie do migracji. Zanim zaczniesz przepisywać komponent, przepisz jego testy na Testing Library (sprawdzające to, co widać na ekranie i co robi użytkownik). Enzyme nie wspiera React 18+ — to i tak konieczny krok przy aktualizacji Reacta.
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+Migracja klas na hooki to zmiana grupowania kodu z „momentu w cyklu życia” na „cel”: stan z `this.state` rozbijasz na `useState`/`useReducer` (setter nie scala!), pary `componentDidMount`/`componentWillUnmount` i porównania w `componentDidUpdate` zastępujesz Effectami z zależnościami, pola instancji — refami, `PureComponent` — `memo`, a HOC-i i render props — własnymi hookami (z nakładką na czas przejścia). Granice błędów zostają klasami. Migrujesz stopniowo, od liści, z testami zachowania napisanymi przed zmianą. W TSX po migracji ubywa typów — zostają typy props i generyki `useState`.
+
+Kryterium akceptacji: moduł raportów nie zawiera komponentów klasowych (poza granicą błędów), logika pobierania raportu jest w jednym hooku używanym we wszystkich miejscach, testy napisane przed migracją przechodzą bez zmian, a wyścig odpowiedzi przy zmianie `reportId` jest obsłużony.
