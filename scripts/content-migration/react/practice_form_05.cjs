@@ -1,0 +1,68 @@
+const model=`export type Ticket={id:number;title:string;description:string;priority:"LOW"|"MEDIUM"|"CRITICAL";assignee:string|null;tags:string[];status:"OPEN"|"DONE";createdAt:string};
+export type NewValues=Pick<Ticket,"title"|"description"|"priority"|"assignee">&{tags?:readonly string[]};
+export const empty=():NewValues=>({title:"",description:"",priority:"MEDIUM",assignee:null,tags:[]});`;
+const helpers=`export function nextId(existing:readonly Ticket[]):number{const max=existing.reduce((max,ticket)=>{if(!Number.isSafeInteger(ticket.id)||ticket.id<0)throw new RangeError("Niepoprawne ID");return Math.max(max,ticket.id);},0);if(max>=Number.MAX_SAFE_INTEGER)throw new RangeError("Brak bezpiecznego ID");return max+1;}
+export function buildTicket(values:NewValues,id:number,createdAt:string):Ticket{if(!Number.isSafeInteger(id)||id<1)throw new RangeError("Niepoprawne nowe ID");if(!values.title.trim())throw new Error("Brak tytułu");if(!Number.isFinite(Date.parse(createdAt)))throw new Error("Niepoprawna data");return {title:values.title.trim(),description:values.description,priority:values.priority,assignee:values.assignee,tags:[...(values.tags??[])],id,status:"OPEN",createdAt};}
+export type Board={tickets:readonly Ticket[];selectedId:number|null;dialogOpen:boolean;notice:string|null};
+export function createInBoard(board:Board,values:NewValues,createdAt:string):Board{const ticket=buildTicket(values,nextId(board.tickets),createdAt);return {...board,tickets:[ticket,...board.tickets],selectedId:ticket.id,dialogOpen:false,notice:\`Utworzono ticket #\${ticket.id}\`};}`;
+const notice=`export function Notice({text,onDismiss}:{text:string|null;onDismiss:()=>void}){if(text===null)return null;return <div role="status">{text}<button type="button" onClick={onDismiss} aria-label="Zamknij komunikat">×</button></div>;}`;
+const form=`import {useId,useState} from "react";
+${model}
+export function CreateForm({onCreate,onCancel}:{onCreate:(values:NewValues)=>void;onCancel:()=>void}){const [values,setValues]=useState(empty);const [submitted,setSubmitted]=useState(false);const id=useId();const invalid=values.title.trim().length<5;return <form noValidate onSubmit={event=>{event.preventDefault();setSubmitted(true);if(invalid)return;onCreate({...values,title:values.title.trim(),tags:[...(values.tags??[])]});setValues(empty());setSubmitted(false);}}><label htmlFor={id}>Tytuł</label><input id={id} name="title" value={values.title} onChange={event=>{const title=event.currentTarget.value;setValues(previous=>({...previous,title}));}} aria-invalid={submitted&&invalid?true:undefined} aria-describedby={submitted&&invalid?id+"-error":undefined}/>{submitted&&invalid&&<p id={id+"-error"}>Minimum 5 znaków.</p>}<label htmlFor={id+"-description"}>Opis</label><textarea id={id+"-description"} value={values.description} onChange={event=>{const description=event.currentTarget.value;setValues(previous=>({...previous,description}));}}/><button type="submit">Utwórz</button><button type="button" onClick={onCancel}>Anuluj</button></form>;}`;
+// Jeden atomowy updater nadaje ID z najnowszej listy. Zegar odczytany w handlerze, poza updaterem.
+const board=`import {useState} from "react";
+${model}
+${helpers}
+${notice}
+import {CreateForm} from "./CreateForm";
+export default function BoardPage(){const [board,setBoard]=useState<Board>({tickets:[],selectedId:null,dialogOpen:false,notice:null});const selected=board.tickets.find(ticket=>ticket.id===board.selectedId);function handleCreate(values:NewValues){const createdAt=new Date().toISOString();setBoard(previous=>createInBoard(previous,values,createdAt));}return <main><h1>Tickety</h1><button type="button" onClick={()=>setBoard(previous=>({...previous,dialogOpen:true}))}>Nowy ticket</button><Notice text={board.notice} onDismiss={()=>setBoard(previous=>({...previous,notice:null}))}/>{board.dialogOpen&&<section aria-label="Tworzenie ticketu"><CreateForm onCreate={handleCreate} onCancel={()=>setBoard(previous=>({...previous,dialogOpen:false}))}/></section>}<ul>{board.tickets.map(ticket=><li key={ticket.id}><button type="button" aria-pressed={ticket.id===board.selectedId} onClick={()=>setBoard(previous=>({...previous,selectedId:ticket.id}))}>{ticket.title}</button></li>)}</ul>{selected&&<section aria-label="Szczegóły"><h2>{selected.title}</h2><p>{selected.description}</p></section>}</main>;}`;
+const full=model+'\n'+helpers;
+const exercises=[
+['Wyprowadź NewValues z Ticket bez technicznych pól rekordu.','Pick wybiera dane formularza.',model],
+['Napisz nextId dla pustej oraz nieposortowanej listy.','Maksimum +1; nie length+1.',full],
+['Odrzuć niebezpieczne ID oraz przepełnienie MAX_SAFE_INTEGER.','Lokalny licznik nie zapewnia globalnej unikalności.',full],
+['Napisz buildTicket z jawnymi id i createdAt.','Nie czytaj zegara wewnątrz czystej funkcji.',full],
+['Ustaw OPEN niezależnie od danych nadmiarowych w obiekcie wejściowym.','Zbuduj jawny wynik zamiast kopiować nieznane pola.',full],
+['Przytnij tytuł i zachowaj opis dokładnie.','Nie normalizuj całego payloadu mechanicznie.',full],
+['Skopiuj tags, aby rekord nie dzielił edytowalnej tablicy z formularzem.','Spread tablicy wystarcza dla stringów.',full],
+['Przy braku tags utwórz nową pustą tablicę.','Nullish coalescing i kopia.',full],
+['Dodaj nowy rekord na początek listy bez mutowania listy rodzica.','Nowa tablica zachowuje stare rekordy.',full],
+['W jednej transformacji ustaw listę, selectedId, dialogOpen i notice.','createInBoard zwraca kompletny kolejny stan.',full],
+['Nadaj ID na podstawie poprzedniego stanu w funkcjonalnym updaterze.','Dwa wywołania bez renderu nie mogą użyć starego maksimum.',board],
+['Przechwyć createdAt raz w handlerze, przed updaterem.','Updater może być kontrolnie uruchomiony ponownie.',board],
+['Nie twórz komunikatu przez efekt obserwujący długość listy.','Źródłem operacji jest zdarzenie tworzenia.',board],
+['Zbuduj CreateForm zbierający wartości bez generowania ID rekordu.','Callback rodzica przyjmuje NewValues.',form],
+['Zablokuj callback dla zbyt krótkiego tytułu.','Submitted ujawnia błąd, ale nie tworzy rekordu.',form],
+['Po poprawnym synchronicznym callbacku wyczyść values i submitted.','Reset następuje dopiero po normalnym powrocie.',form],
+['Zachowaj wartości, gdy synchroniczny callback rzuci wyjątek.','Nie umieszczaj resetu w finally.',form],
+['Odróżnij kontrakt synchroniczny od Promise callbacku.','Ta lekcja nie implementuje await ani pending.','Kontrakt onCreate jest synchroniczny: przykład resetuje po powrocie funkcji. Przekazanie async funkcji do callbacku void może być dopuszczone przez TypeScript, ale nie sprawia, że formularz czeka na Promise. Dla zapisu sieciowego potrzebne są jawne Promise, await, pending oraz obsługa błędu i reset po sukcesie.'],
+['Dodaj Anuluj jako przycisk button.','Anulowanie nie wywołuje onCreate.',form],
+['Renderuj formularz warunkowo i sprawdź świeży stan po ponownym montażu.','Samo ukrycie CSS nie odmontowuje.',board],
+['Zbuduj Notice przyjmujący string|null.','Null oznacza brak komunikatu.',notice],
+['Dodaj do Notice przycisk zamknięcia z aria-label.','Typ button chroni przed przypadkowym submit.',notice],
+['Zamknij komunikat bez zmiany listy i zaznaczenia.','Aktualizuj tylko notice przez spread poprzedniego stanu.',board],
+['Wylicz selected przez find z selectedId.','Nie przechowuj dodatkowej kopii rekordu.',board],
+['Oznacz zaznaczenie na przycisku przez aria-pressed.','Nie używaj aria-selected na zwykłym li.',board],
+['Sprawdź dwa kolejne tworzenia bez mutowania wejściowej listy.','Każdy kolejny stan jest wejściem kolejnej transformacji.',full+'\nconst initial:Board={tickets:[],selectedId:null,dialogOpen:true,notice:null};const a=createInBoard(initial,{...empty(),title:"Pierwszy"},"2026-10-28T10:00:00Z");const b=createInBoard(a,{...empty(),title:"Drugi"},"2026-10-28T10:00:01Z");console.log(b.tickets.map(ticket=>ticket.id),initial.tickets.length);'],
+['Udowodnij, że import danych nie wyświetla komunikatu tworzenia.','Import i create są różnymi operacjami.',full+'\nexport function replaceTickets(board:Board,tickets:readonly Ticket[]):Board{return {...board,tickets:[...tickets],selectedId:null,notice:null};}'],
+['Wyjaśnij ograniczenia maximum+1 przy usuwaniu rekordów i wielu klientach.','To lokalne demo, nie trwały generator.','Usunięcie rekordu o największym ID pozwala ponownie użyć jego numeru. Dwóch klientów może policzyć to samo maksimum. W trwałej aplikacji identyfikację ustala serwer lub inny uzgodniony mechanizm; lokalny nextId nie jest globalnym źródłem ID.'],
+['Nie nazywaj zwykłej sekcji modalem z obsługą fokusu.','Semantyka dialogu wymaga dodatkowego zachowania.','Przykład używa warunkowo montowanej sekcji formularza. Pełny modal wymaga semantyki dialogu, zarządzania fokusem, zamykania Escape i przywracania fokusu. Można wykorzystać poprawnie skonfigurowany komponent biblioteczny; sam aria-modal nie implementuje zachowania.'],
+['Połącz cały przepływ tworzenia, zaznaczania, zamknięcia i powiadomienia.','Sprawdź także anulowanie i ponowne otwarcie.',board],
+];
+// Jawnie oznaczona pula powtórkowa: walidacja oraz reset i pola z poprzednich lekcji.
+const quiz=require('./practice_form_04.cjs').quiz.slice(0,30).map(row=>['Powtórka przed wysłaniem: '+row[0],...row.slice(1)]);
+quiz.push(...require('./practice_form_03.cjs').quiz.filter(row=>!row[6]).slice(0,30).map(row=>['Powtórka resetu i odczytu: '+row[0],...row.slice(1)]));
+const cases=[];const add=(label,expr,a,b,c,d)=>cases.push([label,expr,String(a),String(b),String(c),String(d)]);
+for(const ids of [[],[0],[1],[7,2],[2,9,4],[1,3],[20,4,19],[100,2]])add('Następne ID '+JSON.stringify(ids),`nextId(${JSON.stringify(ids)}.map(id=>({...record,id})))`,Math.max(0,...ids)+1,0,-1,'undefined');
+for(const n of [0,1,3])add('Długość po dopisaniu '+n,`createInBoard({...initial,tickets:Array.from({length:${n}},(_,i)=>({...record,id:i+1}))},values,date).tickets.length`,n+1,0,-1,'undefined');
+for(const [label,expr,a,b,c,d]of [
+['Status rekordu','record.status','OPEN','DONE','null','undefined'],['Tytuł','record.title','Gotowy ticket','  Gotowy ticket  ','null','undefined'],['Opis','record.description.length',8,4,0,6],['Osoba','record.assignee','null','anna','undefined','false'],['ID jawne','record.id',8,1,0,9],['Data','record.createdAt','2026-10-28T10:00:00Z','null','undefined','0'],
+['Kopia tagów','record.tags===values.tags',false,true,'null','undefined'],['Treść tagów','record.tags.join(",")','api,ui','ui,api','api','undefined'],['Nowy selectedId','created.selectedId',1,0,8,'null'],['Zamknięcie sekcji','created.dialogOpen',false,true,'null','undefined'],['Komunikat','created.notice','Utworzono ticket #1','Utworzono ticket #8','null','undefined'],['Długość starej listy','initial.tickets.length',0,1,2,'undefined'],['Nowa lista','created.tickets===initial.tickets',false,true,'null','undefined'],['Nowy stan','created===initial',false,true,'null','undefined'],['Druga operacja ID','second.selectedId',2,1,0,8],['Kolejność','second.tickets.map(ticket=>ticket.id).join(",")','2,1','1,2','1','2'],['Długość pierwszego stanu','created.tickets.length',1,2,0,3],['Pierwszy zachowany rekord','second.tickets[1]===created.tickets[0]',true,false,'null','undefined'],['Zamknięcie notice','({...second,notice:null}).selectedId',2,1,0,'null'],['Brak tags','buildTicket({...values,tags:undefined},1,date).tags.length',0,1,2,'undefined'],['Wejściowy tytuł niezmieniony','values.title.length',17,13,12,0],['Pusta lista z selectedId','initial.selectedId','null',0,1,'undefined'],['Domyślny priorytet','empty().priority','MEDIUM','LOW','CRITICAL','undefined'],['Puste tagi osobne','empty().tags===empty().tags',false,true,'null','undefined'],['Nadmiarowy status','buildTicket({...values,...{status:"DONE"}},1,date).status','OPEN','DONE','undefined','null'],['Nadmiarowy identyfikator','buildTicket({...values,...{id:999}},1,date).id',1,999,0,2],['Zaznaczony rekord','second.tickets.find(ticket=>ticket.id===second.selectedId)?.title','Gotowy ticket','null','undefined','Pierwszy'],['Stare notice','initial.notice','null','Utworzono ticket #1','undefined','false'],['Nowy tag nie zmienia rekordu','(()=>{const tags=["api"];const ticket=buildTicket({...values,tags},1,date);tags.push("ui");return ticket.tags.length;})()',1,2,0,'undefined'],
+])add(label,expr,a,b,c,d);
+if(cases.length!==40)throw Error('Przypadki: '+cases.length);
+const base=full+'\nconst date="2026-10-28T10:00:00Z";const values:NewValues={...empty(),title:"  Gotowy ticket  ",description:"  opis  ",tags:["api","ui"]};const record=buildTicket(values,8,date);const initial:Board={tickets:[],selectedId:null,dialogOpen:true,notice:null};const created=createInBoard(initial,values,date);const second=createInBoard(created,values,date);';
+for(const [label,expr,a,b,c,d]of cases)quiz.push([label+': jaki wynik przepływu tworzenia?',a,b,c,d,'Budowa rekordu kopiuje tagi i ustawia pola techniczne. Transformacja zwraca nowy stan, zachowując wejściowe rekordy.',base+'\nconsole.log('+expr+');']);
+const project={'src/Board.tsx':board,'src/CreateForm.tsx':form,'src/main.tsx':'import {createRoot} from "react-dom/client";import BoardPage from "./Board";const root=document.getElementById("root");if(!root)throw Error("Brak root");createRoot(root).render(<BoardPage/>);'};
+const standaloneBoard=board.replace('import {CreateForm} from "./CreateForm";',form.replace('import {useId,useState} from "react";','import {useId} from "react";').replace(model,''));
+for(const exercise of exercises)if(exercise[2]===board)exercise[2]=standaloneBoard;
+module.exports={model,helpers,notice,form,board:standaloneBoard,exercises,quiz,project};
