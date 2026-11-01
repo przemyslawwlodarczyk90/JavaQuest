@@ -1,0 +1,76 @@
+const model=`export function setTag(tags:readonly string[],tag:string,checked:boolean):readonly string[]{const has=tags.includes(tag);if(has===checked)return tags;return checked?[...tags,tag]:tags.filter(value=>value!==tag);}export function canonicalTags(tags:readonly string[],allowed:readonly string[]):string[]{return [...new Set(tags)].filter(tag=>allowed.includes(tag));}export function sameTags(a:readonly string[],b:readonly string[]):boolean{return a.length===b.length&&a.every((tag,index)=>tag===b[index]);}`;
+const hook=`import {useEffect,useRef,useState} from "react";export type ControlValue=string|number|boolean|null|readonly string[];type Options<T extends ControlValue>={value?:T;defaultValue:T;onChange?:(value:T)=>void};export function useControllableState<T extends ControlValue>({value,defaultValue,onChange}:Options<T>){const controlled=value!==undefined;const [initialMode]=useState(controlled);const [internal,setInternal]=useState<T>(defaultValue);const pending=useRef<T>(defaultValue);useEffect(()=>{if(controlled!==initialMode)throw Error("Nie zmieniaj trybu komponentu; zresetuj instancję przez key.");},[controlled,initialMode]);const current=controlled?value:internal;function update(action:T|((previous:T)=>T)){const previous=controlled?value:pending.current;const next=typeof action==="function"?action(previous):action;if(Object.is(previous,next))return;if(!controlled){pending.current=next;setInternal(next);}onChange?.(next);}return [current,update] as const;}`;
+const picker=`import {useId,useState} from "react";import {useControllableState} from "./hook";
+${model}
+type Shared={options:readonly string[];label:string;disabled?:boolean};export type TagPickerProps=Shared&({value:readonly string[];onChange:(tags:readonly string[])=>void;defaultValue?:never}|{value?:never;defaultValue?:readonly string[];onChange?:(tags:readonly string[])=>void});export function TagPicker(props:TagPickerProps){const id=useId();const [query,setQuery]=useState("");const [tags,setTags]=useControllableState<readonly string[]>({value:props.value,defaultValue:props.defaultValue??[],onChange:props.onChange});const options=[...new Set(props.options)];const visible=options.filter(tag=>tag.toLocaleLowerCase("pl").includes(query.trim().toLocaleLowerCase("pl")));return <fieldset disabled={props.disabled}><legend>{props.label}</legend><label htmlFor={id}>Szukaj tagu<input id={id} value={query} onChange={event=>setQuery(event.currentTarget.value)}/></label>{visible.map(tag=><label key={tag}><input type="checkbox" checked={tags.includes(tag)} onChange={event=>{const checked=event.currentTarget.checked;setTags(previous=>setTag(previous,tag,checked));}}/>{tag}</label>)}{visible.length===0&&<p>Brak pasujących tagów</p>}<p>Wybrane: {tags.join(", ")||"brak"}</p></fieldset>;}`;
+const toggle=`import {useControllableState} from "./hook";type Props={label:string}&({value:boolean;onChange:(value:boolean)=>void;defaultValue?:never}|{value?:never;defaultValue?:boolean;onChange?:(value:boolean)=>void});export function Toggle(props:Props){const [checked,setChecked]=useControllableState({value:props.value,defaultValue:props.defaultValue??false,onChange:props.onChange});return <label><input type="checkbox" checked={checked} onChange={event=>setChecked(event.currentTarget.checked)}/>{props.label}</label>;}`;
+const demo=`import {useState} from "react";import {TagPicker} from "./picker";import {Toggle} from "./toggle";const options=["api","ui","auth","mobile"];export function Demo(){const [tags,setTags]=useState<readonly string[]>([]);const [session,setSession]=useState(0);const [newTags,setNewTags]=useState<readonly string[]>(["api"]);const tickets=[{id:0,title:"Logowanie",tags:["api","auth"]},{id:1,title:"Panel",tags:["ui"]}];const visible=tickets.filter(ticket=>tags.every(tag=>ticket.tags.includes(tag)));return <main><h1>API kontrolowane i niekontrolowane</h1><TagPicker label="Filtr" options={options} value={tags} onChange={setTags}/><button type="button" onClick={()=>setTags([])}>Wyczyść filtry</button><button type="button" onClick={()=>setTags(["api","auth"])}>Szablon Backend</button><ul>{visible.map(ticket=><li key={ticket.id}>{ticket.title}</li>)}</ul><TagPicker key={session} label="Nowy ticket — lokalny wybór" options={options} defaultValue={["api"]} onChange={setNewTags}/><p>Ostatni raport: {newTags.join(", ")}</p><button type="button" onClick={()=>{setSession(value=>value+1);setNewTags(["api"]);}}>Nowy formularz</button><Toggle label="Powiadomienia" defaultValue/></main>;}`;
+const exercises=[
+['Zaprojektuj rozłączną unię props TagPicker.','value wymaga onChange i wyklucza defaultValue.',picker],
+['Rozpoznaj kontrolę przez value !== undefined.','Puste [], false, 0 i null nie oznaczają braku wartości.',hook],
+['Nie kopiuj controlled value do źródła prawdy w stanie.','Każdy render controlled czyta props value.',hook],
+['Odczytaj defaultValue tylko jako start lokalnej sesji.','Późniejsza zmiana defaultValue nie steruje stanem.',hook],
+['Wydziel hook współdzielący kontrakt obu trybów.','Zwracaj readonly krotkę wartości i operacji.',hook],
+['Ustal ograniczenie wartości hooka wykluczające funkcje.','W przeciwnym razie setter nie odróżni funkcji-danych od updatera.',hook],
+['Wywołuj onChange poza funkcją aktualizującą React state.','Updater React musi być czysty.',hook],
+['Skumuluj dwa lokalne updatery przed kolejnym renderem.','Ref pending służy sekwencji zdarzeń; JSX nadal czyta stan.',hook],
+['Nie odczytuj ani nie zmieniaj pending.current w renderze.','To bufor operacji handlera.',hook],
+['Nie przejmuj stanu controlled po żądaniu zmiany.','Widok zmieni się dopiero po akceptacji value przez rodzica.',hook],
+['Obsłuż zmianę trybu jako błąd kontraktu po commit.','Reset instancji przez key jest jawny.',hook],
+['Nie emituj onChange dla Object.is identycznego wyniku.','Dla tablic adapter powinien zwrócić starą referencję przy noop.',hook],
+['Napisz setTag zwracające tę samą tablicę przy braku zmiany.','Nie mutuj wejściowego readonly array.',model],
+['Usuń tag przez filtrowanie, zachowując pozostałą kolejność.','Nie używaj splice na props.',model],
+['Dodaj tag tylko raz.','Idempotentny checked=true nie tworzy duplikatu.',model],
+['Przefiltruj i odduplikuj tagi na jawnej granicy danych.','canonicalTags jest narzędziem adaptera, nie ukrytym resetem w renderze.',model],
+['Dodaj lokalne wyszukiwanie niezależne od wyboru tagów.','Ukrycie opcji przez query nie usuwa jej zaznaczenia.',picker],
+['Usuń duplikaty etykiet opcji przed renderowaniem.','Opcje mają stabilny klucz tag.',picker],
+['Użyj checkboxów zamiast udawanego listboxa.','Natywne kontrolki zapewniają obsługę klawiatury.',picker],
+['Skopiuj checked ze zdarzenia przed przekazaniem updatera.','Nie trzymaj currentTarget w opóźnionym kodzie.',picker],
+['Połącz szukanie z etykietą i unikalnym useId.','Dwie instancje nie mogą mieć tego samego ID.',picker],
+['Zablokuj cały TagPicker przez disabled fieldset.','To rzeczywista blokada natywnych kontrolek.',picker],
+['Pokaż pusty wynik wyszukiwania bez kasowania wyboru.','Query jest stanem widoku.',picker],
+['Zastosuj controlled TagPicker do filtrowania ticketów.','Rodzic zna aktualne wybrane tagi.',demo],
+['Dodaj zewnętrzny reset filtrów.','Ustaw rodzicielskie value na [].',demo],
+['Dodaj przycisk szablonu ustawiający tagi z kodu.','Nie zmieniaj defaultValue istniejącego pickera.',demo],
+['Użyj uncontrolled TagPicker z raportowaniem zmian.','Raport nie musi przejmować kontroli nad dzieckiem.',demo],
+['Zresetuj lokalną sesję nowego formularza przez key.','Wraz z wyborem zresetuje się lokalna query.',demo],
+['Zastosuj ten sam hook do boolowskiego Toggle.','false musi pozostać prawidłową wartością controlled.',toggle],
+['Opisz granicę transakcji controlled setterów.','Kolejne żądania controlled bazują na ostatnim value rodzica; komponent nie akceptuje ich sam.',hook],
+];
+const concepts=[
+['Jak rozpoznać kontrolowany tryb?','value !== undefined','Boolean(value)','value.length > 0','defaultValue !== null'],
+['Czy value=false może być controlled?','Tak','Nie','Tylko w JSX','Tylko bez onChange'],
+['Czy puste [] oznacza uncontrolled?','Nie','Tak','Tylko przy checkbox','Tylko po resecie'],
+['Kto zatwierdza zmianę controlled?','Rodzic przez nowe value','Wewnętrzny ref jako stan widoku','Callback renderujący','defaultValue'],
+['Co zrobi zmiana defaultValue istniejącej instancji?','Nie zmieni lokalnej wartości','Zawsze nadpisze wybór','Wyczyści input','Zmieni tryb na controlled'],
+['Jak jawnie zresetować uncontrolled sesję?','Zmienić key lub użyć osobnego udokumentowanego reset API','Mutować props','Zmienić defaultValue i liczyć na efekt','Przepisać value do ref w renderze'],
+['Po co unia props obu trybów?','Odrzuca sprzeczne kombinacje w TypeScript','Implementuje eventy DOM','Zapewnia autoryzację','Wymusza fetch'],
+['Czy value bez onChange jest poprawne w tym API?','Nie, controlled wymaga callbacku','Tak zawsze','Tylko dla []','Tylko gdy disabled'],
+['Dlaczego nie kopiować value do useState jako źródła widoku?','Późniejsze zmiany rodzica byłyby ignorowane','Bo useState nie przyjmuje tablic','Bo props są zawsze null','Bo input wymaga globalnego stanu'],
+['Czy onChange wolno wykonywać w updaterze React?','Nie, updater powinien pozostać czysty','Tak zawsze','Tylko w StrictMode','Tylko gdy callback void'],
+['Po co pending ref w tym hooku?','Kumuluje lokalne operacje handlera przed renderem','Zastępuje state w JSX','Odczytuje DOM w renderze','Przechowuje wszystkie props'],
+['Czy pending.current jest czytane w renderze widoku?','Nie','Tak','Tylko po każdym kliknięciu','Tylko w controlled'],
+['Dlaczego ControlValue wyklucza funkcje?','Setter rozpoznaje funkcję jako updater','Bo React nie renderuje funkcji nigdy','Bo typeof tablicy to function','Bo null ma callable type'],
+['Czy callback onChange oznacza akceptację przez controlled rodzica?','Nie, jest żądaniem','Tak zawsze','Tylko dla string','Tylko przy null'],
+['Na czym bazują kolejne żądania controlled przed aktualizacją props?','Na ostatnim value rodzica','Na udawanym zaakceptowanym stanie','Na defaultValue','Na losowej kopii'],
+['Co sprawdza Object.is w setterze?','Tożsamość lub równość prymitywów','Głęboką zgodność tablic','Wszystkie pola rekordów','Kolejność DOM'],
+['Jak uniknąć powiadomienia dla identycznego wyboru tablicy?','Zwrócić poprzednią referencję przy noop','Zawsze kopiować tablicę','Mutować props','Użyć klucza index'],
+['Czy readonly array jest zamrożona w runtime?','Nie','Tak zawsze','Tylko w useState','Tylko w Context'],
+['Co jest stanem widoku TagPicker poza wyborem?','Query wyszukiwania','Zawsze role użytkownika','Wszystkie dane backendu','Wyłącznie file input'],
+['Czy ukryty przez query tag traci zaznaczenie?','Nie','Tak zawsze','Tylko na mobile','Tylko z legend'],
+['Co zapewnia fieldset disabled?','Blokadę natywnych kontrolek wewnątrz','Tylko wygląd','Autoryzację','Globalny reset'],
+['Jak checkbox powinien aktualizować tag?','Na podstawie skopiowanego checked','Przez odczyt currentTarget w przyszłym updaterze','Przez mutację props.value','Przez losowanie'],
+['Czy options może zawierać duplikaty nazw?','Adapter powinien je odduplikować przed renderem','Trzeba wyrenderować ten sam key dwa razy','To zawsze błąd React kompilatora','Nie można tego wykryć'],
+['Kto kontroluje reset filtra tabeli?','Rodzic ustawiający value=[]','Wyłącznie useId','Pole legend','CSS'],
+['Czy raportowanie onChange czyni picker kontrolowanym?','Nie, decyduje obecność value','Tak zawsze','Tylko przy tablicy','Tylko po drugim renderze'],
+['Czy null może być kontrolowaną wartością tego hooka?','Tak','Nie','Tylko przy defaultValue null','Tylko na serwerze'],
+['Co powinno się stać przy zmianie trybu w tej implementacji?','Błąd kontraktu po efekcie','Ciche kopiowanie stanu','Automatyczny remount','Zapis do bazy'],
+['Czy ustawienie tego samego defaultValue resetuje query?','Nie','Tak','Tylko z checkbox','Tylko z useEffect'],
+['Czy setTag mutuje readonly tags?','Nie','Tak przez push','Tylko przy usuwaniu','Tylko przy dodawaniu'],
+['Co porównuje sameTags?','Kolejność i wartości tagów','Zbiory bez względu na kolejność','Tożsamość całego DOM','Rozmiar pliku'],
+];
+const quiz=concepts.map(row=>[...row,'Wybierz jedno źródło prawdy. Oddziel żądanie zmiany controlled od akceptacji rodzica oraz stan widoku od bufora operacji.']);quiz.push(...require('./practice_pattern_02.cjs').quiz.slice(0,30).map(row=>['Powtórka API i kompozycji: '+row[0],...row.slice(1)]));
+const cases=[];function add(label,expr,answer){cases.push([label,expr,String(answer)]);}for(const [label,tags,tag,checked,result]of [['Dodaj pusty',[],'api',true,['api']],['Dodaj drugi',['api'],'ui',true,['api','ui']],['Usuń pierwszy',['api','ui'],'api',false,['ui']],['Usuń ostatni',['api','ui'],'ui',false,['api']],['Usuń jedyny',['api'],'api',false,[]],['Dodaj istniejący',['api'],'api',true,['api']],['Usuń obcy',['api'],'ui',false,['api']],['Pusty tag',[],'',true,['']],['Zachowaj kolejność',['ui','api'],'auth',true,['ui','api','auth']],['Usuń środek',['ui','api','auth'],'api',false,['ui','auth']]]){add(label+' długość',`setTag(${JSON.stringify(tags)},${JSON.stringify(tag)},${checked}).length`,result.length);add(label+' zawartość',`JSON.stringify(setTag(${JSON.stringify(tags)},${JSON.stringify(tag)},${checked}))`,JSON.stringify(result));}
+for(const [label,expr,answer]of [['Noop dodaj','setTag(tags,"api",true)===tags',true],['Noop usuń','setTag(tags,"auth",false)===tags',true],['Zmiana kopia','setTag(tags,"ui",true)===tags',false],['Źródło','tags.length',1],['Duplikaty kanon','canonicalTags(["api","api","ui"],["api","ui"]).length',2],['Obce kanon','canonicalTags(["api","x"],["api"]).length',1],['Brak allowed','canonicalTags(["api"],[]).length',0],['Puste tagi','canonicalTags([],["api"]).length',0],['Ta sama sekwencja','sameTags(["a","b"],["a","b"])',true],['Inna kolejność','sameTags(["a","b"],["b","a"])',false],['Różna długość','sameTags(["a"],[])',false],['Puste równe','sameTags([],[])',true],['Nowa referencja równa','sameTags(tags,["api"])',true],['Kanon kolejność','canonicalTags(["ui","api","ui"],["api","ui"]).join(",")','ui,api'],['Kanon nowa','canonicalTags(tags,["api"])===tags',false],['Pusty noop','setTag(empty,"api",false)===empty',true],['Usunięcie duplikatów','setTag(["api","ui","api"],"api",false).length',1],['False nie dodaje','setTag([],"api",false).length',0],['Oryginał po usunięciu','(setTag(tags,"api",false),tags[0])','api'],['Same inny element','sameTags(["api"],["ui"])',false]])add(label,expr,answer);
+for(const [label,expr,answer]of cases){const wrong=['true','false','null','0','1','2','[]','["api"]'].filter(v=>v!==answer).slice(0,3);quiz.push([label+': jaki wynik wyboru tagów?',answer,...wrong,'Odczytaj istniejący wybór; noop zachowuje referencję, a zmiana tworzy nową tablicę.',model+'\nconst tags:readonly string[]=["api"];const empty:readonly string[]=[];console.log('+expr+');']);}
+const project={'src/hook.tsx':hook,'src/picker.tsx':picker,'src/toggle.tsx':toggle,'src/demo.tsx':demo,'src/main.tsx':`import {StrictMode} from "react";import {createRoot} from "react-dom/client";import {Demo} from "./demo";createRoot(document.getElementById("root")!).render(<StrictMode><Demo/></StrictMode>);`};module.exports={model,hook,picker,toggle,demo,exercises,quiz,project};
