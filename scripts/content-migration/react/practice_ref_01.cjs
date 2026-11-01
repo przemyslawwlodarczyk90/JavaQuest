@@ -1,0 +1,82 @@
+const model=`export function durationSeconds(start:number|null,now:number):number{return start===null?0:Math.max(0,Math.round((now-start)/1000));}
+export function createBox<T>(value:T):{current:T}{return {current:value};}`;
+const timer=`import {useRef,useState} from "react";
+${model}
+const browserNow=()=>performance.now();export function useFormTimer(now:()=>number=browserNow){const started=useRef<number|null>(null);return {markStart(){if(started.current===null)started.current=now();},elapsedSeconds(){return durationSeconds(started.current,now());},reset(){started.current=null;}};}
+export function TimedForm({onSubmit}:{onSubmit:(title:string,seconds:number)=>void}){const timer=useFormTimer();const [title,setTitle]=useState("");return <form onFocus={timer.markStart} onSubmit={event=>{event.preventDefault();if(title.trim().length<5)return;const seconds=timer.elapsedSeconds();onSubmit(title.trim(),seconds);timer.reset();setTitle("");}}><label>Tytuł<input value={title} onChange={event=>setTitle(event.currentTarget.value)}/></label><button type="submit">Wyślij i zmierz czas</button></form>;}`;
+const autosave=`import {useEffect,useRef,useState} from "react";
+export function AutoSaveIndicator({onSave}:{onSave:(text:string)=>void}){const timer=useRef<ReturnType<typeof setTimeout>|null>(null);const [text,setText]=useState("");const [status,setStatus]=useState<"idle"|"pending"|"saved"|"error">("idle");useEffect(()=>()=>{if(timer.current!==null)clearTimeout(timer.current);timer.current=null;},[]);function schedule(value:string){if(timer.current!==null)clearTimeout(timer.current);setStatus("pending");timer.current=setTimeout(()=>{timer.current=null;try{onSave(value);setStatus("saved");}catch{setStatus("error");}},1500);}function cancel(){if(timer.current!==null)clearTimeout(timer.current);timer.current=null;setStatus("idle");}return <section><label>Opis do zapisu<textarea value={text} onChange={event=>{const value=event.currentTarget.value;setText(value);schedule(value);}}/></label><p role="status">{status==="pending"?"Oczekiwanie na zapis":status==="saved"?"Zapisano":status==="error"?"Zapis nieudany":"Bez oczekującego zapisu"}</p><button type="button" onClick={cancel}>Anuluj oczekujący zapis</button></section>;}`;
+const delayed=`import {useEffect,useRef,useState} from "react";
+export function DelayedSend({onSend}:{onSend:(text:string)=>void}){const [text,setText]=useState("");const [pending,setPending]=useState(false);const latestText=useRef("");const timer=useRef<ReturnType<typeof setTimeout>|null>(null);useEffect(()=>()=>{if(timer.current!==null)clearTimeout(timer.current);timer.current=null;},[]);function sendLater(){if(timer.current!==null)clearTimeout(timer.current);setPending(true);timer.current=setTimeout(()=>{timer.current=null;setPending(false);onSend(latestText.current);},3000);}return <section><label>Wiadomość<input value={text} onChange={event=>{const value=event.currentTarget.value;latestText.current=value;setText(value);}}/></label><button type="button" onClick={sendLater}>Wyślij najnowszy tekst za 3 sekundy</button><p role="status">{pending?"Zaplanowano wysłanie":"Brak oczekującego wysłania"}</p></section>;}`;
+const clicks=`import {useRef,useState} from "react";export function TrackedRefresh(){const privateClicks=useRef(0);const [reported,setReported]=useState<number|null>(null);return <section><button type="button" onClick={()=>{privateClicks.current++;}}>Odśwież — zlicz prywatnie</button><button type="button" onClick={()=>setReported(privateClicks.current)}>Pokaż raport</button><p>{reported===null?"Raport nieutworzony":"Kliknięcia w chwili raportu: "+reported}</p></section>;}`;
+const exercises=[
+['Zdefiniuj ref przechowujący number|null.','Null oznacza brak rozpoczętego pomiaru.',timer],
+['Rozpocznij pomiar tylko przy pierwszej interakcji.','Ponowny focus nie ma nadpisywać started.',timer],
+['Odczytaj czas dopiero w handlerze wysłania.','Nie wywołuj performance.now w JSX dla refa.',timer],
+['Resetuj started do null po poprawnym synchronicznym callbacku.','Reset nie oznacza automatycznego renderu.',timer],
+['Napisz durationSeconds z nieujemnym wynikiem i round.','Dla braku startu wynik to zero.',model],
+['Wstrzyknij now jako funkcję do testu czasu.','Nie trzeba naprawdę czekać.',timer],
+['Nie traktuj zera timestamp jako brak rozpoczęcia.','Sprawdzaj ===null, nie !started.current.',timer],
+['Przechowuj uchwyt timeout w refie.','Typ ReturnType<typeof setTimeout> nie zakłada środowiska.',autosave],
+['Przy nowej edycji anuluj poprzedni timeout.','Jeden ref wskazuje bieżącą oczekującą operację.',autosave],
+['Po wykonaniu callbacku ustaw uchwyt na null.','Zakończony timer nie jest już oczekującym zasobem.',autosave],
+['Sprzątaj oczekujący zapis po odmontowaniu.','Cleanup czyta aktualny uchwyt refa.',autosave],
+['Dodaj ręczne anulowanie bez utraty tekstu.','Cancel zmienia timer i status, nie cały draft.',autosave],
+['Wyświetlany status trzymaj w state, a nie wyłącznie w refie.','Zmieniony status ma renderować ekran.',autosave],
+['Obsłuż wyjątek synchronicznego onSave.','Nie pokaż Zapisano po nieudanym zapisie.',autosave],
+['Opisz kontrakt asynchronicznego zapisu.','Callback void nie gwarantuje, że przekazana async funkcja zostanie oczekiwana.','Ten komponent modeluje synchroniczny zapis, np. setItem. Jeśli onSave ma zwracać Promise, zmień kontrakt, dodaj await, stan pracy i ochronę przed nieaktualnym wynikiem. Sam TypeScript może dopuścić async callback w miejscu void; nie oznacza to czekania na niego.'],
+['Zbuduj DelayedSend odczytujące najnowszy tekst przy wykonaniu timeoutu.','LatestText jest aktualizowane w handlerze inputa.',delayed],
+['Utrzymuj text w state do renderowania inputa.','Ref nie zastępuje wartości kontrolowanej.',delayed],
+['Nie przepisuj latestText.current podczas renderu.','Zmieniaj ref w handlerze lub odpowiedniej synchronizacji.',delayed],
+['Ponowne zaplanowanie wysłania zastępuje poprzedni timer.','Przykład dopuszcza jedną oczekującą operację.',delayed],
+['Sprzątaj opóźnione wysłanie przy odmontowaniu.','Zamknięty formularz nie ma nadal wysyłać tekstu.',delayed],
+['Rozróżnij najnowszy tekst od migawki z chwili kliknięcia.','Obie polityki mogą być uzasadnione.','Ref latestText oznacza wysłanie treści aktualnej w chwili callbacku. Jeśli użytkownik oczekuje dokładnej treści zatwierdzonej przy kliknięciu, przechwyć wtedy string w lokalnej zmiennej. Nazwij zachowanie w UI i przetestuj edycję w czasie oczekiwania.'],
+['Zlicz prywatne kliknięcia w refie bez wyświetlania go w JSX.','Wartość jest potrzebna logice, nie każdemu renderowi.',clicks],
+['Utwórz jawny raport kliknięć w handlerze.','Kopia wyniku raportu trafia do stanu widocznego UI.',clicks],
+['Nie obiecuj odświeżenia widoku po samej zmianie current.','Zmiana refa nie jest aktualizacją state.',clicks],
+['Sprawdź typ useRef(null) bez generyka.','Nie pozwoli później wpisać number.','import {useRef} from "react";export function WrongRef(){const ref=useRef(null);\n// @ts-expect-error: current ma typ null\nref.current=1;return null;}'],
+['Nie mutuj refa w renderze tylko po to, by policzyć rendery produkcyjne.','Render może być powtarzany i porzucany.','Ref.current++ w renderze jest nieczystą operacją i nie stanowi wiarygodnej miary zatwierdzonych aktualizacji. Użyj odpowiednich narzędzi pomiaru lub diagnostyki z jasnym zakresem.'],
+['Wyjaśnij, że useRef(expensive()) nadal oblicza argument przy każdym renderze.','Ref zapamiętuje pierwszą wartość, nie blokuje obliczenia argumentu.','Jeśli potrzebujesz jednorazowej deterministycznej inicjalizacji obiektu w refie, zastosuj dozwolony wzorzec inicjalizacji przy null. Nie twórz nieodwracalnego zasobu zewnętrznego w renderze; taki zasób może wymagać efektu i cleanup.'],
+['Rozróżnij stabilność obiektu ref i jego mutowalne current.','Stałe jest pudełko, zmienia się zawartość.',model],
+['Sprawdź niezależność dwóch instancji useFormTimer.','Wspólna funkcja hooka nie tworzy wspólnego refa.',timer],
+['Połącz pomiar, autosave oraz opóźnione wysłanie i przetestuj cleanup.','Stan opisuje widok, refy przechowują szczegóły logiki.',autosave],
+];
+const concepts=[
+['Co zwraca useRef?','Obiekt z current','Zawsze dwuelementową krotkę','Nowy Promise','Funkcję dispatch'],
+['Czy obiekt ref zachowuje tożsamość między renderami instancji?','Tak','Nie','Tylko dla DOM','Tylko po memo'],
+['Czy zmiana current sama planuje render?','Nie','Tak','Tylko dla number','Tylko w React 19'],
+['Gdzie trzymać wartość wpływającą na UI?','Zwykle w state','Wyłącznie w ref','Zawsze w zmiennej modułu','W className'],
+['Gdzie zmieniać ref?','W handlerach i efektach, z ograniczonym wyjątkiem inicjalizacji','Dowolnie podczas każdego renderu','Wyłącznie w typie','Tylko w JSX'],
+['Po co number|null dla started?','Rozróżnia pomiar zaczęty od braku startu','Zamienia ref w state','Gwarantuje zapis serwera','Zapewnia timezone'],
+['Czy timestamp 0 oznacza brak pomiaru?','Nie','Tak','Tylko w Node','Tylko przy performance'],
+['Jaki ref pasuje do uchwytu timeout?','ReturnType<typeof setTimeout>|null','Zawsze string','Zawsze Promise<void>','Wyłącznie boolean'],
+['Dlaczego sprawdzać timer!==null?','Uchwyt może być równy zero w pewnym adapterze','Bo null jest true','Bo TS zabrania if','Bo setTimeout nie zwraca wartości'],
+['Co zrobić po wykonaniu zaplanowanego callbacku?','Wyczyścić wskaźnik oczekującego uchwytu','Zostawić go jako zawsze aktywny','Zmienić key całej aplikacji','Mutować props'],
+['Co robi cleanup autosave?','Anuluje oczekujący timer tej instancji','Gwarantuje zapis ostatniej litery','Przenosi tekst do innego pola','Zapisuje bazę'],
+['Czy anulowanie timera usuwa wpisany tekst?','Nie w tym przykładzie','Tak zawsze','Tylko przy state','Tylko w TSX'],
+['Co ma sterować komunikatem Zapisano?','Stan wyniku operacji','Samo istnienie refa','Key inputa','Długość kodu'],
+['Czy callback void automatycznie oczekuje Promise?','Nie','Tak','Tylko w TypeScript','Tylko po throw'],
+['Co wysyła DelayedSend?','Tekst z latestText w chwili wykonania callbacku','Zawsze pierwszy wpis','Wyłącznie ID timera','Cały event'],
+['Jak wysłać tekst z chwili kliknięcia?','Przechwycić wtedy string jako snapshot','Zawsze odczytać latest ref','Usunąć state','Dodać nowy key'],
+['Czy ref jest właściwym miejscem dla każdej wartości?','Nie','Tak','Tylko dla boolean','Tylko w React 19'],
+['Co daje aktualizacja latestText w handlerze?','Świadomie uaktualnia dane dla opóźnionego kodu','Sama renderuje wszystko','Gwarantuje aktualny callback onSend','Wykonuje fetch'],
+['Czy latestText gwarantuje najnowszą funkcję onSend?','Nie, to osobna kwestia kontraktu callbacku','Tak','Tylko z input','Tylko w Node'],
+['Dlaczego prywatny licznik nie jest czytany bezpośrednio w JSX?','Zmiany refa nie są reaktywnym źródłem widoku','Ref nie może zawierać number','JSX zabrania kropek','Ref zawsze jest null'],
+['Jak pokazać raport refa?','Odczytać w handlerze i zapisać wynik raportu w state','Odczytywać w JSX po każdym current++','Zmieniać globalny DOM w renderze','Czekać na reload'],
+['Czy zwykła zmienna lokalna komponentu zachowuje zapisy między wywołaniami?','Nie','Tak','Tylko let','Tylko w TSX'],
+['Czy useRef(null) w TS zna przyszły typ number?','Nie bez właściwego generyka','Tak','Tylko po renderze','Tylko w JSX'],
+['Czy refy dwóch instancji komponentu są automatycznie wspólne?','Nie','Tak','Tylko dla tych samych props','Tylko z jednego pliku'],
+['Czy useRef(expensive()) zapobiega obliczaniu argumentu co render?','Nie','Tak','Tylko w production','Tylko dla obiektów'],
+['Czy inicjalizacja refa jest miejscem na dowolny nieodwracalny efekt?','Nie','Tak','Tylko z null','Tylko w StrictMode'],
+['Co testować dla latest policy?','Edycję po kliknięciu i przed callbackiem','Tylko pierwszy render','Wyłącznie typ string','Liczbę hooków'],
+['Co testować po odmontowaniu?','Brak wykonania oczekującego callbacku','Zawsze zapis API','Zmianę ref w innym komponencie','Tylko tekst button'],
+['Czy bieżące current jest niezmienną migawką renderu jak state?','Nie','Tak','Tylko dla DOM','Tylko dla number'],
+['Jak rozumieć ref?','Stabilny schowek na mutowalną wartość potrzebną logice','Automatycznie reaktywny store','Zamiennik całego state','Generator ID serwera'],
+];
+const quiz=concepts.map(row=>[...row,'Ref przechowuje wartość poza reaktywnym przepływem renderu. Wybór state lub ref zależy od roli danych i świadomej polityki opóźnionych callbacków.']);quiz.push(...require('./practice_effect_04.cjs').quiz.slice(0,30).map(row=>['Powtórka czasu życia uchwytów: '+row[0],...row.slice(1)]));
+const cases=[];const add=(label,expr,a)=>cases.push([label,expr,String(a)]);
+for(const start of [null,0,1000])for(const now of [0,500,1500,3000])add('Czas start '+start+' now '+now,`durationSeconds(${start},${now})`,start===null?0:Math.max(0,Math.round((now-start)/1000)));
+for(const [label,expr,a]of [['Current początek','createBox(5).current',5],['Zmiana current','(()=>{const box=createBox(0);box.current=2;return box.current;})()',2],['To samo pudełko','(()=>{const box=createBox(0);const same=box;box.current=3;return same===box;})()',true],['Alias widzi zmianę','(()=>{const box=createBox(0);const same=box;box.current=3;return same.current;})()',3],['Dwa pudełka','createBox(0)===createBox(0)',false],['Snapshot string','(()=>{const box=createBox("A");const saved=box.current;box.current="B";return saved;})()','A'],['Latest string','(()=>{const box=createBox("A");const callback=()=>box.current;box.current="B";return callback();})()','B'],['Stan model snapshot','(()=>{const value="A";const callback=()=>value;const next="B";return callback();})()','A'],['Null guard zero','(()=>{const box=createBox<number|null>(0);return box.current===null;})()',false],['Uchwyt zero obecny','(()=>{const box=createBox<number|null>(0);return box.current!==null;})()',true],['Null brak','createBox<number|null>(null).current===null',true],['Reset null','(()=>{const box=createBox<number|null>(1);box.current=null;return box.current===null;})()',true],['Kliknięcia w ref','(()=>{const box=createBox(0);box.current++;box.current++;return box.current;})()',2],['Raport stary','(()=>{const box=createBox(1);const report=box.current;box.current++;return report;})()',1],['Nowy raport','(()=>{const box=createBox(1);box.current++;return box.current;})()',2],['Obiekt current alias','(()=>{const value={id:0};return createBox(value).current===value;})()',true],['Kopia pudełka nie kopiuje danych','(()=>{const value={id:0};const a=createBox(value),b=createBox(value);return a.current===b.current;})()',true],['Zmiana current niezależna','(()=>{const a=createBox(0),b=createBox(0);a.current=1;return b.current;})()',0],['Funkcja w pudełku','typeof createBox(()=>1).current','function'],['Wykonanie funkcji jawne','createBox(()=>7).current()',7],['Typ current number','typeof createBox(0).current','number'],['Typ null','typeof createBox(null).current','object'],['500ms round','durationSeconds(0,500)',1],['499ms round','durationSeconds(0,499)',0],['1500ms round','durationSeconds(0,1500)',2],['Czas ujemny clamp','durationSeconds(2000,1000)',0],['Brak startu po czasie','durationSeconds(null,9999)',0],['Klucz pudełka','Object.keys(createBox(0)).join(",")','current']])add(label,expr,a);
+if(cases.length!==40)throw Error('Przypadki '+cases.length);for(const [label,expr,a]of cases){const wrong=['false','true','null','undefined','0','1'].filter(v=>v!==a).slice(0,3);quiz.push([label+': jaki wynik schowka lub pomiaru?',a,...wrong,'CreateBox jest modelem zwykłego obiektu current, nie implementacją hooka React. Alias czyta aktualne pole, a przechwycony string lub number jest migawką.',model+'\nconsole.log('+expr+');']);}
+const project={'src/Timer.tsx':timer,'src/Autosave.tsx':autosave,'src/Delayed.tsx':delayed,'src/Clicks.tsx':clicks,'src/main.tsx':'import {createRoot} from "react-dom/client";import {TimedForm} from "./Timer";import {AutoSaveIndicator} from "./Autosave";import {DelayedSend} from "./Delayed";import {TrackedRefresh} from "./Clicks";const root=document.getElementById("root");if(!root)throw Error("Brak root");createRoot(root).render(<main><h1>Podstawy refów</h1><TimedForm onSubmit={(title,seconds)=>console.log(title,seconds)}/><AutoSaveIndicator onSave={text=>localStorage.setItem("refs-training-draft",text)}/><DelayedSend onSend={text=>console.log("Demonstracja opóźnionego wysłania:",text)}/><TrackedRefresh/></main>);'};
+module.exports={model,timer,autosave,delayed,clicks,exercises,quiz,project};
