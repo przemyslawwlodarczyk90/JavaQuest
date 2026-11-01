@@ -1,0 +1,151 @@
+// Boss: katalog wariantów używający rzeczywistych komponentów, 30 zadań / 100 pytań.
+const palette={light:{'--color-primary':'#2563eb','--color-danger':'#b91c1c','--color-warning':'#a16207','--color-success':'#15803d','--bg':'#ffffff','--surface':'#f9fafb','--text':'#111827','--text-muted':'#4b5563','--border':'#d1d5db'},dark:{'--color-primary':'#93c5fd','--color-danger':'#fca5a5','--color-warning':'#fde047','--color-success':'#86efac','--bg':'#0f172a','--surface':'#1e293b','--text':'#f1f5f9','--text-muted':'#cbd5e1','--border':'#64748b'}};
+const model='export const VARIANTS=["primary","secondary","danger"] as const;\nexport type Variant=(typeof VARIANTS)[number];\nexport const TONES=["neutral","success","warning","danger"] as const;\nexport type Tone=(typeof TONES)[number];\nexport const STATUSES=["OPEN","IN_PROGRESS","CLOSED"] as const;\nexport type Status=(typeof STATUSES)[number];\nexport const PRIORITIES=["LOW","MEDIUM","HIGH","CRITICAL"] as const;\nexport type Priority=(typeof PRIORITIES)[number];\nexport const PALETTE='+JSON.stringify(palette)+' as const;\nexport type Theme=keyof typeof PALETTE;\nexport type ColorToken=keyof typeof PALETTE.light;\nexport const COLOR_TOKENS=Object.keys(PALETTE.light) as ColorToken[];';
+const button='export function Button({variant="primary",type="button",className,children,...rest}:ComponentProps<"button">&{variant?:Variant}){return <button {...rest} type={type} className={clsx(styles.button,styles[variant],className)}>{children}</button>;}';
+const badge='export function Badge({tone="neutral",children}:{tone?:Tone;children:ReactNode}){return <span className={clsx(styles.badge,styles[tone])}>{children}</span>;}\nconst STATUS_TONE:Record<Status,Tone>={OPEN:"success",IN_PROGRESS:"warning",CLOSED:"neutral"};\nconst PRIORITY_TONE:Record<Priority,Tone>={LOW:"neutral",MEDIUM:"neutral",HIGH:"warning",CRITICAL:"danger"};\nexport function StatusBadge({status}:{status:Status}){return <Badge tone={STATUS_TONE[status]}>{status}</Badge>;}\nexport function PriorityBadge({priority}:{priority:Priority}){return <Badge tone={PRIORITY_TONE[priority]}>{priority}</Badge>;}';
+const field='export function TextField({label,error,disabled=false}:{label:string;error?:string;disabled?:boolean}){const id=useId();const errorId=`${id}-error`;const hasError=Boolean(error);return <div className={styles.field}><label htmlFor={id}>{label}</label><input id={id} disabled={disabled} className={clsx(styles.input,hasError&&styles.invalid)} aria-invalid={hasError} aria-describedby={hasError?errorId:undefined}/>{hasError&&<p id={errorId} className={styles.error}>{error}</p>}</div>;}';
+const cards='export function Panel({title,actions,children}:{title:string;actions?:ReactNode;children:ReactNode}){return <section className={styles.panel}><header className={styles.header}><h2>{title}</h2>{actions}</header>{children}</section>;}\nexport function StatCard({label,value,highlight=false}:{label:string;value:number;highlight?:boolean}){return <article className={clsx(styles.stat,highlight&&styles.highlight)}><h3>{label}</h3><strong>{value}</strong></article>;}';
+const imports='import {useId,useState} from "react";\nimport type {ComponentProps,ReactNode} from "react";\nimport clsx from "clsx";\nimport styles from "./StyleGuide.module.css";\nimport {VARIANTS,TONES,STATUSES,PRIORITIES,PALETTE,COLOR_TOKENS} from "./design";\nimport type {Variant,Tone,Status,Priority,Theme} from "./design";';
+const components=imports.replace('useId,useState','useId').replace('import {VARIANTS,TONES,STATUSES,PRIORITIES,PALETTE,COLOR_TOKENS} from "./design";\n','').replace('Variant,Tone,Status,Priority,Theme','Variant,Tone,Status,Priority')+'\n'+button+'\n'+badge+'\n'+field+'\n'+cards;
+const guide='import {useState} from "react";\nimport styles from "./StyleGuide.module.css";\nimport {VARIANTS,TONES,STATUSES,PRIORITIES,PALETTE,COLOR_TOKENS} from "./design";\nimport type {Theme} from "./design";\nimport {Button,Badge,StatusBadge,PriorityBadge,TextField,Panel,StatCard} from "./components";\nexport function StyleGuide({initialTheme="light"}:{initialTheme?:Theme}){const [theme,setTheme]=useState<Theme>(initialTheme);function toggle(){const next:Theme=theme==="light"?"dark":"light";document.documentElement.dataset.theme=next;setTheme(next);}return <main className={styles.guide}><h1>Przewodnik stylu DevDesk</h1><Button onClick={toggle}>{theme==="light"?"Włącz ciemny":"Włącz jasny"}</Button><Panel title="Kolory"><ul className={styles.swatches}>{COLOR_TOKENS.map(token=><li key={token}><span aria-hidden="true" className={styles.swatch} style={{background:`var(${token})`}}/><code>{token}</code><span>{PALETTE[theme][token]}</span></li>)}</ul></Panel><Panel title="Typografia"><h1>Nagłówek h1</h1><h2>Nagłówek h2</h2><h3>Nagłówek h3</h3><p>Tekst podstawowy</p><p className={styles.muted}>Tekst wyciszony</p><code>const ready = true;</code></Panel><Panel title="Przyciski">{VARIANTS.map(variant=><div key={variant} className={styles.examples}><Button variant={variant}>{variant}</Button><Button variant={variant} disabled>{variant} wyłączony</Button></div>)}</Panel><Panel title="Plakietki"><h3>Tony</h3>{TONES.map(tone=><Badge key={tone} tone={tone}>{tone}</Badge>)}<h3>Statusy</h3>{STATUSES.map(status=><StatusBadge key={status} status={status}/>)}<h3>Priorytety</h3>{PRIORITIES.map(priority=><PriorityBadge key={priority} priority={priority}/>)}</Panel><Panel title="Karty i panele" actions={<Button variant="secondary">Akcja panelu</Button>}><StatCard label="Zwykła" value={0}/><StatCard label="Pilne" value={3} highlight/><Panel title="Bez akcji"><p>Treść panelu</p></Panel></Panel><Panel title="Pola tekstowe"><TextField label="Tytuł"/><TextField label="Tytuł z błędem" error="Podaj co najmniej 3 znaki"/><TextField label="Pole wyłączone" disabled/></Panel></main>;}';
+const tokens=Object.entries(palette).map(([theme,values])=>`:root[data-theme="${theme}"]{${Object.entries(values).map(([key,value])=>key+':'+value+';').join('')}color-scheme:${theme};}`).join('\n')+'\n:root{--space-1:4px;--space-2:8px;--space-4:16px;--radius:8px;--font-sm:0.875rem;--font-lg:1.5rem;}\nbody{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;line-height:1.5;}';
+const css='.guide{max-width:70rem;margin:0 auto;padding:var(--space-4);}\n.panel,.stat{margin-block:var(--space-4);padding:var(--space-4);background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);}\n.header,.examples{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);flex-wrap:wrap;}\n.button{padding:var(--space-2) var(--space-4);border:1px solid currentColor;border-radius:var(--radius);cursor:pointer;}\n.primary{background:var(--color-primary);color:var(--bg);}\n.secondary{background:var(--surface);color:var(--text);}\n.danger{color:var(--color-danger);}\n.button.danger{background:var(--color-danger);color:var(--bg);}\n.button:disabled,.input:disabled{opacity:0.5;cursor:not-allowed;}\n.button:focus-visible,.input:focus-visible{outline:2px solid var(--color-primary);outline-offset:2px;}\n.badge{display:inline-block;padding:var(--space-1) var(--space-2);margin:var(--space-1);border:1px solid currentColor;border-radius:var(--radius);}\n.neutral{color:var(--text-muted);}.success{color:var(--color-success);}.warning{color:var(--color-warning);}\n.highlight{outline:2px solid var(--color-danger);}.muted{color:var(--text-muted);}\n.swatches{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:var(--space-2);}\n.swatches li{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;}.swatch{display:inline-block;width:2rem;height:2rem;border:1px solid var(--border);border-radius:var(--radius);}\n.field{display:grid;gap:var(--space-1);margin-block:var(--space-4);}.input{padding:var(--space-2);background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);}.invalid{border-color:var(--color-danger);}.error{margin:0;color:var(--color-danger);font-size:var(--font-sm);}';
+const project={'src/design.ts':model,'src/components.tsx':components,'src/StyleGuide.tsx':guide,'src/StyleGuide.module.css':css,'src/tokens.css':tokens,'src/App.tsx':'import "./tokens.css";\nimport {StyleGuide} from "./StyleGuide";\nexport default function App(){return <StyleGuide initialTheme="light"/>;}','src/main.tsx':'import {createRoot} from "react-dom/client";\nimport App from "./App";\ndocument.documentElement.dataset.theme="light";\nconst container=document.getElementById("root");if(!container)throw Error("Brak root");createRoot(container).render(<App/>);'};
+// Fragmenty rozwiązań są samodzielne poza importem własnego modułu CSS.
+const standalone='import {useId,useState} from "react";\nimport type {ComponentProps,ReactNode} from "react";\nimport clsx from "clsx";\nimport styles from "./StyleGuide.module.css";\n'+model+'\n'+button+'\n'+badge+'\n'+field+'\n'+cards;
+const full=standalone+'\n'+guide.slice(guide.indexOf('export function StyleGuide'));
+const exercises=[
+ ['Utwórz VARIANTS jako readonly krotkę i wyprowadź Variant z jej elementów.','Jedna lista ma zasilać typ i przewodnik.',model],
+ ['Wyprowadź analogicznie Tone, Status i Priority z tablic as const.','Nie utrzymuj oddzielnej ręcznie powielonej unii.',model],
+ ['Napisz Button wspólny dla aplikacji i przewodnika. Przekaż natywne props i domyślny type=button.','Przewodnik nie powinien kopiować jego wyglądu.',standalone],
+ ['Wyrenderuj każdy wariant przycisku enabled i disabled.','Trzy warianty × dwa stany dają sześć przykładów.',full],
+ ['Napisz Badge i wszystkie jego tony z jednej listy.','Wariant wybiera klasy rzeczywistego komponentu.',standalone],
+ ['Napisz mapy statusów i priorytetów na tony.','Record ma wymagać wszystkich elementów domeny.',standalone],
+ ['Dodaj do przewodnika wszystkie statusy i priorytety.','Klucz jest wartością stabilnego wariantu.',full],
+ ['Utwórz katalog kolorów obu motywów i listę nazw tokenów.','To wspólne dane do generowania CSS i opisu próbek.',model],
+ ['Wyrenderuj próbki z map po COLOR_TOKENS, używając background var.','Nie odczytuj DOM w renderze.',full],
+ ['Pokaż nazwę i wartość tokenu dla aktualnego motywu. Wyjaśnij założenie katalogu.','Opis musi być zgodny z CSS.','W tym projekcie katalog PALETTE i tokens.css są generowane z jednego źródła danych autora. Wartość opisowa to PALETTE[theme][token], a próbka używa var(token). Jeżeli aplikacja pozwoli na dodatkowe zewnętrzne nadpisania, katalog nie jest odczytem computed style i trzeba zaprojektować osobną synchronizację opisu.'],
+ ['Zaprojektuj sekcję typografii h1–h3, tekst, muted i kod.','To demonstracja elementów; zachowaj zrozumiałą strukturę sekcji.',full],
+ ['Dodaj StatCard zwykły i wyróżniony, w tym licznik zero.','Highlight nie powinien zmieniać semantyki wartości.',standalone],
+ ['Dodaj Panel z akcją i Panel bez akcji.','Użyj prawdziwego slotu actions.',full],
+ ['Napisz TextField z label i unikalnym id przez useId.','Label.htmlFor i input.id muszą odpowiadać sobie.',standalone],
+ ['Powiąż błąd pola przez aria-invalid i aria-describedby.','Opis wskazuje istniejący komunikat.',standalone],
+ ['Obsłuż pole bez błędu, z błędem i disabled.','Disabled jest natywnym atrybutem input.',full],
+ ['Wyjaśnij, czemu placeholder nie wystarczy jako etykieta w przewodniku.','Pole musi zachować zrozumiałą nazwę.','Placeholder znika przy wpisywaniu i nie zastępuje prawidłowego label. Użyj label powiązanego przez htmlFor/id, a komunikat błędu osobno przez aria-describedby.'],
+ ['Dodaj fokus i disabled w module CSS bez surowych kolorów.','Reguły mają odwoływać się do tokenów.','/* .button:focus-visible,.input:focus-visible {outline:2px solid var(--color-primary);outline-offset:2px;} .button:disabled,.input:disabled {opacity:0.5;cursor:not-allowed;} */'],
+ ['Dodaj przełącznik motywu ze zgodnym stanem początkowym light.','Bootstrap ustawia ten sam atrybut przed pierwszym renderem.',full],
+ ['Wyjaśnij, dlaczego getComputedStyle w renderze nie jest właściwym źródłem próbek.','Render ma być czysty i przewidywalny.','To odczyt zewnętrznego DOM, zależny od środowiska i chwili. Może być niedostępny przy SSR i nie wywołuje sam aktualizacji React po zmianie CSS. Próbka może użyć var, a opis pochodzić z jawnego katalogu lub osobno zsynchronizowanego odczytu po renderze.'],
+ ['Zaplanuj test sześciu przycisków wariantów w obu motywach.','Natywne disabled testuj przez rzeczywistą interakcję.','Sprawdź primary/secondary/danger w enabled/disabled dla light/dark: 12 kombinacji. Enabled ma widoczny fokus i wywołuje callback. Disabled ma natywny atrybut i nie reaguje na aktywację użytkownika. Sprawdź kolory i czytelność.'],
+ ['Zaplanuj test powiązań trzech instancji TextField.','Id nie mogą się powtarzać.','Każdy input ma unikalne id i pasujący label.htmlFor. Tylko pole z błędem ma aria-invalid=true oraz aria-describedby wskazujące istniejący komunikat. Pole disabled ma natywny disabled.'],
+ ['Zaprojektuj responsywną siatkę próbek bez poziomego przepełnienia.','Nazwy i wartości mogą się zawijać.','/* .swatches {display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:var(--space-2);} .swatches li {display:flex;gap:var(--space-2);flex-wrap:wrap;} */\n// Dla viewportów węższych niż minimalna kolumna dodaj odpowiedni wariant jednej kolumny.'],
+ ['Usuń surowe hexy z module.css i pozostaw je w definicji tokenów.','Wyszukiwanie jest początkiem audytu, nie automatyczną naprawą.','Wyszukaj hex/rgb/hsl w modułach. Przenieś decyzje kolorystyczne do katalogu tokenów i zastąp odwołaniami var. Po zmianie sprawdź computed colors i kontrast obu motywów.'],
+ ['Wykaż błędem TS, że Variant nie dopuszcza ghost.','Lista wariantów jest źródłem typu.',model+'\n// @ts-expect-error Brak ghost w VARIANTS\nconst invalid:Variant="ghost";'],
+ ['Porównaj as const i Object.freeze dla list wariantów.','Jedno dotyczy typów, drugie wykonuje kod.','As const zachowuje literały i readonly w analizie TypeScript, bez zamrażania runtime. Object.freeze ogranicza modyfikację obiektu podczas działania i jest płytkie. Żadne nie generuje automatycznie arkusza CSS.'],
+ ['Zapisz plan testu przełączenia motywu całego przewodnika.','Nie sprawdzaj wyłącznie przycisku toggle.','Sprawdź atrybut html, etykietę toggle, wartości opisowe i tła próbek, kolory Panelu, Badge i TextField, widoczny fokus oraz kontrast. Przełącz light→dark→light.'],
+ ['Zaprojektuj wykrywanie brakującego wariantu po dodaniu go do listy.','Typowanie map i test wizualny mają różne zadania.','Record może wykryć brak wpisu mapy TypeScript. Domyślny słownik CSS Modules nie potwierdza istnienia odpowiedniej klasy. Dodaj ją w CSS i sprawdź wygenerowaną regułę oraz wygląd nowego przykładu.'],
+ ['Zapisz kryteria oddania bez deklarowania nieuruchomionych testów.','Rozróżnij kompilację, lint i kontrolę w przeglądarce.','Zweryfikuj strukturę danych i typy, wykonaj build i lint według skryptów projektu, a następnie interakcje klawiaturą oraz oba motywy. W raporcie zaznacz, które kroki faktycznie wykonano i czego środowisko nie umożliwiło.'],
+ ['Oddaj cały StyleGuide z sześcioma sekcjami, wariantami i motywem.','Projekt używa jednego zestawu komponentów i tokenów.','Pliki projektu:\n'+Object.entries(project).map(([file,code])=>`--- ${file} ---\n${code}`).join('\n\n')],
+];
+const quiz=`
+Po co buduje się przewodnik stylu?|By oglądać rzeczywiste komponenty i warianty w jednym miejscu|By kopiować każdy komponent na nowo|By zastąpić testy aplikacji|By usunąć CSS|Przewodnik ujawnia niespójności i pomaga w przeglądzie.
+Czy przycisk przewodnika powinien być kopią jego CSS?|Nie, powinien używać prawdziwego Button|Tak zawsze|Tylko w TSX|Tylko w dark|Kopia może rozjechać się z komponentem produkcyjnym.
+Ile wariantów zawiera VARIANTS w bossie?|3|2|4|6|Primary, secondary i danger.
+Ile przykładów daje enabled/disabled dla każdego wariantu?|6|3|2|12|Trzy warianty po dwa stany.
+Ile kombinacji daje dodatkowo light/dark?|12|6|3|24|Dwa motywy podwajają sześć stanów.
+Co daje as const przy liście wariantów?|Literały i readonly w typach|Object.freeze runtime|CSS automatycznie|Nowy komponent|Nie jest to wykonanie kodu zamrażającego.
+Jak wyprowadzić Variant z VARIANTS?|typeof VARIANTS indeksowane number|typeof Button.key|CSSProperties|ReactNode|Indeks typu tablicy daje unię elementów.
+Czy dopisanie wariantu do listy aktualizuje pochodny typ?|Tak|Nie|Tylko w JSX|Tylko z CSS|Typ odwołuje się do tej samej krotki.
+Czy dopisanie wariantu automatycznie pisze regułę CSS?|Nie|Tak|Tylko w TSX|Tylko przy clsx|Arkusz nadal wymaga uzupełnienia.
+Co sprawdzi Record<Variant,string>?|Kompletność wpisów mapy|Istnienie każdej klasy CSS|Kontrast kolorów|Natywne disabled|To kontrola struktury danych TS.
+Czy domyślne typy CSS Modules wykryją brak klasy ghost?|Nie musi tak być|Zawsze tak|Tylko w strict|Tylko dla Button|Słownik string nie zna rzeczywistych selektorów.
+Jaki key wybrać przy mapowaniu listy wariantów?|Wartość wariantu|Math.random()|Indeks bez potrzeby|useId w map|Wariant jest stabilnym identyfikatorem rodzeństwa.
+Jak generować listę próbek kolorów?|Map po liście nazw tokenów|Ręcznie kopiować każdy li|Przez losowe kolory|Przez querySelector w renderze|Lista jest wspólnym źródłem danych widoku.
+Co umieścić w background próbki?|var z nazwą tokenu|Key próbki|Nazwę komponentu|Callback motywu|Przeglądarka rozwiązuje wartość CSS.
+Czy sam napis --surface pokazuje rzeczywisty kolor?|Nie|Tak|Tylko w TSX|Tylko w dark|Potrzebna jest próbka stosująca zmienną.
+Skąd pochodzą opisowe wartości próbek w rozwiązaniu?|Ze wspólnego katalogu PALETTE dla motywu|Z getComputedStyle w każdym renderze|Z id elementu|Z hasha klasy|Katalog i CSS są generowane ze wspólnych danych autora.
+Czy katalog zawsze odzwierciedli dowolne zewnętrzne nadpisanie CSS?|Nie|Tak|Tylko w TSX|Tylko dla bg|Opis wymaga osobnej polityki, jeśli dojdą inne źródła nadpisań.
+Dlaczego nie odczytywać getComputedStyle w renderze?|To zależność od zewnętrznego DOM|Ponieważ metoda nie istnieje w przeglądarce|Bo CSS nie ma wartości|Bo React wymaga losowego key|Render powinien być czysty i działać niezależnie od chwili odczytu DOM.
+Czy zmiana CSS sama aktualizuje stan React z odczytaną wcześniej wartością?|Nie|Tak|Tylko w dark|Tylko w modules|Potrzebna jest jawna synchronizacja, jeśli stan ma zależeć od CSS.
+Co powinien pokazać katalog typografii?|Nagłówki, tekst, muted i kod|Wyłącznie h1|Tylko kolory|Tylko label|Sekcja demonstruje kilka ról typograficznych.
+Czy sekcja muted powinna użyć wspólnego tokenu?|Tak|Nie|Tylko w TSX|Tylko przy white|Przewodnik ma pokazywać rzeczywistą decyzję projektu.
+Ile tonów ma TONES w rozwiązaniu?|4|3|2|7|Neutral, success, warning i danger.
+Ile statusów ma lista STATUSES?|3|4|2|1|OPEN, IN_PROGRESS i CLOSED.
+Ile priorytetów ma lista PRIORITIES?|4|3|2|5|LOW, MEDIUM, HIGH i CRITICAL.
+Czy Tone i Status są tym samym typem domenowym?|Nie|Tak|Tylko dla OPEN|Tylko w JSX|Status opisuje domenę, tone prezentację.
+Jaki tone ma OPEN w mapie rozwiązania?|success|danger|neutral|warning|Mapa łączy otwarte zgłoszenie z success.
+Jaki tone ma IN_PROGRESS?|warning|success|danger|neutral|W toku jest mapowane na warning.
+Jaki tone ma CLOSED?|neutral|danger|success|warning|Zamknięte ma neutralny wygląd.
+Jaki tone ma CRITICAL?|danger|neutral|success|warning|Krytyczny priorytet jest wyróżniany jako danger.
+Jaki tone ma HIGH?|warning|danger|success|neutral|High jest mapowane na warning.
+Czy LOW i MEDIUM mogą mieć ten sam tone?|Tak|Nie|Tylko w JSX|Tylko w dark|Różne wartości domenowe mogą współdzielić prezentację.
+Czy etykieta statusu powinna zniknąć, gdy ma kolor?|Nie|Tak|Tylko w light|Tylko dla CLOSED|Kolor nie zastępuje tekstu.
+Co demonstrują dwa StatCard?|Zwykły i wyróżniony wariant|Dwa różne backendy|Dwa losowe komponenty|Wyłącznie dwa id|Highlight jest wariantem tego samego komponentu.
+Czy value=0 jest poprawną statystyką?|Tak|Nie|Tylko w TSX|Tylko w dark|Nie należy ukrywać zera warunkiem falsy.
+Co pokazuje Panel bez actions?|Zwykłą kompozycję bez akcji|Błąd props zawsze|Brak children|Brak tytułu|Actions jest opcjonalnym slotem.
+Co pokazuje Panel z actions?|Kompozycję nagłówka z kontrolką|Nowy typ danych|Automatyczny fetch|Zawsze formularz|Slot przyjmuje element akcji.
+Czy TextField powinien mieć label?|Tak|Nie|Tylko przy błędzie|Tylko w TSX|Etykieta identyfikuje kontrolkę.
+Do czego służy useId w TextField?|Powiązania etykiety i opisu dla instancji|Generowania key danych|Losowania kolorów|Pobierania użytkownika|Id służy relacjom dostępności.
+Czy trzy TextField mogą współdzielić to samo id inputa?|Nie|Tak|Tylko bez błędu|Tylko w dark|Id w dokumencie powinny być unikalne.
+Co musi równać się input.id?|Label.htmlFor|ClassName label|Key listy|Tone badge|To tworzy powiązanie etykiety z polem.
+Co oznacza aria-invalid=true?|Pole jest oznaczone jako niepoprawne|Pole jest automatycznie wyłączone|Pole jest niewidoczne|Pole jest required zawsze|To stan dostępności, a nie mechanizm walidacji sam w sobie.
+Co wskazuje aria-describedby w polu z błędem?|Id istniejącego komunikatu|Tekst komunikatu bezpośrednio|Nazwę klasy CSS|Id komponentu React|Atrybut tworzy relację z elementem opisującym.
+Czy aria-describedby powinno wskazywać nieistniejący element?|Nie|Tak|Tylko w TSX|Tylko dla błędu|Odwołanie musi mieć poprawny cel.
+Czy error jest wyświetlany wyłącznie kolorem ramki?|Nie, także tekstem|Tak|Tylko w dark|Tylko w JSX|Treść błędu musi być czytelna niezależnie od koloru.
+Czy placeholder zastępuje label?|Nie|Tak|Tylko w przewodniku|Tylko w TSX|Placeholder nie jest trwałą etykietą.
+Czy disabled w TextField jest klasą czy natywnym atrybutem w rozwiązaniu?|Natywnym atrybutem z dodatkowym stylem|Wyłącznie klasą|Wyłącznie aria-label|Wyłącznie key|Atrybut kontroluje rzeczywiste zachowanie pola.
+Czy klasa disabled sama blokuje kliknięcie przycisku?|Nie|Tak|Tylko z opacity|Tylko w JSX|Potrzebny jest natywny disabled lub odpowiedni model zachowania.
+Czy ręczne wywołanie props.onClick dowodzi zachowania disabled w przeglądarce?|Nie|Tak|Tylko dla Button|Tylko w TSX|To omija natywny mechanizm interakcji.
+Czy wyłączone kontrolki powinny pokazywać odróżnialny wygląd?|Tak|Nie|Tylko w dark|Tylko dla danger|Przewodnik demonstruje także stan disabled.
+Po co type=button w przykładach akcji?|By nie wysłać przypadkowo formularza|By dodać kolor|By utworzyć key|By wyłączyć CSS|Natywne domyślne zachowanie w formularzu wymaga uwagi.
+Czy ComponentProps<"button"> obejmuje typowe natywne props?|Tak|Nie|Tylko onClick|Tylko className|Opakowanie może przekazać m.in. disabled, aria-label i type.
+Czy domyślny type=button może dopuścić jawny submit?|Tak w przygotowanym API|Nie|Tylko w JSX|Tylko przy secondary|Domyślna wartość nie blokuje jawnego props.
+Jak zachować bazową klasę przy className rodzica?|Połączyć je np. clsx|Zawsze usunąć bazę|Zapisać className do key|Zignorować rodzica|To zachowuje strukturę i rozszerzenie.
+Czy kolejność tokenów klas rozwiązuje każdy konflikt CSS?|Nie|Tak|Tylko w modules|Tylko z clsx|Wynik zależy od kaskady reguł.
+Gdzie powinny znajdować się surowe kolory w tym bossie?|W definicji katalogu/tokenów|W każdym module po kopii|W każdym button inline|W key|Komponenty korzystają z odwołań var.
+Czy wyszukanie samego znaku # jest pełnym audytem surowych kolorów?|Nie|Tak|Tylko w TSX|Tylko dla dark|Kolory mogą być zapisane także rgb, hsl i nazwami.
+Czy każda liczba CSS musi zostać tokenem?|Nie|Tak|Tylko w module|Tylko w JSX|Tokenizuje się wspólne decyzje projektowe.
+Co daje focus-visible w przewodniku?|Widoczny sygnał fokusu|Automatyczne generowanie danych|Wyłączenie hover|Nowy komponent|Ważna jest nawigacja klawiaturą.
+Czy outline:none bez zamiennika jest dobrym kryterium wyglądu?|Nie|Tak|Tylko w dark|Tylko dla primary|Użytkownik może stracić orientację fokusu.
+Czy fokus trzeba sprawdzić w obu motywach?|Tak|Nie|Tylko dla danger|Tylko w TSX|Kolory tła i obrysu mogą zmienić kontrast.
+Czy sam wygląd próbki koloru dowodzi czytelności tekstu?|Nie|Tak|Tylko dla primary|Tylko w light|Kontrast zależy od pary foreground/background i kontekstu.
+Co sprawdzić po zmianie text-muted?|Kontrast na odpowiednich powierzchniach obu motywów|Tylko liczbę klas|Wyłącznie nazwę tokenu|Tylko hash CSS|Semantyczna nazwa nie gwarantuje czytelności.
+Czy aria-hidden na dekoracyjnej próbce ukrywa nazwę tokenu obok?|Nie|Tak|Tylko w TSX|Tylko w dark|Atrybut dotyczy samego elementu próbki.
+Dlaczego próbka ma obramowanie?|Pomaga odróżnić ją od podobnego tła|Nadaje rolę przycisku|Tworzy token|Włącza dark|Biała próbka na białym tle potrzebuje granicy.
+Czy lista tokenów ma być klikalna, jeśli tylko prezentuje kolory?|Nie musi|Zawsze tak|Tylko w TSX|Tylko w dark|Nie dodaje się interakcji bez potrzeby.
+Czy kod tokenu należy renderować przez dangerouslySetInnerHTML?|Nie|Tak|Tylko w JSX|Tylko przy myślnikach|Zwykły tekst w code wystarcza.
+Czy HTML escape z Reacta pozwala bezpiecznie pokazać nazwę tokenu jako tekst?|Tak w zwykłym renderowaniu tekstu|Nie|Tylko w TSX|Tylko w dark|Tekst nie jest interpretowany jako surowy HTML.
+Gdzie zmienia się data-theme w przełączniku bossa?|W handlerze kliknięcia|W każdym renderze|W mapie tokenów|W typie Theme|Efekt uboczny jest odpowiedzią na akcję.
+Dlaczego bootstrap ustawia light zgodnie z initialTheme?|By początkowy CSS i etykieta były spójne|By wyłączyć wszystkie style|By utworzyć key|By pobrać dane|Dwa źródła zaczynają z tej samej wartości.
+Czy sam setTheme automatycznie ustawia globalne data-theme?|Nie|Tak|Tylko w TSX|Tylko w strict|Potrzebny jest jawny zapis lub inna warstwa synchronizacji.
+Czy zapis data-theme automatycznie zmienia useState?|Nie|Tak|Tylko w dark|Tylko w JSX|Stan React nie obserwuje automatycznie dataset.
+Czy przełączanie light→dark→light powinno przywrócić kolory?|Tak|Nie|Tylko po odświeżeniu|Tylko dla bg|Odwracalny wariant jest częścią testu.
+Czy opis PALETTE[theme][token] zmienia się po aktualizacji theme?|Tak|Nie|Tylko w JSX|Tylko dla primary|Jest wyliczany z bieżącego stanu.
+Czy CSS var potrzebuje osobnego renderu każdej próbki, aby zmienić jej kolor?|Nie|Tak|Tylko w modules|Tylko w dark|Przeglądarka przelicza zmienne CSS.
+Czy useId daje id rekordu biznesowego?|Nie|Tak|Tylko w TSX|Tylko dla TextField|To identyfikator instancji do powiązań UI.
+Czy klucze powinny zależeć od aktywnego motywu?|Nie|Tak|Tylko dla próbek|Tylko w dark|Zmiana wyglądu nie zmienia tożsamości elementów.
+Czy losowy key przy każdym renderze pomaga przewodnikowi?|Nie|Tak|Tylko dla Badge|Tylko w JSX|Może powodować remount i utratę stanu lub fokusu.
+Czy można użyć tej samej wartości key w dwóch niezależnych listach?|Tak|Nie|Tylko w TSX|Tylko w dark|Unikalność dotyczy danego rodzeństwa.
+Czy opisany przewodnik musi już mieć router?|Nie|Tak|Tylko w TSX|Tylko w Vite|Może być zwykłym komponentem zamiast Main.
+Czy do listy wariantów potrzebny jest fetch?|Nie|Tak|Tylko dla primary|Tylko w JSX|To lokalne dane katalogu.
+Czy aria-invalid samo waliduje długość wpisanej treści?|Nie|Tak|Tylko w TSX|Tylko przy error|Atrybut ogłasza stan; logika walidacji jest osobna.
+Czy przewodnik może pokazać stan błędu jako dane demonstracyjne?|Tak|Nie|Tylko z backendem|Tylko w JSX|Celem jest prezentacja istniejącego wariantu.
+Czy brak błędu powinien pozostawiać dangling aria-describedby?|Nie|Tak|Tylko w dark|Tylko przy disabled|Nie powinno być odwołania do brakującego opisu.
+Czy puste error="" ma w rozwiązaniu status błędu?|Nie|Tak|Tylko w TSX|Tylko w light|Boolean pustego napisu jest false.
+Czy id komunikatu może wynikać z id pola z sufiksem -error?|Tak|Nie|Tylko w JSX|Tylko przy useState|Tworzy powiązany unikalny identyfikator.
+Czy CSSModules izoluje wszystkie reguły elementowe z modułu?|Nie|Tak|Tylko dla h1|Tylko w Vite|Nazwy klas są lokalne, ale sam selektor elementu wymaga uwagi.
+Dlaczego moduł używa .header zamiast globalnego header?|By ograniczyć styl do lokalnej klasy|By zmienić semantykę elementu|By nadać id|By włączyć state|Lokalna nazwa kontroluje zakres reguły.
+Czy .button.danger i .danger mogą mieć różne odpowiedzialności?|Tak|Nie|Tylko w TSX|Tylko bez clsx|Selektor złożony może doprecyzować wariant przycisku.
+Czy widok jednej strony przewodnika zastępuje wszystkie testy aplikacji?|Nie|Tak|Tylko z TSX|Tylko w dark|Nie obejmuje wszystkich integracji i przepływów produktu.
+Co sprawdzić przy małym viewporcie próbek?|Zawijanie nazw i brak poziomego przepełnienia|Tylko hash CSS|Wyłącznie ilość tokenów|Tylko wariant danger|Katalog musi pozostać czytelny.
+Czy minmax(16rem,1fr) zawsze mieści się w kontenerze węższym niż 16rem?|Nie|Tak|Tylko w dark|Tylko z grid|Minimalna szerokość może wymagać dodatkowego dostosowania.
+Czy typecheck i build są tym samym sprawdzeniem?|Nie|Tak|Tylko w TSX|Tylko w Vite|Transpilacja, analiza typów i pakowanie mają różne zadania.
+Czy build dowodzi obsługi klawiatury w przeglądarce?|Nie|Tak|Tylko dla disabled|Tylko w TSX|Potrzebny jest test interakcji.
+Czy można raportować lint jako zaliczony bez jego uruchomienia?|Nie|Tak|Tylko dla treści|Tylko w CSS|Raport musi odpowiadać wykonanym sprawdzeniom.
+Co zrobić, jeśli środowisko nie umożliwia interaktywnego testu?|Jawnie zaznaczyć zakres wykonanej weryfikacji|Uznać wszystkie testy za zaliczone|Usunąć kryteria|Zmienić nazwy komponentów|Ograniczenia nie powinny być ukrywane.
+Czy negatywny test @ts-expect-error powinien wskazywać świadomy błąd?|Tak|Nie|Tylko w JSX|Tylko dla CSS|Dyrektywa weryfikuje spodziewaną diagnostykę.
+Czy dodanie ghost wymaga aktualizacji tylko przewodnika?|Nie, także implementacji wariantu|Tak zawsze|Tylko w dark|Tylko w JSX|Lista rozszerza API, które musi mieć właściwy wygląd.
+Czy kompletna macierz wariantów pomaga wykrywać regresje?|Tak|Nie|Tylko w TSX|Tylko przy CSS-in-JS|W jednym miejscu widać pominięte stany.
+Czy boss jest ukończony po samym wypisaniu nazw sekcji?|Nie|Tak|Tylko w JSX|Tylko z tokenami|Potrzebne są rzeczywiste komponenty, warianty i działający motyw.
+Co stanowi finalny rezultat bossa?|Spójny katalog komponentów i stanów w obu motywach|Wyłącznie nowy plik CSS|Tylko zainstalowany clsx|Wyłącznie lista kolorów|Zadanie łączy dane, kompozycję, style i dostępne kontrolki.
+`.trim().split('\n').map(line=>line.split('|'));
+module.exports={exercises,quiz,model,components,standalone,guide,full,project,palette};
