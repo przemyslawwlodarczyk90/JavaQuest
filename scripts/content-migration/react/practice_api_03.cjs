@@ -1,0 +1,76 @@
+const contract=require('./practice_api_01.cjs').model;
+const state=`export type View<T>={kind:"loading";key:string}|{kind:"success";key:string;data:Page<T>}|{kind:"error";key:string;message:string};export function viewForRequest<T>(state:View<T>,key:string):View<T>{return state.key===key?state:{kind:"loading",key};}`;
+const client=`import {z} from "zod";
+${contract}
+${state}
+export const ticketSchema=z.object({id:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),title:z.string(),description:z.string(),status:z.enum(["OPEN","IN_PROGRESS","CLOSED"]),priority:z.enum(["LOW","NORMAL","HIGH"]),assignee:z.string().nullable(),createdAt:z.iso.datetime({offset:true}),tags:z.array(z.string())});export const pageSchema=z.object({items:z.array(ticketSchema),total:z.number().int().nonnegative(),page:z.number().int().positive(),pageSize:z.number().int().min(1).max(100)}).refine(page=>page.items.length<=page.pageSize&&page.items.length<=page.total,"Sprzeczne metadane strony");export class HttpError extends Error{constructor(public status:number){super("Nie udało się pobrać ticketów (HTTP "+status+")");this.name="HttpError";}}export async function fetchTickets(query:TicketListQuery,signal?:AbortSignal,fetcher:typeof fetch=fetch):Promise<Page<Ticket>>{const response=await fetcher(ticketsUrl(query),{signal,headers:{Accept:"application/json"}});if(!response.ok)throw new HttpError(response.status);const raw:unknown=await response.json();const parsed=pageSchema.safeParse(raw);if(!parsed.success)throw Error("Nieprawidłowa odpowiedź API");const expectedPage=query.page??1,expectedSize=query.pageSize??10;if(parsed.data.page!==expectedPage||parsed.data.pageSize!==expectedSize)throw Error("Metadane nie odpowiadają żądaniu");return parsed.data;}`;
+const hook=`import {useEffect,useState} from "react";import {fetchTickets,ticketsUrl,viewForRequest,type TicketListQuery,type View,type Ticket} from "./client";export type Loader=typeof fetchTickets;export function useTickets(query:TicketListQuery,loader:Loader=fetchTickets){const {status,sort}=query;const q=query.q?.trim()??"",page=query.page??1,pageSize=query.pageSize??10;const key=ticketsUrl({status,q,page,pageSize,sort});const [state,setState]=useState<View<Ticket>>({kind:"loading",key});const [version,setVersion]=useState(0);useEffect(()=>{let active=true;const controller=new AbortController();const requestKey=ticketsUrl({status,q,page,pageSize,sort});setState({kind:"loading",key:requestKey});async function load(){try{const data=await loader({status,q,page,pageSize,sort},controller.signal);if(active)setState({kind:"success",key:requestKey,data});}catch(error){if(!active||controller.signal.aborted)return;setState({kind:"error",key:requestKey,message:error instanceof Error?error.message:"Nie udało się pobrać danych"});}}void load();return ()=>{active=false;controller.abort();};},[status,q,page,pageSize,sort,loader,version]);return {view:viewForRequest(state,key),reload:()=>setVersion(value=>value+1)};}`;
+const demo=`import {useState} from "react";import {useTickets} from "./hook";import type {TicketStatus} from "./client";export function Demo(){const [status,setStatus]=useState<TicketStatus|undefined>();const [page,setPage]=useState(1);const {view,reload}=useTickets({status,page,pageSize:1,sort:"createdAt:desc"});return <main><h1>Tickety z API</h1><label>Status<select value={status??""} onChange={event=>{const next=event.currentTarget.value;if(next===""||next==="OPEN"||next==="IN_PROGRESS"||next==="CLOSED"){setStatus(next===""?undefined:next);setPage(1);}}}><option value="">Wszystkie</option><option value="OPEN">Otwarte</option><option value="IN_PROGRESS">W toku</option><option value="CLOSED">Zamknięte</option></select></label><section aria-busy={view.kind==="loading"}>{view.kind==="loading"?<p role="status">Ładowanie…</p>:view.kind==="error"?<><p role="alert">{view.message}</p><button type="button" onClick={reload}>Spróbuj ponownie</button></>:<><p role="status">Wyników: {view.data.total}, strona {view.data.page}</p>{view.data.items.length===0?<p>Brak ticketów na tej stronie.</p>:<ul>{view.data.items.map(ticket=><li key={ticket.id}>#{ticket.id} {ticket.title}</li>)}</ul>}</>}</section><button type="button" disabled={page===1} onClick={()=>setPage(value=>Math.max(1,value-1))}>Poprzednia</button><button type="button" disabled={view.kind!=="success"||view.data.page*view.data.pageSize>=view.data.total} onClick={()=>setPage(value=>value+1)}>Następna</button><button type="button" onClick={reload}>Odśwież</button></main>;}`;
+const exercises=[
+['Zbuduj klienta fetchTickets poza komponentem.','UI nie powinno znać szczegółów JSON i URL.',client],
+['Waliduj odpowiedź jako unknown.','Zod sprawdza rzeczywisty runtime payload.',client],
+['Sprawdź status, priorytet i nullable assignee w schemacie.','Sama tablica items nie wystarcza.',client],
+['Sprawdź bezpieczne ID, datę ISO i tagi.','Dane serwera mogą nie odpowiadać deklaracji Ticket.',client],
+['Sprawdź spójność liczby items z total i pageSize.','Metadane są częścią kontraktu.',client],
+['Sprawdź zgodność page i pageSize z konkretnym żądaniem.','Poprawna struktura nie oznacza poprawnej strony.',client],
+['Sprawdzaj response.ok przed interpretacją JSON jako danych.','HttpError zachowuje status dla warstwy UI.',client],
+['Przekaż signal i Accept do fetch.','Przerwanie należy do czasu życia żądania.',client],
+['Wstrzyknij fetcher dla sprawdzania klienta.','Test może podać prawdziwą Response bez sieci.',client],
+['Opisz loading, success i error jako unię rozłączną.','Nie utrzymuj sprzecznych isLoading i error obok gotowych danych.',client],
+['Powiąż wynik z kluczem konkretnego żądania.','Nie wyświetlaj starych danych jako wyniku nowego filtra.',client],
+['Wylicz widok loading przy zmianie klucza jeszcze przed nowym efektem.','Efekt uruchamia się dopiero po commit.',client],
+['Zbuduj useTickets z zależnościami po prymitywnych kryteriach.','Nowy obiekt query co render nie musi tworzyć pętli efektu.',hook],
+['Znormalizuj query oraz domyślne wartości page/pageSize.','Klucz i rzeczywiste żądanie muszą być zgodne.',hook],
+['Użyj wewnętrznej funkcji async w efekcie.','Callback useEffect nie może zwracać Promise.',hook],
+['Przejdź do loading przed rozpoczęciem żądania.','Status dotyczy requestKey bieżącego setup.',hook],
+['Utwórz AbortController dla każdego setup efektu.','Nie współdziel zużytego kontrolera między żądaniami.',hook],
+['Ignoruj stare odpowiedzi niezależnie od obsługi abort przez loader.','Flaga active jest lokalna dla konkretnego setup.',hook],
+['Nie pokazuj abort jako błędu użytkownika.','Cleanup oznacza koniec tej synchronizacji.',hook],
+['Posprzątaj przez active=false i controller.abort.','StrictMode może wykonać setup, cleanup i ponowny setup.',hook],
+['Nie oznaczaj efektu async bezpośrednio.','Zwracana wartość ma być funkcją cleanup.',hook],
+['Dodaj kontrolowane ponowienie przez licznik wersji.','Ten sam klucz danych może wymagać nowego żądania.',hook],
+['Pozostaw loader stabilny jako eksport modułu.','Nowa funkcja inline restartowałaby efekt.',hook],
+['Wyświetl loading jako status bez przenoszenia fokusu.','aria-busy informuje o zajętości regionu.',demo],
+['Pokaż trwały błąd i przycisk Spróbuj ponownie.','Nie ograniczaj błędu pobierania do krótkiego toasta.',demo],
+['Rozróżnij pustą stronę od błędu HTTP.','Poprawna odpowiedź może zawierać items=[].',demo],
+['Renderuj tickety według stabilnego id.','Numer pozycji strony nie jest tożsamością.',demo],
+['Resetuj paginację przy zmianie filtra.','Nie zostawiaj strony poza nowym zbiorem wyników.',demo],
+['Zablokuj następną stronę bez potwierdzonych metadanych.','Nie zgaduj końca listy na podstawie starej strony.',demo],
+['Uruchom z mockiem i sprawdź zmianę filtrów podczas wolnego żądania.','Wynik poprzedniego żądania nie może zastąpić nowszego.',hook],
+];
+const concepts=[
+['Dlaczego funkcja API jest poza komponentem?','Oddziela kontrakt sieci od renderowania','Żeby ominąć walidację','Żeby zablokować props','Żeby uniemożliwić testy'],
+['Co powinno wejść do walidatora odpowiedzi?','unknown','Bezwarunkowe as Ticket[]','Zawsze string z title','JSX'],
+['Czy as Page<Ticket> sprawdza JSON?','Nie','Tak','Tylko przy await','Tylko w strict TS'],
+['Czy odpowiedź z items ale bez total spełnia Page?','Nie','Tak','Tylko dla pustej listy','Tylko przy 200'],
+['Czy poprawny typ strony gwarantuje, że to żądana strona?','Nie, trzeba porównać metadane','Tak zawsze','Tylko w MSW','Tylko z JSON'],
+['Co ma zawierać klucz żądania?','Kryteria wpływające na wynik','Wyłącznie nazwę komponentu','Zawsze Date.now','Ref inputa'],
+['Dlaczego stary wynik ma zapisany key?','Żeby nie udawał wyniku nowego filtra','Żeby generować globalne ID','Żeby pominąć cleanup','Żeby ustawić aria-label'],
+['Kiedy działa efekt względem renderu?','Po commit','Przed każdym odczytem props','W trakcie obliczania JSX','Zawsze przed serwerem'],
+['Czy useEffect callback może być async?','Nie, Promise nie jest cleanup','Tak bez ograniczeń','Tylko w TSX','Tylko dla GET'],
+['Gdzie umieścić async load?','Wewnątrz setup efektu albo jako wywołaną funkcję','Jako updater stanu','Jako funkcję render prop z hookiem','W module bez wywołania'],
+['Dlaczego deps po status/q/page zamiast całym nowym query?','Unikają restartów tylko przez nową referencję obiektu','Wyłączają reguły hooków','Zapewniają cache globalny','Pomijają zmianę filtrów'],
+['Czy loader inline zmienia zależność efektu?','Tak, ma nową tożsamość przy renderze','Nie','Tylko po błędzie','Tylko w Node'],
+['Co zapewnia lokalna flaga active?','Odrzuca wynik setup, który został posprzątany','Anuluje fizycznie każdy transport','Zapewnia autoryzację','Zapisuje cache'],
+['Dlaczego abort nie zastępuje całkiem sprawdzenia active?','Loader może zignorować signal lub odpowiedź mogła już nadejść','Abort nigdy nie działa','Signal służy wyłącznie CSS','React nie obsługuje fetch'],
+['Czy abort cleanup to błąd do pokazania użytkownikowi?','Nie','Tak zawsze','Tylko dla GET','Tylko przy 500'],
+['Ile kontrolerów użyć dla kolejnych setup efektu?','Nowy na każdy setup','Jeden zużywany na zawsze','Zawsze zero','Po jednym na każde pole JSON'],
+['Czy StrictMode może wywołać dodatkowy setup/cleanup w dev?','Tak','Nie','Tylko w produkcji','Tylko bez useEffect'],
+['Co reprezentuje success?','Zweryfikowaną stronę konkretnego key','Dowolny poprzedni wynik','Sam response.ok bez danych','Zawsze niepustą listę'],
+['Czy success może zawierać pustą listę?','Tak','Nie','Tylko z błędem','Tylko po DELETE'],
+['Co robi reload w tym hooku?','Zwiększa wersję wyzwalającą nowe pobranie','Zmienia rolę użytkownika','Mutuje poprzednią stronę','Resetuje backend'],
+['Czy reload wymaga zmiany filtrów?','Nie','Tak','Tylko przy error','Tylko w MSW'],
+['Czy aria-busy blokuje kliknięcia?','Nie','Tak','Tylko w regionie','Tylko przy loading'],
+['Gdzie pokazać trwały błąd pobrania?','Przy obszarze danych z możliwością ponowienia','Wyłącznie console.log','Tylko w odmontowanym komponencie','W zmiennej ref bez UI'],
+['Co zrobić z numerem strony po zmianie statusu filtra?','Zresetować do pierwszej','Zawsze zostawić 100','Skopiować z indeksu inputa','Zmienić na null bez kontraktu'],
+['Czy indeks rekordu na stronie to dobry key?','Nie, użyj stabilnego id','Tak zawsze','Tylko przy paginacji','Tylko z total'],
+['Dlaczego sprawdzać datę ISO w schemacie?','Serwer może zwrócić błędny format','Bo TypeScript parsuje daty','Bo JSX wymaga Date','Bo sort zawsze używa stringów'],
+['Czy status 200 gwarantuje poprawny JSON?','Nie','Tak','Tylko przy Accept','Tylko przy Content-Type'],
+['Czy status 500 jest tym samym co błąd sieci?','Nie','Tak','Tylko w fetch','Tylko w MSW'],
+['Co porównuje viewForRequest?','Klucz zapisanego stanu i bieżącego requestu','Głęboką tożsamość całego React','Czas animacji','Typ nagłówka'],
+['Czy test modelu i hooka dowodzi pełnego cyklu React?','Nie, wymaga osobnego testu integracyjnego','Tak','Tylko z 100 pytaniami','Tylko z TS'],
+];
+const quiz=concepts.map(row=>[...row,'Pobranie danych obejmuje walidację odpowiedzi, tożsamość żądania i sprzątanie synchronizacji.']);quiz.push(...require('./practice_api_02.cjs').quiz.slice(0,30).map(row=>['Powtórka mocka do pobierania: '+row[0],...row.slice(1)]));
+const cases=[];function add(label,expr,answer){cases.push([label,expr,String(answer)]);}const sample='const ticket={id:0,title:"API",description:"Opis",status:"OPEN",priority:"HIGH",assignee:null,createdAt:"2026-10-31T12:00:00Z",tags:["api"]};const page={items:[ticket],total:1,page:1,pageSize:10};';for(const [label,change,answer]of [['Poprawny','{}',true],['Brak total','{total:undefined}',false],['Ujemny total','{total:-1}',false],['Ułamkowy total','{total:1.5}',false],['Zła strona','{page:0}',false],['Zły rozmiar','{pageSize:0}',false],['Za duży rozmiar','{pageSize:101}',false],['Puste items','{items:[],total:0}',true],['Items więcej niż total','{total:0}',false],['Złe items','{items:null}',false],['Title liczba','{items:[{...ticket,title:42}]}',false],['Status obcy','{items:[{...ticket,status:"DONE"}]}',false],['Priorytet obcy','{items:[{...ticket,priority:"URGENT"}]}',false],['Assignee string','{items:[{...ticket,assignee:"anna"}]}',true],['Assignee brak','{items:[{...ticket,assignee:undefined}]}',false],['Zła data','{items:[{...ticket,createdAt:"wczoraj"}]}',false],['Złe ID','{items:[{...ticket,id:-1}]}',false],['Tag liczba','{items:[{...ticket,tags:[1]}]}',false],['Strefa offset','{items:[{...ticket,createdAt:"2026-10-31T13:00:00+01:00"}]}',true],['Druga pusta','{items:[],total:1,page:2,pageSize:1}',true]])add(label,`pageSchema.safeParse({...page,...${change}}).success`,answer);
+for(const kind of ['loading','success','error'])for(const key of ['a','b','']){const stateExpr=kind==='loading'?'{kind:"loading",key:"a"}':kind==='success'?'{kind:"success",key:"a",data:page}':'{kind:"error",key:"a",message:"Błąd"}';add('Widok '+kind+' klucz '+JSON.stringify(key),`viewForRequest(${stateExpr},${JSON.stringify(key)}).kind`,key==='a'?kind:'loading');add('Klucz '+kind+' '+JSON.stringify(key),`viewForRequest(${stateExpr},${JSON.stringify(key)}).key||"pusty"`,key||'pusty');}add('Snapshot tej samej referencji','(()=>{const state:View<Ticket>={kind:"success",key:"a",data:page as Page<Ticket>};return viewForRequest(state,"a")===state;})()',true);add('Nowy widok nie mutuje','(()=>{const state:View<Ticket>={kind:"error",key:"a",message:"Błąd"};viewForRequest(state,"b");return state.key;})()','a');for(const [label,expr,answer]of cases){const wrong=['true','false','null','loading','success','error','a','b'].filter(v=>v!==answer).slice(0,3);quiz.push([label+': jaki wynik walidacji lub widoku pobierania?',answer,...wrong,'Schemat sprawdza strukturę i metadane, a viewForRequest nie pokazuje danych innego klucza.',client+'\n'+sample+'\nconsole.log('+expr+');']);}
+const mock=require('./practice_api_02.cjs');const project={'src/client.ts':client,'src/hook.ts':hook,'src/demo.tsx':demo,'src/handlers.ts':mock.handlers,'src/browser.ts':mock.browser,'src/env.d.ts':mock.project['src/env.d.ts'],'README.md':mock.project['README.md'],'src/main.tsx':mock.bootstrap.replace('import {Demo} from "./demo";','import {Demo} from "./demo";')};module.exports={client,state,hook,demo,exercises,quiz,project};
