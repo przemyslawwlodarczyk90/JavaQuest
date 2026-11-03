@@ -104,6 +104,13 @@ const entries = [
   ['11_BossBooksCrud', './practice_api_11.cjs', 30, 100, '_react_10_api'],
   ['01_RestContractWithSpringBoot', './practice_backend_01.cjs', 30, 100, '_react_11_backend_spring'],
   ['02_AuthenticationJwtAndSessions', './practice_backend_02.cjs', 30, 100, '_react_11_backend_spring'],
+  ['03_ProtectedRoutesAndRoles', './practice_backend_03.cjs', 30, 100, '_react_11_backend_spring'],
+  ['04_FileUploadAndDownload', './practice_backend_04.cjs', 30, 100, '_react_11_backend_spring'],
+  ['05_RealTimeWebSocketsAndSse', './practice_backend_05.cjs', 30, 100, '_react_11_backend_spring'],
+  ['06_OpenApiGeneratedClient', './practice_backend_06.cjs', 30, 100, '_react_11_backend_spring'],
+  ['07_BossFullStackFeature', './practice_backend_07.cjs', 30, 100, '_react_11_backend_spring'],
+  ['01_RouterBasics', './practice_route_01.cjs', 30, 100, '_react_12_routing'],
+  ['02_LayoutAndNestedRoutes', './practice_route_02.cjs', 30, 100, '_react_12_routing'],
 ];
 
 function build(source, exerciseCount, questionCount) {
