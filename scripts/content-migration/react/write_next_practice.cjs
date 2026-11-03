@@ -112,6 +112,7 @@ const entries = [
   ['01_RouterBasics', './practice_route_01.cjs', 30, 100, '_react_12_routing'],
   ['02_LayoutAndNestedRoutes', './practice_route_02.cjs', 30, 100, '_react_12_routing'],
   ['03_RouteParams', './practice_route_03.cjs', 30, 100, '_react_12_routing'],
+  ['04_SearchParamsAsState', './practice_route_04.cjs', 30, 100, '_react_12_routing'],
 ];
 
 function build(source, exerciseCount, questionCount) {

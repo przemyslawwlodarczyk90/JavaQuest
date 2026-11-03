@@ -6,6 +6,7 @@ process.env.NODE_PATH=path.join(root,'frontend/node_modules');require('node:modu
 const req=createRequire(path.join(root,'frontend/package.json')),React=req('react'),{renderToStaticMarkup}=req('react-dom/server');
 const entries=[['01_RouterBasics','./practice_route_01.cjs',30,100],['02_LayoutAndNestedRoutes','./practice_route_02.cjs',30,100]];
 entries.push(['03_RouteParams','./practice_route_03.cjs',30,100]);
+entries.push(['04_SearchParamsAsState','./practice_route_04.cjs',30,100]);
 const sources=new Map();
 sources.set(path.join(root,'target/react-routing-qa/env.d.ts'),'declare module "*.module.css"{const classes:{readonly [key:string]:string};export default classes;}\ndeclare module "*.css";');
 for(const [slug,source,ec,qc] of entries){
@@ -34,7 +35,7 @@ function loadProject(source){const cache=new Map();function load(name){const key
 const {createMemoryRouter,RouterProvider,matchRoutes}=req('react-router');
 for(const [,sourcePath]of entries){const source=require(sourcePath),load=loadProject(source),routes=load('./routes').routes;
 await load('./historyCheck').verifyHistory();checks+=3;
-for(const [url,id] of [['/','dashboard'],['/tickets','tickets'],['/archive','archive'],['/settings',(source.model||source.ids)?'profile':'settings'],['/missing','not-found']]){assert.equal(matchRoutes(routes,url).at(-1).route.id,id);checks++;}
+for(const [url,id] of [['/','dashboard'],['/tickets','tickets'],['/archive','archive'],['/settings',(source.model||source.ids||source.filters)?'profile':'settings'],['/missing','not-found']]){assert.equal(matchRoutes(routes,url).at(-1).route.id,id);checks++;}
 const router=createMemoryRouter(routes,{initialEntries:['/archive']});try{const html=renderToStaticMarkup(React.createElement(load('./providers').AppProviders,null,React.createElement(RouterProvider,{router})));assert.match(html,/aria-current="page"[^>]*[^]*?Archiwum/);assert.match(html,/href="\/tickets"/);assert.equal((html.match(/<main/g)||[]).length,1);checks+=3;}finally{router.dispose();}
 }
 // Parametry i logika asynchroniczna: setup/cleanup uruchamiane jawnie, bez udawania DOM.
@@ -55,6 +56,18 @@ const router=createMemoryRouter(routes,{initialEntries:['/archive']});try{const 
  queue[0].resolve({id:7,title:'Stary',description:''});await Promise.resolve();assert.equal(render(42).ticket.id,42);checks++;
  assert.equal(render(481).status,'loading');cleanup42();const cleanup481=effects[0].setup();queue[2].reject(new TicketFailure(404));await Promise.resolve();await Promise.resolve();assert.equal(render(481).status,'missing');cleanup481();checks+=2;
  render(9);const cleanup9=effects[0].setup();queue[3].reject(new Error('sieć'));await Promise.resolve();await Promise.resolve();assert.equal(render(9).status,'error');cleanup9();checks++;
+}
+// Funkcje stanu listy: semantyka URL, historia i rzeczywista selekcja danych.
+{
+ const source=require('./practice_route_04.cjs'),load=loadProject(source),f=load('./filters'),data=load('./listData');
+ assert.equal(f.readFilters(new URLSearchParams('page=01&status=WRONG&sort=evil')).page,1);assert.equal(f.readFilters(new URLSearchParams('page=01&status=WRONG&sort=evil')).status,null);checks+=2;
+ const old=new URLSearchParams('q=api&page=4&utm=kurs&tag=ui&tag=api'),next=f.patchFilters(old,{status:'OPEN'});assert.equal(old.get('page'),'4');assert.equal(next.has('page'),false);assert.equal(next.get('q'),'api');assert.equal(next.get('utm'),'kurs');assert.deepEqual(next.getAll('tag'),['ui','api']);checks+=5;
+ assert.throws(()=>f.patchFilters(old,{page:0}),RangeError);assert.throws(()=>f.patchFilters(old,{page:1.5}),RangeError);checks+=2;
+ assert.equal(f.patchFilters(old,{page:3},false).get('page'),'3');assert.equal(f.clearFilters(old).toString(),'utm=kurs&tag=ui&tag=api');checks+=2;
+ assert.deepEqual(f.listKey(f.readFilters(new URLSearchParams('status=OPEN&page=2'))),f.listKey(f.readFilters(new URLSearchParams('page=2&status=OPEN'))));assert.equal(f.apiParams(f.readFilters(old)).has('utm'),false);checks+=2;
+ const before=JSON.stringify(data.rows),page=data.selectPage(data.rows,{status:'OPEN',q:'',sort:'priority:desc',page:1});assert.deepEqual(page.items.map(row=>row.id),[483,7]);assert.equal(page.total,3);assert.equal(page.pageCount,2);assert.equal(JSON.stringify(data.rows),before);checks+=4;
+ assert.deepEqual(data.selectPage(data.rows,{status:'OPEN',q:'',sort:'priority:desc',page:2}).items.map(row=>row.id),[482]);assert.equal(data.selectPage(data.rows,{status:'OPEN',q:'API',sort:'createdAt:desc',page:1}).total,1);checks+=2;
+ const router=createMemoryRouter(load('./routes').routes,{initialEntries:['/tickets?status=OPEN&page=2']});try{await router.navigate('/tickets?status=OPEN&page=3');await router.navigate(-1);assert.equal(router.state.location.search,'?status=OPEN&page=2');const html=renderToStaticMarkup(React.createElement(load('./providers').AppProviders,null,React.createElement(RouterProvider,{router})));assert.match(html,/API wyszukiwania/);assert.match(html,/Strona 2/);checks+=3;}finally{router.dispose();}
 }
 const {build}=await import(pathToFileURL(path.join(root,'frontend/node_modules/vite/dist/node/index.js')));const {default:reactPlugin}=await import(pathToFileURL(path.join(root,'frontend/node_modules/@vitejs/plugin-react/dist/index.js')));let builds=0;
 for(const [,source]of entries){const fixture=fs.mkdtempSync(path.join(root,'target/react-routing-build-'));for(const [file,code]of Object.entries(require(source).project)){fs.mkdirSync(path.dirname(path.join(fixture,file)),{recursive:true});fs.writeFileSync(path.join(fixture,file),code);}fs.writeFileSync(path.join(fixture,'index.html'),'<!doctype html><html lang="pl"><head><title>Routing</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>');const base=path.join(root,'frontend/node_modules');await build({root:fixture,configFile:false,logLevel:'error',plugins:[reactPlugin()],resolve:{alias:[{find:'react-router/dom',replacement:base+'/react-router/dist/development/dom-export.mjs'},{find:/^react-router$/,replacement:base+'/react-router/dist/development/index.mjs'},{find:/^react$/,replacement:base+'/react/index.js'},{find:/^react\/(.*)$/,replacement:base+'/react/$1'},{find:/^react-dom$/,replacement:base+'/react-dom/index.js'},{find:/^react-dom\/(.*)$/,replacement:base+'/react-dom/$1'}]}});assert.ok(fs.existsSync(path.join(fixture,'dist/index.html')));builds++;}
