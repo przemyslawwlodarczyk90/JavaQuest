@@ -111,6 +111,7 @@ const entries = [
   ['07_BossFullStackFeature', './practice_backend_07.cjs', 30, 100, '_react_11_backend_spring'],
   ['01_RouterBasics', './practice_route_01.cjs', 30, 100, '_react_12_routing'],
   ['02_LayoutAndNestedRoutes', './practice_route_02.cjs', 30, 100, '_react_12_routing'],
+  ['03_RouteParams', './practice_route_03.cjs', 30, 100, '_react_12_routing'],
 ];
 
 function build(source, exerciseCount, questionCount) {

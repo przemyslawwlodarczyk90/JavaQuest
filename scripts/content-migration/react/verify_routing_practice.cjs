@@ -5,6 +5,7 @@ const root=path.resolve(__dirname,'../../..'),ts=require(path.join(root,'target/
 process.env.NODE_PATH=path.join(root,'frontend/node_modules');require('node:module').Module._initPaths();
 const req=createRequire(path.join(root,'frontend/package.json')),React=req('react'),{renderToStaticMarkup}=req('react-dom/server');
 const entries=[['01_RouterBasics','./practice_route_01.cjs',30,100],['02_LayoutAndNestedRoutes','./practice_route_02.cjs',30,100]];
+entries.push(['03_RouteParams','./practice_route_03.cjs',30,100]);
 const sources=new Map();
 sources.set(path.join(root,'target/react-routing-qa/env.d.ts'),'declare module "*.module.css"{const classes:{readonly [key:string]:string};export default classes;}\ndeclare module "*.css";');
 for(const [slug,source,ec,qc] of entries){
@@ -33,8 +34,27 @@ function loadProject(source){const cache=new Map();function load(name){const key
 const {createMemoryRouter,RouterProvider,matchRoutes}=req('react-router');
 for(const [,sourcePath]of entries){const source=require(sourcePath),load=loadProject(source),routes=load('./routes').routes;
 await load('./historyCheck').verifyHistory();checks+=3;
-for(const [url,id] of [['/','dashboard'],['/tickets','tickets'],['/archive','archive'],['/settings',source.model?'profile':'settings'],['/missing','not-found']]){assert.equal(matchRoutes(routes,url).at(-1).route.id,id);checks++;}
+for(const [url,id] of [['/','dashboard'],['/tickets','tickets'],['/archive','archive'],['/settings',(source.model||source.ids)?'profile':'settings'],['/missing','not-found']]){assert.equal(matchRoutes(routes,url).at(-1).route.id,id);checks++;}
 const router=createMemoryRouter(routes,{initialEntries:['/archive']});try{const html=renderToStaticMarkup(React.createElement(load('./providers').AppProviders,null,React.createElement(RouterProvider,{router})));assert.match(html,/aria-current="page"[^>]*[^]*?Archiwum/);assert.match(html,/href="\/tickets"/);assert.equal((html.match(/<main/g)||[]).length,1);checks+=3;}finally{router.dispose();}
+}
+// Parametry i logika asynchroniczna: setup/cleanup uruchamiane jawnie, bez udawania DOM.
+{
+ const source=require('./practice_route_03.cjs'),load=loadProject(source),ids=load('./ticketIds');
+ const good=[['1',1],['42',42],['9007199254740991',Number.MAX_SAFE_INTEGER]];
+ for(const [raw,id]of good){assert.equal(ids.parseTicketId(raw),id);checks++;}
+ for(const raw of [undefined,'','0','01','1e3','42abc',' 42 ','1.5','-1','9007199254740992']){assert.equal(ids.parseTicketId(raw),null);checks++;}
+ assert.throws(()=>ids.ticketPath(0),RangeError);assert.throws(()=>ids.ticketPath(NaN),RangeError);checks+=2;
+ const {routes}=load('./routes');for(const [url,id,params]of [['/tickets/42/activity','activity',{ticketId:'42'}],['/tickets/7/comments/9','comment',{ticketId:'7',commentId:'9'}],['/files/a/b','files',{'*':'a/b'}],['/help','help',{}],['/tickets/new','new',{}]]){const match=matchRoutes(routes,url).at(-1);assert.equal(match.route.id,id);for(const [key,value]of Object.entries(params))assert.equal(match.params[key],value);checks++;}
+ const queue=[],slots=[],effects=[];let cursor=0;const fakeReact={useState(initial){const index=cursor++;if(!(index in slots))slots[index]=initial;return [slots[index],value=>slots[index]=value];},useEffect(setup,deps){effects.push({setup,deps});}};
+ const TicketFailure=load('./ticketApi').TicketFailure;
+ const hook=evaluate(source.query,{require:name=>name==='react'?fakeReact:{TicketFailure,fetchTicket:(id,signal)=>new Promise((resolve,reject)=>queue.push({id,signal,resolve,reject}))}}).useTicket;
+ const render=id=>{cursor=0;effects.length=0;return hook(id);};
+ assert.equal(render(null).status,'loading');assert.equal(effects[0].setup(),undefined);assert.equal(queue.length,0);checks++;
+ render(7);const cleanup7=effects[0].setup();assert.equal(queue[0].id,7);cleanup7();assert.equal(queue[0].signal.aborted,true);checks+=2;
+ render(42);const cleanup42=effects[0].setup();queue[1].resolve({id:42,title:'Nowy',description:''});await Promise.resolve();assert.equal(render(42).status,'ready');checks++;
+ queue[0].resolve({id:7,title:'Stary',description:''});await Promise.resolve();assert.equal(render(42).ticket.id,42);checks++;
+ assert.equal(render(481).status,'loading');cleanup42();const cleanup481=effects[0].setup();queue[2].reject(new TicketFailure(404));await Promise.resolve();await Promise.resolve();assert.equal(render(481).status,'missing');cleanup481();checks+=2;
+ render(9);const cleanup9=effects[0].setup();queue[3].reject(new Error('sieć'));await Promise.resolve();await Promise.resolve();assert.equal(render(9).status,'error');cleanup9();checks++;
 }
 const {build}=await import(pathToFileURL(path.join(root,'frontend/node_modules/vite/dist/node/index.js')));const {default:reactPlugin}=await import(pathToFileURL(path.join(root,'frontend/node_modules/@vitejs/plugin-react/dist/index.js')));let builds=0;
 for(const [,source]of entries){const fixture=fs.mkdtempSync(path.join(root,'target/react-routing-build-'));for(const [file,code]of Object.entries(require(source).project)){fs.mkdirSync(path.dirname(path.join(fixture,file)),{recursive:true});fs.writeFileSync(path.join(fixture,file),code);}fs.writeFileSync(path.join(fixture,'index.html'),'<!doctype html><html lang="pl"><head><title>Routing</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>');const base=path.join(root,'frontend/node_modules');await build({root:fixture,configFile:false,logLevel:'error',plugins:[reactPlugin()],resolve:{alias:[{find:'react-router/dom',replacement:base+'/react-router/dist/development/dom-export.mjs'},{find:/^react-router$/,replacement:base+'/react-router/dist/development/index.mjs'},{find:/^react$/,replacement:base+'/react/index.js'},{find:/^react\/(.*)$/,replacement:base+'/react/$1'},{find:/^react-dom$/,replacement:base+'/react-dom/index.js'},{find:/^react-dom\/(.*)$/,replacement:base+'/react-dom/$1'}]}});assert.ok(fs.existsSync(path.join(fixture,'dist/index.html')));builds++;}
