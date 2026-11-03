@@ -7,6 +7,7 @@ const req=createRequire(path.join(root,'frontend/package.json')),React=req('reac
 const entries=[['01_RouterBasics','./practice_route_01.cjs',30,100],['02_LayoutAndNestedRoutes','./practice_route_02.cjs',30,100]];
 entries.push(['03_RouteParams','./practice_route_03.cjs',30,100]);
 entries.push(['04_SearchParamsAsState','./practice_route_04.cjs',30,100]);
+entries.push(['05_DataLoadersAndActions','./practice_route_05.cjs',30,100]);
 const sources=new Map();
 sources.set(path.join(root,'target/react-routing-qa/env.d.ts'),'declare module "*.module.css"{const classes:{readonly [key:string]:string};export default classes;}\ndeclare module "*.css";');
 for(const [slug,source,ec,qc] of entries){
@@ -35,7 +36,7 @@ function loadProject(source){const cache=new Map();function load(name){const key
 const {createMemoryRouter,RouterProvider,matchRoutes}=req('react-router');
 for(const [,sourcePath]of entries){const source=require(sourcePath),load=loadProject(source),routes=load('./routes').routes;
 await load('./historyCheck').verifyHistory();checks+=3;
-for(const [url,id] of [['/','dashboard'],['/tickets','tickets'],['/archive','archive'],['/settings',(source.model||source.ids||source.filters)?'profile':'settings'],['/missing','not-found']]){assert.equal(matchRoutes(routes,url).at(-1).route.id,id);checks++;}
+for(const [url,id] of [['/','dashboard'],['/tickets','tickets'],['/archive','archive'],['/settings',(source.model||source.ids||source.filters||source.validation)?'profile':'settings'],['/missing','not-found']]){assert.equal(matchRoutes(routes,url).at(-1).route.id,id);checks++;}
 const router=createMemoryRouter(routes,{initialEntries:['/archive']});try{const html=renderToStaticMarkup(React.createElement(load('./providers').AppProviders,null,React.createElement(RouterProvider,{router})));assert.match(html,/aria-current="page"[^>]*[^]*?Archiwum/);assert.match(html,/href="\/tickets"/);assert.equal((html.match(/<main/g)||[]).length,1);checks+=3;}finally{router.dispose();}
 }
 // Parametry i logika asynchroniczna: setup/cleanup uruchamiane jawnie, bez udawania DOM.
@@ -68,6 +69,23 @@ const router=createMemoryRouter(routes,{initialEntries:['/archive']});try{const 
  const before=JSON.stringify(data.rows),page=data.selectPage(data.rows,{status:'OPEN',q:'',sort:'priority:desc',page:1});assert.deepEqual(page.items.map(row=>row.id),[483,7]);assert.equal(page.total,3);assert.equal(page.pageCount,2);assert.equal(JSON.stringify(data.rows),before);checks+=4;
  assert.deepEqual(data.selectPage(data.rows,{status:'OPEN',q:'',sort:'priority:desc',page:2}).items.map(row=>row.id),[482]);assert.equal(data.selectPage(data.rows,{status:'OPEN',q:'API',sort:'createdAt:desc',page:1}).total,1);checks+=2;
  const router=createMemoryRouter(load('./routes').routes,{initialEntries:['/tickets?status=OPEN&page=2']});try{await router.navigate('/tickets?status=OPEN&page=3');await router.navigate(-1);assert.equal(router.state.location.search,'?status=OPEN&page=2');const html=renderToStaticMarkup(React.createElement(load('./providers').AppProviders,null,React.createElement(RouterProvider,{router})));assert.match(html,/API wyszukiwania/);assert.match(html,/Strona 2/);checks+=3;}finally{router.dispose();}
+}
+// Loadery/action: uruchomienie rzeczywistego przepływu data routera i granic wejścia.
+{
+ const source=require('./practice_route_05.cjs'),load=loadProject(source),{readComment}=load('./commentInput'),{ticketLoader}=load('./ticketLoader'),{commentAction}=load('./commentAction');
+ const form=text=>{const f=new FormData();if(text!==undefined)f.set('text',text);return f;};
+ for(const value of [undefined,' a ','x'.repeat(501),new File(['abc'],'a.txt')]){assert.equal(readComment(form(value)).ok,false);checks++;}
+ assert.deepEqual(readComment(form('  abc  ')),{ok:true,text:'abc'});checks++;
+ const request=new Request('https://devdesk.example/tickets/42');const started=[],resolvers=[];
+ const parallel=evaluate(source.loader,{require:name=>name==='react-router'?req(name):name==='./ticketIds'?load('./ticketIds'):name==='./ticketApi'?load('./ticketApi'):{fetchTicket:(id,signal)=>new Promise(resolve=>{started.push(['ticket',id,signal]);resolvers.push(resolve);}),fetchComments:(id,signal)=>new Promise(resolve=>{started.push(['comments',id,signal]);resolvers.push(resolve);})}}).ticketLoader;
+ const pending=parallel({params:{ticketId:'42'},request,context:{}});assert.equal(started.length,2);assert.equal(started[0][2],request.signal);assert.equal(started[1][2],request.signal);resolvers[0]({id:42,title:'API',description:''});resolvers[1]([]);assert.equal((await pending).ticket.id,42);checks+=4;
+ const before=started.length;await assert.rejects(parallel({params:{ticketId:'abc'},request,context:{}}),error=>error.init?.status===400);assert.equal(started.length,before);checks+=2;
+ await assert.rejects(ticketLoader({params:{ticketId:'999'},request,context:{}}),error=>error.init?.status===404);checks++;
+ await assert.rejects(commentAction({params:{ticketId:'42'},request,context:{}}),error=>error.init?.status===405);checks++;
+ const invalid=await commentAction({params:{ticketId:'42'},request:new Request(request.url,{method:'POST',body:form(' a ')}),context:{}});assert.equal(invalid.init.status,400);assert.equal(typeof invalid.data.error,'string');checks+=2;
+ const api=load('./dataApi');const beforeComments=(await api.fetchComments(42,request.signal)).length;
+ await commentAction({params:{ticketId:'42'},request:new Request(request.url,{method:'POST',body:form('  Poprawny komentarz  ')}),context:{}});const after=await api.fetchComments(42,request.signal);assert.equal(after.length,beforeComments+1);assert.equal(after.at(-1).text,'Poprawny komentarz');checks+=2;
+ const router=createMemoryRouter(load('./routes').routes,{initialEntries:['/tickets/42']});try{await load('./historyCheck').waitReady(router);const count=router.state.loaderData.ticket.comments.length;await router.navigate('/tickets/42',{formMethod:'post',formData:form('Komentarz rewalidowany')});assert.equal(router.state.loaderData.ticket.comments.length,count+1);assert.equal(router.state.navigation.state,'idle');const html=renderToStaticMarkup(React.createElement(load('./providers').AppProviders,null,React.createElement(RouterProvider,{router})));assert.match(html,/Komentarz rewalidowany/);checks+=3;await router.navigate('/tickets/abc');assert.equal(router.state.errors.ticket.status,400);checks++;}finally{router.dispose();}
 }
 const {build}=await import(pathToFileURL(path.join(root,'frontend/node_modules/vite/dist/node/index.js')));const {default:reactPlugin}=await import(pathToFileURL(path.join(root,'frontend/node_modules/@vitejs/plugin-react/dist/index.js')));let builds=0;
 for(const [,source]of entries){const fixture=fs.mkdtempSync(path.join(root,'target/react-routing-build-'));for(const [file,code]of Object.entries(require(source).project)){fs.mkdirSync(path.dirname(path.join(fixture,file)),{recursive:true});fs.writeFileSync(path.join(fixture,file),code);}fs.writeFileSync(path.join(fixture,'index.html'),'<!doctype html><html lang="pl"><head><title>Routing</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>');const base=path.join(root,'frontend/node_modules');await build({root:fixture,configFile:false,logLevel:'error',plugins:[reactPlugin()],resolve:{alias:[{find:'react-router/dom',replacement:base+'/react-router/dist/development/dom-export.mjs'},{find:/^react-router$/,replacement:base+'/react-router/dist/development/index.mjs'},{find:/^react$/,replacement:base+'/react/index.js'},{find:/^react\/(.*)$/,replacement:base+'/react/$1'},{find:/^react-dom$/,replacement:base+'/react-dom/index.js'},{find:/^react-dom\/(.*)$/,replacement:base+'/react-dom/$1'}]}});assert.ok(fs.existsSync(path.join(fixture,'dist/index.html')));builds++;}
