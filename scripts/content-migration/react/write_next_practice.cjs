@@ -115,6 +115,15 @@ const entries = [
   ['04_SearchParamsAsState', './practice_route_04.cjs', 30, 100, '_react_12_routing'],
   ['05_DataLoadersAndActions', './practice_route_05.cjs', 30, 100, '_react_12_routing'],
   ['06_NavigationStatesAndPendingUi', './practice_route_06.cjs', 30, 100, '_react_12_routing'],
+  ['07_NotFoundAndRouteErrors', './practice_route_07.cjs', 30, 100, '_react_12_routing'],
+  ['08_BossProductRoutes', './practice_route_08.cjs', 30, 100, '_react_12_routing'],
+  ['01_WhenGlobalStateLibrary', './practice_global_01.cjs', 30, 100, '_react_13_stan_globalny'],
+  ['02_Zustand', './practice_global_02.cjs', 30, 100, '_react_13_stan_globalny'],
+  ['03_ReduxToolkitBasics', './practice_global_03.cjs', 30, 100, '_react_13_stan_globalny'],
+  ['04_ReduxAsyncAndRtkQuery', './practice_global_04.cjs', 30, 100, '_react_13_stan_globalny'],
+  ['05_JotaiAndAtomicState', './practice_global_05.cjs', 30, 100, '_react_13_stan_globalny'],
+  ['06_BossCartStore', './practice_global_06.cjs', 30, 100, '_react_13_stan_globalny'],
+  ['01_TestingStrategy', './practice_test_01.cjs', 30, 100, '_react_14_testy'],
 ];
 
 function build(source, exerciseCount, questionCount) {
