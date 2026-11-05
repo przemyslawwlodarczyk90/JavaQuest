@@ -124,6 +124,7 @@ const entries = [
   ['05_JotaiAndAtomicState', './practice_global_05.cjs', 30, 100, '_react_13_stan_globalny'],
   ['06_BossCartStore', './practice_global_06.cjs', 30, 100, '_react_13_stan_globalny'],
   ['01_TestingStrategy', './practice_test_01.cjs', 30, 100, '_react_14_testy'],
+  ['02_VitestBasics', './practice_test_02.cjs', 30, 100, '_react_14_testy'],
 ];
 
 function build(source, exerciseCount, questionCount) {
