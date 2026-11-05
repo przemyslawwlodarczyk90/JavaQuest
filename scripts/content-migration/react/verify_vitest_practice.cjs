@@ -10,6 +10,7 @@ const ts=require(path.join(root,'target/react-typescript-qa/node_modules/typescr
 const entries=[
   ['_react_15_react_od_srodka','01_ElementsAndVirtualDom','./practice_inside_01.cjs',30,100],
   ['_react_15_react_od_srodka','02_Reconciliation','./practice_inside_02.cjs',30,100],
+  ['_react_15_react_od_srodka','03_FiberArchitecture','./practice_inside_03.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;
