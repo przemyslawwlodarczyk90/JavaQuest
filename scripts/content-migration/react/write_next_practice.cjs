@@ -127,6 +127,7 @@ const entries = [
   ['02_VitestBasics', './practice_test_02.cjs', 30, 100, '_react_14_testy'],
   ['03_ReactTestingLibrary', './practice_test_03.cjs', 30, 100, '_react_14_testy'],
   ['04_UserEventInteractions', './practice_test_04.cjs', 30, 100, '_react_14_testy'],
+  ['05_TestingHooksAndContext', './practice_test_05.cjs', 30, 100, '_react_14_testy'],
 ];
 
 function build(source, exerciseCount, questionCount) {

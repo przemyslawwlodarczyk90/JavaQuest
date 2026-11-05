@@ -8,6 +8,7 @@ const entries=[['01_TestingStrategy','./practice_test_01.cjs',30,100]];
 entries.push(['02_VitestBasics','./practice_test_02.cjs',30,100]);
 entries.push(['03_ReactTestingLibrary','./practice_test_03.cjs',30,100]);
 entries.push(['04_UserEventInteractions','./practice_test_04.cjs',30,100]);
+entries.push(['05_TestingHooksAndContext','./practice_test_05.cjs',30,100]);
 const requested=process.argv.slice(2);
 if(requested.length){for(const slug of requested)assert.ok(entries.some(entry=>entry[0]===slug),'Nieznana lekcja: '+slug);for(let i=entries.length-1;i>=0;i--)if(!requested.includes(entries[i][0]))entries.splice(i,1);}
 const sources=new Map();
