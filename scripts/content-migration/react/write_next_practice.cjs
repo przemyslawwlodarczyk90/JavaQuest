@@ -135,6 +135,7 @@ const entries = [
   ['01_ElementsAndVirtualDom', './practice_inside_01.cjs', 30, 100, '_react_15_react_od_srodka'],
   ['02_Reconciliation', './practice_inside_02.cjs', 30, 100, '_react_15_react_od_srodka'],
   ['03_FiberArchitecture', './practice_inside_03.cjs', 30, 100, '_react_15_react_od_srodka'],
+  ['04_RenderAndCommitPhases', './practice_inside_04.cjs', 30, 100, '_react_15_react_od_srodka'],
 ];
 
 function build(source, exerciseCount, questionCount) {
