@@ -133,6 +133,7 @@ const entries = [
   ['08_VisualAndAccessibilityTests', './practice_test_08.cjs', 30, 100, '_react_14_testy'],
   ['09_BossTestUnknownComponent', './practice_test_09.cjs', 30, 100, '_react_14_testy'],
   ['01_ElementsAndVirtualDom', './practice_inside_01.cjs', 30, 100, '_react_15_react_od_srodka'],
+  ['02_Reconciliation', './practice_inside_02.cjs', 30, 100, '_react_15_react_od_srodka'],
 ];
 
 function build(source, exerciseCount, questionCount) {
