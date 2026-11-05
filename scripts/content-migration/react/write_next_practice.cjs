@@ -130,6 +130,7 @@ const entries = [
   ['05_TestingHooksAndContext', './practice_test_05.cjs', 30, 100, '_react_14_testy'],
   ['06_AsyncTestsWithMsw', './practice_test_06.cjs', 30, 100, '_react_14_testy'],
   ['07_PlaywrightE2e', './practice_test_07.cjs', 30, 100, '_react_14_testy'],
+  ['08_VisualAndAccessibilityTests', './practice_test_08.cjs', 30, 100, '_react_14_testy'],
 ];
 
 function build(source, exerciseCount, questionCount) {
