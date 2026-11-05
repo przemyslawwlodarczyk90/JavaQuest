@@ -72,6 +72,1292 @@
       "body": "MSW w testach (`setupServer` z `msw/node`) przechwytuje prawdziwe żądania komponentów tymi samymi handlerami co w przeglądarce; cykl `listen` → `resetHandlers` → `close` w pliku setup, a scenariusze testu przez `server.use`. Na treść asynchroniczną czekasz `findBy…`, `waitFor`, `waitForElementToBeRemoved`. Testujesz obie strony: co komponent wysłał (przechwycone w handlerze) i co pokazał. Każdy test ma świeży `QueryClient` z `retry: false`. W TSX typy kontraktu obowiązują też w mockach testów.\n\nKryterium akceptacji: tabela DevDesk ma testy stanów ładowania, sukcesu, błędu z ponowieniem i pustej listy przez MSW, mutacja zamknięcia sprawdza wysłane dane i nowy status, a test aktualizacji optymistycznej potwierdza wycofanie przy błędzie."
     }
   ],
-  "exercises": [],
-  "quiz": []
+  "exercises": [
+    {
+      "prompt": "Napisz klienta API ticketów z absolutnym adresem bazowym i klasą ApiError przenoszącą błędy pól.",
+      "hint": "W Node fetch nie rozwiąże ścieżki względnej; nagłówek Content-Type dodaj tylko, gdy jest body.",
+      "solution": "import type {Priority,Status,Ticket} from \"./ticketTypes\";\n// W Node fetch nie zna adresu strony, dlatego klient używa adresu absolutnego.\nexport const API=\"http://devdesk.test/api\";\nexport type TicketPage={items:Ticket[];total:number;page:number;pageSize:number};\nexport class ApiError extends Error{\n  constructor(readonly status:number,readonly fieldErrors:Record<string,string>={}){super(\"HTTP \"+status);this.name=\"ApiError\";}\n}\nasync function send<T>(path:string,init:RequestInit={}):Promise<T>{\n  const headers:Record<string,string>={Accept:\"application/json\"};\n  if(init.body)headers[\"Content-Type\"]=\"application/json\";\n  const response=await fetch(API+path,{...init,headers});\n  if(!response.ok){\n    let fieldErrors:Record<string,string>={};\n    try{const body=await response.json() as {fieldErrors?:Record<string,string>};fieldErrors=body.fieldErrors??{};}catch{/* treść błędu nie jest JSON */}\n    throw new ApiError(response.status,fieldErrors);\n  }\n  return await response.json() as T;\n}\nexport function fetchTickets({status,page}:{status?:Status;page:number}){\n  const params=new URLSearchParams({page:String(page)});\n  if(status)params.set(\"status\",status);\n  return send<TicketPage>(\"/tickets?\"+params.toString());\n}\nexport function patchTicket(id:number,patch:Partial<Pick<Ticket,\"status\"|\"priority\">>){\n  return send<Ticket>(\"/tickets/\"+id,{method:\"PATCH\",body:JSON.stringify(patch)});\n}\nexport function createTicket(values:{title:string;priority:Priority}){\n  return send<Ticket>(\"/tickets\",{method:\"POST\",body:JSON.stringify(values)});\n}"
+    },
+    {
+      "prompt": "Przygotuj handlery MSW z mutowalną bazą w pamięci, walidacją POST i funkcją resetDb.",
+      "hint": "Handler PATCH zwraca 404 dla nieznanego ID; POST zwraca 400 z fieldErrors.",
+      "solution": "import {http,HttpResponse} from \"msw\";\nimport {setupServer} from \"msw/node\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket,type Priority,type Ticket} from \"./ticketTypes\";\nconst seed=():Ticket[]=>[\n  makeTicket(),\n  makeTicket({id:7,title:\"Dokumentacja\",status:\"CLOSED\",priority:\"LOW\"}),\n  makeTicket({id:9,title:\"Logowanie SSO\",status:\"IN_PROGRESS\",priority:\"NORMAL\"}),\n];\nlet db=seed();\n// Handlery zmieniają bazę w pamięci, więc każdy test musi zaczynać od świeżej kopii.\nexport function resetDb(){db=seed();}\nexport const handlers=[\n  http.get(API+\"/tickets\",({request})=>{\n    const url=new URL(request.url),status=url.searchParams.get(\"status\"),page=Number(url.searchParams.get(\"page\")??\"1\"),pageSize=10;\n    const matching=status?db.filter(ticket=>ticket.status===status):db;\n    return HttpResponse.json<TicketPage>({items:matching.slice((page-1)*pageSize,page*pageSize),total:matching.length,page,pageSize});\n  }),\n  http.patch(API+\"/tickets/:id\",async({request,params})=>{\n    const id=Number(params.id),patch=await request.json() as Partial<Ticket>,index=db.findIndex(ticket=>ticket.id===id);\n    if(index<0)return HttpResponse.json({message:\"Nie ma ticketu \"+id},{status:404});\n    const saved={...db[index],...patch};db=db.map(ticket=>ticket.id===id?saved:ticket);\n    return HttpResponse.json(saved);\n  }),\n  http.post(API+\"/tickets\",async({request})=>{\n    const body=await request.json() as {title?:string;priority?:Priority},title=(body.title??\"\").trim();\n    if(title.length<5)return HttpResponse.json({fieldErrors:{title:\"Tytuł musi mieć co najmniej 5 znaków.\"}},{status:400});\n    const ticket=makeTicket({id:100+db.length,title,priority:body.priority??\"NORMAL\"});db=[...db,ticket];\n    return HttpResponse.json(ticket,{status:201});\n  }),\n];\nexport const server=setupServer(...handlers);"
+    },
+    {
+      "prompt": "Podłącz cykl życia MSW w pliku setup: listen z onUnhandledFrame, resetHandlers, close.",
+      "hint": "Po każdym teście przywróć handlery i dane — oba źródła stanu mogą przeciec.",
+      "solution": "import {afterAll,afterEach,beforeAll} from \"vitest\";\nimport {cleanup} from \"@testing-library/react\";\nimport \"@testing-library/jest-dom/vitest\";\nimport {resetDb,server} from \"./mswServer\";\n// MSW 3: onUnhandledFrame (w MSW 2 ta opcja nazywała się onUnhandledRequest).\nbeforeAll(()=>server.listen({onUnhandledFrame:\"error\"}));\nafterEach(()=>{cleanup();server.resetHandlers();resetDb();});\nafterAll(()=>server.close());"
+    },
+    {
+      "prompt": "Zbuduj TicketsPage na TanStack Query: ładowanie, błąd z ponowieniem, pusty stan i tabela.",
+      "hint": "Klucz zapytania zawiera status i stronę odczytane z adresu.",
+      "solution": "import {useMutation,useQuery,useQueryClient} from \"@tanstack/react-query\";\nimport {useSearchParams} from \"react-router\";\nimport {PriorityBadge,StatusBadge} from \"./badges\";\nimport {fetchTickets,patchTicket,type TicketPage} from \"./ticketApi\";\nimport {statuses,type Priority,type Status} from \"./ticketTypes\";\nfunction parseStatus(raw:string|null):Status|undefined{return statuses.find(status=>status===raw);}\nexport function TicketsPage(){\n  const [params,setParams]=useSearchParams();\n  const status=parseStatus(params.get(\"status\")),page=Math.max(1,Math.floor(Number(params.get(\"page\")))||1);\n  const key=[\"tickets\",{status:status??null,page}] as const;\n  const client=useQueryClient();\n  const query=useQuery({queryKey:key,queryFn:()=>fetchTickets({status,page})});\n  const close=useMutation({\n    mutationFn:(id:number)=>patchTicket(id,{status:\"CLOSED\"}),\n    onSuccess:saved=>{client.setQueryData<TicketPage>(key,old=>old&&{...old,items:old.items.map(t=>t.id===saved.id?saved:t)});},\n  });\n  const raise=useMutation({\n    mutationFn:({id,priority}:{id:number;priority:Priority})=>patchTicket(id,{priority}),\n    onMutate:async({id,priority})=>{\n      await client.cancelQueries({queryKey:key});\n      const previous=client.getQueryData<TicketPage>(key);\n      client.setQueryData<TicketPage>(key,old=>old&&{...old,items:old.items.map(t=>t.id===id?{...t,priority}:t)});\n      return {previous};\n    },\n    onError:(_error,_variables,context)=>{if(context?.previous)client.setQueryData(key,context.previous);},\n    onSettled:()=>client.invalidateQueries({queryKey:[\"tickets\"]}),\n  });\n  if(query.isPending)return <p aria-label=\"Ładowanie ticketów\" aria-busy=\"true\">Ładowanie…</p>;\n  if(query.isError)return <div role=\"alert\"><p>Nie udało się wczytać ticketów.</p><button type=\"button\" onClick={()=>void query.refetch()}>Spróbuj ponownie</button></div>;\n  if(query.data.items.length===0)return <section><p>Brak ticketów pasujących do filtrów.</p><button type=\"button\" onClick={()=>setParams({})}>Wyczyść filtry</button></section>;\n  return <section>\n    {raise.isError&&<p role=\"alert\">Nie zapisano priorytetu. Przywrócono poprzednią wartość.</p>}\n    {close.isError&&<p role=\"alert\">Nie udało się zamknąć ticketu.</p>}\n    <table><caption>Tickety ({query.data.total})</caption>\n      <thead><tr><th scope=\"col\">Tytuł</th><th scope=\"col\">Status</th><th scope=\"col\">Priorytet</th><th scope=\"col\">Akcje</th></tr></thead>\n      <tbody>{query.data.items.map(ticket=><tr key={ticket.id}>\n        <td>{ticket.title}</td><td><StatusBadge status={ticket.status}/></td><td><PriorityBadge priority={ticket.priority}/></td>\n        <td>\n          {ticket.status!==\"CLOSED\"&&<button type=\"button\" disabled={close.isPending} onClick={()=>close.mutate(ticket.id)}>Zamknij</button>}\n          {ticket.priority!==\"HIGH\"&&<button type=\"button\" onClick={()=>raise.mutate({id:ticket.id,priority:\"HIGH\"})}>Podnieś priorytet</button>}\n        </td>\n      </tr>)}</tbody>\n    </table>\n  </section>;\n}"
+    },
+    {
+      "prompt": "Dodaj formularz tworzenia ticketu, który pokazuje błąd 400 przy polu tytułu.",
+      "hint": "Rozróżnij ApiError z fieldErrors od ogólnego błędu formularza.",
+      "solution": "import {useMutation,useQueryClient} from \"@tanstack/react-query\";\nimport {useId,useState,type FormEvent} from \"react\";\nimport {ApiError,createTicket} from \"./ticketApi\";\nexport function CreateTicketForm(){\n  const id=useId(),client=useQueryClient();\n  const [title,setTitle]=useState(\"\");\n  const create=useMutation({mutationFn:createTicket,onSuccess:()=>{setTitle(\"\");return client.invalidateQueries({queryKey:[\"tickets\"]});}});\n  const fieldError=create.error instanceof ApiError?create.error.fieldErrors.title:undefined;\n  const formError=create.error&&!fieldError?\"Nie udało się utworzyć ticketu.\":undefined;\n  function submit(event:FormEvent<HTMLFormElement>){event.preventDefault();create.mutate({title,priority:\"NORMAL\"});}\n  return <form noValidate onSubmit={submit}>\n    <label htmlFor={id}>Tytuł</label>\n    <input id={id} value={title} aria-invalid={!!fieldError} aria-describedby={fieldError?id+\"-error\":undefined} onChange={event=>setTitle(event.currentTarget.value)}/>\n    {fieldError&&<p id={id+\"-error\"}>{fieldError}</p>}\n    {formError&&<p role=\"alert\">{formError}</p>}\n    {create.isSuccess&&<p role=\"status\">Utworzono ticket #{create.data.id}.</p>}\n    <button type=\"submit\" disabled={create.isPending}>{create.isPending?\"Zapisywanie…\":\"Utwórz\"}</button>\n  </form>;\n}"
+    },
+    {
+      "prompt": "Przetestuj przejście od stanu ładowania do wiersza z danymi z MSW.",
+      "hint": "Pierwszą asercję zrób synchronicznie, drugą przez findByRole.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"pokazuje ładowanie, a potem tickety z API\",async()=>{\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets\"});\n  expect(screen.getByLabelText(\"Ładowanie ticketów\")).toBeInTheDocument();\n  expect(await screen.findByRole(\"row\",{name:/API timeout/})).toBeInTheDocument();\n  expect(screen.queryByLabelText(\"Ładowanie ticketów\")).not.toBeInTheDocument();\n});\ntest(\"waitForElementToBeRemoved czeka na zniknięcie wskaźnika\",async()=>{\n  renderWithProviders(<TicketsPage/>);\n  await waitForElementToBeRemoved(()=>screen.queryByLabelText(\"Ładowanie ticketów\"));\n  expect(screen.getByRole(\"table\",{name:\"Tickety (3)\"})).toBeInTheDocument();\n  expect(screen.getAllByRole(\"row\")).toHaveLength(4);\n});"
+    },
+    {
+      "prompt": "Poczekaj na zniknięcie wskaźnika ładowania przez waitForElementToBeRemoved i policz wiersze.",
+      "hint": "Callback musi zwrócić element obecny w chwili wywołania.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"pokazuje ładowanie, a potem tickety z API\",async()=>{\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets\"});\n  expect(screen.getByLabelText(\"Ładowanie ticketów\")).toBeInTheDocument();\n  expect(await screen.findByRole(\"row\",{name:/API timeout/})).toBeInTheDocument();\n  expect(screen.queryByLabelText(\"Ładowanie ticketów\")).not.toBeInTheDocument();\n});\ntest(\"waitForElementToBeRemoved czeka na zniknięcie wskaźnika\",async()=>{\n  renderWithProviders(<TicketsPage/>);\n  await waitForElementToBeRemoved(()=>screen.queryByLabelText(\"Ładowanie ticketów\"));\n  expect(screen.getByRole(\"table\",{name:\"Tickety (3)\"})).toBeInTheDocument();\n  expect(screen.getAllByRole(\"row\")).toHaveLength(4);\n});"
+    },
+    {
+      "prompt": "Przetestuj błąd 500 i ponowienie, licząc wywołania handlera.",
+      "hint": "Pierwsze wywołanie zwraca 500, drugie pustą stronę.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"błąd 500 pokazuje komunikat, a ponowienie wysyła drugie żądanie\",async()=>{\n  let calls=0;\n  server.use(http.get(API+\"/tickets\",()=>{calls+=1;return calls===1?HttpResponse.json({message:\"Błąd\"},{status:500}):HttpResponse.json(empty);}));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się wczytać ticketów.\");\n  expect(screen.queryByRole(\"table\")).not.toBeInTheDocument();\n  await user.click(screen.getByRole(\"button\",{name:\"Spróbuj ponownie\"}));\n  expect(await screen.findByText(\"Brak ticketów pasujących do filtrów.\")).toBeInTheDocument();\n  expect(calls).toBe(2);\n});\ntest(\"bez retry:false test błędu czekałby na ponowienia — tu jest jedno żądanie\",async()=>{\n  let calls=0;\n  server.use(http.get(API+\"/tickets\",()=>{calls+=1;return HttpResponse.json({message:\"Błąd\"},{status:503});}));\n  renderWithProviders(<TicketsPage/>);\n  await screen.findByRole(\"alert\");\n  expect(calls).toBe(1);\n});"
+    },
+    {
+      "prompt": "Sprawdź, że błąd ma rolę alert, tabela nie jest pokazana, a bez ponowień jest jedno żądanie.",
+      "hint": "retry:false w renderWithProviders decyduje o liczbie wywołań.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"błąd 500 pokazuje komunikat, a ponowienie wysyła drugie żądanie\",async()=>{\n  let calls=0;\n  server.use(http.get(API+\"/tickets\",()=>{calls+=1;return calls===1?HttpResponse.json({message:\"Błąd\"},{status:500}):HttpResponse.json(empty);}));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się wczytać ticketów.\");\n  expect(screen.queryByRole(\"table\")).not.toBeInTheDocument();\n  await user.click(screen.getByRole(\"button\",{name:\"Spróbuj ponownie\"}));\n  expect(await screen.findByText(\"Brak ticketów pasujących do filtrów.\")).toBeInTheDocument();\n  expect(calls).toBe(2);\n});\ntest(\"bez retry:false test błędu czekałby na ponowienia — tu jest jedno żądanie\",async()=>{\n  let calls=0;\n  server.use(http.get(API+\"/tickets\",()=>{calls+=1;return HttpResponse.json({message:\"Błąd\"},{status:503});}));\n  renderWithProviders(<TicketsPage/>);\n  await screen.findByRole(\"alert\");\n  expect(calls).toBe(1);\n});"
+    },
+    {
+      "prompt": "Odczytaj w handlerze searchParams i sprawdź, że filtr z adresu trafił do API.",
+      "hint": "Porównaj pełny łańcuch parametrów, nie tylko obecność statusu.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"filtr z adresu trafia do zapytania\",async()=>{\n  const seen:string[]=[];\n  server.use(http.get(API+\"/tickets\",({request})=>{seen.push(new URL(request.url).searchParams.toString());return HttpResponse.json(empty);}));\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=OPEN&page=2\"});\n  expect(await screen.findByText(\"Brak ticketów pasujących do filtrów.\")).toBeInTheDocument();\n  expect(seen).toEqual([\"page=2&status=OPEN\"]);\n});\ntest(\"niepoprawny status z adresu nie trafia do API\",async()=>{\n  const seen:string[]=[];\n  server.use(http.get(API+\"/tickets\",({request})=>{seen.push(new URL(request.url).search);return HttpResponse.json(empty);}));\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=HACK&page=-4\"});\n  await screen.findByText(\"Brak ticketów pasujących do filtrów.\");\n  expect(seen).toEqual([\"?page=1\"]);\n});\ntest(\"pusty stan: Wyczyść filtry pobiera pełną listę\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(empty),{once:true}));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=OPEN\"});\n  await user.click(await screen.findByRole(\"button\",{name:\"Wyczyść filtry\"}));\n  expect(await screen.findByRole(\"table\",{name:\"Tickety (3)\"})).toBeInTheDocument();\n});"
+    },
+    {
+      "prompt": "Sprawdź, że niepoprawny status i ujemna strona z adresu nie trafiają do API.",
+      "hint": "Parsowanie adresu jest kontraktem ekranu.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"filtr z adresu trafia do zapytania\",async()=>{\n  const seen:string[]=[];\n  server.use(http.get(API+\"/tickets\",({request})=>{seen.push(new URL(request.url).searchParams.toString());return HttpResponse.json(empty);}));\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=OPEN&page=2\"});\n  expect(await screen.findByText(\"Brak ticketów pasujących do filtrów.\")).toBeInTheDocument();\n  expect(seen).toEqual([\"page=2&status=OPEN\"]);\n});\ntest(\"niepoprawny status z adresu nie trafia do API\",async()=>{\n  const seen:string[]=[];\n  server.use(http.get(API+\"/tickets\",({request})=>{seen.push(new URL(request.url).search);return HttpResponse.json(empty);}));\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=HACK&page=-4\"});\n  await screen.findByText(\"Brak ticketów pasujących do filtrów.\");\n  expect(seen).toEqual([\"?page=1\"]);\n});\ntest(\"pusty stan: Wyczyść filtry pobiera pełną listę\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(empty),{once:true}));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=OPEN\"});\n  await user.click(await screen.findByRole(\"button\",{name:\"Wyczyść filtry\"}));\n  expect(await screen.findByRole(\"table\",{name:\"Tickety (3)\"})).toBeInTheDocument();\n});"
+    },
+    {
+      "prompt": "Przetestuj pusty stan jednorazowym handlerem i przycisk Wyczyść filtry.",
+      "hint": "Opcja {once:true} sprawia, że kolejne żądanie trafi do domyślnego handlera.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"filtr z adresu trafia do zapytania\",async()=>{\n  const seen:string[]=[];\n  server.use(http.get(API+\"/tickets\",({request})=>{seen.push(new URL(request.url).searchParams.toString());return HttpResponse.json(empty);}));\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=OPEN&page=2\"});\n  expect(await screen.findByText(\"Brak ticketów pasujących do filtrów.\")).toBeInTheDocument();\n  expect(seen).toEqual([\"page=2&status=OPEN\"]);\n});\ntest(\"niepoprawny status z adresu nie trafia do API\",async()=>{\n  const seen:string[]=[];\n  server.use(http.get(API+\"/tickets\",({request})=>{seen.push(new URL(request.url).search);return HttpResponse.json(empty);}));\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=HACK&page=-4\"});\n  await screen.findByText(\"Brak ticketów pasujących do filtrów.\");\n  expect(seen).toEqual([\"?page=1\"]);\n});\ntest(\"pusty stan: Wyczyść filtry pobiera pełną listę\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(empty),{once:true}));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>,{route:\"/tickets?status=OPEN\"});\n  await user.click(await screen.findByRole(\"button\",{name:\"Wyczyść filtry\"}));\n  expect(await screen.findByRole(\"table\",{name:\"Tickety (3)\"})).toBeInTheDocument();\n});"
+    },
+    {
+      "prompt": "Przetestuj zamknięcie ticketu: wysłany PATCH i nowy status w tym samym wierszu.",
+      "hint": "Zbieraj dane w handlerze, a asercje wykonuj w treści testu.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"zamknięcie wysyła PATCH i odświeża status w tym samym wierszu\",async()=>{\n  const sent:unknown[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request,params})=>{\n    sent.push({id:params.id,body:await request.json()});\n    return HttpResponse.json(makeTicket({status:\"CLOSED\"}));\n  }));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await within(row).findByText(\"Zamknięty\")).toBeInTheDocument();\n  expect(sent).toEqual([{id:\"42\",body:{status:\"CLOSED\"}}]);\n  expect(within(row).queryByRole(\"button\",{name:\"Zamknij\"})).not.toBeInTheDocument();\n});\ntest(\"błąd zamknięcia pokazuje komunikat i zostawia status\",async()=>{\n  server.use(http.patch(API+\"/tickets/:id\",()=>HttpResponse.json({message:\"Błąd\"},{status:500})));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się zamknąć ticketu.\");\n  expect(within(row).getByText(\"Otwarty\")).toBeInTheDocument();\n});\ntest(\"cache po zamknięciu zawiera odpowiedź serwera\",async()=>{\n  const user=userEvent.setup();\n  const {queryClient}=renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  await within(row).findByText(\"Zamknięty\");\n  const cached=queryClient.getQueryData<TicketPage>([\"tickets\",{status:null,page:1}]);\n  expect(cached?.items.find(ticket=>ticket.id===42)?.status).toBe(\"CLOSED\");\n});"
+    },
+    {
+      "prompt": "Sprawdź, że po zamknięciu w wierszu znika przycisk Zamknij.",
+      "hint": "Ogranicz zapytanie do wiersza przez within.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"zamknięcie wysyła PATCH i odświeża status w tym samym wierszu\",async()=>{\n  const sent:unknown[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request,params})=>{\n    sent.push({id:params.id,body:await request.json()});\n    return HttpResponse.json(makeTicket({status:\"CLOSED\"}));\n  }));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await within(row).findByText(\"Zamknięty\")).toBeInTheDocument();\n  expect(sent).toEqual([{id:\"42\",body:{status:\"CLOSED\"}}]);\n  expect(within(row).queryByRole(\"button\",{name:\"Zamknij\"})).not.toBeInTheDocument();\n});\ntest(\"błąd zamknięcia pokazuje komunikat i zostawia status\",async()=>{\n  server.use(http.patch(API+\"/tickets/:id\",()=>HttpResponse.json({message:\"Błąd\"},{status:500})));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się zamknąć ticketu.\");\n  expect(within(row).getByText(\"Otwarty\")).toBeInTheDocument();\n});\ntest(\"cache po zamknięciu zawiera odpowiedź serwera\",async()=>{\n  const user=userEvent.setup();\n  const {queryClient}=renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  await within(row).findByText(\"Zamknięty\");\n  const cached=queryClient.getQueryData<TicketPage>([\"tickets\",{status:null,page:1}]);\n  expect(cached?.items.find(ticket=>ticket.id===42)?.status).toBe(\"CLOSED\");\n});"
+    },
+    {
+      "prompt": "Przetestuj błąd zamknięcia: komunikat w roli alert i niezmieniony status.",
+      "hint": "Odpowiedź 500 z server.use dotyczy tylko tego testu.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"zamknięcie wysyła PATCH i odświeża status w tym samym wierszu\",async()=>{\n  const sent:unknown[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request,params})=>{\n    sent.push({id:params.id,body:await request.json()});\n    return HttpResponse.json(makeTicket({status:\"CLOSED\"}));\n  }));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await within(row).findByText(\"Zamknięty\")).toBeInTheDocument();\n  expect(sent).toEqual([{id:\"42\",body:{status:\"CLOSED\"}}]);\n  expect(within(row).queryByRole(\"button\",{name:\"Zamknij\"})).not.toBeInTheDocument();\n});\ntest(\"błąd zamknięcia pokazuje komunikat i zostawia status\",async()=>{\n  server.use(http.patch(API+\"/tickets/:id\",()=>HttpResponse.json({message:\"Błąd\"},{status:500})));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się zamknąć ticketu.\");\n  expect(within(row).getByText(\"Otwarty\")).toBeInTheDocument();\n});\ntest(\"cache po zamknięciu zawiera odpowiedź serwera\",async()=>{\n  const user=userEvent.setup();\n  const {queryClient}=renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  await within(row).findByText(\"Zamknięty\");\n  const cached=queryClient.getQueryData<TicketPage>([\"tickets\",{status:null,page:1}]);\n  expect(cached?.items.find(ticket=>ticket.id===42)?.status).toBe(\"CLOSED\");\n});"
+    },
+    {
+      "prompt": "Użyj queryClient zwróconego z renderWithProviders, by sprawdzić cache po mutacji.",
+      "hint": "Klucz musi być identyczny z kluczem ekranu.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\ntest(\"zamknięcie wysyła PATCH i odświeża status w tym samym wierszu\",async()=>{\n  const sent:unknown[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request,params})=>{\n    sent.push({id:params.id,body:await request.json()});\n    return HttpResponse.json(makeTicket({status:\"CLOSED\"}));\n  }));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await within(row).findByText(\"Zamknięty\")).toBeInTheDocument();\n  expect(sent).toEqual([{id:\"42\",body:{status:\"CLOSED\"}}]);\n  expect(within(row).queryByRole(\"button\",{name:\"Zamknij\"})).not.toBeInTheDocument();\n});\ntest(\"błąd zamknięcia pokazuje komunikat i zostawia status\",async()=>{\n  server.use(http.patch(API+\"/tickets/:id\",()=>HttpResponse.json({message:\"Błąd\"},{status:500})));\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się zamknąć ticketu.\");\n  expect(within(row).getByText(\"Otwarty\")).toBeInTheDocument();\n});\ntest(\"cache po zamknięciu zawiera odpowiedź serwera\",async()=>{\n  const user=userEvent.setup();\n  const {queryClient}=renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/API timeout/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Zamknij\"}));\n  await within(row).findByText(\"Zamknięty\");\n  const cached=queryClient.getQueryData<TicketPage>([\"tickets\",{status:null,page:1}]);\n  expect(cached?.items.find(ticket=>ticket.id===42)?.status).toBe(\"CLOSED\");\n});"
+    },
+    {
+      "prompt": "Steruj czasem odpowiedzi PATCH bramką Promise, by uchwycić stan optymistyczny.",
+      "hint": "Zwolnij bramkę dopiero po asercji pośredniego stanu.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\nconst rows=()=>HttpResponse.json<TicketPage>({items:[makeTicket(),makeTicket({id:9,title:\"Logowanie SSO\",status:\"IN_PROGRESS\",priority:\"NORMAL\"})],total:2,page:1,pageSize:10});\ntest(\"plakietka zmienia się od razu, a po 500 wraca, zanim przyjdzie ponowne pobranie\",async()=>{\n  let releasePatch!:()=>void,releaseRefetch!:()=>void,gets=0;\n  const patchGate=new Promise<void>(resolve=>{releasePatch=resolve;}),refetchGate=new Promise<void>(resolve=>{releaseRefetch=resolve;});\n  server.use(\n    http.get(API+\"/tickets\",async()=>{gets+=1;if(gets>1)await refetchGate;return rows();}),\n    http.patch(API+\"/tickets/:id\",async()=>{await patchGate;return HttpResponse.json({message:\"Błąd\"},{status:500});}),\n  );\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/Logowanie SSO/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Podnieś priorytet\"}));\n  expect(await within(row).findByText(\"Wysoki\")).toBeInTheDocument();\n  releasePatch();\n  expect(await within(row).findByText(\"Zwykły\")).toBeInTheDocument();\n  await waitFor(()=>expect(gets).toBe(2));\n  // onSettled zwraca obietnicę invalidateQueries: mutacja jest pending, dopóki refetch trwa.\n  expect(screen.queryByRole(\"alert\")).not.toBeInTheDocument();\n  releaseRefetch();\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Przywrócono poprzednią wartość\");\n});\ntest(\"udana zmiana zostaje po odpowiedzi serwera i odświeżeniu\",async()=>{\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/Logowanie SSO/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Podnieś priorytet\"}));\n  expect(await within(row).findByText(\"Wysoki\")).toBeInTheDocument();\n  await waitFor(()=>expect(within(row).queryByRole(\"button\",{name:\"Podnieś priorytet\"})).not.toBeInTheDocument());\n  expect(screen.queryByRole(\"alert\")).not.toBeInTheDocument();\n});"
+    },
+    {
+      "prompt": "Udowodnij wycofanie optymistycznej zmiany, gdy ponowne pobranie jeszcze trwa.",
+      "hint": "Zatrzymaj drugi GET, żeby rollback nie mógł być zastąpiony refetchem.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\nconst rows=()=>HttpResponse.json<TicketPage>({items:[makeTicket(),makeTicket({id:9,title:\"Logowanie SSO\",status:\"IN_PROGRESS\",priority:\"NORMAL\"})],total:2,page:1,pageSize:10});\ntest(\"plakietka zmienia się od razu, a po 500 wraca, zanim przyjdzie ponowne pobranie\",async()=>{\n  let releasePatch!:()=>void,releaseRefetch!:()=>void,gets=0;\n  const patchGate=new Promise<void>(resolve=>{releasePatch=resolve;}),refetchGate=new Promise<void>(resolve=>{releaseRefetch=resolve;});\n  server.use(\n    http.get(API+\"/tickets\",async()=>{gets+=1;if(gets>1)await refetchGate;return rows();}),\n    http.patch(API+\"/tickets/:id\",async()=>{await patchGate;return HttpResponse.json({message:\"Błąd\"},{status:500});}),\n  );\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/Logowanie SSO/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Podnieś priorytet\"}));\n  expect(await within(row).findByText(\"Wysoki\")).toBeInTheDocument();\n  releasePatch();\n  expect(await within(row).findByText(\"Zwykły\")).toBeInTheDocument();\n  await waitFor(()=>expect(gets).toBe(2));\n  // onSettled zwraca obietnicę invalidateQueries: mutacja jest pending, dopóki refetch trwa.\n  expect(screen.queryByRole(\"alert\")).not.toBeInTheDocument();\n  releaseRefetch();\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Przywrócono poprzednią wartość\");\n});\ntest(\"udana zmiana zostaje po odpowiedzi serwera i odświeżeniu\",async()=>{\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/Logowanie SSO/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Podnieś priorytet\"}));\n  expect(await within(row).findByText(\"Wysoki\")).toBeInTheDocument();\n  await waitFor(()=>expect(within(row).queryByRole(\"button\",{name:\"Podnieś priorytet\"})).not.toBeInTheDocument());\n  expect(screen.queryByRole(\"alert\")).not.toBeInTheDocument();\n});"
+    },
+    {
+      "prompt": "Sprawdź udaną optymistyczną zmianę: plakietka zostaje i nie ma komunikatu błędu.",
+      "hint": "Czekaj na zniknięcie przycisku zamiast na losową pauzę.",
+      "solution": "// @vitest-environment jsdom\nimport {screen,waitFor,waitForElementToBeRemoved,within} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,type TicketPage} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst empty:TicketPage={items:[],total:0,page:1,pageSize:10};\nconst rows=()=>HttpResponse.json<TicketPage>({items:[makeTicket(),makeTicket({id:9,title:\"Logowanie SSO\",status:\"IN_PROGRESS\",priority:\"NORMAL\"})],total:2,page:1,pageSize:10});\ntest(\"plakietka zmienia się od razu, a po 500 wraca, zanim przyjdzie ponowne pobranie\",async()=>{\n  let releasePatch!:()=>void,releaseRefetch!:()=>void,gets=0;\n  const patchGate=new Promise<void>(resolve=>{releasePatch=resolve;}),refetchGate=new Promise<void>(resolve=>{releaseRefetch=resolve;});\n  server.use(\n    http.get(API+\"/tickets\",async()=>{gets+=1;if(gets>1)await refetchGate;return rows();}),\n    http.patch(API+\"/tickets/:id\",async()=>{await patchGate;return HttpResponse.json({message:\"Błąd\"},{status:500});}),\n  );\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/Logowanie SSO/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Podnieś priorytet\"}));\n  expect(await within(row).findByText(\"Wysoki\")).toBeInTheDocument();\n  releasePatch();\n  expect(await within(row).findByText(\"Zwykły\")).toBeInTheDocument();\n  await waitFor(()=>expect(gets).toBe(2));\n  // onSettled zwraca obietnicę invalidateQueries: mutacja jest pending, dopóki refetch trwa.\n  expect(screen.queryByRole(\"alert\")).not.toBeInTheDocument();\n  releaseRefetch();\n  expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Przywrócono poprzednią wartość\");\n});\ntest(\"udana zmiana zostaje po odpowiedzi serwera i odświeżeniu\",async()=>{\n  const user=userEvent.setup();\n  renderWithProviders(<TicketsPage/>);\n  const row=await screen.findByRole(\"row\",{name:/Logowanie SSO/});\n  await user.click(within(row).getByRole(\"button\",{name:\"Podnieś priorytet\"}));\n  expect(await within(row).findByText(\"Wysoki\")).toBeInTheDocument();\n  await waitFor(()=>expect(within(row).queryByRole(\"button\",{name:\"Podnieś priorytet\"})).not.toBeInTheDocument());\n  expect(screen.queryByRole(\"alert\")).not.toBeInTheDocument();\n});"
+    },
+    {
+      "prompt": "Przetestuj błąd 400 formularza: komunikat powiązany z polem i aria-invalid.",
+      "hint": "toHaveAccessibleDescription sprawdza powiązanie aria-describedby.",
+      "solution": "// @vitest-environment jsdom\nimport {screen} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {CreateTicketForm} from \"./CreateTicketForm\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\ntest(\"400 z serwera pokazuje błąd przy polu tytułu\",async()=>{\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  const input=screen.getByLabelText(\"Tytuł\");\n  await user.type(input,\"abc\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByText(\"Tytuł musi mieć co najmniej 5 znaków.\")).toBeInTheDocument();\n  expect(input).toHaveAttribute(\"aria-invalid\",\"true\");\n  expect(input).toHaveAccessibleDescription(\"Tytuł musi mieć co najmniej 5 znaków.\");\n  expect(input).toHaveValue(\"abc\");\n});\ntest(\"udane utworzenie wysyła JSON, pokazuje status i czyści pole\",async()=>{\n  const bodies:unknown[]=[];\n  server.use(http.post(API+\"/tickets\",async({request})=>{bodies.push(await request.json());return HttpResponse.json(makeTicket({id:103,title:\"Nowy ticket\"}),{status:201});}));\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  await user.type(screen.getByLabelText(\"Tytuł\"),\"Nowy ticket\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByRole(\"status\")).toHaveTextContent(\"Utworzono ticket #103.\");\n  expect(bodies).toEqual([{title:\"Nowy ticket\",priority:\"NORMAL\"}]);\n  expect(screen.getByLabelText(\"Tytuł\")).toHaveValue(\"\");\n});\ntest(\"w trakcie wysyłania przycisk jest zablokowany\",async()=>{\n  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});\n  server.use(http.post(API+\"/tickets\",async()=>{await gate;return HttpResponse.json(makeTicket({id:104}),{status:201});}));\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  await user.type(screen.getByLabelText(\"Tytuł\"),\"Długi tytuł\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByRole(\"button\",{name:\"Zapisywanie…\"})).toBeDisabled();\n  release();\n  expect(await screen.findByRole(\"button\",{name:\"Utwórz\"})).toBeEnabled();\n});"
+    },
+    {
+      "prompt": "Przetestuj udane utworzenie: treść POST, komunikat statusu i wyczyszczone pole.",
+      "hint": "Odczytaj request.json() w handlerze i porównaj z oczekiwanym obiektem.",
+      "solution": "// @vitest-environment jsdom\nimport {screen} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {CreateTicketForm} from \"./CreateTicketForm\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\ntest(\"400 z serwera pokazuje błąd przy polu tytułu\",async()=>{\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  const input=screen.getByLabelText(\"Tytuł\");\n  await user.type(input,\"abc\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByText(\"Tytuł musi mieć co najmniej 5 znaków.\")).toBeInTheDocument();\n  expect(input).toHaveAttribute(\"aria-invalid\",\"true\");\n  expect(input).toHaveAccessibleDescription(\"Tytuł musi mieć co najmniej 5 znaków.\");\n  expect(input).toHaveValue(\"abc\");\n});\ntest(\"udane utworzenie wysyła JSON, pokazuje status i czyści pole\",async()=>{\n  const bodies:unknown[]=[];\n  server.use(http.post(API+\"/tickets\",async({request})=>{bodies.push(await request.json());return HttpResponse.json(makeTicket({id:103,title:\"Nowy ticket\"}),{status:201});}));\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  await user.type(screen.getByLabelText(\"Tytuł\"),\"Nowy ticket\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByRole(\"status\")).toHaveTextContent(\"Utworzono ticket #103.\");\n  expect(bodies).toEqual([{title:\"Nowy ticket\",priority:\"NORMAL\"}]);\n  expect(screen.getByLabelText(\"Tytuł\")).toHaveValue(\"\");\n});\ntest(\"w trakcie wysyłania przycisk jest zablokowany\",async()=>{\n  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});\n  server.use(http.post(API+\"/tickets\",async()=>{await gate;return HttpResponse.json(makeTicket({id:104}),{status:201});}));\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  await user.type(screen.getByLabelText(\"Tytuł\"),\"Długi tytuł\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByRole(\"button\",{name:\"Zapisywanie…\"})).toBeDisabled();\n  release();\n  expect(await screen.findByRole(\"button\",{name:\"Utwórz\"})).toBeEnabled();\n});"
+    },
+    {
+      "prompt": "Sprawdź, że przycisk jest zablokowany w trakcie wysyłania formularza.",
+      "hint": "Bramka w handlerze POST trzyma mutację w stanie pending.",
+      "solution": "// @vitest-environment jsdom\nimport {screen} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {CreateTicketForm} from \"./CreateTicketForm\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API} from \"./ticketApi\";\nimport {makeTicket} from \"./ticketTypes\";\ntest(\"400 z serwera pokazuje błąd przy polu tytułu\",async()=>{\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  const input=screen.getByLabelText(\"Tytuł\");\n  await user.type(input,\"abc\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByText(\"Tytuł musi mieć co najmniej 5 znaków.\")).toBeInTheDocument();\n  expect(input).toHaveAttribute(\"aria-invalid\",\"true\");\n  expect(input).toHaveAccessibleDescription(\"Tytuł musi mieć co najmniej 5 znaków.\");\n  expect(input).toHaveValue(\"abc\");\n});\ntest(\"udane utworzenie wysyła JSON, pokazuje status i czyści pole\",async()=>{\n  const bodies:unknown[]=[];\n  server.use(http.post(API+\"/tickets\",async({request})=>{bodies.push(await request.json());return HttpResponse.json(makeTicket({id:103,title:\"Nowy ticket\"}),{status:201});}));\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  await user.type(screen.getByLabelText(\"Tytuł\"),\"Nowy ticket\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByRole(\"status\")).toHaveTextContent(\"Utworzono ticket #103.\");\n  expect(bodies).toEqual([{title:\"Nowy ticket\",priority:\"NORMAL\"}]);\n  expect(screen.getByLabelText(\"Tytuł\")).toHaveValue(\"\");\n});\ntest(\"w trakcie wysyłania przycisk jest zablokowany\",async()=>{\n  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});\n  server.use(http.post(API+\"/tickets\",async()=>{await gate;return HttpResponse.json(makeTicket({id:104}),{status:201});}));\n  const user=userEvent.setup();\n  renderWithProviders(<CreateTicketForm/>);\n  await user.type(screen.getByLabelText(\"Tytuł\"),\"Długi tytuł\");\n  await user.click(screen.getByRole(\"button\",{name:\"Utwórz\"}));\n  expect(await screen.findByRole(\"button\",{name:\"Zapisywanie…\"})).toBeDisabled();\n  release();\n  expect(await screen.findByRole(\"button\",{name:\"Utwórz\"})).toBeEnabled();\n});"
+    },
+    {
+      "prompt": "Przetestuj klienta bez Reacta w środowisku node: parametry i odpowiedź.",
+      "hint": "Domyślne handlery wystarczą — filtr CLOSED zwraca jeden ticket.",
+      "solution": "// @vitest-environment node\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test,vi} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";\ntest(\"klient wysyła parametry i zwraca stronę\",async()=>{\n  const page=await fetchTickets({status:\"CLOSED\",page:1});\n  expect(page.items.map(ticket=>ticket.id)).toEqual([7]);\n  expect(page.total).toBe(1);\n});\ntest(\"patchTicket wysyła JSON z nagłówkiem\",async()=>{\n  const seen:{type:string|null;body:string}[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request})=>{seen.push({type:request.headers.get(\"content-type\"),body:await request.text()});return HttpResponse.json({id:42});}));\n  await patchTicket(42,{priority:\"LOW\"});\n  expect(seen).toEqual([{type:\"application/json\",body:'{\"priority\":\"LOW\"}'}]);\n});\ntest(\"400 bez JSON daje ApiError z pustymi błędami pól\",async()=>{\n  server.use(http.post(API+\"/tickets\",()=>new HttpResponse(\"zła prośba\",{status:400})));\n  const error=await createTicket({title:\"Długi tytuł\",priority:\"LOW\"}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(ApiError);\n  expect(error).toMatchObject({status:400,fieldErrors:{}});\n});\ntest(\"nieobsłużone żądanie kończy się błędem\",async()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  await expect(fetch(API+\"/nieznane\")).rejects.toThrow();\n});\ntest(\"błąd sieci to nie ApiError\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.error()));\n  const error=await fetchTickets({page:1}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(TypeError);\n  expect(error).not.toBeInstanceOf(ApiError);\n});"
+    },
+    {
+      "prompt": "Sprawdź nagłówek Content-Type i surową treść JSON wysyłaną przez patchTicket.",
+      "hint": "request.text() pokazuje dokładny łańcuch body.",
+      "solution": "// @vitest-environment node\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test,vi} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";\ntest(\"klient wysyła parametry i zwraca stronę\",async()=>{\n  const page=await fetchTickets({status:\"CLOSED\",page:1});\n  expect(page.items.map(ticket=>ticket.id)).toEqual([7]);\n  expect(page.total).toBe(1);\n});\ntest(\"patchTicket wysyła JSON z nagłówkiem\",async()=>{\n  const seen:{type:string|null;body:string}[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request})=>{seen.push({type:request.headers.get(\"content-type\"),body:await request.text()});return HttpResponse.json({id:42});}));\n  await patchTicket(42,{priority:\"LOW\"});\n  expect(seen).toEqual([{type:\"application/json\",body:'{\"priority\":\"LOW\"}'}]);\n});\ntest(\"400 bez JSON daje ApiError z pustymi błędami pól\",async()=>{\n  server.use(http.post(API+\"/tickets\",()=>new HttpResponse(\"zła prośba\",{status:400})));\n  const error=await createTicket({title:\"Długi tytuł\",priority:\"LOW\"}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(ApiError);\n  expect(error).toMatchObject({status:400,fieldErrors:{}});\n});\ntest(\"nieobsłużone żądanie kończy się błędem\",async()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  await expect(fetch(API+\"/nieznane\")).rejects.toThrow();\n});\ntest(\"błąd sieci to nie ApiError\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.error()));\n  const error=await fetchTickets({page:1}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(TypeError);\n  expect(error).not.toBeInstanceOf(ApiError);\n});"
+    },
+    {
+      "prompt": "Zamień odpowiedź 400 bez JSON na ApiError z pustymi błędami pól.",
+      "hint": "Parsowanie treści błędu nie może przesłonić statusu.",
+      "solution": "// @vitest-environment node\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test,vi} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";\ntest(\"klient wysyła parametry i zwraca stronę\",async()=>{\n  const page=await fetchTickets({status:\"CLOSED\",page:1});\n  expect(page.items.map(ticket=>ticket.id)).toEqual([7]);\n  expect(page.total).toBe(1);\n});\ntest(\"patchTicket wysyła JSON z nagłówkiem\",async()=>{\n  const seen:{type:string|null;body:string}[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request})=>{seen.push({type:request.headers.get(\"content-type\"),body:await request.text()});return HttpResponse.json({id:42});}));\n  await patchTicket(42,{priority:\"LOW\"});\n  expect(seen).toEqual([{type:\"application/json\",body:'{\"priority\":\"LOW\"}'}]);\n});\ntest(\"400 bez JSON daje ApiError z pustymi błędami pól\",async()=>{\n  server.use(http.post(API+\"/tickets\",()=>new HttpResponse(\"zła prośba\",{status:400})));\n  const error=await createTicket({title:\"Długi tytuł\",priority:\"LOW\"}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(ApiError);\n  expect(error).toMatchObject({status:400,fieldErrors:{}});\n});\ntest(\"nieobsłużone żądanie kończy się błędem\",async()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  await expect(fetch(API+\"/nieznane\")).rejects.toThrow();\n});\ntest(\"błąd sieci to nie ApiError\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.error()));\n  const error=await fetchTickets({page:1}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(TypeError);\n  expect(error).not.toBeInstanceOf(ApiError);\n});"
+    },
+    {
+      "prompt": "Udowodnij, że nieobsłużone żądanie kończy się błędem przy onUnhandledFrame: \"error\".",
+      "hint": "Wycisz console.error szpiegiem przywracanym po teście.",
+      "solution": "// @vitest-environment node\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test,vi} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";\ntest(\"klient wysyła parametry i zwraca stronę\",async()=>{\n  const page=await fetchTickets({status:\"CLOSED\",page:1});\n  expect(page.items.map(ticket=>ticket.id)).toEqual([7]);\n  expect(page.total).toBe(1);\n});\ntest(\"patchTicket wysyła JSON z nagłówkiem\",async()=>{\n  const seen:{type:string|null;body:string}[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request})=>{seen.push({type:request.headers.get(\"content-type\"),body:await request.text()});return HttpResponse.json({id:42});}));\n  await patchTicket(42,{priority:\"LOW\"});\n  expect(seen).toEqual([{type:\"application/json\",body:'{\"priority\":\"LOW\"}'}]);\n});\ntest(\"400 bez JSON daje ApiError z pustymi błędami pól\",async()=>{\n  server.use(http.post(API+\"/tickets\",()=>new HttpResponse(\"zła prośba\",{status:400})));\n  const error=await createTicket({title:\"Długi tytuł\",priority:\"LOW\"}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(ApiError);\n  expect(error).toMatchObject({status:400,fieldErrors:{}});\n});\ntest(\"nieobsłużone żądanie kończy się błędem\",async()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  await expect(fetch(API+\"/nieznane\")).rejects.toThrow();\n});\ntest(\"błąd sieci to nie ApiError\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.error()));\n  const error=await fetchTickets({page:1}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(TypeError);\n  expect(error).not.toBeInstanceOf(ApiError);\n});"
+    },
+    {
+      "prompt": "Rozróżnij błąd sieci (HttpResponse.error) od błędu HTTP.",
+      "hint": "Błąd sieci odrzuca fetch, zanim powstanie Response.",
+      "solution": "// @vitest-environment node\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test,vi} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";\ntest(\"klient wysyła parametry i zwraca stronę\",async()=>{\n  const page=await fetchTickets({status:\"CLOSED\",page:1});\n  expect(page.items.map(ticket=>ticket.id)).toEqual([7]);\n  expect(page.total).toBe(1);\n});\ntest(\"patchTicket wysyła JSON z nagłówkiem\",async()=>{\n  const seen:{type:string|null;body:string}[]=[];\n  server.use(http.patch(API+\"/tickets/:id\",async({request})=>{seen.push({type:request.headers.get(\"content-type\"),body:await request.text()});return HttpResponse.json({id:42});}));\n  await patchTicket(42,{priority:\"LOW\"});\n  expect(seen).toEqual([{type:\"application/json\",body:'{\"priority\":\"LOW\"}'}]);\n});\ntest(\"400 bez JSON daje ApiError z pustymi błędami pól\",async()=>{\n  server.use(http.post(API+\"/tickets\",()=>new HttpResponse(\"zła prośba\",{status:400})));\n  const error=await createTicket({title:\"Długi tytuł\",priority:\"LOW\"}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(ApiError);\n  expect(error).toMatchObject({status:400,fieldErrors:{}});\n});\ntest(\"nieobsłużone żądanie kończy się błędem\",async()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  await expect(fetch(API+\"/nieznane\")).rejects.toThrow();\n});\ntest(\"błąd sieci to nie ApiError\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.error()));\n  const error=await fetchTickets({page:1}).catch((reason:unknown)=>reason);\n  expect(error).toBeInstanceOf(TypeError);\n  expect(error).not.toBeInstanceOf(ApiError);\n});"
+    },
+    {
+      "prompt": "Sprawdź, że ostatnie server.use ma pierwszeństwo, a resetHandlers je usuwa.",
+      "hint": "Nowe handlery są dopisywane na początek listy.",
+      "solution": "// @vitest-environment jsdom\nimport {screen} from \"@testing-library/react\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,createTicket,fetchTickets,type TicketPage} from \"./ticketApi\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst page=(total:number):TicketPage=>({items:[],total,page:1,pageSize:10});\ntest(\"ostatnie server.use ma pierwszeństwo, a resetHandlers je usuwa\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(page(1))));\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(page(2))));\n  expect((await fetchTickets({page:1})).total).toBe(2);\n  server.resetHandlers();\n  expect((await fetchTickets({page:1})).total).toBe(3);\n});\ntest(\"test A tworzy ticket w bazie handlerów\",async()=>{\n  await createTicket({title:\"Tymczasowy\",priority:\"LOW\"});\n  expect((await fetchTickets({page:1})).total).toBe(4);\n});\ntest(\"test B widzi świeżą bazę po resetDb\",async()=>{\n  expect((await fetchTickets({page:1})).total).toBe(3);\n});\ntest(\"dwa komponenty z tym samym kluczem wysyłają jedno żądanie\",async()=>{\n  let gets=0;\n  server.use(http.get(API+\"/tickets\",()=>{gets+=1;return HttpResponse.json(page(0));}));\n  renderWithProviders(<><TicketsPage/><TicketsPage/></>);\n  expect(await screen.findAllByText(\"Brak ticketów pasujących do filtrów.\")).toHaveLength(2);\n  expect(gets).toBe(1);\n});"
+    },
+    {
+      "prompt": "Udowodnij izolację: dane utworzone w jednym teście nie przeciekają do następnego.",
+      "hint": "resetDb w afterEach przywraca bazę handlerów.",
+      "solution": "// @vitest-environment jsdom\nimport {screen} from \"@testing-library/react\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,createTicket,fetchTickets,type TicketPage} from \"./ticketApi\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst page=(total:number):TicketPage=>({items:[],total,page:1,pageSize:10});\ntest(\"ostatnie server.use ma pierwszeństwo, a resetHandlers je usuwa\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(page(1))));\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(page(2))));\n  expect((await fetchTickets({page:1})).total).toBe(2);\n  server.resetHandlers();\n  expect((await fetchTickets({page:1})).total).toBe(3);\n});\ntest(\"test A tworzy ticket w bazie handlerów\",async()=>{\n  await createTicket({title:\"Tymczasowy\",priority:\"LOW\"});\n  expect((await fetchTickets({page:1})).total).toBe(4);\n});\ntest(\"test B widzi świeżą bazę po resetDb\",async()=>{\n  expect((await fetchTickets({page:1})).total).toBe(3);\n});\ntest(\"dwa komponenty z tym samym kluczem wysyłają jedno żądanie\",async()=>{\n  let gets=0;\n  server.use(http.get(API+\"/tickets\",()=>{gets+=1;return HttpResponse.json(page(0));}));\n  renderWithProviders(<><TicketsPage/><TicketsPage/></>);\n  expect(await screen.findAllByText(\"Brak ticketów pasujących do filtrów.\")).toHaveLength(2);\n  expect(gets).toBe(1);\n});"
+    },
+    {
+      "prompt": "Sprawdź, że dwa komponenty z tym samym kluczem zapytania wysyłają jedno żądanie.",
+      "hint": "TanStack Query deduplikuje zapytania w locie.",
+      "solution": "// @vitest-environment jsdom\nimport {screen} from \"@testing-library/react\";\nimport {http,HttpResponse} from \"msw\";\nimport {expect,test} from \"vitest\";\nimport {server} from \"./mswServer\";\nimport {renderWithProviders} from \"./renderWithProviders\";\nimport {API,createTicket,fetchTickets,type TicketPage} from \"./ticketApi\";\nimport {TicketsPage} from \"./TicketsPage\";\nconst page=(total:number):TicketPage=>({items:[],total,page:1,pageSize:10});\ntest(\"ostatnie server.use ma pierwszeństwo, a resetHandlers je usuwa\",async()=>{\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(page(1))));\n  server.use(http.get(API+\"/tickets\",()=>HttpResponse.json(page(2))));\n  expect((await fetchTickets({page:1})).total).toBe(2);\n  server.resetHandlers();\n  expect((await fetchTickets({page:1})).total).toBe(3);\n});\ntest(\"test A tworzy ticket w bazie handlerów\",async()=>{\n  await createTicket({title:\"Tymczasowy\",priority:\"LOW\"});\n  expect((await fetchTickets({page:1})).total).toBe(4);\n});\ntest(\"test B widzi świeżą bazę po resetDb\",async()=>{\n  expect((await fetchTickets({page:1})).total).toBe(3);\n});\ntest(\"dwa komponenty z tym samym kluczem wysyłają jedno żądanie\",async()=>{\n  let gets=0;\n  server.use(http.get(API+\"/tickets\",()=>{gets+=1;return HttpResponse.json(page(0));}));\n  renderWithProviders(<><TicketsPage/><TicketsPage/></>);\n  expect(await screen.findAllByText(\"Brak ticketów pasujących do filtrów.\")).toHaveLength(2);\n  expect(gets).toBe(1);\n});"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co robi setupServer z msw/node?",
+      "options": {
+        "A": "Uruchamia prawdziwy serwer HTTP na porcie 8080",
+        "B": "Rejestruje Service Workera w jsdom",
+        "C": "Przechwytuje żądania wychodzące z procesu testów i odpowiada handlerami",
+        "D": "Podmienia moduł klienta API przez vi.mock"
+      },
+      "correct": "C",
+      "explanation": "W Node MSW działa przez interceptory żądań w procesie; nie potrzebuje Service Workera ani portu."
+    },
+    {
+      "question": "Dlaczego te same handlery mogą działać w przeglądarce i w testach?",
+      "options": {
+        "A": "Opisują kontrakt HTTP niezależnie od środowiska uruchomienia",
+        "B": "Bo testy zawsze uruchamiają przeglądarkę",
+        "C": "Bo msw/node kopiuje Service Workera do Node",
+        "D": "Bo handlery są zapisywane w localStorage"
+      },
+      "correct": "A",
+      "explanation": "Handler opisuje metodę, ścieżkę i odpowiedź; setupWorker i setupServer tylko inaczej je podłączają."
+    },
+    {
+      "question": "Gdzie wywołać server.listen()?",
+      "options": {
+        "A": "W każdym teście przed render",
+        "B": "W afterEach",
+        "C": "W komponencie aplikacji",
+        "D": "W beforeAll pliku setup"
+      },
+      "correct": "D",
+      "explanation": "Jedno uruchomienie na plik testów wystarcza; reset handlerów robi się po każdym teście."
+    },
+    {
+      "question": "Po co server.resetHandlers() w afterEach?",
+      "options": {
+        "A": "Usuwa nadpisania z server.use, przywracając domyślne handlery",
+        "B": "Zamyka serwer na stałe",
+        "C": "Czyści cache TanStack Query",
+        "D": "Resetuje zegar fake timers"
+      },
+      "correct": "A",
+      "explanation": "Bez resetu scenariusz błędu z jednego testu wyciekałby do następnego."
+    },
+    {
+      "question": "Jak w MSW 3 nazywa się opcja reakcji na żądanie bez handlera?",
+      "options": {
+        "A": "onUnhandledFrame",
+        "B": "onUnhandledRequest",
+        "C": "onMissingHandler",
+        "D": "strictRequests"
+      },
+      "correct": "A",
+      "explanation": "W MSW 2 była to onUnhandledRequest; w starszych poradnikach zobaczysz tę nazwę."
+    },
+    {
+      "question": "Co daje onUnhandledFrame: \"error\"?",
+      "options": {
+        "A": "Każde żądanie dostaje status 500",
+        "B": "Wyłącza wszystkie handlery",
+        "C": "Ukrywa ostrzeżenia w konsoli",
+        "D": "Nieoczekiwane żądanie kończy się błędem zamiast cicho przejść do sieci"
+      },
+      "correct": "D",
+      "explanation": "Test nie przegapi wywołania, którego nikt nie zaplanował."
+    },
+    {
+      "question": "Co robi server.use(handler)?",
+      "options": {
+        "A": "Zastępuje na stałe całą listę handlerów",
+        "B": "Wysyła żądanie testowe",
+        "C": "Dodaje handler przed domyślnymi na czas testu",
+        "D": "Uruchamia drugi serwer"
+      },
+      "correct": "C",
+      "explanation": "Nadpisanie obowiązuje do najbliższego resetHandlers."
+    },
+    {
+      "question": "Który handler wygra, gdy dwa server.use pasują do tego samego żądania?",
+      "options": {
+        "A": "Dodany wcześniej",
+        "B": "Dodany później",
+        "C": "Domyślny z setupServer",
+        "D": "Losowy"
+      },
+      "correct": "B",
+      "explanation": "server.use dopisuje na początek listy, więc ostatnie nadpisanie jest sprawdzane jako pierwsze."
+    },
+    {
+      "question": "Co robi opcja {once:true} handlera?",
+      "options": {
+        "A": "Handler działa tylko w pierwszym teście pliku",
+        "B": "Wymusza jedną odpowiedź na cały proces",
+        "C": "Handler obsługuje tylko pierwsze pasujące żądanie",
+        "D": "Wyłącza handler po resetDb"
+      },
+      "correct": "C",
+      "explanation": "Po jednym użyciu kolejne żądania trafiają do następnego pasującego handlera."
+    },
+    {
+      "question": "Kiedy wywołać server.close()?",
+      "options": {
+        "A": "Po każdej asercji",
+        "B": "W beforeEach",
+        "C": "Nigdy, bo zamyka Vitest",
+        "D": "W afterAll"
+      },
+      "correct": "D",
+      "explanation": "Zamknięcie zwalnia interceptory po zakończeniu pliku testów."
+    },
+    {
+      "question": "Dlaczego mockowanie modułu klienta API (vi.mock) jest słabszym testem niż MSW?",
+      "options": {
+        "A": "Sprawdza wywołanie funkcji, a nie ścieżkę komponent → klient → fetch → odpowiedź",
+        "B": "Bo vi.mock nie działa z TypeScriptem",
+        "C": "Bo MSW nie wymaga asercji",
+        "D": "Bo vi.mock zawsze wysyła żądanie"
+      },
+      "correct": "A",
+      "explanation": "Zmiana parametrów zapytania lub klienta nie zostanie wykryta albo zepsuje test mimo działającej aplikacji."
+    },
+    {
+      "question": "Co tracisz, mockując globalny fetch przez vi.spyOn?",
+      "options": {
+        "A": "Możliwość renderowania komponentu",
+        "B": "Typy Reacta",
+        "C": "Niezależność testu od sposobu wykonania żądania",
+        "D": "Dostęp do screen"
+      },
+      "correct": "C",
+      "explanation": "Przejście z fetch na inną bibliotekę HTTP psuje test, choć zachowanie się nie zmieniło."
+    },
+    {
+      "question": "Dlaczego klient w lekcji używa absolutnego API?",
+      "options": {
+        "A": "W Node fetch nie ma adresu strony, więc ścieżka względna jest niepoprawna",
+        "B": "Bo MSW obsługuje tylko HTTPS",
+        "C": "Bo jsdom blokuje ścieżki względne w przeglądarce",
+        "D": "Bo TanStack Query wymaga domeny"
+      },
+      "correct": "A",
+      "explanation": "Node fetch nie zna location; w aplikacji adres bazowy zwykle pochodzi z konfiguracji."
+    },
+    {
+      "question": "Na co czeka await screen.findByRole(...)?",
+      "options": {
+        "A": "Na zakończenie wszystkich żądań w procesie",
+        "B": "Na następny render bez limitu",
+        "C": "Aż element się pojawi, domyślnie do około 1 sekundy",
+        "D": "Na kliknięcie użytkownika"
+      },
+      "correct": "C",
+      "explanation": "findBy to getBy opakowane w waitFor."
+    },
+    {
+      "question": "Czym różni się queryBy od getBy przy braku elementu?",
+      "options": {
+        "A": "queryBy czeka, getBy nie",
+        "B": "getBy zwraca null, queryBy rzuca",
+        "C": "Nie różnią się",
+        "D": "queryBy zwraca null, getBy rzuca błąd"
+      },
+      "correct": "D",
+      "explanation": "queryBy służy do asercji nieobecności."
+    },
+    {
+      "question": "Co wolno umieścić w callbacku waitFor?",
+      "options": {
+        "A": "Asercje, które mają w końcu przejść",
+        "B": "Kliknięcia użytkownika",
+        "C": "Wywołania mutacji",
+        "D": "Zmianę handlerów MSW"
+      },
+      "correct": "A",
+      "explanation": "Callback jest powtarzany; efekty uboczne wykonałyby się wiele razy."
+    },
+    {
+      "question": "Co się stanie, gdy waitForElementToBeRemoved dostanie callback zwracający null już na starcie?",
+      "options": {
+        "A": "Natychmiast przejdzie",
+        "B": "Poczeka do timeoutu i przejdzie",
+        "C": "Rzuci błąd, bo element musi istnieć w chwili wywołania",
+        "D": "Wyrenderuje element ponownie"
+      },
+      "correct": "C",
+      "explanation": "To zabezpieczenie przed testem, który niczego nie sprawdza."
+    },
+    {
+      "question": "Dlaczego renderWithProviders tworzy QueryClient wewnątrz funkcji?",
+      "options": {
+        "A": "Żeby testy dzieliły dane",
+        "B": "Każdy test dostaje pusty cache",
+        "C": "Żeby wyłączyć React",
+        "D": "Bo QueryClient jest singletonem w bibliotece"
+      },
+      "correct": "B",
+      "explanation": "Wspólny klient przenosiłby dane i błędy między testami."
+    },
+    {
+      "question": "Po co retry:false w testach TanStack Query?",
+      "options": {
+        "A": "Żeby wyłączyć cache",
+        "B": "Żeby zapytania szły synchronicznie",
+        "C": "Żeby MSW nie logował",
+        "D": "Test błędu nie czeka na domyślne ponowienia"
+      },
+      "correct": "D",
+      "explanation": "Domyślnie zapytanie ponawia się trzy razy z rosnącym opóźnieniem."
+    },
+    {
+      "question": "Jak sprawdzić, co komponent wysłał do serwera?",
+      "options": {
+        "A": "Odczytać prywatny stan useMutation",
+        "B": "Sprawdzić tylko komunikat na ekranie",
+        "C": "Zebrać request w handlerze i porównać w treści testu",
+        "D": "Przeczytać kod komponentu w teście"
+      },
+      "correct": "C",
+      "explanation": "Test mutacji sprawdza obie strony: wysłane dane i widok."
+    },
+    {
+      "question": "Co się dzieje z expect rzuconym w handlerze MSW?",
+      "options": {
+        "A": "Wyjątek zamienia się w odpowiedź błędu, a test może go nie zgłosić czytelnie",
+        "B": "Test zawsze natychmiast się kończy z tym komunikatem",
+        "C": "MSW ignoruje wyjątek i zwraca 200",
+        "D": "Vitest powtarza handler"
+      },
+      "correct": "A",
+      "explanation": "Dlatego w handlerze zbiera się dane, a asercje robi w teście."
+    },
+    {
+      "question": "Jak odczytać parametry zapytania w handlerze?",
+      "options": {
+        "A": "params.searchParams",
+        "B": "request.query",
+        "C": "request.body.params",
+        "D": "new URL(request.url).searchParams"
+      },
+      "correct": "D",
+      "explanation": "params zawiera tylko parametry ścieżki, np. :id."
+    },
+    {
+      "question": "Jakiego typu jest params.id w handlerze /tickets/:id?",
+      "options": {
+        "A": "string",
+        "B": "number",
+        "C": "bigint",
+        "D": "Zawsze undefined"
+      },
+      "correct": "A",
+      "explanation": "Parametry ścieżki są tekstem; zamiana na liczbę należy do handlera."
+    },
+    {
+      "question": "Co zwraca HttpResponse.error()?",
+      "options": {
+        "A": "Odpowiedź 500 z JSON",
+        "B": "Odpowiedź 404",
+        "C": "Błąd sieci, który odrzuca fetch",
+        "D": "Pustą odpowiedź 204"
+      },
+      "correct": "C",
+      "explanation": "Symuluje zerwane połączenie, a nie błędny status HTTP."
+    },
+    {
+      "question": "Czym różni się 500 od HttpResponse.error() dla fetch?",
+      "options": {
+        "A": "Niczym",
+        "B": "error() daje status 0 w Response",
+        "C": "500 daje Response z ok=false, error() odrzuca obietnicę fetch",
+        "D": "500 odrzuca fetch"
+      },
+      "correct": "C",
+      "explanation": "Klient musi obsłużyć obie ścieżki osobno."
+    },
+    {
+      "question": "Po co resetDb obok resetHandlers?",
+      "options": {
+        "A": "Handlery mutujące bazę w pamięci zostawiłyby zmiany dla kolejnych testów",
+        "B": "resetHandlers nie istnieje w MSW 3",
+        "C": "Bo resetDb zamyka serwer",
+        "D": "Żeby przyspieszyć jsdom"
+      },
+      "correct": "A",
+      "explanation": "resetHandlers przywraca funkcje, ale nie dane, które te funkcje zmieniły."
+    },
+    {
+      "question": "Dlaczego test pustego stanu używa jednorazowego handlera?",
+      "options": {
+        "A": "Kliknięcie Wyczyść filtry powinno pobrać pełną listę z domyślnego handlera",
+        "B": "Bo pusty stan wymaga dwóch serwerów",
+        "C": "Bo once przyspiesza render",
+        "D": "Bo inaczej MSW rzuca błąd typu"
+      },
+      "correct": "A",
+      "explanation": "Drugie żądanie pokazuje, że przycisk naprawdę zmienia zapytanie."
+    },
+    {
+      "question": "Dlaczego test błędu liczy wywołania handlera?",
+      "options": {
+        "A": "Bo MSW wymaga licznika",
+        "B": "Żeby zmierzyć wydajność",
+        "C": "Żeby wyłączyć retry",
+        "D": "Potwierdza, że ponowienie wysłało nowe żądanie"
+      },
+      "correct": "D",
+      "explanation": "Sama zmiana widoku mogłaby pochodzić z cache."
+    },
+    {
+      "question": "Co sprawdza test z route \"/tickets?status=OPEN&page=2\"?",
+      "options": {
+        "A": "Że router działa w przeglądarce",
+        "B": "Że serwer filtruje po stronie bazy",
+        "C": "Że komponent nie używa sieci",
+        "D": "Że stan adresu przekłada się na parametry żądania"
+      },
+      "correct": "D",
+      "explanation": "Ekran odczytuje filtry z URL, a test potwierdza je na granicy HTTP."
+    },
+    {
+      "question": "Dlaczego ekran nie wysyła status=HACK?",
+      "options": {
+        "A": "Bo MSW usuwa nieznane parametry",
+        "B": "Parsuje status do znanej listy i odrzuca resztę",
+        "C": "Bo URLSearchParams filtruje wartości",
+        "D": "Bo React Router waliduje enumy"
+      },
+      "correct": "B",
+      "explanation": "Kontrakt ekranu: tylko znane statusy trafiają do API."
+    },
+    {
+      "question": "Co daje waitForElementToBeRemoved w porównaniu z findBy danych?",
+      "options": {
+        "A": "Wyraża oczekiwanie na zakończenie stanu, a nie na konkretny wiersz",
+        "B": "Działa synchronicznie",
+        "C": "Nie wymaga await",
+        "D": "Pomija limit czasu"
+      },
+      "correct": "A",
+      "explanation": "Przydaje się, gdy potem sprawdzasz kilka elementów naraz."
+    },
+    {
+      "question": "Jak uchwycić stan pośredni aktualizacji optymistycznej?",
+      "options": {
+        "A": "Dodać sleep 500 ms",
+        "B": "Wyłączyć MSW",
+        "C": "Użyć snapshotu",
+        "D": "Zatrzymać odpowiedź handlera bramką Promise do czasu asercji"
+      },
+      "correct": "D",
+      "explanation": "Bramka daje deterministyczną kontrolę nad kolejnością."
+    },
+    {
+      "question": "Dlaczego test rollbacku blokuje drugi GET?",
+      "options": {
+        "A": "Bez tego refetch po onSettled ukryłby brak wycofania",
+        "B": "Bo GET nie może być dwa razy",
+        "C": "Bo cache jest wyłączony",
+        "D": "Bo onError nie działa z GET"
+      },
+      "correct": "A",
+      "explanation": "Inaczej mutant bez rollbacku przeszedłby test dzięki odświeżeniu danych."
+    },
+    {
+      "question": "Po co cancelQueries w onMutate?",
+      "options": {
+        "A": "Trwające pobranie nie nadpisze optymistycznej wartości",
+        "B": "Żeby anulować mutację",
+        "C": "Żeby wyczyścić cały cache",
+        "D": "Żeby zablokować przycisk"
+      },
+      "correct": "A",
+      "explanation": "Odpowiedź ze starym stanem przyszłaby po optymistycznej zmianie."
+    },
+    {
+      "question": "Co zwraca onMutate w przykładzie?",
+      "options": {
+        "A": "Kontekst z poprzednią stroną danych",
+        "B": "Nowy QueryClient",
+        "C": "Odpowiedź serwera",
+        "D": "Liczbę żądań"
+      },
+      "correct": "A",
+      "explanation": "onError dostaje ten kontekst i przywraca dane."
+    },
+    {
+      "question": "Po co invalidateQueries w onSettled?",
+      "options": {
+        "A": "Żeby anulować błąd",
+        "B": "Po sukcesie lub błędzie dane są zsynchronizowane z serwerem",
+        "C": "Żeby wyłączyć retry",
+        "D": "Żeby usunąć handler MSW"
+      },
+      "correct": "B",
+      "explanation": "Optymistyczny stan jest tymczasowy; źródłem prawdy pozostaje serwer."
+    },
+    {
+      "question": "Dlaczego w teście zamknięcia używa się within(row)?",
+      "options": {
+        "A": "Asercja dotyczy konkretnego wiersza, a nie dowolnego tekstu na stronie",
+        "B": "Bo screen nie widzi tabel",
+        "C": "Bo within czeka dłużej",
+        "D": "Bo row jest w portalu"
+      },
+      "correct": "A",
+      "explanation": "Status „Zamknięty” mógłby istnieć w innym wierszu."
+    },
+    {
+      "question": "Co zwraca renderWithProviders oprócz wyniku render?",
+      "options": {
+        "A": "queryClient użyty w teście",
+        "B": "Instancję serwera MSW",
+        "C": "Router przeglądarkowy",
+        "D": "Store Zustand"
+      },
+      "correct": "A",
+      "explanation": "Dostęp do klienta pozwala sprawdzić cache tam, gdzie to część kontraktu."
+    },
+    {
+      "question": "Kiedy sprawdzanie cache QueryClient jest uzasadnione?",
+      "options": {
+        "A": "Zawsze zamiast sprawdzania ekranu",
+        "B": "Nigdy",
+        "C": "Gdy kontraktem jest aktualizacja danych bez ponownego pobrania",
+        "D": "Tylko w testach e2e"
+      },
+      "correct": "C",
+      "explanation": "Podstawą pozostaje widok; cache uzupełnia obraz."
+    },
+    {
+      "question": "Co potwierdza toHaveAccessibleDescription na polu tytułu?",
+      "options": {
+        "A": "Że pole ma placeholder",
+        "B": "Komunikat jest powiązany z polem przez aria-describedby",
+        "C": "Że komunikat ma czerwony kolor",
+        "D": "Że pole jest wymagane"
+      },
+      "correct": "B",
+      "explanation": "Czytnik ekranu ogłosi błąd razem z polem."
+    },
+    {
+      "question": "Dlaczego formularz po 400 zachowuje wpisany tekst?",
+      "options": {
+        "A": "Użytkownik poprawia dane zamiast wpisywać je od nowa",
+        "B": "Bo React nie może czyścić pól",
+        "C": "Bo MSW blokuje zmianę stanu",
+        "D": "Bo 400 cofa render"
+      },
+      "correct": "A",
+      "explanation": "Czyszczenie należy tylko do ścieżki sukcesu."
+    },
+    {
+      "question": "Jak przetestować zablokowany przycisk podczas zapisu?",
+      "options": {
+        "A": "Kliknąć dwa razy i liczyć milisekundy",
+        "B": "Zatrzymać odpowiedź POST bramką i sprawdzić stan przed jej zwolnieniem",
+        "C": "Ustawić retry:true",
+        "D": "Sprawdzić klasę CSS"
+      },
+      "correct": "B",
+      "explanation": "Stan pending jest widoczny tylko, gdy odpowiedź jeszcze nie przyszła."
+    },
+    {
+      "question": "Dlaczego klienta API można testować w środowisku node?",
+      "options": {
+        "A": "Bo node ma jsdom",
+        "B": "Bo fetch istnieje tylko w node",
+        "C": "Nie renderuje DOM, a MSW działa w Node",
+        "D": "Bo React wymaga node"
+      },
+      "correct": "C",
+      "explanation": "Lżejsze środowisko pasuje do czystego kodu sieciowego."
+    },
+    {
+      "question": "Co sprawdza test nagłówka Content-Type?",
+      "options": {
+        "A": "Że przeglądarka pokaże pole",
+        "B": "Że serwer dostanie JSON opisany poprawnym typem",
+        "C": "Że MSW konwertuje body",
+        "D": "Że odpowiedź ma status 200"
+      },
+      "correct": "B",
+      "explanation": "Bez nagłówka wiele backendów (np. Spring) odrzuci treść."
+    },
+    {
+      "question": "Co się stanie, gdy treść błędu 400 nie jest JSON?",
+      "options": {
+        "A": "Klient zachowa status i zwróci puste fieldErrors",
+        "B": "Klient rzuci SyntaxError zamiast ApiError",
+        "C": "Fetch się zawiesi",
+        "D": "Formularz pokaże sukces"
+      },
+      "correct": "A",
+      "explanation": "Parsowanie treści błędu jest w try/catch."
+    },
+    {
+      "question": "Dlaczego dwa TicketsPage z tym samym kluczem wysyłają jedno żądanie?",
+      "options": {
+        "A": "MSW łączy żądania",
+        "B": "React renderuje komponent raz",
+        "C": "TanStack Query deduplikuje zapytanie w locie",
+        "D": "fetch ma wbudowany cache"
+      },
+      "correct": "C",
+      "explanation": "Obaj obserwatorzy dzielą jeden wpis cache."
+    },
+    {
+      "question": "Czy dane utworzone przez POST w jednym teście powinny być widoczne w następnym?",
+      "options": {
+        "A": "Tak, testy w pliku dzielą bazę celowo",
+        "B": "Tak, jeśli są w tym samym describe",
+        "C": "Nie, testy muszą być niezależne",
+        "D": "Tylko w trybie watch"
+      },
+      "correct": "C",
+      "explanation": "resetDb po każdym teście daje powtarzalny start."
+    },
+    {
+      "question": "Co jest dowodem rzeczywistego działania ponowienia w teście błędu?",
+      "options": {
+        "A": "Sam fakt kliknięcia",
+        "B": "Brak ostrzeżeń w konsoli",
+        "C": "Druga odpowiedź handlera widoczna na ekranie i licznik 2",
+        "D": "Zmiana tekstu przycisku"
+      },
+      "correct": "C",
+      "explanation": "Obie strony: żądanie i widok."
+    },
+    {
+      "question": "Dlaczego nie czekać w teście przez setTimeout(500)?",
+      "options": {
+        "A": "Bo setTimeout nie działa w jsdom",
+        "B": "Bo Vitest zabrania timerów",
+        "C": "Test zależałby od szybkości maszyny, a nie od warunku",
+        "D": "Bo MSW wtedy się wyłącza"
+      },
+      "correct": "C",
+      "explanation": "findBy i waitFor czekają dokładnie tyle, ile trzeba."
+    },
+    {
+      "question": "Co może się stać, gdy zapomnisz await przed findByRole?",
+      "options": {
+        "A": "Test zawsze się zawiesi",
+        "B": "Asercja dostanie Promise i test może przejść bez sprawdzenia",
+        "C": "React rzuci błąd kompilacji",
+        "D": "MSW zwróci 404"
+      },
+      "correct": "B",
+      "explanation": "Brak await to klasyczny fałszywie zielony test."
+    },
+    {
+      "question": "Dlaczego test sprawdza zniknięcie przycisku Podnieś priorytet po sukcesie?",
+      "options": {
+        "A": "Bo przycisk zawsze znika po kliknięciu",
+        "B": "Bo tak działa waitFor",
+        "C": "To obserwowalny skutek nowego priorytetu zamiast pauzy",
+        "D": "Bo inaczej MSW nie odpowie"
+      },
+      "correct": "C",
+      "explanation": "Warunek końcowy zamiast arbitralnego czasu."
+    },
+    {
+      "question": "Co w TSX chroni przed handlerem zwracającym zły kształt danych?",
+      "options": {
+        "A": "Typ HttpResponse.json<TicketPage>(...)",
+        "B": "vi.mock",
+        "C": "StrictMode",
+        "D": "jest-dom"
+      },
+      "correct": "A",
+      "explanation": "Ten sam typ kontraktu obowiązuje w kliencie i w mockach."
+    },
+    {
+      "question": "Jak w JSX pilnować zgodności mocków z backendem?",
+      "options": {
+        "A": "Ręcznie porównywać odpowiedzi API z handlerami (np. testem kontraktu)",
+        "B": "Nie trzeba, MSW sam pobiera schemat",
+        "C": "Przez PropTypes w handlerach",
+        "D": "Przez snapshot DOM"
+      },
+      "correct": "A",
+      "explanation": "Bez typów zgodność zapewnia proces i testy kontraktu."
+    },
+    {
+      "question": "Dlaczego test filtrów porównuje pełny łańcuch parametrów?",
+      "options": {
+        "A": "Bo searchParams nie ma metody get",
+        "B": "Bo MSW sortuje parametry",
+        "C": "Bo tak jest szybciej",
+        "D": "Wykrywa zarówno brak, jak i nadmiarowe parametry"
+      },
+      "correct": "D",
+      "explanation": "Pełne porównanie łapie np. status=undefined."
+    },
+    {
+      "question": "Jaki problem wykrywa mutant klienta traktujący tylko statusy ≥500 jako błąd?",
+      "options": {
+        "A": "Brak cache",
+        "B": "Brak routera",
+        "C": "Zły kolor przycisku",
+        "D": "Odpowiedź 400 zostałaby potraktowana jak sukces"
+      },
+      "correct": "D",
+      "explanation": "Test formularza z błędem 400 musi go odrzucić."
+    },
+    {
+      "question": "Jaki problem wykrywa mutant bez params.set(\"status\")?",
+      "options": {
+        "A": "Brak paginacji w UI",
+        "B": "Błąd typów",
+        "C": "Brak nagłówka Accept",
+        "D": "Filtr z adresu nie trafia do serwera"
+      },
+      "correct": "D",
+      "explanation": "Test filtrów porównuje parametry w handlerze."
+    },
+    {
+      "question": "Dlaczego test błędu zamknięcia sprawdza status „Otwarty”?",
+      "options": {
+        "A": "Nieudany zapis nie może zmienić widoku jak sukces",
+        "B": "Bo alert zawsze zawiera status",
+        "C": "Bo MSW zwraca stary status",
+        "D": "Bo retry przywraca widok"
+      },
+      "correct": "A",
+      "explanation": "Komunikat bez sprawdzenia danych byłby połowicznym testem."
+    },
+    {
+      "question": "Kiedy MSW wypisuje błąd o nieobsłużonym żądaniu?",
+      "options": {
+        "A": "Gdy handler zwraca 404",
+        "B": "Gdy test trwa dłużej niż sekundę",
+        "C": "Gdy komponent się odmontuje",
+        "D": "Gdy żaden handler nie pasuje do metody i adresu"
+      },
+      "correct": "D",
+      "explanation": "404 z handlera to obsłużone żądanie."
+    },
+    {
+      "question": "Dlaczego test nieobsłużonego żądania wycisza console.error?",
+      "options": {
+        "A": "Bo console.error psuje jsdom",
+        "B": "MSW raportuje błąd w konsoli, a test sprawdza samo odrzucenie",
+        "C": "Bo inaczej fetch przejdzie",
+        "D": "Bo Vitest zabrania logów"
+      },
+      "correct": "B",
+      "explanation": "Szpieg jest przywracany przez restoreMocks."
+    },
+    {
+      "question": "Czy MSW w testach Node sprawdza CORS przeglądarki?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Nie",
+        "C": "Tylko dla PATCH",
+        "D": "Tylko z jsdom"
+      },
+      "correct": "B",
+      "explanation": "CORS to mechanizm przeglądarki; sprawdzisz go w e2e lub ręcznie."
+    },
+    {
+      "question": "Czego nie dowodzą testy z MSW?",
+      "options": {
+        "A": "Że komponent wysyła poprawne parametry",
+        "B": "Że ekran pokazuje błąd",
+        "C": "Że ponowienie działa",
+        "D": "Że prawdziwy backend zwraca dane w tym samym kształcie"
+      },
+      "correct": "D",
+      "explanation": "Zgodność z backendem sprawdza test kontraktu lub e2e."
+    },
+    {
+      "question": "Po co waitFor(()=>expect(gets).toBe(2)) w teście rollbacku?",
+      "options": {
+        "A": "Przyspiesza test",
+        "B": "Potwierdza, że refetch po onSettled rzeczywiście ruszył",
+        "C": "Zastępuje rollback",
+        "D": "Wyłącza bramkę"
+      },
+      "correct": "B",
+      "explanation": "Test opisuje całą sekwencję, a nie tylko końcowy wygląd."
+    },
+    {
+      "question": "Dlaczego w teście rollbacku komunikat błędu mutacji pojawia się dopiero po zwolnieniu drugiego GET?",
+      "options": {
+        "A": "Bo onError nie wywołuje się przy 500",
+        "B": "Bo MSW opóźnia wszystkie alerty",
+        "C": "onSettled zwraca obietnicę invalidateQueries, więc mutacja pozostaje pending do końca refetchu",
+        "D": "Bo React nie renderuje dwóch alertów"
+      },
+      "correct": "C",
+      "explanation": "Zwrócona obietnica wydłuża mutację; to świadoma decyzja, którą test powinien znać, a nie omijać pauzą."
+    },
+    {
+      "question": "Dlaczego TicketsPage aktualizuje cache po zamknięciu przez setQueryData?",
+      "options": {
+        "A": "Bo invalidateQueries nie istnieje",
+        "B": "Bo setQueryData wysyła PATCH",
+        "C": "Bo cache jest wyłączony",
+        "D": "Wiersz pokazuje odpowiedź serwera bez dodatkowego GET"
+      },
+      "correct": "D",
+      "explanation": "Test zamknięcia oczekuje nowego statusu po odpowiedzi PATCH."
+    },
+    {
+      "question": "Czym jest obsłużony błąd HTTP w kliencie lekcji?",
+      "options": {
+        "A": "Zwykły string",
+        "B": "Obiekt Response",
+        "C": "ApiError ze statusem i błędami pól",
+        "D": "null"
+      },
+      "correct": "C",
+      "explanation": "Komponenty rozpoznają błąd przez instanceof ApiError."
+    },
+    {
+      "question": "Dlaczego formularz rozróżnia fieldError od formError?",
+      "options": {
+        "A": "Bo React wymaga dwóch stanów",
+        "B": "Bo MSW zwraca dwa błędy",
+        "C": "Bo aria-invalid działa tylko z formError",
+        "D": "Błąd walidacji pola trafia przy polu, inne błędy jako ogólny alert"
+      },
+      "correct": "D",
+      "explanation": "Komunikat ma trafić tam, gdzie użytkownik może go naprawić."
+    },
+    {
+      "question": "Domyślna lista — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await fetchTickets({page:1})).items.length);",
+      "options": {
+        "A": "2",
+        "B": "0",
+        "C": "10",
+        "D": "3"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Filtr CLOSED — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await fetchTickets({status:\"CLOSED\",page:1})).items.length);",
+      "options": {
+        "A": "3",
+        "B": "1",
+        "C": "0",
+        "D": "2"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Tytuł po filtrze IN_PROGRESS — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await fetchTickets({status:\"IN_PROGRESS\",page:1})).items[0].title);",
+      "options": {
+        "A": "API timeout",
+        "B": "Dokumentacja",
+        "C": "undefined",
+        "D": "Logowanie SSO"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Druga strona — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await fetchTickets({page:2})).items.length);",
+      "options": {
+        "A": "3",
+        "B": "10",
+        "C": "0",
+        "D": "1"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Total na drugiej stronie — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await fetchTickets({page:2})).total);",
+      "options": {
+        "A": "0",
+        "B": "10",
+        "C": "13",
+        "D": "3"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Parametry w handlerze — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let seen=\"\";server.use(http.get(API+\"/tickets\",({request})=>{seen=new URL(request.url).searchParams.toString();return HttpResponse.json({items:[],total:0,page:1,pageSize:10});}));await fetchTickets({status:\"OPEN\",page:1});console.log(seen);",
+      "options": {
+        "A": "status=OPEN&page=1",
+        "B": "page=1&status=OPEN",
+        "C": "page=1",
+        "D": "status=OPEN"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Brak statusu w zapytaniu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let seen=\"\";server.use(http.get(API+\"/tickets\",({request})=>{seen=new URL(request.url).searchParams.toString();return HttpResponse.json({items:[],total:0,page:1,pageSize:10});}));await fetchTickets({page:1});console.log(seen);",
+      "options": {
+        "A": "page=1",
+        "B": "page=1&status=",
+        "C": "page=1&status=undefined",
+        "D": "status=undefined&page=1"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Status 500 w ApiError — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";server.use(http.get(API+\"/tickets\",()=>HttpResponse.json({},{status:500})));try{await fetchTickets({page:1});console.log(\"sukces\");}catch(error){console.log(error instanceof ApiError?String(error.status):\"inny\");}",
+      "options": {
+        "A": "200",
+        "B": "inny",
+        "C": "0",
+        "D": "500"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Błąd pola z 400 — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";try{await createTicket({title:\"abc\",priority:\"LOW\"});console.log(\"Brak\");}catch(error){console.log(error instanceof ApiError?String(error.fieldErrors.title):\"Brak\");}",
+      "options": {
+        "A": "undefined",
+        "B": "HTTP 400",
+        "C": "Tytuł musi mieć co najmniej 5 znaków.",
+        "D": "Brak"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Trim po stronie serwera — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log(\"[\"+(await createTicket({title:\"  Nowy ticket  \",priority:\"LOW\"})).title+\"]\");",
+      "options": {
+        "A": "[  Nowy ticket  ]",
+        "B": "[Nowy ticket]",
+        "C": "[Nowy ticket  ]",
+        "D": "[undefined]"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Status utworzonego ticketu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await createTicket({title:\"Nowy ticket\",priority:\"LOW\"})).status);",
+      "options": {
+        "A": "OPEN",
+        "B": "CLOSED",
+        "C": "IN_PROGRESS",
+        "D": "undefined"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Lista po utworzeniu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";await createTicket({title:\"Nowy ticket\",priority:\"LOW\"});console.log((await fetchTickets({page:1})).total);",
+      "options": {
+        "A": "3",
+        "B": "5",
+        "C": "1",
+        "D": "4"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "resetDb po utworzeniu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";await createTicket({title:\"Nowy ticket\",priority:\"LOW\"});resetDb();console.log((await fetchTickets({page:1})).total);",
+      "options": {
+        "A": "3",
+        "B": "4",
+        "C": "0",
+        "D": "5"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "PATCH zmienia status — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await patchTicket(42,{status:\"CLOSED\"})).status);",
+      "options": {
+        "A": "OPEN",
+        "B": "CLOSED",
+        "C": "IN_PROGRESS",
+        "D": "undefined"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "PATCH zachowuje tytuł — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await patchTicket(42,{status:\"CLOSED\"})).title);",
+      "options": {
+        "A": "undefined",
+        "B": "Pusty",
+        "C": "API timeout",
+        "D": "Dokumentacja"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "PATCH nieistniejącego ID — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";try{await patchTicket(999,{status:\"CLOSED\"});console.log(\"200\");}catch(error){console.log(error instanceof ApiError?String(error.status):\"inny\");}",
+      "options": {
+        "A": "500",
+        "B": "200",
+        "C": "400",
+        "D": "404"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Body wysłane w PATCH — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let body=\"\";server.use(http.patch(API+\"/tickets/:id\",async({request})=>{body=await request.text();return HttpResponse.json({id:42});}));await patchTicket(42,{priority:\"LOW\"});console.log(body);",
+      "options": {
+        "A": "{\"status\":\"CLOSED\"}",
+        "B": "priority=LOW",
+        "C": "{\"priority\":\"LOW\"}",
+        "D": "{}"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Content-Type w POST — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let type:string|null=\"\";server.use(http.post(API+\"/tickets\",({request})=>{type=request.headers.get(\"content-type\");return HttpResponse.json({id:1},{status:201});}));await createTicket({title:\"Nowy ticket\",priority:\"LOW\"});console.log(String(type));",
+      "options": {
+        "A": "text/plain;charset=UTF-8",
+        "B": "application/json",
+        "C": "null",
+        "D": "multipart/form-data"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Content-Type w GET — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let type:string|null=\"\";server.use(http.get(API+\"/tickets\",({request})=>{type=request.headers.get(\"content-type\");return HttpResponse.json({items:[],total:0,page:1,pageSize:10});}));await fetchTickets({page:1});console.log(String(type));",
+      "options": {
+        "A": "application/json",
+        "B": "text/plain",
+        "C": "undefined",
+        "D": "null"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Metoda zamknięcia — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let method=\"\";server.use(http.all(API+\"/tickets/:id\",({request})=>{method=request.method;return HttpResponse.json({id:42});}));await patchTicket(42,{status:\"CLOSED\"});console.log(method);",
+      "options": {
+        "A": "POST",
+        "B": "PATCH",
+        "C": "PUT",
+        "D": "GET"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Typ parametru ścieżki — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let seen=\"\";server.use(http.patch(API+\"/tickets/:id\",({params})=>{seen=typeof params.id+\":\"+String(params.id);return HttpResponse.json({id:42});}));await patchTicket(42,{status:\"CLOSED\"});console.log(seen);",
+      "options": {
+        "A": "number:42",
+        "B": "string:42",
+        "C": "string:undefined",
+        "D": "number:NaN"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Handler jednorazowy — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";server.use(http.get(API+\"/tickets\",()=>HttpResponse.json({items:[],total:0,page:1,pageSize:10}),{once:true}));const first=(await fetchTickets({page:1})).total,second=(await fetchTickets({page:1})).total;console.log(first+\",\"+second);",
+      "options": {
+        "A": "0,0",
+        "B": "0,3",
+        "C": "3,3",
+        "D": "3,0"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "resetHandlers w teście — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";server.use(http.get(API+\"/tickets\",()=>HttpResponse.json({items:[],total:0,page:1,pageSize:10})));server.resetHandlers();console.log((await fetchTickets({page:1})).total);",
+      "options": {
+        "A": "0",
+        "B": "undefined",
+        "C": "3",
+        "D": "1"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Kolejność server.use — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";server.use(http.get(API+\"/tickets\",()=>HttpResponse.json({items:[],total:1,page:1,pageSize:10})));server.use(http.get(API+\"/tickets\",()=>HttpResponse.json({items:[],total:2,page:1,pageSize:10})));console.log((await fetchTickets({page:1})).total);",
+      "options": {
+        "A": "1",
+        "B": "3",
+        "C": "0",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Nieobsłużone żądanie — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";const original=console.error;console.error=()=>{};try{await fetch(API+\"/nieznane\");console.log(\"przepuszczone\");}catch{console.log(\"odrzucone\");}finally{console.error=original;}",
+      "options": {
+        "A": "przepuszczone",
+        "B": "odrzucone",
+        "C": "404",
+        "D": "200"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Błąd sieci — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";server.use(http.get(API+\"/tickets\",()=>HttpResponse.error()));try{await fetchTickets({page:1});console.log(\"sukces\");}catch(error){console.log(error instanceof ApiError?\"ApiError\":error instanceof TypeError?\"TypeError\":\"inny\");}",
+      "options": {
+        "A": "ApiError",
+        "B": "TypeError",
+        "C": "inny",
+        "D": "RangeError"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Błąd bez JSON — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";server.use(http.get(API+\"/tickets\",()=>new HttpResponse(\"oops\",{status:500})));try{await fetchTickets({page:1});console.log(\"sukces\");}catch(error){console.log(error instanceof ApiError?String(Object.keys(error.fieldErrors).length):\"inny\");}",
+      "options": {
+        "A": "1",
+        "B": "undefined",
+        "C": "4",
+        "D": "0"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Status utworzenia — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";const response=await fetch(API+\"/tickets\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify({title:\"Długi tytuł\",priority:\"LOW\"})});console.log(response.status);",
+      "options": {
+        "A": "200",
+        "B": "201",
+        "C": "204",
+        "D": "400"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "response.ok dla 404 — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";const response=await fetch(API+\"/tickets/999\",{method:\"PATCH\",headers:{\"Content-Type\":\"application/json\"},body:\"{}\"});console.log(response.ok);",
+      "options": {
+        "A": "false",
+        "B": "true",
+        "C": "undefined",
+        "D": "404"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Licznik równoległych żądań — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";let calls=0;server.use(http.get(API+\"/tickets\",()=>{calls+=1;return HttpResponse.json({items:[],total:0,page:1,pageSize:10});}));await Promise.all([fetchTickets({page:1}),fetchTickets({page:1})]);console.log(calls);",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "ID nowego ticketu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";console.log((await createTicket({title:\"Nowy ticket\",priority:\"LOW\"})).id);",
+      "options": {
+        "A": "100",
+        "B": "4",
+        "C": "103",
+        "D": "42"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Filtr po zamknięciu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";await patchTicket(42,{status:\"CLOSED\"});console.log((await fetchTickets({status:\"CLOSED\",page:1})).total);",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "0"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Komunikat ApiError — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";try{await createTicket({title:\"abc\",priority:\"LOW\"});}catch(error){console.log(error instanceof Error?error.message:\"inny\");}",
+      "options": {
+        "A": "Bad Request",
+        "B": "Tytuł musi mieć co najmniej 5 znaków.",
+        "C": "HTTP 400",
+        "D": "undefined"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    },
+    {
+      "question": "Nazwa błędu — jaki wynik?",
+      "code": "import {http,HttpResponse} from \"msw\";import {resetDb,server} from \"./mswServer\";import {API,ApiError,createTicket,fetchTickets,patchTicket} from \"./ticketApi\";try{await createTicket({title:\"abc\",priority:\"LOW\"});}catch(error){console.log(error instanceof Error?error.name:\"inny\");}",
+      "options": {
+        "A": "Error",
+        "B": "ApiError",
+        "C": "TypeError",
+        "D": "HttpError"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z prawdziwego wywołania fetch przechwyconego przez MSW w Vitest; handlery i baza są resetowane po każdym teście."
+    }
+  ]
 }
