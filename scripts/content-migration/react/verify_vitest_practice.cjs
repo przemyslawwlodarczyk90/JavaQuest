@@ -19,6 +19,7 @@ const entries=[
   ['_react_16_wydajnosc','02_Memoization','./practice_perf_02.cjs',30,100],
   ['_react_16_wydajnosc','03_ReactCompiler','./practice_perf_03.cjs',30,100],
   ['_react_16_wydajnosc','04_DrillMemoization','./practice_perf_04.cjs',30,100],
+  ['_react_16_wydajnosc','05_LazyAndSuspense','./practice_perf_05.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;
