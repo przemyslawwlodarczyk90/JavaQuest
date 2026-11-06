@@ -138,6 +138,7 @@ const entries = [
   ['04_RenderAndCommitPhases', './practice_inside_04.cjs', 30, 100, '_react_15_react_od_srodka'],
   ['05_BatchingSchedulingAndLanes', './practice_inside_05.cjs', 30, 100, '_react_15_react_od_srodka'],
   ['06_HooksUnderTheHood', './practice_inside_06.cjs', 30, 100, '_react_15_react_od_srodka'],
+  ['07_BuildMiniReact', './practice_inside_07.cjs', 30, 100, '_react_15_react_od_srodka'],
 ];
 
 function build(source, exerciseCount, questionCount) {
