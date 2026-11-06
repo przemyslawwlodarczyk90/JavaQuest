@@ -144,6 +144,7 @@ const entries = [
   ['03_ReactCompiler', './practice_perf_03.cjs', 30, 100, '_react_16_wydajnosc'],
   ['04_DrillMemoization', './practice_perf_04.cjs', 30, 100, '_react_16_wydajnosc'],
   ['05_LazyAndSuspense', './practice_perf_05.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['06_TransitionsAndDeferredValues', './practice_perf_06.cjs', 30, 100, '_react_16_wydajnosc'],
 ];
 
 function build(source, exerciseCount, questionCount) {
