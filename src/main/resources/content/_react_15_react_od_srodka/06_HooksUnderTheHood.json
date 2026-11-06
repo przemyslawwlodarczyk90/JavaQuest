@@ -65,6 +65,1292 @@
       "body": "Hooki komponentu to lista węzłów w jego fiberze, rozpoznawana wyłącznie po kolejności wywołań — nazwy zmiennych nie mają znaczenia. Stąd zasady hooków: wywołania tylko na najwyższym poziomie, bez warunków, pętli i wczesnych `return` przed nimi. `useState` przechowuje wartość i kolejkę aktualizacji, efekty — zależności porównywane `Object.is`, `useRef` — stały obiekt, `useMemo` — wynik z zależnościami. Własne hooki dopisują węzły do listy komponentu. Przed złą kolejnością chronią ESLint i React, nie TypeScript.\n\nKryterium akceptacji: potrafisz wyjaśnić na symulacji, dlaczego hook w warunku zwraca cudzy stan, odtworzyć i opisać błąd Reacta o zmianie liczby hooków oraz przewidzieć wynik `depsChanged` dla wartości prostych, obiektów i `NaN`."
     }
   ],
-  "exercises": [],
-  "quiz": []
+  "exercises": [
+    {
+      "prompt": "Zaimplementuj depsChanged porównujące zależności przez Object.is.",
+      "hint": "Brak tablicy i różna długość to zawsze zmiana.",
+      "solution": "// Model porównania zależności efektu/memo: Object.is element po elemencie.\nexport function depsChanged(prev:readonly unknown[]|undefined,next:readonly unknown[]|undefined):boolean{\n  if(prev===undefined||next===undefined)return true; // brak tablicy → po każdym renderze\n  if(prev.length!==next.length)return true;\n  return next.some((value,i)=>!Object.is(value,prev[i]));\n}"
+    },
+    {
+      "prompt": "Napisz test depsChanged dla liczb, obiektów, NaN, -0 i braku tablicy.",
+      "hint": "Object.is(NaN, NaN) to true, Object.is(0, -0) to false.",
+      "solution": "import {expect,test} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\ntest(\"depsChanged\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});"
+    },
+    {
+      "prompt": "Odtwórz model slotów z teorii jako createHooksModel z indeksem resetowanym przed renderem.",
+      "hint": "Slot dopisywany tylko wtedy, gdy indeks wychodzi poza tablicę.",
+      "solution": "// Uproszczony model z teorii: tablica slotów i indeks resetowany przed każdym „renderem”.\nexport function createHooksModel(){\n  const slots:unknown[]=[];\n  let index=0;\n  function useSimState<T>(initial:T):[T,(v:T)=>void]{\n    const i=index++;\n    if(slots.length<=i)slots.push(initial); // montowanie\n    return [slots[i] as T,(v:T)=>{slots[i]=v;}];\n  }\n  function render<R>(component:()=>R):R{index=0;return component();}\n  return {useSimState,render,slots};\n}\nexport function ticketFormDemo(){\n  const {useSimState,render}=createHooksModel();\n  function TicketForm(showDescription:boolean){\n    const [title]=useSimState(\"Błąd eksportu\");\n    const description=showDescription?useSimState(\"\")[0]:null; // ŹLE: hook w warunku\n    const [priority]=useSimState<\"LOW\"|\"HIGH\">(\"HIGH\");\n    return {title,description,priority};\n  }\n  return [render(()=>TicketForm(true)),render(()=>TicketForm(false))];\n}"
+    },
+    {
+      "prompt": "Udowodnij testem, że hook w warunku w modelu slotów zwraca cudzą wartość.",
+      "hint": "Drugi render bez opisu: priority dostaje pusty tekst.",
+      "solution": "import {expect,test} from \"vitest\";\nimport {ticketFormDemo} from \"./hooksModel\";\ntest(\"cudzy slot\",()=>{\n  const [, second]=ticketFormDemo();\n  expect(second.priority).toBe(\"\");\n});"
+    },
+    {
+      "prompt": "Zbuduj nextHook: wskaźnik bieżącego hooka, tworzenie węzła przy montowaniu i błędy przy aktualizacji.",
+      "hint": "Brak węzła = więcej hooków; inny rodzaj = zmiana kolejności.",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Dodaj useState z kolejką aktualizacji i dispatch tworzonym raz przy montowaniu.",
+      "hint": "Kolejkę przetwarzaj w renderze po kolei.",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Dodaj wczesne wyjście: ta sama wartość przy pustej kolejce nie planuje renderu.",
+      "hint": "Object.is(action, hook.value).",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Zaimplementuj useRef jako obiekt { current } tworzony raz.",
+      "hint": "Zwracaj zawsze ten sam obiekt z węzła.",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Zaimplementuj useMemo przeliczające wynik tylko po zmianie zależności.",
+      "hint": "Użyj depsChanged na zapisanych i nowych zależnościach.",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Zaimplementuj useEffect odkładany do „commitu” ze sprzątaniem poprzedniego setupu.",
+      "hint": "Kolejka efektów uruchamiana po zakończeniu renderu.",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Napisz mount z update, flush i błędem „Rendered fewer hooks than expected”.",
+      "hint": "Po renderze porównaj index z długością listy.",
+      "solution": "import {depsChanged} from \"./depsChanged\";\n// Model listy hooków jednego komponentu: węzły w kolejności wywołań, wskaźnik index resetowany przed renderem.\ntype Action<T>=T|((prev:T)=>T);\ntype StateHook={kind:\"state\";value:unknown;queue:((prev:unknown)=>unknown)[];dispatch:(action:unknown)=>void};\ntype RefHook={kind:\"ref\";ref:{current:unknown}};\ntype MemoHook={kind:\"memo\";value:unknown;deps:readonly unknown[]};\ntype EffectHook={kind:\"effect\";deps:readonly unknown[]|undefined;destroy:(()=>void)|undefined};\nexport type HookNode=StateHook|RefHook|MemoHook|EffectHook;\ntype Instance={hooks:HookNode[];index:number;mounting:boolean;dirty:boolean;effects:(()=>void)[]};\nlet current:Instance|null=null;\nfunction nextHook<K extends HookNode[\"kind\"]>(kind:K,create:(inst:Instance)=>Extract<HookNode,{kind:K}>):Extract<HookNode,{kind:K}>{\n  const inst=current;\n  if(!inst)throw new Error(\"Hook wywołany poza renderem komponentu\");\n  const i=inst.index++;\n  if(inst.mounting){const node=create(inst);inst.hooks.push(node);return node;}\n  const node=inst.hooks[i];\n  if(!node)throw new Error(\"Rendered more hooks than during the previous render.\");\n  if(node.kind!==kind)throw new Error(\"Zmiana kolejności hooków na pozycji \"+i+\": było \"+node.kind+\", jest \"+kind);\n  return node as Extract<HookNode,{kind:K}>;\n}\nexport function useState<T>(initial:T|(()=>T)):[T,(action:Action<T>)=>void]{\n  const node=nextHook(\"state\",inst=>{\n    const hook:StateHook={kind:\"state\",value:typeof initial===\"function\"?(initial as ()=>T)():initial,queue:[],dispatch:()=>{}};\n    // dispatch tworzony raz przy montowaniu — stała tożsamość między renderami\n    hook.dispatch=action=>{\n      if(hook.queue.length===0&&typeof action!==\"function\"&&Object.is(action,hook.value))return; // wczesne wyjście\n      hook.queue.push(typeof action===\"function\"?action as (prev:unknown)=>unknown:()=>action);\n      inst.dirty=true;\n    };\n    return hook;\n  });\n  for(const update of node.queue.splice(0))node.value=update(node.value); // kolejka po kolei\n  return [node.value as T,node.dispatch as (action:Action<T>)=>void];\n}\nexport function useRef<T>(initial:T):{current:T}{\n  return nextHook(\"ref\",()=>({kind:\"ref\",ref:{current:initial}})).ref as {current:T};\n}\nexport function useMemo<T>(compute:()=>T,deps:readonly unknown[]):T{\n  const node=nextHook(\"memo\",()=>({kind:\"memo\",value:compute(),deps}));\n  if(depsChanged(node.deps,deps)){node.value=compute();node.deps=deps;}\n  return node.value as T;\n}\nexport function useEffect(setup:()=>void|(()=>void),deps?:readonly unknown[]):void{\n  const inst=current;\n  let fresh=false;\n  const node=nextHook(\"effect\",()=>{fresh=true;return {kind:\"effect\",deps,destroy:undefined};});\n  if(fresh||depsChanged(node.deps,deps)){\n    node.deps=deps;\n    // „commit”: efekt czeka, aż render się skończy; najpierw sprzątanie poprzedniego setupu\n    inst?.effects.push(()=>{node.destroy?.();const destroy=setup();node.destroy=typeof destroy===\"function\"?destroy:undefined;});\n  }\n}\nexport type Mounted<P,R>={readonly output:R;readonly renders:number;readonly hooks:readonly HookNode[];update(props:P):void;flush():boolean;unmount():void};\nexport function mount<P,R>(component:(props:P)=>R,initialProps:NoInfer<P>):Mounted<P,R>{\n  const inst:Instance={hooks:[],index:0,mounting:true,dirty:false,effects:[]};\n  let props=initialProps,output!:R,renders=0;\n  function render(){\n    inst.index=0;current=inst;\n    try{output=component(props);}finally{current=null;}\n    if(!inst.mounting&&inst.index<inst.hooks.length)throw new Error(\"Rendered fewer hooks than expected. This may be caused by an accidental early return statement.\");\n    inst.mounting=false;renders+=1;\n    for(const run of inst.effects.splice(0))run();\n  }\n  render();\n  return {\n    get output(){return output;},\n    get renders(){return renders;},\n    hooks:inst.hooks,\n    update(next){props=next;inst.dirty=false;render();},\n    flush(){if(!inst.dirty)return false;inst.dirty=false;render();return true;},\n    unmount(){for(const node of inst.hooks)if(node.kind===\"effect\")node.destroy?.();},\n  };\n}"
+    },
+    {
+      "prompt": "Sprawdź testem, że stany są rozpoznawane po kolejności, a nie po nazwach.",
+      "hint": "Zmień drugi stan i sprawdź oba wyniki.",
+      "solution": "import {expect,test,vi} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\nimport {ticketFormDemo} from \"./hooksModel\";\nimport {mount,useEffect,useMemo,useRef,useState} from \"./hookRuntime\";\ntest(\"depsChanged porównuje Object.is element po elemencie\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged([1],[1,2])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});\ntest(\"model z teorii po cichu zwraca cudzy slot\",()=>{\n  const [first,second]=ticketFormDemo();\n  expect(first).toEqual({title:\"Błąd eksportu\",description:\"\",priority:\"HIGH\"});\n  expect(second).toEqual({title:\"Błąd eksportu\",description:null,priority:\"\"});\n});\ntest(\"stany rozpoznawane po kolejności, nie po nazwie\",()=>{\n  let setSecond!:(v:string)=>void;\n  const view=mount(()=>{const [a]=useState(\"pierwszy\");const [b,setB]=useState(\"drugi\");setSecond=setB;return a+\"|\"+b;},undefined);\n  setSecond(\"zmieniony\");\n  view.flush();\n  expect(view.output).toBe(\"pierwszy|zmieniony\");\n});\ntest(\"kilka setState przed flush daje jeden render\",()=>{\n  let bump!:()=>void;\n  const view=mount(()=>{const [a,setA]=useState(0);const [b,setB]=useState(0);bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return a+b;},undefined);\n  bump();\n  expect(view.flush()).toBe(true);\n  expect(view.renders).toBe(2);\n  expect(view.output).toBe(3);\n});\ntest(\"kolejka przetwarza aktualizacje po kolei\",()=>{\n  let run!:()=>void;\n  const view=mount(()=>{const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return n;},undefined);\n  run();\n  view.flush();\n  expect(view.output).toBe(6);\n});\ntest(\"ta sama wartość nie planuje renderu\",()=>{\n  let set!:(v:string)=>void;\n  const view=mount(()=>{const [s,setS]=useState(\"OPEN\");set=setS;return s;},undefined);\n  set(\"OPEN\");\n  expect(view.flush()).toBe(false);\n  expect(view.renders).toBe(1);\n  set(\"CLOSED\");\n  expect(view.flush()).toBe(true);\n  expect(view.output).toBe(\"CLOSED\");\n});\ntest(\"setter i ref są stałe między renderami\",()=>{\n  const setters:unknown[]=[],refs:{current:number}[]=[];\n  const view=mount((n:number)=>{const [,set]=useState(0);const ref=useRef(n);setters.push(set);refs.push(ref);return n;},1);\n  view.update(2);\n  expect(setters[0]).toBe(setters[1]);\n  expect(refs[0]).toBe(refs[1]);\n  expect(refs[1].current).toBe(1);\n});\ntest(\"useMemo liczy ponownie tylko po zmianie zależności\",()=>{\n  const compute=vi.fn((n:number)=>n*2);\n  const view=mount((p:{n:number;tick:number})=>useMemo(()=>compute(p.n),[p.n])+p.tick,{n:1,tick:0});\n  view.update({n:1,tick:1});\n  expect(compute).toHaveBeenCalledTimes(1);\n  view.update({n:2,tick:1});\n  expect(compute).toHaveBeenCalledTimes(2);\n  expect(view.output).toBe(5);\n});\ntest(\"efekt: po renderze, Object.is na zależnościach, sprzątanie przed nowym setupem\",()=>{\n  const log:string[]=[];\n  const view=mount((dep:unknown)=>{\n    log.push(\"render\");\n    useEffect(()=>{log.push(\"setup \"+String(dep));return ()=>{log.push(\"cleanup \"+String(dep));};},[dep]);\n    return null;\n  },NaN as unknown);\n  view.update(NaN);\n  view.update(\"a\");\n  view.unmount();\n  expect(log).toEqual([\"render\",\"setup NaN\",\"render\",\"render\",\"cleanup NaN\",\"setup a\",\"cleanup a\"]);\n});\ntest(\"nowy obiekt w zależnościach uruchamia efekt przy każdym renderze\",()=>{\n  const setup=vi.fn();\n  const view=mount((status:string)=>{const filter={status};useEffect(()=>{setup(filter.status);},[filter]);return null;},\"OPEN\");\n  view.update(\"OPEN\");\n  view.update(\"OPEN\");\n  expect(setup).toHaveBeenCalledTimes(3);\n});\ntest(\"hook w warunku: mniej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},true);\n  expect(()=>view.update(false)).toThrow(/fewer hooks/);\n});\ntest(\"hook w warunku: więcej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},false);\n  expect(()=>view.update(true)).toThrow(/more hooks/);\n});\ntest(\"zmiana rodzaju hooka na pozycji to błąd\",()=>{\n  const view=mount((first:boolean)=>{if(first){useState(0);}else{useRef(0);}return first;},true);\n  expect(()=>view.update(false)).toThrow(/Zmiana kolejności hooków na pozycji 0/);\n});\ntest(\"hook poza renderem rzuca\",()=>{\n  expect(()=>useState(0)).toThrow(/poza renderem/);\n});\ntest(\"własny hook dopisuje węzły do listy komponentu\",()=>{\n  function useOnlineSim(){const [online]=useState(true);useEffect(()=>{},[]);return online;}\n  const view=mount(()=>{const [collapsed]=useState(false);const online=useOnlineSim();return String(collapsed)+String(online);},undefined);\n  expect(view.hooks.map(h=>h.kind)).toEqual([\"state\",\"state\",\"effect\"]);\n});"
+    },
+    {
+      "prompt": "Sprawdź testem grupowanie: trzy setState przed flush dają jeden render.",
+      "hint": "Licznik renders w obiekcie z mount.",
+      "solution": "import {expect,test,vi} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\nimport {ticketFormDemo} from \"./hooksModel\";\nimport {mount,useEffect,useMemo,useRef,useState} from \"./hookRuntime\";\ntest(\"depsChanged porównuje Object.is element po elemencie\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged([1],[1,2])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});\ntest(\"model z teorii po cichu zwraca cudzy slot\",()=>{\n  const [first,second]=ticketFormDemo();\n  expect(first).toEqual({title:\"Błąd eksportu\",description:\"\",priority:\"HIGH\"});\n  expect(second).toEqual({title:\"Błąd eksportu\",description:null,priority:\"\"});\n});\ntest(\"stany rozpoznawane po kolejności, nie po nazwie\",()=>{\n  let setSecond!:(v:string)=>void;\n  const view=mount(()=>{const [a]=useState(\"pierwszy\");const [b,setB]=useState(\"drugi\");setSecond=setB;return a+\"|\"+b;},undefined);\n  setSecond(\"zmieniony\");\n  view.flush();\n  expect(view.output).toBe(\"pierwszy|zmieniony\");\n});\ntest(\"kilka setState przed flush daje jeden render\",()=>{\n  let bump!:()=>void;\n  const view=mount(()=>{const [a,setA]=useState(0);const [b,setB]=useState(0);bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return a+b;},undefined);\n  bump();\n  expect(view.flush()).toBe(true);\n  expect(view.renders).toBe(2);\n  expect(view.output).toBe(3);\n});\ntest(\"kolejka przetwarza aktualizacje po kolei\",()=>{\n  let run!:()=>void;\n  const view=mount(()=>{const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return n;},undefined);\n  run();\n  view.flush();\n  expect(view.output).toBe(6);\n});\ntest(\"ta sama wartość nie planuje renderu\",()=>{\n  let set!:(v:string)=>void;\n  const view=mount(()=>{const [s,setS]=useState(\"OPEN\");set=setS;return s;},undefined);\n  set(\"OPEN\");\n  expect(view.flush()).toBe(false);\n  expect(view.renders).toBe(1);\n  set(\"CLOSED\");\n  expect(view.flush()).toBe(true);\n  expect(view.output).toBe(\"CLOSED\");\n});\ntest(\"setter i ref są stałe między renderami\",()=>{\n  const setters:unknown[]=[],refs:{current:number}[]=[];\n  const view=mount((n:number)=>{const [,set]=useState(0);const ref=useRef(n);setters.push(set);refs.push(ref);return n;},1);\n  view.update(2);\n  expect(setters[0]).toBe(setters[1]);\n  expect(refs[0]).toBe(refs[1]);\n  expect(refs[1].current).toBe(1);\n});\ntest(\"useMemo liczy ponownie tylko po zmianie zależności\",()=>{\n  const compute=vi.fn((n:number)=>n*2);\n  const view=mount((p:{n:number;tick:number})=>useMemo(()=>compute(p.n),[p.n])+p.tick,{n:1,tick:0});\n  view.update({n:1,tick:1});\n  expect(compute).toHaveBeenCalledTimes(1);\n  view.update({n:2,tick:1});\n  expect(compute).toHaveBeenCalledTimes(2);\n  expect(view.output).toBe(5);\n});\ntest(\"efekt: po renderze, Object.is na zależnościach, sprzątanie przed nowym setupem\",()=>{\n  const log:string[]=[];\n  const view=mount((dep:unknown)=>{\n    log.push(\"render\");\n    useEffect(()=>{log.push(\"setup \"+String(dep));return ()=>{log.push(\"cleanup \"+String(dep));};},[dep]);\n    return null;\n  },NaN as unknown);\n  view.update(NaN);\n  view.update(\"a\");\n  view.unmount();\n  expect(log).toEqual([\"render\",\"setup NaN\",\"render\",\"render\",\"cleanup NaN\",\"setup a\",\"cleanup a\"]);\n});\ntest(\"nowy obiekt w zależnościach uruchamia efekt przy każdym renderze\",()=>{\n  const setup=vi.fn();\n  const view=mount((status:string)=>{const filter={status};useEffect(()=>{setup(filter.status);},[filter]);return null;},\"OPEN\");\n  view.update(\"OPEN\");\n  view.update(\"OPEN\");\n  expect(setup).toHaveBeenCalledTimes(3);\n});\ntest(\"hook w warunku: mniej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},true);\n  expect(()=>view.update(false)).toThrow(/fewer hooks/);\n});\ntest(\"hook w warunku: więcej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},false);\n  expect(()=>view.update(true)).toThrow(/more hooks/);\n});\ntest(\"zmiana rodzaju hooka na pozycji to błąd\",()=>{\n  const view=mount((first:boolean)=>{if(first){useState(0);}else{useRef(0);}return first;},true);\n  expect(()=>view.update(false)).toThrow(/Zmiana kolejności hooków na pozycji 0/);\n});\ntest(\"hook poza renderem rzuca\",()=>{\n  expect(()=>useState(0)).toThrow(/poza renderem/);\n});\ntest(\"własny hook dopisuje węzły do listy komponentu\",()=>{\n  function useOnlineSim(){const [online]=useState(true);useEffect(()=>{},[]);return online;}\n  const view=mount(()=>{const [collapsed]=useState(false);const online=useOnlineSim();return String(collapsed)+String(online);},undefined);\n  expect(view.hooks.map(h=>h.kind)).toEqual([\"state\",\"state\",\"effect\"]);\n});"
+    },
+    {
+      "prompt": "Sprawdź testem stałą tożsamość settera i refa między renderami.",
+      "hint": "toBe porównuje referencje.",
+      "solution": "import {expect,test,vi} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\nimport {ticketFormDemo} from \"./hooksModel\";\nimport {mount,useEffect,useMemo,useRef,useState} from \"./hookRuntime\";\ntest(\"depsChanged porównuje Object.is element po elemencie\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged([1],[1,2])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});\ntest(\"model z teorii po cichu zwraca cudzy slot\",()=>{\n  const [first,second]=ticketFormDemo();\n  expect(first).toEqual({title:\"Błąd eksportu\",description:\"\",priority:\"HIGH\"});\n  expect(second).toEqual({title:\"Błąd eksportu\",description:null,priority:\"\"});\n});\ntest(\"stany rozpoznawane po kolejności, nie po nazwie\",()=>{\n  let setSecond!:(v:string)=>void;\n  const view=mount(()=>{const [a]=useState(\"pierwszy\");const [b,setB]=useState(\"drugi\");setSecond=setB;return a+\"|\"+b;},undefined);\n  setSecond(\"zmieniony\");\n  view.flush();\n  expect(view.output).toBe(\"pierwszy|zmieniony\");\n});\ntest(\"kilka setState przed flush daje jeden render\",()=>{\n  let bump!:()=>void;\n  const view=mount(()=>{const [a,setA]=useState(0);const [b,setB]=useState(0);bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return a+b;},undefined);\n  bump();\n  expect(view.flush()).toBe(true);\n  expect(view.renders).toBe(2);\n  expect(view.output).toBe(3);\n});\ntest(\"kolejka przetwarza aktualizacje po kolei\",()=>{\n  let run!:()=>void;\n  const view=mount(()=>{const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return n;},undefined);\n  run();\n  view.flush();\n  expect(view.output).toBe(6);\n});\ntest(\"ta sama wartość nie planuje renderu\",()=>{\n  let set!:(v:string)=>void;\n  const view=mount(()=>{const [s,setS]=useState(\"OPEN\");set=setS;return s;},undefined);\n  set(\"OPEN\");\n  expect(view.flush()).toBe(false);\n  expect(view.renders).toBe(1);\n  set(\"CLOSED\");\n  expect(view.flush()).toBe(true);\n  expect(view.output).toBe(\"CLOSED\");\n});\ntest(\"setter i ref są stałe między renderami\",()=>{\n  const setters:unknown[]=[],refs:{current:number}[]=[];\n  const view=mount((n:number)=>{const [,set]=useState(0);const ref=useRef(n);setters.push(set);refs.push(ref);return n;},1);\n  view.update(2);\n  expect(setters[0]).toBe(setters[1]);\n  expect(refs[0]).toBe(refs[1]);\n  expect(refs[1].current).toBe(1);\n});\ntest(\"useMemo liczy ponownie tylko po zmianie zależności\",()=>{\n  const compute=vi.fn((n:number)=>n*2);\n  const view=mount((p:{n:number;tick:number})=>useMemo(()=>compute(p.n),[p.n])+p.tick,{n:1,tick:0});\n  view.update({n:1,tick:1});\n  expect(compute).toHaveBeenCalledTimes(1);\n  view.update({n:2,tick:1});\n  expect(compute).toHaveBeenCalledTimes(2);\n  expect(view.output).toBe(5);\n});\ntest(\"efekt: po renderze, Object.is na zależnościach, sprzątanie przed nowym setupem\",()=>{\n  const log:string[]=[];\n  const view=mount((dep:unknown)=>{\n    log.push(\"render\");\n    useEffect(()=>{log.push(\"setup \"+String(dep));return ()=>{log.push(\"cleanup \"+String(dep));};},[dep]);\n    return null;\n  },NaN as unknown);\n  view.update(NaN);\n  view.update(\"a\");\n  view.unmount();\n  expect(log).toEqual([\"render\",\"setup NaN\",\"render\",\"render\",\"cleanup NaN\",\"setup a\",\"cleanup a\"]);\n});\ntest(\"nowy obiekt w zależnościach uruchamia efekt przy każdym renderze\",()=>{\n  const setup=vi.fn();\n  const view=mount((status:string)=>{const filter={status};useEffect(()=>{setup(filter.status);},[filter]);return null;},\"OPEN\");\n  view.update(\"OPEN\");\n  view.update(\"OPEN\");\n  expect(setup).toHaveBeenCalledTimes(3);\n});\ntest(\"hook w warunku: mniej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},true);\n  expect(()=>view.update(false)).toThrow(/fewer hooks/);\n});\ntest(\"hook w warunku: więcej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},false);\n  expect(()=>view.update(true)).toThrow(/more hooks/);\n});\ntest(\"zmiana rodzaju hooka na pozycji to błąd\",()=>{\n  const view=mount((first:boolean)=>{if(first){useState(0);}else{useRef(0);}return first;},true);\n  expect(()=>view.update(false)).toThrow(/Zmiana kolejności hooków na pozycji 0/);\n});\ntest(\"hook poza renderem rzuca\",()=>{\n  expect(()=>useState(0)).toThrow(/poza renderem/);\n});\ntest(\"własny hook dopisuje węzły do listy komponentu\",()=>{\n  function useOnlineSim(){const [online]=useState(true);useEffect(()=>{},[]);return online;}\n  const view=mount(()=>{const [collapsed]=useState(false);const online=useOnlineSim();return String(collapsed)+String(online);},undefined);\n  expect(view.hooks.map(h=>h.kind)).toEqual([\"state\",\"state\",\"effect\"]);\n});"
+    },
+    {
+      "prompt": "Sprawdź testem efekt z NaN w zależnościach i efekt z nowym obiektem.",
+      "hint": "NaN nie uruchomi ponownie, obiekt — za każdym razem.",
+      "solution": "import {expect,test,vi} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\nimport {ticketFormDemo} from \"./hooksModel\";\nimport {mount,useEffect,useMemo,useRef,useState} from \"./hookRuntime\";\ntest(\"depsChanged porównuje Object.is element po elemencie\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged([1],[1,2])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});\ntest(\"model z teorii po cichu zwraca cudzy slot\",()=>{\n  const [first,second]=ticketFormDemo();\n  expect(first).toEqual({title:\"Błąd eksportu\",description:\"\",priority:\"HIGH\"});\n  expect(second).toEqual({title:\"Błąd eksportu\",description:null,priority:\"\"});\n});\ntest(\"stany rozpoznawane po kolejności, nie po nazwie\",()=>{\n  let setSecond!:(v:string)=>void;\n  const view=mount(()=>{const [a]=useState(\"pierwszy\");const [b,setB]=useState(\"drugi\");setSecond=setB;return a+\"|\"+b;},undefined);\n  setSecond(\"zmieniony\");\n  view.flush();\n  expect(view.output).toBe(\"pierwszy|zmieniony\");\n});\ntest(\"kilka setState przed flush daje jeden render\",()=>{\n  let bump!:()=>void;\n  const view=mount(()=>{const [a,setA]=useState(0);const [b,setB]=useState(0);bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return a+b;},undefined);\n  bump();\n  expect(view.flush()).toBe(true);\n  expect(view.renders).toBe(2);\n  expect(view.output).toBe(3);\n});\ntest(\"kolejka przetwarza aktualizacje po kolei\",()=>{\n  let run!:()=>void;\n  const view=mount(()=>{const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return n;},undefined);\n  run();\n  view.flush();\n  expect(view.output).toBe(6);\n});\ntest(\"ta sama wartość nie planuje renderu\",()=>{\n  let set!:(v:string)=>void;\n  const view=mount(()=>{const [s,setS]=useState(\"OPEN\");set=setS;return s;},undefined);\n  set(\"OPEN\");\n  expect(view.flush()).toBe(false);\n  expect(view.renders).toBe(1);\n  set(\"CLOSED\");\n  expect(view.flush()).toBe(true);\n  expect(view.output).toBe(\"CLOSED\");\n});\ntest(\"setter i ref są stałe między renderami\",()=>{\n  const setters:unknown[]=[],refs:{current:number}[]=[];\n  const view=mount((n:number)=>{const [,set]=useState(0);const ref=useRef(n);setters.push(set);refs.push(ref);return n;},1);\n  view.update(2);\n  expect(setters[0]).toBe(setters[1]);\n  expect(refs[0]).toBe(refs[1]);\n  expect(refs[1].current).toBe(1);\n});\ntest(\"useMemo liczy ponownie tylko po zmianie zależności\",()=>{\n  const compute=vi.fn((n:number)=>n*2);\n  const view=mount((p:{n:number;tick:number})=>useMemo(()=>compute(p.n),[p.n])+p.tick,{n:1,tick:0});\n  view.update({n:1,tick:1});\n  expect(compute).toHaveBeenCalledTimes(1);\n  view.update({n:2,tick:1});\n  expect(compute).toHaveBeenCalledTimes(2);\n  expect(view.output).toBe(5);\n});\ntest(\"efekt: po renderze, Object.is na zależnościach, sprzątanie przed nowym setupem\",()=>{\n  const log:string[]=[];\n  const view=mount((dep:unknown)=>{\n    log.push(\"render\");\n    useEffect(()=>{log.push(\"setup \"+String(dep));return ()=>{log.push(\"cleanup \"+String(dep));};},[dep]);\n    return null;\n  },NaN as unknown);\n  view.update(NaN);\n  view.update(\"a\");\n  view.unmount();\n  expect(log).toEqual([\"render\",\"setup NaN\",\"render\",\"render\",\"cleanup NaN\",\"setup a\",\"cleanup a\"]);\n});\ntest(\"nowy obiekt w zależnościach uruchamia efekt przy każdym renderze\",()=>{\n  const setup=vi.fn();\n  const view=mount((status:string)=>{const filter={status};useEffect(()=>{setup(filter.status);},[filter]);return null;},\"OPEN\");\n  view.update(\"OPEN\");\n  view.update(\"OPEN\");\n  expect(setup).toHaveBeenCalledTimes(3);\n});\ntest(\"hook w warunku: mniej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},true);\n  expect(()=>view.update(false)).toThrow(/fewer hooks/);\n});\ntest(\"hook w warunku: więcej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},false);\n  expect(()=>view.update(true)).toThrow(/more hooks/);\n});\ntest(\"zmiana rodzaju hooka na pozycji to błąd\",()=>{\n  const view=mount((first:boolean)=>{if(first){useState(0);}else{useRef(0);}return first;},true);\n  expect(()=>view.update(false)).toThrow(/Zmiana kolejności hooków na pozycji 0/);\n});\ntest(\"hook poza renderem rzuca\",()=>{\n  expect(()=>useState(0)).toThrow(/poza renderem/);\n});\ntest(\"własny hook dopisuje węzły do listy komponentu\",()=>{\n  function useOnlineSim(){const [online]=useState(true);useEffect(()=>{},[]);return online;}\n  const view=mount(()=>{const [collapsed]=useState(false);const online=useOnlineSim();return String(collapsed)+String(online);},undefined);\n  expect(view.hooks.map(h=>h.kind)).toEqual([\"state\",\"state\",\"effect\"]);\n});"
+    },
+    {
+      "prompt": "Sprawdź testem trzy błędy: mniej hooków, więcej hooków i zmiana rodzaju.",
+      "hint": "expect(() => view.update(...)).toThrow(...).",
+      "solution": "import {expect,test,vi} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\nimport {ticketFormDemo} from \"./hooksModel\";\nimport {mount,useEffect,useMemo,useRef,useState} from \"./hookRuntime\";\ntest(\"depsChanged porównuje Object.is element po elemencie\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged([1],[1,2])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});\ntest(\"model z teorii po cichu zwraca cudzy slot\",()=>{\n  const [first,second]=ticketFormDemo();\n  expect(first).toEqual({title:\"Błąd eksportu\",description:\"\",priority:\"HIGH\"});\n  expect(second).toEqual({title:\"Błąd eksportu\",description:null,priority:\"\"});\n});\ntest(\"stany rozpoznawane po kolejności, nie po nazwie\",()=>{\n  let setSecond!:(v:string)=>void;\n  const view=mount(()=>{const [a]=useState(\"pierwszy\");const [b,setB]=useState(\"drugi\");setSecond=setB;return a+\"|\"+b;},undefined);\n  setSecond(\"zmieniony\");\n  view.flush();\n  expect(view.output).toBe(\"pierwszy|zmieniony\");\n});\ntest(\"kilka setState przed flush daje jeden render\",()=>{\n  let bump!:()=>void;\n  const view=mount(()=>{const [a,setA]=useState(0);const [b,setB]=useState(0);bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return a+b;},undefined);\n  bump();\n  expect(view.flush()).toBe(true);\n  expect(view.renders).toBe(2);\n  expect(view.output).toBe(3);\n});\ntest(\"kolejka przetwarza aktualizacje po kolei\",()=>{\n  let run!:()=>void;\n  const view=mount(()=>{const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return n;},undefined);\n  run();\n  view.flush();\n  expect(view.output).toBe(6);\n});\ntest(\"ta sama wartość nie planuje renderu\",()=>{\n  let set!:(v:string)=>void;\n  const view=mount(()=>{const [s,setS]=useState(\"OPEN\");set=setS;return s;},undefined);\n  set(\"OPEN\");\n  expect(view.flush()).toBe(false);\n  expect(view.renders).toBe(1);\n  set(\"CLOSED\");\n  expect(view.flush()).toBe(true);\n  expect(view.output).toBe(\"CLOSED\");\n});\ntest(\"setter i ref są stałe między renderami\",()=>{\n  const setters:unknown[]=[],refs:{current:number}[]=[];\n  const view=mount((n:number)=>{const [,set]=useState(0);const ref=useRef(n);setters.push(set);refs.push(ref);return n;},1);\n  view.update(2);\n  expect(setters[0]).toBe(setters[1]);\n  expect(refs[0]).toBe(refs[1]);\n  expect(refs[1].current).toBe(1);\n});\ntest(\"useMemo liczy ponownie tylko po zmianie zależności\",()=>{\n  const compute=vi.fn((n:number)=>n*2);\n  const view=mount((p:{n:number;tick:number})=>useMemo(()=>compute(p.n),[p.n])+p.tick,{n:1,tick:0});\n  view.update({n:1,tick:1});\n  expect(compute).toHaveBeenCalledTimes(1);\n  view.update({n:2,tick:1});\n  expect(compute).toHaveBeenCalledTimes(2);\n  expect(view.output).toBe(5);\n});\ntest(\"efekt: po renderze, Object.is na zależnościach, sprzątanie przed nowym setupem\",()=>{\n  const log:string[]=[];\n  const view=mount((dep:unknown)=>{\n    log.push(\"render\");\n    useEffect(()=>{log.push(\"setup \"+String(dep));return ()=>{log.push(\"cleanup \"+String(dep));};},[dep]);\n    return null;\n  },NaN as unknown);\n  view.update(NaN);\n  view.update(\"a\");\n  view.unmount();\n  expect(log).toEqual([\"render\",\"setup NaN\",\"render\",\"render\",\"cleanup NaN\",\"setup a\",\"cleanup a\"]);\n});\ntest(\"nowy obiekt w zależnościach uruchamia efekt przy każdym renderze\",()=>{\n  const setup=vi.fn();\n  const view=mount((status:string)=>{const filter={status};useEffect(()=>{setup(filter.status);},[filter]);return null;},\"OPEN\");\n  view.update(\"OPEN\");\n  view.update(\"OPEN\");\n  expect(setup).toHaveBeenCalledTimes(3);\n});\ntest(\"hook w warunku: mniej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},true);\n  expect(()=>view.update(false)).toThrow(/fewer hooks/);\n});\ntest(\"hook w warunku: więcej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},false);\n  expect(()=>view.update(true)).toThrow(/more hooks/);\n});\ntest(\"zmiana rodzaju hooka na pozycji to błąd\",()=>{\n  const view=mount((first:boolean)=>{if(first){useState(0);}else{useRef(0);}return first;},true);\n  expect(()=>view.update(false)).toThrow(/Zmiana kolejności hooków na pozycji 0/);\n});\ntest(\"hook poza renderem rzuca\",()=>{\n  expect(()=>useState(0)).toThrow(/poza renderem/);\n});\ntest(\"własny hook dopisuje węzły do listy komponentu\",()=>{\n  function useOnlineSim(){const [online]=useState(true);useEffect(()=>{},[]);return online;}\n  const view=mount(()=>{const [collapsed]=useState(false);const online=useOnlineSim();return String(collapsed)+String(online);},undefined);\n  expect(view.hooks.map(h=>h.kind)).toEqual([\"state\",\"state\",\"effect\"]);\n});"
+    },
+    {
+      "prompt": "Pokaż testem, że własny hook dopisuje węzły do listy komponentu.",
+      "hint": "Porównaj rodzaje węzłów: state, state, effect.",
+      "solution": "import {expect,test,vi} from \"vitest\";\nimport {depsChanged} from \"./depsChanged\";\nimport {ticketFormDemo} from \"./hooksModel\";\nimport {mount,useEffect,useMemo,useRef,useState} from \"./hookRuntime\";\ntest(\"depsChanged porównuje Object.is element po elemencie\",()=>{\n  expect(depsChanged([1,\"OPEN\"],[1,\"OPEN\"])).toBe(false);\n  expect(depsChanged([{status:\"OPEN\"}],[{status:\"OPEN\"}])).toBe(true);\n  expect(depsChanged([NaN],[NaN])).toBe(false);\n  expect(depsChanged([0],[-0])).toBe(true);\n  expect(depsChanged([1],[1,2])).toBe(true);\n  expect(depsChanged(undefined,undefined)).toBe(true);\n});\ntest(\"model z teorii po cichu zwraca cudzy slot\",()=>{\n  const [first,second]=ticketFormDemo();\n  expect(first).toEqual({title:\"Błąd eksportu\",description:\"\",priority:\"HIGH\"});\n  expect(second).toEqual({title:\"Błąd eksportu\",description:null,priority:\"\"});\n});\ntest(\"stany rozpoznawane po kolejności, nie po nazwie\",()=>{\n  let setSecond!:(v:string)=>void;\n  const view=mount(()=>{const [a]=useState(\"pierwszy\");const [b,setB]=useState(\"drugi\");setSecond=setB;return a+\"|\"+b;},undefined);\n  setSecond(\"zmieniony\");\n  view.flush();\n  expect(view.output).toBe(\"pierwszy|zmieniony\");\n});\ntest(\"kilka setState przed flush daje jeden render\",()=>{\n  let bump!:()=>void;\n  const view=mount(()=>{const [a,setA]=useState(0);const [b,setB]=useState(0);bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return a+b;},undefined);\n  bump();\n  expect(view.flush()).toBe(true);\n  expect(view.renders).toBe(2);\n  expect(view.output).toBe(3);\n});\ntest(\"kolejka przetwarza aktualizacje po kolei\",()=>{\n  let run!:()=>void;\n  const view=mount(()=>{const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return n;},undefined);\n  run();\n  view.flush();\n  expect(view.output).toBe(6);\n});\ntest(\"ta sama wartość nie planuje renderu\",()=>{\n  let set!:(v:string)=>void;\n  const view=mount(()=>{const [s,setS]=useState(\"OPEN\");set=setS;return s;},undefined);\n  set(\"OPEN\");\n  expect(view.flush()).toBe(false);\n  expect(view.renders).toBe(1);\n  set(\"CLOSED\");\n  expect(view.flush()).toBe(true);\n  expect(view.output).toBe(\"CLOSED\");\n});\ntest(\"setter i ref są stałe między renderami\",()=>{\n  const setters:unknown[]=[],refs:{current:number}[]=[];\n  const view=mount((n:number)=>{const [,set]=useState(0);const ref=useRef(n);setters.push(set);refs.push(ref);return n;},1);\n  view.update(2);\n  expect(setters[0]).toBe(setters[1]);\n  expect(refs[0]).toBe(refs[1]);\n  expect(refs[1].current).toBe(1);\n});\ntest(\"useMemo liczy ponownie tylko po zmianie zależności\",()=>{\n  const compute=vi.fn((n:number)=>n*2);\n  const view=mount((p:{n:number;tick:number})=>useMemo(()=>compute(p.n),[p.n])+p.tick,{n:1,tick:0});\n  view.update({n:1,tick:1});\n  expect(compute).toHaveBeenCalledTimes(1);\n  view.update({n:2,tick:1});\n  expect(compute).toHaveBeenCalledTimes(2);\n  expect(view.output).toBe(5);\n});\ntest(\"efekt: po renderze, Object.is na zależnościach, sprzątanie przed nowym setupem\",()=>{\n  const log:string[]=[];\n  const view=mount((dep:unknown)=>{\n    log.push(\"render\");\n    useEffect(()=>{log.push(\"setup \"+String(dep));return ()=>{log.push(\"cleanup \"+String(dep));};},[dep]);\n    return null;\n  },NaN as unknown);\n  view.update(NaN);\n  view.update(\"a\");\n  view.unmount();\n  expect(log).toEqual([\"render\",\"setup NaN\",\"render\",\"render\",\"cleanup NaN\",\"setup a\",\"cleanup a\"]);\n});\ntest(\"nowy obiekt w zależnościach uruchamia efekt przy każdym renderze\",()=>{\n  const setup=vi.fn();\n  const view=mount((status:string)=>{const filter={status};useEffect(()=>{setup(filter.status);},[filter]);return null;},\"OPEN\");\n  view.update(\"OPEN\");\n  view.update(\"OPEN\");\n  expect(setup).toHaveBeenCalledTimes(3);\n});\ntest(\"hook w warunku: mniej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},true);\n  expect(()=>view.update(false)).toThrow(/fewer hooks/);\n});\ntest(\"hook w warunku: więcej hooków niż poprzednio to błąd\",()=>{\n  const view=mount((on:boolean)=>{useState(\"a\");if(on)useState(\"b\");return on;},false);\n  expect(()=>view.update(true)).toThrow(/more hooks/);\n});\ntest(\"zmiana rodzaju hooka na pozycji to błąd\",()=>{\n  const view=mount((first:boolean)=>{if(first){useState(0);}else{useRef(0);}return first;},true);\n  expect(()=>view.update(false)).toThrow(/Zmiana kolejności hooków na pozycji 0/);\n});\ntest(\"hook poza renderem rzuca\",()=>{\n  expect(()=>useState(0)).toThrow(/poza renderem/);\n});\ntest(\"własny hook dopisuje węzły do listy komponentu\",()=>{\n  function useOnlineSim(){const [online]=useState(true);useEffect(()=>{},[]);return online;}\n  const view=mount(()=>{const [collapsed]=useState(false);const online=useOnlineSim();return String(collapsed)+String(online);},undefined);\n  expect(view.hooks.map(h=>h.kind)).toEqual([\"state\",\"state\",\"effect\"]);\n});"
+    },
+    {
+      "prompt": "Popraw TicketCard, który miał wczesny return przed useState.",
+      "hint": "Hook przed pierwszym warunkowym return.",
+      "solution": "import {useState} from \"react\";\nexport type Ticket={id:number;title:string;details:string};\n// Wszystkie hooki przed pierwszym warunkowym return — lista hooków ma zawsze tę samą długość.\nexport function TicketCard({ticket}:{ticket:Ticket|null}){\n  const [open,setOpen]=useState(false);\n  if(!ticket)return <p>Brak zgłoszenia</p>;\n  return <article>\n    <h2>{ticket.title}</h2>\n    <button type=\"button\" aria-expanded={open} onClick={()=>setOpen(o=>!o)}>Szczegóły</button>\n    {open&&<p>{ticket.details}</p>}\n  </article>;\n}"
+    },
+    {
+      "prompt": "Rozwiąż wczesny return inaczej: wydziel komponent-dziecko z własną listą hooków.",
+      "hint": "Rodzic bez hooków może wrócić wcześnie.",
+      "solution": "import {useState} from \"react\";\nimport type {Ticket} from \"./TicketCard\";\nexport function TicketCardShell({ticket}:{ticket:Ticket|null}){\n  if(!ticket)return <p>Brak zgłoszenia</p>; // bezpieczne: ten komponent nie wywołuje hooków\n  return <TicketDetails ticket={ticket}/>;\n}\nfunction TicketDetails({ticket}:{ticket:Ticket}){\n  const [open,setOpen]=useState(false); // własna lista hooków dziecka, montowana razem z nim\n  return <article>\n    <h2>{ticket.title}</h2>\n    <button type=\"button\" onClick={()=>setOpen(o=>!o)}>Szczegóły</button>\n    {open&&<p>{ticket.details}</p>}\n  </article>;\n}"
+    },
+    {
+      "prompt": "Napisz useOnline i StatusBar z teorii, dodając przycisk zamiast klikanej stopki.",
+      "hint": "Hook zawsze wywołany na najwyższym poziomie.",
+      "solution": "import {useEffect,useState} from \"react\";\n// Własny hook: jego dwa wywołania hooków trafiają do listy komponentu, który go wywołał.\nexport function useOnline(){\n  const [online,setOnline]=useState(true);\n  useEffect(()=>{\n    const update=()=>setOnline(navigator.onLine);\n    window.addEventListener(\"online\",update);\n    window.addEventListener(\"offline\",update);\n    return ()=>{window.removeEventListener(\"online\",update);window.removeEventListener(\"offline\",update);};\n  },[]);\n  return online;\n}\n// --- StatusBar.tsx ---\nexport function StatusBar(){\n  const [collapsed,setCollapsed]=useState(false); // węzeł 0\n  const online=useOnline();                       // węzły 1 i 2 (z wnętrza hooka)\n  return <footer>\n    <button type=\"button\" onClick={()=>setCollapsed(c=>!c)}>{collapsed?\"…\":online?\"Online\":\"Offline\"}</button>\n  </footer>;\n}"
+    },
+    {
+      "prompt": "Sprawdź testem, że dwa StatusBar mają niezależny stan i oba reagują na offline.",
+      "hint": "Zamockuj getter navigator.onLine i wyślij zdarzenie offline w act.",
+      "solution": "import {useState} from \"react\";\nimport {act,render,screen} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {expect,test,vi} from \"vitest\";\nimport {StatusBar} from \"./StatusBar\";\nimport {TicketCard} from \"./TicketCard\";\nimport {TicketForm} from \"./TicketForm\";\nfunction ConditionalHook({on}:{on:boolean}){\n  const [title]=useState(\"Błąd eksportu\");\n  const description=on?useState(\"\")[0]:null; // celowe złamanie zasad hooków do testu\n  return <p>{title}{description}</p>;\n}\ntest(\"React wykrywa mniej hooków niż w poprzednim renderze\",()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  const view=render(<ConditionalHook on/>);\n  expect(()=>view.rerender(<ConditionalHook on={false}/>)).toThrow(/Rendered fewer hooks than expected/);\n});\ntest(\"hooki przed wczesnym return: zgłoszenie może się pojawiać i znikać\",async()=>{\n  const user=userEvent.setup();\n  const view=render(<TicketCard ticket={null}/>);\n  expect(screen.getByText(\"Brak zgłoszenia\")).toBeInTheDocument();\n  view.rerender(<TicketCard ticket={{id:1,title:\"Błąd eksportu\",details:\"CSV bez nagłówka\"}}/>);\n  await user.click(screen.getByRole(\"button\",{name:\"Szczegóły\"}));\n  expect(screen.getByText(\"CSV bez nagłówka\")).toBeInTheDocument();\n  view.rerender(<TicketCard ticket={null}/>);\n  expect(screen.getByText(\"Brak zgłoszenia\")).toBeInTheDocument();\n  // Ten sam węzeł useState przetrwał render bez zgłoszenia — szczegóły nadal rozwinięte.\n  view.rerender(<TicketCard ticket={{id:1,title:\"Błąd eksportu\",details:\"CSV bez nagłówka\"}}/>);\n  expect(screen.getByText(\"CSV bez nagłówka\")).toBeInTheDocument();\n});\ntest(\"cztery stany formularza są niezależne\",async()=>{\n  const user=userEvent.setup();\n  render(<TicketForm/>);\n  await user.selectOptions(screen.getByLabelText(\"Priorytet\"),\"LOW\");\n  await user.type(screen.getByLabelText(\"Osoba\"),\"Ala\");\n  expect(screen.getByLabelText(\"Tytuł\")).toHaveValue(\"Błąd eksportu\");\n  expect(screen.getByLabelText(\"Opis\")).toHaveValue(\"\");\n  expect(screen.getByLabelText(\"Priorytet\")).toHaveValue(\"LOW\");\n  expect(screen.getByLabelText(\"Osoba\")).toHaveValue(\"Ala\");\n});\ntest(\"dwa StatusBar mają niezależny stan, a zdarzenie offline dociera do obu\",async()=>{\n  const user=userEvent.setup();\n  render(<><StatusBar/><StatusBar/></>);\n  expect(screen.getAllByText(\"Online\")).toHaveLength(2);\n  await user.click(screen.getAllByRole(\"button\")[0]);\n  expect(screen.getAllByText(\"Online\")).toHaveLength(1);\n  vi.spyOn(navigator,\"onLine\",\"get\").mockReturnValue(false);\n  act(()=>{window.dispatchEvent(new Event(\"offline\"));});\n  expect(screen.getAllByText(\"Offline\")).toHaveLength(1);\n  expect(screen.getByText(\"…\")).toBeInTheDocument();\n});\ntest(\"odmontowanie StatusBar usuwa oba nasłuchy\",()=>{\n  const remove=vi.spyOn(window,\"removeEventListener\");\n  const view=render(<StatusBar/>);\n  view.unmount();\n  expect(remove).toHaveBeenCalledWith(\"online\",expect.any(Function));\n  expect(remove).toHaveBeenCalledWith(\"offline\",expect.any(Function));\n});"
+    },
+    {
+      "prompt": "Sprawdź testem, że prawdziwy React rzuca „Rendered fewer hooks than expected”.",
+      "hint": "Wycisz console.error na czas testu.",
+      "solution": "import {useState} from \"react\";\nimport {act,render,screen} from \"@testing-library/react\";\nimport userEvent from \"@testing-library/user-event\";\nimport {expect,test,vi} from \"vitest\";\nimport {StatusBar} from \"./StatusBar\";\nimport {TicketCard} from \"./TicketCard\";\nimport {TicketForm} from \"./TicketForm\";\nfunction ConditionalHook({on}:{on:boolean}){\n  const [title]=useState(\"Błąd eksportu\");\n  const description=on?useState(\"\")[0]:null; // celowe złamanie zasad hooków do testu\n  return <p>{title}{description}</p>;\n}\ntest(\"React wykrywa mniej hooków niż w poprzednim renderze\",()=>{\n  vi.spyOn(console,\"error\").mockImplementation(()=>{});\n  const view=render(<ConditionalHook on/>);\n  expect(()=>view.rerender(<ConditionalHook on={false}/>)).toThrow(/Rendered fewer hooks than expected/);\n});\ntest(\"hooki przed wczesnym return: zgłoszenie może się pojawiać i znikać\",async()=>{\n  const user=userEvent.setup();\n  const view=render(<TicketCard ticket={null}/>);\n  expect(screen.getByText(\"Brak zgłoszenia\")).toBeInTheDocument();\n  view.rerender(<TicketCard ticket={{id:1,title:\"Błąd eksportu\",details:\"CSV bez nagłówka\"}}/>);\n  await user.click(screen.getByRole(\"button\",{name:\"Szczegóły\"}));\n  expect(screen.getByText(\"CSV bez nagłówka\")).toBeInTheDocument();\n  view.rerender(<TicketCard ticket={null}/>);\n  expect(screen.getByText(\"Brak zgłoszenia\")).toBeInTheDocument();\n  // Ten sam węzeł useState przetrwał render bez zgłoszenia — szczegóły nadal rozwinięte.\n  view.rerender(<TicketCard ticket={{id:1,title:\"Błąd eksportu\",details:\"CSV bez nagłówka\"}}/>);\n  expect(screen.getByText(\"CSV bez nagłówka\")).toBeInTheDocument();\n});\ntest(\"cztery stany formularza są niezależne\",async()=>{\n  const user=userEvent.setup();\n  render(<TicketForm/>);\n  await user.selectOptions(screen.getByLabelText(\"Priorytet\"),\"LOW\");\n  await user.type(screen.getByLabelText(\"Osoba\"),\"Ala\");\n  expect(screen.getByLabelText(\"Tytuł\")).toHaveValue(\"Błąd eksportu\");\n  expect(screen.getByLabelText(\"Opis\")).toHaveValue(\"\");\n  expect(screen.getByLabelText(\"Priorytet\")).toHaveValue(\"LOW\");\n  expect(screen.getByLabelText(\"Osoba\")).toHaveValue(\"Ala\");\n});\ntest(\"dwa StatusBar mają niezależny stan, a zdarzenie offline dociera do obu\",async()=>{\n  const user=userEvent.setup();\n  render(<><StatusBar/><StatusBar/></>);\n  expect(screen.getAllByText(\"Online\")).toHaveLength(2);\n  await user.click(screen.getAllByRole(\"button\")[0]);\n  expect(screen.getAllByText(\"Online\")).toHaveLength(1);\n  vi.spyOn(navigator,\"onLine\",\"get\").mockReturnValue(false);\n  act(()=>{window.dispatchEvent(new Event(\"offline\"));});\n  expect(screen.getAllByText(\"Offline\")).toHaveLength(1);\n  expect(screen.getByText(\"…\")).toBeInTheDocument();\n});\ntest(\"odmontowanie StatusBar usuwa oba nasłuchy\",()=>{\n  const remove=vi.spyOn(window,\"removeEventListener\");\n  const view=render(<StatusBar/>);\n  view.unmount();\n  expect(remove).toHaveBeenCalledWith(\"online\",expect.any(Function));\n  expect(remove).toHaveBeenCalledWith(\"offline\",expect.any(Function));\n});"
+    },
+    {
+      "prompt": "Zbuduj TicketForm z czterema useState i udowodnij testem ich niezależność.",
+      "hint": "Zmień priorytet i osobę, sprawdź wszystkie cztery pola.",
+      "solution": "import {useState} from \"react\";\n// Cztery useState bez nazw i kluczy — React rozróżnia je wyłącznie po kolejności wywołań.\nexport function TicketForm(){\n  const [title,setTitle]=useState(\"Błąd eksportu\");\n  const [description,setDescription]=useState(\"\");\n  const [priority,setPriority]=useState<\"LOW\"|\"HIGH\">(\"HIGH\");\n  const [assignee,setAssignee]=useState(\"\");\n  return <form>\n    <input aria-label=\"Tytuł\" value={title} onChange={e=>setTitle(e.target.value)}/>\n    <textarea aria-label=\"Opis\" value={description} onChange={e=>setDescription(e.target.value)}/>\n    <select aria-label=\"Priorytet\" value={priority} onChange={e=>setPriority(e.target.value===\"LOW\"?\"LOW\":\"HIGH\")}>\n      <option value=\"LOW\">LOW</option>\n      <option value=\"HIGH\">HIGH</option>\n    </select>\n    <input aria-label=\"Osoba\" value={assignee} onChange={e=>setAssignee(e.target.value)}/>\n  </form>;\n}"
+    },
+    {
+      "prompt": "Zastąp useState w pętli o zmiennej długości jednym stanem z obiektem.",
+      "hint": "Liczba hooków nie może zależeć od danych.",
+      "solution": "import {useState} from \"react\";\n// ŹLE: for (const field of fields) useState(\"\") — liczba hooków zależy od danych.\nexport function DynamicFields({fields}:{fields:string[]}){\n  const [values,setValues]=useState<Record<string,string>>({});\n  return <div>{fields.map(field=><input key={field} aria-label={field} value={values[field]??\"\"} onChange={e=>setValues(prev=>({...prev,[field]:e.target.value}))}/>)}</div>;\n}"
+    },
+    {
+      "prompt": "Przenieś warunek z if przed useEffect do wnętrza efektu.",
+      "hint": "Hook zawsze wywołany, warunek w środku.",
+      "solution": "import {useEffect} from \"react\";\nexport function useAutosave(enabled:boolean,draft:string,save:(text:string)=>void){\n  useEffect(()=>{\n    if(!enabled)return; // warunek w środku — węzeł efektu istnieje w każdym renderze\n    const id=setTimeout(()=>save(draft),500);\n    return ()=>clearTimeout(id);\n  },[enabled,draft,save]);\n}"
+    },
+    {
+      "prompt": "Odczytaj kontekst warunkowo przez use zamiast useContext.",
+      "hint": "use wolno wywołać w if i w pętli.",
+      "solution": "import {createContext,use} from \"react\";\nexport const ThemeContext=createContext<\"jasny\"|\"ciemny\">(\"jasny\");\n// use() to jedyne API Reacta, które dokumentacja pozwala wywołać warunkowo.\nexport function Badge({themed}:{themed:boolean}){\n  if(!themed)return <span>Zwykły</span>;\n  const theme=use(ThemeContext);\n  return <span className={theme}>Motyw: {theme}</span>;\n}"
+    },
+    {
+      "prompt": "Skonfiguruj ESLint z regułami rules-of-hooks i exhaustive-deps.",
+      "hint": "Plugin eslint-plugin-react-hooks, konfiguracja płaska.",
+      "solution": "// eslint.config.js\nimport reactHooks from \"eslint-plugin-react-hooks\";\nexport default [{\n  files: [\"**/*.{js,jsx,ts,tsx}\"],\n  plugins: { \"react-hooks\": reactHooks },\n  rules: {\n    \"react-hooks/rules-of-hooks\": \"error\",   // hook w warunku, pętli lub po wczesnym return\n    \"react-hooks/exhaustive-deps\": \"warn\",   // brakujące zależności efektów i memo\n  },\n}];"
+    },
+    {
+      "prompt": "Zastąp useState(parseDraft(...)) leniwym inicjalizatorem.",
+      "hint": "Wartość początkowa jest używana tylko przy montowaniu.",
+      "solution": "import {useState} from \"react\";\nfunction parseDraft(raw:string|null):{title:string}{return raw?JSON.parse(raw) as {title:string}:{title:\"\"};}\nexport function DraftEditor(){\n  // useState(parseDraft(...)) parsowałby przy każdym renderze; funkcja wykona się tylko przy montowaniu.\n  const [draft,setDraft]=useState(()=>parseDraft(localStorage.getItem(\"draft\")));\n  return <input aria-label=\"Tytuł\" value={draft.title} onChange={e=>setDraft({title:e.target.value})}/>;\n}"
+    },
+    {
+      "prompt": "Zresetuj stan pola komentarza przy zmianie zgłoszenia przez key.",
+      "hint": "Nowy key to nowy fiber i nowa lista hooków.",
+      "solution": "import {useState} from \"react\";\nfunction CommentBox({ticketId}:{ticketId:number}){\n  const [text,setText]=useState(\"\");\n  return <textarea aria-label={\"Komentarz do \"+ticketId} value={text} onChange={e=>setText(e.target.value)}/>;\n}\n// Nowy key = nowy fiber = nowa lista hooków, więc stan zaczyna od wartości początkowej.\nexport function TicketComments({ticketId}:{ticketId:number}){\n  return <CommentBox key={ticketId} ticketId={ticketId}/>;\n}"
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego TypeScript nie wykryje hooka w warunku i co go wykryje.",
+      "hint": "Mechanizm działa po pozycji w czasie działania.",
+      "solution": "// TypeScript sprawdza typy wartości, a nie kolejność wywołań w czasie działania:\n// useState<\"LOW\" | \"HIGH\"> obiecuje typ, ale węzeł wybierany jest po pozycji, więc może trafić cudza wartość.\n// Wykrywają to: ESLint (react-hooks/rules-of-hooks) w edytorze oraz React w czasie działania\n// („Rendered fewer/more hooks…”, w dev ostrzeżenie o zmianie kolejności hooków).\nexport {};"
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Gdzie React przechowuje hooki komponentu funkcyjnego?",
+      "options": {
+        "A": "W globalnej mapie według nazw zmiennych",
+        "B": "W props komponentu",
+        "C": "W liście powiązanej w memoizedState jego fibera",
+        "D": "W obiekcie window"
+      },
+      "correct": "C",
+      "explanation": "Jeden węzeł na każde wywołanie hooka, w kolejności wywołań."
+    },
+    {
+      "question": "Po czym React rozpoznaje, który stan zwrócić z useState?",
+      "options": {
+        "A": "Po kolejności wywołania w renderze",
+        "B": "Po nazwie zmiennej",
+        "C": "Po typie wartości początkowej",
+        "D": "Po numerze linii w pliku"
+      },
+      "correct": "A",
+      "explanation": "Nazwy zmiennych w ogóle nie docierają do Reacta."
+    },
+    {
+      "question": "Co robi React z hookami przy pierwszym renderze (montowaniu)?",
+      "options": {
+        "A": "Odczytuje istniejące węzły",
+        "B": "Pomija wszystkie hooki",
+        "C": "Kopiuje węzły z rodzica",
+        "D": "Tworzy nowe węzły z wartościami początkowymi"
+      },
+      "correct": "D",
+      "explanation": "Przy kolejnych renderach odczytuje je w tej samej kolejności."
+    },
+    {
+      "question": "Co robi React z hookami przy kolejnych renderach?",
+      "options": {
+        "A": "Odczytuje istniejące węzły w tej samej kolejności",
+        "B": "Tworzy nowe węzły z wartościami początkowymi",
+        "C": "Sortuje hooki alfabetycznie",
+        "D": "Usuwa węzły, które nie zmieniły wartości"
+      },
+      "correct": "A",
+      "explanation": "Dlatego wartość początkowa jest ignorowana po montowaniu."
+    },
+    {
+      "question": "Co zmieni przemianowanie zmiennej priority na prio w useState?",
+      "options": {
+        "A": "Nic — liczy się pozycja wywołania",
+        "B": "Stan zostanie zresetowany",
+        "C": "React rzuci błąd",
+        "D": "Powstanie dodatkowy węzeł"
+      },
+      "correct": "A",
+      "explanation": "Nazwa zmiennej to sprawa kodu, nie mechanizmu."
+    },
+    {
+      "question": "Dlaczego hook nie może być wywołany w if?",
+      "options": {
+        "A": "Bo if spowalnia render",
+        "B": "Bo TypeScript tego zabrania",
+        "C": "Bo hooki są asynchroniczne",
+        "D": "Zmienia liczbę lub kolejność wywołań między renderami"
+      },
+      "correct": "D",
+      "explanation": "Rozjazd pozycji daje cudzy stan albo błąd Reacta."
+    },
+    {
+      "question": "Jaki błąd rzuci React, gdy w renderze wywołano mniej hooków niż poprzednio?",
+      "options": {
+        "A": "Rendered more hooks than during the previous render",
+        "B": "Too many re-renders",
+        "C": "Rendered fewer hooks than expected",
+        "D": "Objects are not valid as a React child"
+      },
+      "correct": "C",
+      "explanation": "Komunikat dodaje: może to być przypadkowy wczesny return."
+    },
+    {
+      "question": "Jaki błąd rzuci React, gdy wywołano więcej hooków niż poprzednio?",
+      "options": {
+        "A": "Rendered fewer hooks than expected",
+        "B": "Rendered more hooks than during the previous render",
+        "C": "Maximum update depth exceeded",
+        "D": "Each child in a list should have a unique key"
+      },
+      "correct": "B",
+      "explanation": "Brakuje węzła dla dodatkowego wywołania."
+    },
+    {
+      "question": "Na co wskazuje komunikat „Rendered fewer hooks than expected”?",
+      "options": {
+        "A": "Na brak key w liście",
+        "B": "Na zbyt głęboką rekurencję",
+        "C": "Na przypadkowy wczesny return przed hookiem",
+        "D": "Na brak providera kontekstu"
+      },
+      "correct": "C",
+      "explanation": "Komunikat wprost wspomina „accidental early return statement”."
+    },
+    {
+      "question": "Która reguła ESLint pilnuje zasad hooków?",
+      "options": {
+        "A": "react-hooks/exhaustive-deps",
+        "B": "react/jsx-key",
+        "C": "no-unused-vars",
+        "D": "react-hooks/rules-of-hooks"
+      },
+      "correct": "D",
+      "explanation": "Działa tak samo w JSX i TSX."
+    },
+    {
+      "question": "Do czego służy reguła react-hooks/exhaustive-deps?",
+      "options": {
+        "A": "Ostrzega o brakujących lub zbędnych zależnościach efektów i memo",
+        "B": "Pilnuje kolejności hooków",
+        "C": "Wymusza pliki TSX",
+        "D": "Zakazuje useEffect"
+      },
+      "correct": "A",
+      "explanation": "Kolejności pilnuje rules-of-hooks."
+    },
+    {
+      "question": "Czy TypeScript wykryje hook wywołany w warunku?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Tylko w trybie strict",
+        "C": "Nie — to błąd czasu działania, nie typów",
+        "D": "Tylko w plikach TSX"
+      },
+      "correct": "C",
+      "explanation": "Chronią ESLint i React."
+    },
+    {
+      "question": "Co zwraca symulacja z teorii jako priority w TicketForm(false)?",
+      "options": {
+        "A": "Pusty tekst — wartość ze slotu opisu",
+        "B": "HIGH",
+        "C": "null",
+        "D": "undefined"
+      },
+      "correct": "A",
+      "explanation": "Drugie wywołanie trafia do slotu, który należał do opisu."
+    },
+    {
+      "question": "Dlaczego w symulacji TSX typ \"LOW\" | \"HIGH\" nie chroni przed złą wartością?",
+      "options": {
+        "A": "Bo TypeScript nie obsługuje unii",
+        "B": "Bo tablica slotów jest const",
+        "C": "Slot jest unknown rzutowany na T, a wybór slotu odbywa się po pozycji w czasie działania",
+        "D": "Bo typ jest opcjonalny"
+      },
+      "correct": "C",
+      "explanation": "Rzutowanie as T obiecuje typ bez sprawdzenia."
+    },
+    {
+      "question": "Gdzie wolno wywoływać hooki?",
+      "options": {
+        "A": "W pętlach",
+        "B": "W handlerach zdarzeń",
+        "C": "W dowolnej funkcji pomocniczej",
+        "D": "Na najwyższym poziomie komponentu lub własnego hooka"
+      },
+      "correct": "D",
+      "explanation": "Poza tym — bez warunków i wczesnych return przed nimi."
+    },
+    {
+      "question": "Czy można wywołać useState w handlerze onClick?",
+      "options": {
+        "A": "Nie — hooki wywołuje się tylko podczas renderu",
+        "B": "Tak",
+        "C": "Tylko w TSX",
+        "D": "Tylko w useCallback"
+      },
+      "correct": "A",
+      "explanation": "Handler działa poza renderem, bez bieżącego fibera."
+    },
+    {
+      "question": "Jak naprawić wczesny return przed hookiem?",
+      "options": {
+        "A": "Dodać key",
+        "B": "Owinąć render w try/catch",
+        "C": "Wywołać hooki przed pierwszym warunkowym return albo przenieść resztę do komponentu-dziecka",
+        "D": "Użyć useMemo"
+      },
+      "correct": "C",
+      "explanation": "Lista hooków musi mieć stałą długość."
+    },
+    {
+      "question": "Dlaczego wydzielenie komponentu-dziecka rozwiązuje problem warunkowego hooka?",
+      "options": {
+        "A": "Dziecko renderuje się szybciej",
+        "B": "Dziecko ma własny fiber i własną listę hooków, montowaną razem z nim",
+        "C": "Dzieci nie mogą mieć hooków",
+        "D": "Dziecko dzieli listę z rodzicem"
+      },
+      "correct": "B",
+      "explanation": "Warunek decyduje o montowaniu dziecka, a nie o liczbie hooków."
+    },
+    {
+      "question": "Co przechowuje węzeł useState?",
+      "options": {
+        "A": "Tylko wartość początkową",
+        "B": "Kopię props",
+        "C": "Listę dzieci",
+        "D": "Wartość i kolejkę aktualizacji"
+      },
+      "correct": "D",
+      "explanation": "Kolejka jest przetwarzana w następnym renderze."
+    },
+    {
+      "question": "Co robi setter z useState?",
+      "options": {
+        "A": "Natychmiast zmienia zmienną w bieżącym renderze",
+        "B": "Odmontowuje komponent",
+        "C": "Dopisuje aktualizację do kolejki i planuje render",
+        "D": "Kopiuje stan do refa"
+      },
+      "correct": "C",
+      "explanation": "Zmienna stanu w bieżącym renderze się nie zmienia."
+    },
+    {
+      "question": "Dlaczego forma prev => … widzi wynik poprzednich aktualizacji?",
+      "options": {
+        "A": "Kolejka jest przetwarzana po kolei, każda funkcja dostaje wynik poprzedniej",
+        "B": "Bo prev to ref",
+        "C": "Bo React czeka 0 ms",
+        "D": "Bo to wymóg klas"
+      },
+      "correct": "A",
+      "explanation": "setN(5); setN(x => x + 1) daje 6."
+    },
+    {
+      "question": "Czy funkcja setState ma stałą tożsamość między renderami?",
+      "options": {
+        "A": "Nie, jest nowa w każdym renderze",
+        "B": "Tylko w StrictMode",
+        "C": "Tylko po owinięciu w useCallback",
+        "D": "Tak, React gwarantuje stabilny setter"
+      },
+      "correct": "D",
+      "explanation": "Dlatego linter nie wymaga jej w zależnościach."
+    },
+    {
+      "question": "Co przechowuje węzeł useEffect?",
+      "options": {
+        "A": "Funkcję efektu, zależności i funkcję sprzątającą",
+        "B": "Wynik renderu",
+        "C": "Tylko zależności",
+        "D": "Węzeł DOM"
+      },
+      "correct": "A",
+      "explanation": "Przy renderze React porównuje nowe zależności z zapisanymi."
+    },
+    {
+      "question": "Jak React porównuje zależności efektu?",
+      "options": {
+        "A": "JSON.stringify całej tablicy",
+        "B": "Operatorem ==",
+        "C": "Object.is element po elemencie",
+        "D": "Głębokim porównaniem rekurencyjnym"
+      },
+      "correct": "C",
+      "explanation": "Inna referencja obiektu to zmiana."
+    },
+    {
+      "question": "Ile wynosi Object.is(NaN, NaN)?",
+      "options": {
+        "A": "false",
+        "B": "undefined",
+        "C": "true",
+        "D": "Rzuca błąd"
+      },
+      "correct": "C",
+      "explanation": "W odróżnieniu od NaN === NaN."
+    },
+    {
+      "question": "Ile wynosi Object.is(0, -0)?",
+      "options": {
+        "A": "false",
+        "B": "true",
+        "C": "NaN",
+        "D": "Rzuca błąd"
+      },
+      "correct": "A",
+      "explanation": "W odróżnieniu od 0 === -0."
+    },
+    {
+      "question": "Co się stanie z efektem, gdy w zależnościach jest obiekt tworzony w renderze?",
+      "options": {
+        "A": "Uruchomi się po każdym renderze — nowa referencja",
+        "B": "Nie uruchomi się nigdy",
+        "C": "Uruchomi się raz",
+        "D": "React rzuci błąd"
+      },
+      "correct": "A",
+      "explanation": "Przenieś tworzenie obiektu do efektu albo zależ od pól prostych."
+    },
+    {
+      "question": "Co zwraca depsChanged, gdy tablica zależności nie została podana?",
+      "options": {
+        "A": "false",
+        "B": "Rzuca błąd",
+        "C": "true tylko przy montowaniu",
+        "D": "true — efekt po każdym renderze"
+      },
+      "correct": "D",
+      "explanation": "Brak tablicy to synchronizacja po każdym renderze."
+    },
+    {
+      "question": "Jak React traktuje zmianę długości tablicy zależności między renderami?",
+      "options": {
+        "A": "Ignoruje ją",
+        "B": "Resetuje stan komponentu",
+        "C": "Zgłasza błąd TypeScript",
+        "D": "Jako zmianę i ostrzega w trybie deweloperskim"
+      },
+      "correct": "D",
+      "explanation": "Tablica zależności powinna mieć stałą długość."
+    },
+    {
+      "question": "Co przechowuje węzeł useRef?",
+      "options": {
+        "A": "Nową kopię obiektu w każdym renderze",
+        "B": "Obiekt { current } utworzony raz",
+        "C": "Wartość stanu z kolejką",
+        "D": "Funkcję sprzątającą"
+      },
+      "correct": "B",
+      "explanation": "Zwracany jest zawsze ten sam obiekt."
+    },
+    {
+      "question": "Czy zmiana ref.current powoduje render?",
+      "options": {
+        "A": "Nie",
+        "B": "Tak",
+        "C": "Tylko dla węzłów DOM",
+        "D": "Tylko w StrictMode"
+      },
+      "correct": "A",
+      "explanation": "Ref nie ma kolejki ani planowania renderu."
+    },
+    {
+      "question": "Co przechowuje węzeł useMemo?",
+      "options": {
+        "A": "Tylko funkcję obliczającą",
+        "B": "Kolejkę aktualizacji",
+        "C": "Węzeł DOM",
+        "D": "Wynik obliczenia i zależności"
+      },
+      "correct": "D",
+      "explanation": "Przy niezmienionych zależnościach zwraca zapamiętany wynik."
+    },
+    {
+      "question": "Kiedy useMemo liczy wynik ponownie?",
+      "options": {
+        "A": "Gdy zmieniła się któraś zależność (Object.is)",
+        "B": "Przy każdym renderze",
+        "C": "Nigdy po montowaniu",
+        "D": "Co określony czas"
+      },
+      "correct": "A",
+      "explanation": "To optymalizacja — nie gwarancja semantyczna."
+    },
+    {
+      "question": "Czym jest useCallback(fn, deps) w modelu węzłów?",
+      "options": {
+        "A": "Tym samym co useMemo(() => fn, deps)",
+        "B": "Nowym rodzajem efektu",
+        "C": "Refem do DOM",
+        "D": "Kolejką aktualizacji"
+      },
+      "correct": "A",
+      "explanation": "Zapamiętuje funkcję zamiast wyniku."
+    },
+    {
+      "question": "Czym różni się useContext od useState w modelu listy hooków?",
+      "options": {
+        "A": "Odczytuje wartość z najbliższego providera i rejestruje zależność fibera, bez węzła ze stanem",
+        "B": "Tworzy węzeł z kopią wartości kontekstu",
+        "C": "Tworzy nowego providera",
+        "D": "Nie działa w komponentach funkcyjnych"
+      },
+      "correct": "A",
+      "explanation": "Mimo to zasady hooków dotyczą też useContext."
+    },
+    {
+      "question": "Które API Reacta dokumentacja pozwala wywołać w if i w pętli?",
+      "options": {
+        "A": "useContext",
+        "B": "use",
+        "C": "useState",
+        "D": "useEffect"
+      },
+      "correct": "B",
+      "explanation": "Pozostałe hooki — tylko na najwyższym poziomie."
+    },
+    {
+      "question": "Skąd useId bierze identyfikator?",
+      "options": {
+        "A": "Z pozycji komponentu w drzewie — stabilny na serwerze i w przeglądarce",
+        "B": "Z Math.random przy każdym renderze",
+        "C": "Z globalnego licznika przy każdym renderze",
+        "D": "Z key komponentu"
+      },
+      "correct": "A",
+      "explanation": "Dzięki temu hydratacja dostaje te same ID."
+    },
+    {
+      "question": "Czy useId zmienia się między renderami tego samego komponentu?",
+      "options": {
+        "A": "Nie",
+        "B": "Tak",
+        "C": "Tylko po setState",
+        "D": "Tylko w trybie deweloperskim"
+      },
+      "correct": "A",
+      "explanation": "ID jest zapisane w węźle hooka."
+    },
+    {
+      "question": "Czy własny hook ma własną listę hooków?",
+      "options": {
+        "A": "Tak",
+        "B": "Tylko gdy nazwa zaczyna się od use",
+        "C": "Nie — jego wywołania dopisują się do listy komponentu",
+        "D": "Tylko w TSX"
+      },
+      "correct": "C",
+      "explanation": "Dlatego własny hook też musi być wywoływany bezwarunkowo."
+    },
+    {
+      "question": "Czy dwa komponenty używające tego samego własnego hooka dzielą stan?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie — każdy ma własne węzły w swoim fiberze",
+        "C": "Tylko przy tych samych props",
+        "D": "Tylko u tego samego rodzica"
+      },
+      "correct": "B",
+      "explanation": "Hook to przepis na węzły, nie wspólny magazyn."
+    },
+    {
+      "question": "Dlaczego nazwa własnego hooka musi zaczynać się od use?",
+      "options": {
+        "A": "Żeby linter rozpoznał wywołania hooków i pilnował zasad",
+        "B": "Bo inaczej kod się nie skompiluje",
+        "C": "Bo React wyszukuje hooki po nazwie w czasie działania",
+        "D": "Bo tego wymaga JavaScript"
+      },
+      "correct": "A",
+      "explanation": "Konwencja nazwy jest sygnałem dla narzędzi i ludzi."
+    },
+    {
+      "question": "Ile węzłów hooków ma StatusBar z teorii?",
+      "options": {
+        "A": "Jeden",
+        "B": "Trzy: useState oraz useState i useEffect z useOnline",
+        "C": "Dwa",
+        "D": "Cztery"
+      },
+      "correct": "B",
+      "explanation": "useOnline dopisuje swoje dwa węzły po collapsed."
+    },
+    {
+      "question": "Gdzie w React DevTools zobaczysz listę hooków komponentu?",
+      "options": {
+        "A": "W panelu Profiler",
+        "B": "W konsoli przeglądarki",
+        "C": "W panelu Components, w sekcji hooks zaznaczonego komponentu",
+        "D": "W zakładce Network"
+      },
+      "correct": "C",
+      "explanation": "Hooki są ponumerowane w kolejności wywołań."
+    },
+    {
+      "question": "Jak DevTools pokazuje hooki pochodzące z własnego hooka?",
+      "options": {
+        "A": "Wcale ich nie pokazuje",
+        "B": "Zagnieżdżone pod nazwą własnego hooka",
+        "C": "Jako osobny komponent",
+        "D": "Na końcu listy bez nazw"
+      },
+      "correct": "B",
+      "explanation": "Np. Online → State, Effect."
+    },
+    {
+      "question": "Co zrobić z hookiem wywoływanym w pętli o zmiennej długości?",
+      "options": {
+        "A": "Zamienić na jeden stan z tablicą lub obiektem albo wydzielić komponent dla elementu",
+        "B": "Dodać key do hooka",
+        "C": "Owinąć pętlę w useMemo",
+        "D": "Wywołać hooki w setTimeout"
+      },
+      "correct": "A",
+      "explanation": "Liczba hooków nie może zależeć od danych."
+    },
+    {
+      "question": "Czy pętla o zawsze tej samej liczbie iteracji z hookiem w środku zadziała?",
+      "options": {
+        "A": "Nie, zawsze rzuci błąd",
+        "B": "Tak, i jest zalecana",
+        "C": "Technicznie tak, ale łamie zasady i linter ją zgłosi",
+        "D": "Tylko w TSX"
+      },
+      "correct": "C",
+      "explanation": "Bezpieczna jest tylko dopóki liczba iteracji się nie zmieni."
+    },
+    {
+      "question": "Jak warunkowo uruchomić efekt?",
+      "options": {
+        "A": "Umieścić if przed useEffect",
+        "B": "Usunąć tablicę zależności",
+        "C": "Wywołać useEffect zawsze, a warunek umieścić w jego środku",
+        "D": "Wywołać useEffect w handlerze"
+      },
+      "correct": "C",
+      "explanation": "Węzeł efektu istnieje w każdym renderze."
+    },
+    {
+      "question": "Co robi zmiana key na komponencie z hookami?",
+      "options": {
+        "A": "Nic",
+        "B": "Przestawia kolejność hooków",
+        "C": "Tworzy nowy fiber z nową listą hooków — stan zaczyna się od nowa",
+        "D": "Kopiuje stan do nowego komponentu"
+      },
+      "correct": "C",
+      "explanation": "To zalecany sposób resetu stanu."
+    },
+    {
+      "question": "Czy wartość przekazana do useState jest używana po montowaniu?",
+      "options": {
+        "A": "Tak, przy każdym renderze",
+        "B": "Tak, gdy się zmieni",
+        "C": "Nie, tylko przy pierwszym renderze",
+        "D": "Tylko w StrictMode"
+      },
+      "correct": "C",
+      "explanation": "Później węzeł ma już własną wartość."
+    },
+    {
+      "question": "Co daje leniwy inicjalizator useState(() => …)?",
+      "options": {
+        "A": "Stan staje się asynchroniczny",
+        "B": "Funkcja wykona się tylko przy montowaniu",
+        "C": "Stan jest tylko do odczytu",
+        "D": "Komponent nie renderuje się ponownie"
+      },
+      "correct": "B",
+      "explanation": "useState(heavy()) wywołuje heavy przy każdym renderze."
+    },
+    {
+      "question": "Co może zrobić React po setState z wartością równą obecnej (Object.is)?",
+      "options": {
+        "A": "Wyrenderować dwa razy",
+        "B": "Rzucić błąd",
+        "C": "Pominąć render (bailout)",
+        "D": "Odmontować komponent"
+      },
+      "correct": "C",
+      "explanation": "Nowy obiekt o tej samej treści to jednak zmiana."
+    },
+    {
+      "question": "Jak useState ma się do useReducer w implementacji Reacta?",
+      "options": {
+        "A": "useState to useReducer z wbudowanym reduktorem — obie mają kolejkę",
+        "B": "Mają zupełnie osobne mechanizmy bez kolejki",
+        "C": "useReducer przetwarza tylko jedną akcję na render",
+        "D": "useReducer działa tylko w klasach"
+      },
+      "correct": "A",
+      "explanation": "Reduktor useState: (state, action) => typeof action === \"function\" ? action(state) : action."
+    },
+    {
+      "question": "Co zrobi React w trybie deweloperskim, gdy na tej samej pozycji zmieni się rodzaj hooka (useState → useRef)?",
+      "options": {
+        "A": "Ostrzeże o zmianie kolejności hooków",
+        "B": "Nic nie zauważy",
+        "C": "Posortuje hooki",
+        "D": "Utworzy nowy fiber"
+      },
+      "correct": "A",
+      "explanation": "Komunikat: „React has detected a change in the order of Hooks”."
+    },
+    {
+      "question": "Czy hooków można używać w komponentach klasowych?",
+      "options": {
+        "A": "Tak",
+        "B": "Tylko useRef",
+        "C": "Tylko w metodzie render",
+        "D": "Nie"
+      },
+      "correct": "D",
+      "explanation": "Klasy mają this.state i metody cyklu życia."
+    },
+    {
+      "question": "Co oznacza błąd „Invalid hook call”?",
+      "options": {
+        "A": "Hook w warunku",
+        "B": "Złą tablicę zależności",
+        "C": "Brak key w liście",
+        "D": "Hook wywołany poza renderem komponentu funkcyjnego albo zduplikowany pakiet react"
+      },
+      "correct": "D",
+      "explanation": "Zasady kolejności to osobne błędy „fewer/more hooks”."
+    },
+    {
+      "question": "Dlaczego dwa egzemplarze pakietu react w bundlu dają „Invalid hook call”?",
+      "options": {
+        "A": "Bo pliki się nadpisują",
+        "B": "Bo TypeScript się gubi",
+        "C": "Bo hooki są zapisane w window",
+        "D": "Komponent woła hooki z innej kopii niż ta, w której renderer ustawił dyspozytora"
+      },
+      "correct": "D",
+      "explanation": "Sprawdź npm ls react."
+    },
+    {
+      "question": "Czym jest dyspozytor hooków?",
+      "options": {
+        "A": "Obiektem podmienianym na czas renderu (montowanie lub aktualizacja), przez który przechodzą wywołania hooków",
+        "B": "Osobnym wątkiem przeglądarki",
+        "C": "Pluginem Babel",
+        "D": "Pętlą zdarzeń"
+      },
+      "correct": "A",
+      "explanation": "Poza renderem dyspozytor zgłasza błąd."
+    },
+    {
+      "question": "Dlaczego ta sama funkcja useState działa inaczej przy montowaniu i aktualizacji?",
+      "options": {
+        "A": "Bo sprawdza nazwę zmiennej",
+        "B": "Bo ma dwa eksporty",
+        "C": "Bo czyta props komponentu",
+        "D": "React podstawia na czas renderu inny dyspozytor dla montowania i aktualizacji"
+      },
+      "correct": "D",
+      "explanation": "Montowanie tworzy węzły, aktualizacja je odczytuje."
+    },
+    {
+      "question": "W jakiej kolejności uruchamiają się efekty jednego komponentu?",
+      "options": {
+        "A": "W odwrotnej kolejności",
+        "B": "W kolejności węzłów, czyli wywołań",
+        "C": "Alfabetycznie",
+        "D": "Losowo"
+      },
+      "correct": "B",
+      "explanation": "Efekty układu przed zwykłymi efektami."
+    },
+    {
+      "question": "Co dzieje się z węzłami hooków przy odmontowaniu komponentu?",
+      "options": {
+        "A": "Są zapisywane do localStorage",
+        "B": "React uruchamia sprzątanie efektów, a fiber z listą jest porzucany",
+        "C": "Przechodzą do rodzica",
+        "D": "Zostają do ponownego montowania"
+      },
+      "correct": "B",
+      "explanation": "Ponowne zamontowanie zaczyna od wartości początkowych."
+    },
+    {
+      "question": "Czy można wywołać hook w zwykłej funkcji pomocniczej, np. formatTicket?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Tylko gdy zwraca JSX",
+        "C": "Tylko w TSX",
+        "D": "Nie — tylko w komponencie lub funkcji, której nazwa zaczyna się od use"
+      },
+      "correct": "D",
+      "explanation": "Zmień ją we własny hook albo przekaż wartość argumentem."
+    },
+    {
+      "question": "Co pokazuje symulacja z indeksem resetowanym przed renderem?",
+      "options": {
+        "A": "Że React używa nazw zmiennych",
+        "B": "Że dopasowanie stanu do wywołania zależy wyłącznie od pozycji",
+        "C": "Że stan jest wspólny dla całej aplikacji",
+        "D": "Że hooki są asynchroniczne"
+      },
+      "correct": "B",
+      "explanation": "Dokładnie dlatego istnieją zasady hooków."
+    },
+    {
+      "question": "Dlaczego prawdziwy React rzuca błąd, a symulacja zwraca złą wartość po cichu?",
+      "options": {
+        "A": "Bo symulacja jest w TypeScript",
+        "B": "Bo React zna nazwy zmiennych",
+        "C": "React porównuje liczbę (a w dev także rodzaj) hooków między renderami",
+        "D": "Bo React nie ma kolejki aktualizacji"
+      },
+      "correct": "C",
+      "explanation": "Symulacja nie ma żadnej kontroli listy."
+    },
+    {
+      "question": "Czy React Compiler pozwala łamać zasady hooków?",
+      "options": {
+        "A": "Tak",
+        "B": "Tylko w produkcji",
+        "C": "Tylko z use",
+        "D": "Nie — zakłada ich przestrzeganie i pomija komponenty, które je łamią"
+      },
+      "correct": "D",
+      "explanation": "Kompilator opiera optymalizacje na zasadach Reacta."
+    },
+    {
+      "question": "Ile zwróci depsChanged([1, \"OPEN\"], [1, \"OPEN\"])?",
+      "options": {
+        "A": "true",
+        "B": "undefined",
+        "C": "false",
+        "D": "Rzuci błąd"
+      },
+      "correct": "C",
+      "explanation": "Te same wartości proste — efekt pominięty."
+    },
+    {
+      "question": "Co się stanie z efektem, gdy w zależnościach jest funkcja zdefiniowana w renderze?",
+      "options": {
+        "A": "Nie uruchomi się nigdy",
+        "B": "Uruchomi się raz",
+        "C": "React rzuci błąd",
+        "D": "Uruchomi się po każdym renderze — nowa funkcja to nowa referencja"
+      },
+      "correct": "D",
+      "explanation": "Przenieś funkcję do efektu albo użyj useCallback."
+    },
+    {
+      "question": "Dwa stany po kolejności — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet seen=\"\";function C(){const [title]=useState(\"Błąd eksportu\");const [priority]=useState(\"HIGH\");seen=title+\"|\"+priority;return null;}mount(<C/>);console.log(seen);",
+      "options": {
+        "A": "HIGH|Błąd eksportu",
+        "B": "Błąd eksportu|Błąd eksportu",
+        "C": "|HIGH",
+        "D": "Błąd eksportu|HIGH"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Hook w warunku: true → false — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({on}:{on:boolean}){useState(\"a\");if(on)useState(\"b\");return null;}const v=mount(<C on/>);console.log(hookError(()=>v.update(<C on={false}/>)));",
+      "options": {
+        "A": "more hooks",
+        "B": "fewer hooks",
+        "C": "brak błędu",
+        "D": "inny błąd"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Hook w warunku: false → true — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({on}:{on:boolean}){useState(\"a\");if(on)useState(\"b\");return null;}const v=mount(<C on={false}/>);console.log(hookError(()=>v.update(<C on/>)));",
+      "options": {
+        "A": "fewer hooks",
+        "B": "brak błędu",
+        "C": "inny błąd",
+        "D": "more hooks"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Wczesny return między hookami — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction Card({ticket}:{ticket:string|null}){const [seen]=useState(0);if(!ticket)return <p>Brak</p>;const [open]=useState(false);return <p>{ticket+seen+String(open)}</p>;}const v=mount(<Card ticket=\"T-1\"/>);console.log(hookError(()=>v.update(<Card ticket={null}/>)));",
+      "options": {
+        "A": "more hooks",
+        "B": "brak błędu",
+        "C": "fewer hooks",
+        "D": "inny błąd"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Pętla z hookiem: 2 → 3 iteracje — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({count}:{count:number}){for(let i=0;i<count;i++)useState(i);return null;}const v=mount(<C count={2}/>);console.log(hookError(()=>v.update(<C count={3}/>)));",
+      "options": {
+        "A": "fewer hooks",
+        "B": "brak błędu",
+        "C": "inny błąd",
+        "D": "more hooks"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Pętla z hookiem o stałej długości — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({count}:{count:number}){for(let i=0;i<count;i++)useState(i);return null;}const v=mount(<C count={2}/>);console.log(hookError(()=>v.update(<C count={2}/>)));",
+      "options": {
+        "A": "more hooks",
+        "B": "brak błędu",
+        "C": "fewer hooks",
+        "D": "inny błąd"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Tożsamość settera między renderami — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst setters:unknown[]=[];function C({n}:{n:number}){const [,set]=useState(0);setters.push(set);return <p>{n}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);console.log(String(setters[0]===setters[1]));",
+      "options": {
+        "A": "true",
+        "B": "false",
+        "C": "undefined",
+        "D": "błąd"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Tożsamość obiektu refa między renderami — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst refs:unknown[]=[];function C({n}:{n:number}){refs.push(useRef(n));return <p>{n}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);console.log(String(refs[0]===refs[1]));",
+      "options": {
+        "A": "false",
+        "B": "undefined",
+        "C": "błąd",
+        "D": "true"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "useMemo przy tych samych zależnościach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet computes=0;function C({n,tick}:{n:number;tick:number}){const doubled=useMemo(()=>{computes+=1;return n*2;},[n]);return <p>{doubled+tick}</p>;}const v=mount(<C n={1} tick={1}/>);v.update(<C n={1} tick={2}/>);v.update(<C n={1} tick={3}/>);console.log(computes);",
+      "options": {
+        "A": "3",
+        "B": "2",
+        "C": "1",
+        "D": "0"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "useMemo po zmianie zależności — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet computes=0;function C({n}:{n:number}){const doubled=useMemo(()=>{computes+=1;return n*2;},[n]);return <p>{doubled}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);console.log(computes);",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "0"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "useCallback przy tych samych zależnościach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst fns:unknown[]=[];function C({id,tick}:{id:number;tick:number}){fns.push(useCallback(()=>id,[id]));return <p>{tick}</p>;}const v=mount(<C id={1} tick={1}/>);v.update(<C id={1} tick={2}/>);console.log(String(fns[0]===fns[1]));",
+      "options": {
+        "A": "true",
+        "B": "false",
+        "C": "undefined",
+        "D": "błąd"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "useCallback po zmianie zależności — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst fns:unknown[]=[];function C({id}:{id:number}){fns.push(useCallback(()=>id,[id]));return <p>{id}</p>;}const v=mount(<C id={1}/>);v.update(<C id={2}/>);console.log(String(fns[0]===fns[1]));",
+      "options": {
+        "A": "true",
+        "B": "undefined",
+        "C": "błąd",
+        "D": "false"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Kolejka: wartość, potem funkcja — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet run!:()=>void;function C(){const [n,setN]=useState(3);run=()=>{setN(n+1);setN(x=>x*2);};return <p>{n}</p>;}const v=mount(<C/>);act(()=>run());console.log(v.host.textContent);",
+      "options": {
+        "A": "8",
+        "B": "4",
+        "C": "7",
+        "D": "6"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Kolejka: 5, potem x + 1 — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet run!:()=>void;function C(){const [n,setN]=useState(0);run=()=>{setN(5);setN(x=>x+1);};return <p>{n}</p>;}const v=mount(<C/>);act(()=>run());console.log(v.host.textContent);",
+      "options": {
+        "A": "5",
+        "B": "6",
+        "C": "1",
+        "D": "7"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Kolejka: x + 1, potem 10 — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet run!:()=>void;function C(){const [n,setN]=useState(0);run=()=>{setN(x=>x+1);setN(10);};return <p>{n}</p>;}const v=mount(<C/>);act(()=>run());console.log(v.host.textContent);",
+      "options": {
+        "A": "11",
+        "B": "1",
+        "C": "10",
+        "D": "0"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Dwa razy setN(n + 1) — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet run!:()=>void;function C(){const [n,setN]=useState(0);run=()=>{setN(n+1);setN(n+1);};return <p>{n}</p>;}const v=mount(<C/>);act(()=>run());console.log(v.host.textContent);",
+      "options": {
+        "A": "2",
+        "B": "0",
+        "C": "3",
+        "D": "1"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Dwie akcje useReducer w jednym act — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet send!:()=>void;function C(){const [n,dispatch]=useReducer((s:number,a:\"inc\")=>a===\"inc\"?s+1:s,0);send=()=>{dispatch(\"inc\");dispatch(\"inc\");};return <p>{n}</p>;}const v=mount(<C/>);act(()=>send());console.log(v.host.textContent);",
+      "options": {
+        "A": "1",
+        "B": "0",
+        "C": "2",
+        "D": "3"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Leniwy inicjalizator przy trzech renderach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet calls=0;function init(){calls+=1;return \"szkic\";}function C({n}:{n:number}){const [draft]=useState(init);return <p>{draft+n}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);v.update(<C n={3}/>);console.log(calls);",
+      "options": {
+        "A": "3",
+        "B": "1",
+        "C": "2",
+        "D": "0"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Wywołanie init() w useState przy trzech renderach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet calls=0;function init(){calls+=1;return \"szkic\";}function C({n}:{n:number}){const [draft]=useState(init());return <p>{draft+n}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);v.update(<C n={3}/>);console.log(calls);",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Efekt z NaN w zależnościach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet runs=0;function C({value,tick}:{value:number;tick:number}){useEffect(()=>{runs+=1;},[value]);return <p>{tick}</p>;}const v=mount(<C value={NaN} tick={1}/>);v.update(<C value={NaN} tick={2}/>);console.log(runs);",
+      "options": {
+        "A": "2",
+        "B": "1",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Efekt z obiektem z renderu w zależnościach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet runs=0;function C({status}:{status:string}){const filter={status};useEffect(()=>{runs+=1;},[filter]);return <p>{filter.status}</p>;}const v=mount(<C status=\"OPEN\"/>);v.update(<C status=\"OPEN\"/>);console.log(runs);",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Efekt z tym samym tekstem w zależnościach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet runs=0;function C({status,tick}:{status:string;tick:number}){useEffect(()=>{runs+=1;},[status]);return <p>{tick}</p>;}const v=mount(<C status=\"OPEN\" tick={1}/>);v.update(<C status=\"OPEN\" tick={2}/>);console.log(runs);",
+      "options": {
+        "A": "2",
+        "B": "1",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Efekt bez tablicy zależności przy trzech renderach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet runs=0;function C({n}:{n:number}){useEffect(()=>{runs+=1;});return <p>{n}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);v.update(<C n={3}/>);console.log(runs);",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "0"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Zmiana tylko drugiej zależności — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({a,b}:{a:number;b:number}){useEffect(()=>{log.push(\"A\");},[a]);useEffect(()=>{log.push(\"B\");},[b]);return null;}const v=mount(<C a={1} b={1}/>);log.length=0;v.update(<C a={1} b={2}/>);console.log(log.join(\",\")||\"pusty\");",
+      "options": {
+        "A": "A,B",
+        "B": "A",
+        "C": "pusty",
+        "D": "B"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Własny hook w dwóch komponentach — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction useCounter(){const [n,setN]=useState(0);return [n,()=>setN(x=>x+1)] as const;}let incA!:()=>void;function A(){const [n,inc]=useCounter();incA=inc;return <i>{n}</i>;}function B(){const [n]=useCounter();return <b>{n}</b>;}const v=mount(<><A/><B/></>);act(()=>incA());console.log(v.host.textContent);",
+      "options": {
+        "A": "11",
+        "B": "10",
+        "C": "00",
+        "D": "01"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Własny hook wywołany dwa razy w komponencie — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction useCounter(){const [n,setN]=useState(0);return [n,()=>setN(x=>x+1)] as const;}let inc!:()=>void;function C(){const [a,incA]=useCounter();const [b]=useCounter();inc=incA;return <p>{a}{b}</p>;}const v=mount(<C/>);act(()=>{inc();inc();});console.log(v.host.textContent);",
+      "options": {
+        "A": "22",
+        "B": "20",
+        "C": "11",
+        "D": "02"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "useId między renderami — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst ids:string[]=[];function C({n}:{n:number}){ids.push(useId());return <p>{n}</p>;}const v=mount(<C n={1}/>);v.update(<C n={2}/>);console.log(String(ids[0]===ids[1]));",
+      "options": {
+        "A": "false",
+        "B": "undefined",
+        "C": "błąd",
+        "D": "true"
+      },
+      "correct": "D",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "use(Context) w warunku — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst Ctx=createContext(\"OPEN\");function C({show}:{show:boolean}){if(!show)return null;return <p>{use(Ctx)}</p>;}const v=mount(<C show={false}/>);v.update(<C show/>);console.log(v.host.textContent||\"pusty\");",
+      "options": {
+        "A": "pusty",
+        "B": "OPEN",
+        "C": "more hooks",
+        "D": "inny błąd"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Rendery po trzech setState w jednym act — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet renders=0;let bump!:()=>void;function C(){const [a,setA]=useState(0);const [b,setB]=useState(0);renders+=1;bump=()=>{setA(x=>x+1);setB(x=>x+1);setA(x=>x+1);};return <p>{a+b}</p>;}mount(<C/>);act(()=>bump());console.log(renders);",
+      "options": {
+        "A": "2",
+        "B": "4",
+        "C": "3",
+        "D": "1"
+      },
+      "correct": "A",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Nowa wartość początkowa po montowaniu — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({initial}:{initial:string}){const [value]=useState(initial);return <p>{value}</p>;}const v=mount(<C initial=\"a\"/>);v.update(<C initial=\"b\"/>);console.log(v.host.textContent);",
+      "options": {
+        "A": "b",
+        "B": "a",
+        "C": "pusty",
+        "D": "undefined"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Nowa wartość początkowa po zmianie key — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction C({initial}:{initial:string}){const [value]=useState(initial);return <p>{value}</p>;}const v=mount(<C key=\"1\" initial=\"a\"/>);v.update(<C key=\"2\" initial=\"b\"/>);console.log(v.host.textContent);",
+      "options": {
+        "A": "a",
+        "B": "pusty",
+        "C": "b",
+        "D": "undefined"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Rendery po zmianie ref.current — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nlet renders=0;let bump!:()=>void;function C(){const ref=useRef(0);renders+=1;bump=()=>{ref.current+=1;};return <p>{renders}</p>;}mount(<C/>);act(()=>{bump();bump();});console.log(renders);",
+      "options": {
+        "A": "2",
+        "B": "1",
+        "C": "0",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "depsChanged dla [NaN] i [NaN] — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nfunction depsChanged(prev:readonly unknown[]|undefined,next:readonly unknown[]|undefined){if(prev===undefined||next===undefined)return true;if(prev.length!==next.length)return true;return next.some((value,i)=>!Object.is(value,prev[i]));}console.log(String(depsChanged([NaN],[NaN])));",
+      "options": {
+        "A": "true",
+        "B": "undefined",
+        "C": "false",
+        "D": "błąd"
+      },
+      "correct": "C",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    },
+    {
+      "question": "Model slotów: priority po pominięciu hooka — co wypisze kod?",
+      "code": "import {act,createContext,use,useCallback,useEffect,useId,useMemo,useReducer,useRef,useState,type ReactNode} from \"react\";\nimport {createRoot} from \"react-dom/client\";\nconst log:string[]=[];\nfunction mount(ui:ReactNode){const host=document.createElement(\"div\");document.body.append(host);const root=createRoot(host);act(()=>root.render(ui));return {host,update:(next:ReactNode)=>act(()=>root.render(next)),unmount:()=>act(()=>root.unmount())};}\nfunction hookError(run:()=>void):string{try{run();return \"brak błędu\";}catch(error){const list=error instanceof AggregateError?error.errors:[error];const text=list.map(e=>e instanceof Error?e.message:String(e)).join(\" \");return text.includes(\"fewer hooks\")?\"fewer hooks\":text.includes(\"more hooks\")?\"more hooks\":\"inny błąd\";}}\nvoid createContext;void use;void useCallback;void useEffect;void useId;void useMemo;void useReducer;void useRef;void useState;void log;void hookError;\nconst slots:unknown[]=[];let index=0;function useSimState<T>(initial:T):[T]{const i=index++;if(slots.length<=i)slots.push(initial);return [slots[i] as T];}function TicketForm(show:boolean){const [title]=useSimState(\"Błąd eksportu\");void title;if(show)useSimState(\"\");const [priority]=useSimState(\"HIGH\");return priority;}index=0;TicketForm(true);index=0;console.log(JSON.stringify(TicketForm(false)));",
+      "options": {
+        "A": "\"HIGH\"",
+        "B": "\"\"",
+        "C": "null",
+        "D": "undefined"
+      },
+      "correct": "B",
+      "explanation": "Wynik pochodzi z uruchomienia na React 19 w Vitest (createRoot + act w jsdom, bez StrictMode)."
+    }
+  ]
 }
