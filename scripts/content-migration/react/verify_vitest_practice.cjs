@@ -17,6 +17,7 @@ const entries=[
   ['_react_15_react_od_srodka','07_BuildMiniReact','./practice_inside_07.cjs',30,100],
   ['_react_16_wydajnosc','01_RenderModelAndProfiler','./practice_perf_01.cjs',30,100],
   ['_react_16_wydajnosc','02_Memoization','./practice_perf_02.cjs',30,100],
+  ['_react_16_wydajnosc','03_ReactCompiler','./practice_perf_03.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;

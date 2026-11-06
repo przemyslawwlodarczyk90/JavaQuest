@@ -141,6 +141,7 @@ const entries = [
   ['07_BuildMiniReact', './practice_inside_07.cjs', 30, 100, '_react_15_react_od_srodka'],
   ['01_RenderModelAndProfiler', './practice_perf_01.cjs', 30, 100, '_react_16_wydajnosc'],
   ['02_Memoization', './practice_perf_02.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['03_ReactCompiler', './practice_perf_03.cjs', 30, 100, '_react_16_wydajnosc'],
 ];
 
 function build(source, exerciseCount, questionCount) {
