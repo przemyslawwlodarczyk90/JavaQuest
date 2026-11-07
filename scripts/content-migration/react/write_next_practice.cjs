@@ -145,6 +145,11 @@ const entries = [
   ['04_DrillMemoization', './practice_perf_04.cjs', 30, 100, '_react_16_wydajnosc'],
   ['05_LazyAndSuspense', './practice_perf_05.cjs', 30, 100, '_react_16_wydajnosc'],
   ['06_TransitionsAndDeferredValues', './practice_perf_06.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['07_VirtualizingLongLists', './practice_perf_07.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['08_BundleAnalysisAndCodeSplitting', './practice_perf_08.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['09_WebVitalsAndAssets', './practice_perf_09.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['10_BossFindTheBottleneck', './practice_perf_10.cjs', 30, 100, '_react_16_wydajnosc'],
+  ['01_UseHookAndPromises', './practice_react19_01.cjs', 30, 100, '_react_17_react_19'],
 ];
 
 function build(source, exerciseCount, questionCount) {
@@ -182,7 +187,7 @@ function build(source, exerciseCount, questionCount) {
 
 // Najpierw walidacja wszystkich źródeł; dopiero potem zapis.
 const prepared = entries.map(([slug, source, exercises, questions, chapter = '_react_00_wprowadzenie']) => {
-  assert.match(chapter, /^_react_\d{2}_[a-z_]+$/);
+  assert.match(chapter, /^_react_\d{2}_[a-z0-9_]+$/);
   assert.match(slug, /^\d{2}_[A-Za-z0-9]+$/);
   const file = path.resolve(__dirname, '../../../src/main/resources/content', chapter, `${slug}.json`);
   const lesson = JSON.parse(fs.readFileSync(file, 'utf8'));

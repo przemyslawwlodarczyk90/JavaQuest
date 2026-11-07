@@ -21,6 +21,11 @@ const entries=[
   ['_react_16_wydajnosc','04_DrillMemoization','./practice_perf_04.cjs',30,100],
   ['_react_16_wydajnosc','05_LazyAndSuspense','./practice_perf_05.cjs',30,100],
   ['_react_16_wydajnosc','06_TransitionsAndDeferredValues','./practice_perf_06.cjs',30,100],
+  ['_react_16_wydajnosc','07_VirtualizingLongLists','./practice_perf_07.cjs',30,100],
+  ['_react_16_wydajnosc','08_BundleAnalysisAndCodeSplitting','./practice_perf_08.cjs',30,100],
+  ['_react_16_wydajnosc','09_WebVitalsAndAssets','./practice_perf_09.cjs',30,100],
+  ['_react_16_wydajnosc','10_BossFindTheBottleneck','./practice_perf_10.cjs',30,100],
+  ['_react_17_react_19','01_UseHookAndPromises','./practice_react19_01.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;
@@ -37,7 +42,8 @@ function probeTest(row,index){
     '\n;probeExpect(observed).toEqual(['+JSON.stringify(answer)+']);}finally{log.mockRestore();}});\n';
 }
 function runVitest(dir){
-  const report=path.join(dir,'vitest-results.json'),env={...process.env,NODE_ENV:'test'};let failed=false;
+  const temporary=path.join(dir,'.tmp');fs.mkdirSync(temporary,{recursive:true});
+  const report=path.join(dir,'vitest-results.json'),env={...process.env,NODE_ENV:'test',TEMP:temporary,TMP:temporary};let failed=false;
   try{execFileSync(process.execPath,[path.join(deps,'node_modules/vitest/vitest.mjs'),'run','--root',dir,'--reporter=json','--outputFile',report],{cwd:dir,env,stdio:'pipe',timeout:300000});}catch{failed=true;}
   return {failed,report:JSON.parse(fs.readFileSync(report,'utf8'))};
 }
