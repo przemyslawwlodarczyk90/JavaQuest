@@ -41,6 +41,8 @@ const entries=[
   ['_react_18_frameworki','06_ChoosingAFramework','./practice_framework_06.cjs',30,100],
   ['_react_19_jakosc','01_AccessibilityFundamentals','./practice_quality_01.cjs',30,100],
   ['_react_19_jakosc','02_AriaPatternsAndScreenReaders','./practice_quality_02.cjs',30,100],
+  ['_react_19_jakosc','03_AccessibilityPassDevDesk','./practice_quality_03.cjs',30,100],
+  ['_react_19_jakosc','04_Internationalization','./practice_quality_04.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;
@@ -76,11 +78,12 @@ for(const [chapter,slug,sourcePath,ec,qc] of selected){
   // TypeScript: katalog QA w środowisku testów, więc pakiety rozwiązują się zwykłą ścieżką node_modules.
   const qa=path.join(activeDeps,'qa',slug),sources=new Map();
   for(const [file,code] of Object.entries(project))if(/\.tsx?$/.test(file))sources.set(path.join(qa,file),code);
+  const jsonFiles=new Map(Object.entries(project).filter(([file])=>/^src\/.*\.json$/.test(file)).map(([file,code])=>[path.join(qa,file),code]));
   lesson.exercises.forEach((e,i)=>{if(/^(?:import |export |type |const |function |\/\/ @check)/.test(e.solution))sources.set(path.join(qa,'src','exercise'+(i+1)+'.tsx'),e.solution+'\nexport {};');});
   lesson.quiz.forEach((q,i)=>{if(q.code&&!/^\/\/ @check-skip/.test(q.code))sources.set(path.join(qa,'src','question'+(i+1)+'.tsx'),q.code+'\nexport {};');});
-  const options={baseUrl:qa,paths:{"@/*":["src/*"]},strict:true,noEmit:true,target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler,jsx:ts.JsxEmit.ReactJSX,skipLibCheck:true,types:[],lib:['lib.es2023.d.ts','lib.dom.d.ts','lib.dom.iterable.d.ts']};
+  const options={resolveJsonModule:true,baseUrl:qa,paths:{"@/*":["src/*"]},strict:true,noEmit:true,target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler,jsx:ts.JsxEmit.ReactJSX,skipLibCheck:true,types:[],lib:['lib.es2023.d.ts','lib.dom.d.ts','lib.dom.iterable.d.ts']};
   const host=ts.createCompilerHost(options),read=host.readFile.bind(host),exists=host.fileExists.bind(host),directory=host.directoryExists.bind(host);
-  host.readFile=file=>sources.get(path.resolve(file))??read(file);host.fileExists=file=>sources.has(path.resolve(file))||exists(file);host.directoryExists=dir=>[...sources.keys()].some(file=>file.startsWith(path.resolve(dir)+path.sep))||directory(dir);
+  host.readFile=file=>sources.get(path.resolve(file))??jsonFiles.get(path.resolve(file))??read(file);host.fileExists=file=>sources.has(path.resolve(file))||jsonFiles.has(path.resolve(file))||exists(file);host.directoryExists=dir=>[...sources.keys(),...jsonFiles.keys()].some(file=>file.startsWith(path.resolve(dir)+path.sep))||directory(dir);
   const diagnostics=ts.getPreEmitDiagnostics(ts.createProgram([...sources.keys()],options,host));
   assert.equal(diagnostics.length,0,ts.formatDiagnosticsWithColorAndContext(diagnostics,{getCurrentDirectory:()=>root,getCanonicalFileName:f=>f,getNewLine:()=>'\n'}));
   // Vitest: testy projektu i próbki quizu w jednym przebiegu.

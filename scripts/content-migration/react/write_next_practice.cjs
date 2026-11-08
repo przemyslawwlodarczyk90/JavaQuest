@@ -165,6 +165,8 @@ const entries = [
   ['06_ChoosingAFramework', './practice_framework_06.cjs', 30, 100, '_react_18_frameworki'],
   ['01_AccessibilityFundamentals', './practice_quality_01.cjs', 30, 100, '_react_19_jakosc'],
   ['02_AriaPatternsAndScreenReaders', './practice_quality_02.cjs', 30, 100, '_react_19_jakosc'],
+  ['03_AccessibilityPassDevDesk', './practice_quality_03.cjs', 30, 100, '_react_19_jakosc'],
+  ['04_Internationalization', './practice_quality_04.cjs', 30, 100, '_react_19_jakosc'],
 ];
 
 function build(source, exerciseCount, questionCount) {
