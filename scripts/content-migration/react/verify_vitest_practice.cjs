@@ -26,6 +26,21 @@ const entries=[
   ['_react_16_wydajnosc','09_WebVitalsAndAssets','./practice_perf_09.cjs',30,100],
   ['_react_16_wydajnosc','10_BossFindTheBottleneck','./practice_perf_10.cjs',30,100],
   ['_react_17_react_19','01_UseHookAndPromises','./practice_react19_01.cjs',30,100],
+  ['_react_17_react_19','02_SuspenseForData','./practice_react19_02.cjs',30,100],
+  ['_react_17_react_19','03_UseOptimistic','./practice_react19_03.cjs',30,100],
+  ['_react_17_react_19','04_ActionsAndTransitions','./practice_react19_04.cjs',30,100],
+  ['_react_17_react_19','05_DocumentMetadataAndResources','./practice_react19_05.cjs',30,100],
+  ['_react_17_react_19','06_ActivityAndViewTransitions','./practice_react19_06.cjs',30,100],
+  ['_react_17_react_19','07_ServerComponentsConcept','./practice_react19_07.cjs',30,100],
+  ['_react_17_react_19','08_DrillReact19Hooks','./practice_react19_08.cjs',30,100],
+  ['_react_18_frameworki','01_RenderingStrategies','./practice_framework_01.cjs',30,100],
+  ['_react_18_frameworki','02_HydrationAndItsErrors','./practice_framework_02.cjs',30,100],
+  ['_react_18_frameworki','03_NextJsAppRouterBasics','./practice_framework_03.cjs',30,100],
+  ['_react_18_frameworki','04_NextJsServerActionsAndCaching','./practice_framework_04.cjs',30,100],
+  ['_react_18_frameworki','05_ReactRouterFrameworkMode','./practice_framework_05.cjs',30,100],
+  ['_react_18_frameworki','06_ChoosingAFramework','./practice_framework_06.cjs',30,100],
+  ['_react_19_jakosc','01_AccessibilityFundamentals','./practice_quality_01.cjs',30,100],
+  ['_react_19_jakosc','02_AriaPatternsAndScreenReaders','./practice_quality_02.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;
@@ -41,10 +56,10 @@ function probeTest(row,index){
     '\nprobeTest('+JSON.stringify('pytanie '+(index+1)+': '+question)+',async()=>{const observed:string[]=[];const log=probeVi.spyOn(console,"log").mockImplementation((...values:unknown[])=>{observed.push(values.map(String).join(" "));});try{\n'+body+
     '\n;probeExpect(observed).toEqual(['+JSON.stringify(answer)+']);}finally{log.mockRestore();}});\n';
 }
-function runVitest(dir){
+function runVitest(dir,dependencyRoot=deps,extraEnv={}){
   const temporary=path.join(dir,'.tmp');fs.mkdirSync(temporary,{recursive:true});
-  const report=path.join(dir,'vitest-results.json'),env={...process.env,NODE_ENV:'test',TEMP:temporary,TMP:temporary};let failed=false;
-  try{execFileSync(process.execPath,[path.join(deps,'node_modules/vitest/vitest.mjs'),'run','--root',dir,'--reporter=json','--outputFile',report],{cwd:dir,env,stdio:'pipe',timeout:300000});}catch{failed=true;}
+  const report=path.join(dir,'vitest-results.json'),env={...process.env,NODE_ENV:'test',TEMP:temporary,TMP:temporary,...extraEnv};let failed=false;
+  try{execFileSync(process.execPath,[path.join(dependencyRoot,'node_modules/vitest/vitest.mjs'),'run','--root',dir,'--reporter=json','--outputFile',report],{cwd:dir,env,stdio:'pipe',timeout:300000});}catch{failed=true;}
   return {failed,report:JSON.parse(fs.readFileSync(report,'utf8'))};
 }
 function failures(report){return report.testResults.flatMap(file=>file.assertionResults.filter(a=>a.status==='failed').map(a=>a.fullName+': '+(a.failureMessages??[]).join(' ').split('\n').slice(0,4).join(' | ')).concat(file.status==='failed'&&!file.assertionResults.length?[path.basename(file.name)+': '+String(file.message).slice(0,600)]:[]));}
@@ -55,31 +70,33 @@ for(const [chapter,slug,sourcePath,ec,qc] of selected){
   for(const e of lesson.exercises)for(const field of ['prompt','hint','solution'])assert.ok(e[field]?.trim());
   for(const q of lesson.quiz){assert.equal(new Set(Object.values(q.options)).size,4);assert.ok(q.options[q.correct]);assert.ok(q.explanation.trim());}
   for(const letter of 'ABCD')assert.equal(lesson.quiz.filter(q=>q.correct===letter).length,qc/4);
+  assert.match(source.dependencyRoot??'target/react-testing-deps',/^target\/react-(?:testing|next|astro)-deps$/);
+  const activeDeps=path.join(root,source.dependencyRoot??'target/react-testing-deps');
   const project=withDefaults(source.project);
   // TypeScript: katalog QA w środowisku testów, więc pakiety rozwiązują się zwykłą ścieżką node_modules.
-  const qa=path.join(deps,'qa',slug),sources=new Map();
+  const qa=path.join(activeDeps,'qa',slug),sources=new Map();
   for(const [file,code] of Object.entries(project))if(/\.tsx?$/.test(file))sources.set(path.join(qa,file),code);
   lesson.exercises.forEach((e,i)=>{if(/^(?:import |export |type |const |function |\/\/ @check)/.test(e.solution))sources.set(path.join(qa,'src','exercise'+(i+1)+'.tsx'),e.solution+'\nexport {};');});
   lesson.quiz.forEach((q,i)=>{if(q.code&&!/^\/\/ @check-skip/.test(q.code))sources.set(path.join(qa,'src','question'+(i+1)+'.tsx'),q.code+'\nexport {};');});
-  const options={strict:true,noEmit:true,target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler,jsx:ts.JsxEmit.ReactJSX,skipLibCheck:true,types:[],lib:['lib.es2023.d.ts','lib.dom.d.ts','lib.dom.iterable.d.ts']};
+  const options={baseUrl:qa,paths:{"@/*":["src/*"]},strict:true,noEmit:true,target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler,jsx:ts.JsxEmit.ReactJSX,skipLibCheck:true,types:[],lib:['lib.es2023.d.ts','lib.dom.d.ts','lib.dom.iterable.d.ts']};
   const host=ts.createCompilerHost(options),read=host.readFile.bind(host),exists=host.fileExists.bind(host),directory=host.directoryExists.bind(host);
   host.readFile=file=>sources.get(path.resolve(file))??read(file);host.fileExists=file=>sources.has(path.resolve(file))||exists(file);host.directoryExists=dir=>[...sources.keys()].some(file=>file.startsWith(path.resolve(dir)+path.sep))||directory(dir);
   const diagnostics=ts.getPreEmitDiagnostics(ts.createProgram([...sources.keys()],options,host));
   assert.equal(diagnostics.length,0,ts.formatDiagnosticsWithColorAndContext(diagnostics,{getCurrentDirectory:()=>root,getCanonicalFileName:f=>f,getNewLine:()=>'\n'}));
   // Vitest: testy projektu i próbki quizu w jednym przebiegu.
-  const probes=source.probeCount??0,fixture=fs.mkdtempSync(path.join(deps,'lesson-'));
+  const probes=source.probeCount??0,fixture=fs.mkdtempSync(path.join(activeDeps,'lesson-'));
   writeProject(project,fixture);
   source.quiz.slice(source.quiz.length-probes).forEach((row,i)=>{assert.ok(row[6],'Próbka bez kodu: '+row[0]);fs.writeFileSync(path.join(fixture,'src','quiz-'+i+'.test.tsx'),probeTest(row,source.quiz.length-probes+i));});
-  const clean=runVitest(fixture);
+  const clean=runVitest(fixture,activeDeps);
   assert.equal(clean.failed,false,'Vitest '+slug+':\n'+failures(clean.report).join('\n'));
   assert.ok(clean.report.numPassedTests>=probes+1);
   let rejected=0;
   for(const mutation of source.mutants??[]){
-    const dir=fs.mkdtempSync(path.join(deps,'mutant-'));writeProject(project,dir);
+    const dir=fs.mkdtempSync(path.join(activeDeps,'mutant-'));writeProject(project,dir);
     const file=path.join(dir,mutation.file),original=fs.readFileSync(file,'utf8');
     assert.ok(original.includes(mutation.before),'Brak miejsca mutacji: '+mutation.before);
     fs.writeFileSync(file,original.replace(mutation.before,mutation.after));
-    const run=runVitest(dir);
+    const run=runVitest(dir,activeDeps,{LESSON_MUTANT:"1"});
     assert.ok(run.failed&&run.report.numFailedTests>0,'Mutant przeszedł testy: '+mutation.file+' / '+mutation.before);
     rejected++;
   }

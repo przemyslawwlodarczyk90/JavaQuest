@@ -150,6 +150,21 @@ const entries = [
   ['09_WebVitalsAndAssets', './practice_perf_09.cjs', 30, 100, '_react_16_wydajnosc'],
   ['10_BossFindTheBottleneck', './practice_perf_10.cjs', 30, 100, '_react_16_wydajnosc'],
   ['01_UseHookAndPromises', './practice_react19_01.cjs', 30, 100, '_react_17_react_19'],
+  ['02_SuspenseForData', './practice_react19_02.cjs', 30, 100, '_react_17_react_19'],
+  ['03_UseOptimistic', './practice_react19_03.cjs', 30, 100, '_react_17_react_19'],
+  ['04_ActionsAndTransitions', './practice_react19_04.cjs', 30, 100, '_react_17_react_19'],
+  ['05_DocumentMetadataAndResources', './practice_react19_05.cjs', 30, 100, '_react_17_react_19'],
+  ['06_ActivityAndViewTransitions', './practice_react19_06.cjs', 30, 100, '_react_17_react_19'],
+  ['07_ServerComponentsConcept', './practice_react19_07.cjs', 30, 100, '_react_17_react_19'],
+  ['08_DrillReact19Hooks', './practice_react19_08.cjs', 30, 100, '_react_17_react_19'],
+  ['01_RenderingStrategies', './practice_framework_01.cjs', 30, 100, '_react_18_frameworki'],
+  ['02_HydrationAndItsErrors', './practice_framework_02.cjs', 30, 100, '_react_18_frameworki'],
+  ['03_NextJsAppRouterBasics', './practice_framework_03.cjs', 30, 100, '_react_18_frameworki'],
+  ['04_NextJsServerActionsAndCaching', './practice_framework_04.cjs', 30, 100, '_react_18_frameworki'],
+  ['05_ReactRouterFrameworkMode', './practice_framework_05.cjs', 30, 100, '_react_18_frameworki'],
+  ['06_ChoosingAFramework', './practice_framework_06.cjs', 30, 100, '_react_18_frameworki'],
+  ['01_AccessibilityFundamentals', './practice_quality_01.cjs', 30, 100, '_react_19_jakosc'],
+  ['02_AriaPatternsAndScreenReaders', './practice_quality_02.cjs', 30, 100, '_react_19_jakosc'],
 ];
 
 function build(source, exerciseCount, questionCount) {
