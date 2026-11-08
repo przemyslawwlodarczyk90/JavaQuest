@@ -167,6 +167,11 @@ const entries = [
   ['02_AriaPatternsAndScreenReaders', './practice_quality_02.cjs', 30, 100, '_react_19_jakosc'],
   ['03_AccessibilityPassDevDesk', './practice_quality_03.cjs', 30, 100, '_react_19_jakosc'],
   ['04_Internationalization', './practice_quality_04.cjs', 30, 100, '_react_19_jakosc'],
+  ['05_SecurityInReact', './practice_quality_05.cjs', 30, 100, '_react_19_jakosc'],
+  ['06_ErrorBoundariesAndMonitoring', './practice_quality_06.cjs', 30, 100, '_react_19_jakosc'],
+  ['07_StorybookAndComponentDocs', './practice_quality_07.cjs', 30, 100, '_react_19_jakosc'],
+  ['01_CssTransitionsAndAnimations', './practice_ux_01.cjs', 30, 100, '_react_20_animacje_i_ux'],
+  ['02_MotionLibrary', './practice_ux_02.cjs', 30, 100, '_react_20_animacje_i_ux'],
 ];
 
 function build(source, exerciseCount, questionCount) {
