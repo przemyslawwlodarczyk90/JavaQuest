@@ -172,6 +172,11 @@ const entries = [
   ['07_StorybookAndComponentDocs', './practice_quality_07.cjs', 30, 100, '_react_19_jakosc'],
   ['01_CssTransitionsAndAnimations', './practice_ux_01.cjs', 30, 100, '_react_20_animacje_i_ux'],
   ['02_MotionLibrary', './practice_ux_02.cjs', 30, 100, '_react_20_animacje_i_ux'],
+  ['03_DragAndDrop', './practice_ux_03.cjs', 30, 100, '_react_20_animacje_i_ux'],
+  ['04_ChartsAndDataViz', './practice_ux_04.cjs', 30, 100, '_react_20_animacje_i_ux'],
+  ['05_BossKanbanBoard', './practice_ux_05.cjs', 30, 100, '_react_20_animacje_i_ux'],
+  ['01_ProjectArchitecture', './practice_prod_01.cjs', 30, 100, '_react_21_produkcja'],
+  ['02_EnvVariablesAndConfig', './practice_prod_02.cjs', 30, 100, '_react_21_produkcja'],
 ];
 
 function build(source, exerciseCount, questionCount) {

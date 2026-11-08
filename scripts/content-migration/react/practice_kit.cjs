@@ -28,4 +28,6 @@ function lesson({ exercises, concepts, probeRows, project, mutants, header, depe
   }
   return { exercises, quiz, project, mutants, probeCount: executed.length, ...(dependencyRoot ? { dependencyRoot } : {}) };
 }
-module.exports = { probes, lesson };
+// Plik setup dla projektów łączących testy jsdom i testy w środowisku node (np. prawdziwy vite build).
+const nodeSafeSetup = 'import {afterEach} from "vitest";\nimport {cleanup} from "@testing-library/react";\nimport "@testing-library/jest-dom/vitest";\n(globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;\nafterEach(()=>{if(typeof document!=="undefined")cleanup();});\n';
+module.exports = { probes, lesson, nodeSafeSetup };
