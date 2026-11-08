@@ -181,6 +181,8 @@ const entries = [
   ['04_DockerNginxAndSpringStatic', './practice_prod_04.cjs', 30, 100, '_react_21_produkcja'],
   ['05_CiCdGithubActions', './practice_prod_05.cjs', 30, 100, '_react_21_produkcja'],
   ['06_PwaAndOffline', './practice_prod_06.cjs', 30, 100, '_react_21_produkcja'],
+  ['07_MigratingJsProjectToTs', './practice_prod_07.cjs', 30, 100, '_react_21_produkcja'],
+  ['08_CapstoneIssueAdmin', './practice_prod_08.cjs', 30, 100, '_react_21_produkcja'],
 ];
 
 function build(source, exerciseCount, questionCount) {

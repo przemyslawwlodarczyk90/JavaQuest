@@ -57,6 +57,8 @@ const entries=[
   ['_react_21_produkcja','04_DockerNginxAndSpringStatic','./practice_prod_04.cjs',30,100],
   ['_react_21_produkcja','05_CiCdGithubActions','./practice_prod_05.cjs',30,100],
   ['_react_21_produkcja','06_PwaAndOffline','./practice_prod_06.cjs',30,100],
+  ['_react_21_produkcja','07_MigratingJsProjectToTs','./practice_prod_07.cjs',30,100],
+  ['_react_21_produkcja','08_CapstoneIssueAdmin','./practice_prod_08.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;
