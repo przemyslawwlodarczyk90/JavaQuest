@@ -1,23 +1,39 @@
 // Lekcja 23/01 "Trening całościowy": pula pytań z całego toru React i pytania przekrojowe.
 // Teoria zostaje bez zmian (react_build.cjs); ten skrypt zastępuje tylko "exercises" i "quiz".
 // Do puli nie trafiają pytania wymagające kontekstu lekcji: kod importujący pliki projektu,
-// odwołania typu "w tej lekcji" albo "ten kod" bez kodu, a także powtórki pytań z innej lekcji.
+// odwołania typu "w tej lekcji" albo "ten kod" bez kodu, nazwy znane tylko z projektu jednej lekcji
+// oraz powtórki pytań z innej lekcji.
 // Uruchomienie: node scripts/content-migration/react/react_final_training.cjs
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {crossQuestions,crossExercises}=require('./react_final_cross.cjs');
 const root=path.resolve(__dirname,'../../../src/main/resources/content');
 const target=path.join(root,'_react_23_podsumowanie','01_FinalTraining.json');
 
-const NEEDS_LESSON=/(tej lekcji|tym modelu|tego modelu|w modelu|powtórka|tym projekcie|tego projektu|w tym przykładzie|powyżej|poniżej|lab\b)/i;
+const NEEDS_LESSON=/(tej lekcji|tym modelu|tego modelu|w modelu|powtórka|tym projekcie|tego projektu|w tym przykładzie|powyżej|poniżej|lab\b|opisan|tego zadania|tej aplikacji|tym ekranie|tego ekranu|trzech zakładek)/i;
 const NEEDS_CODE=/(ten kod|tym kodzie|tego kodu|ten fragment|tym fragmencie|tego fragmentu|tej funkcji|ta funkcja|ten komponent|tym komponencie|tego komponentu|ten test|tego testu|ta klasa|tej klasy|ten plik|tym pliku|tego pliku)/i;
 const LOCAL_IMPORT=/from\s+["']\.\.?\/|from\s+["']@\//;
 // Pytania-próbki z lekcji odwołują się do funkcji projektu nawet bez importu względnego w treści.
 const LOCAL_CALL=/\b(observe[A-Z]\w*|probe[A-Z]\w*|lab[A-Z]\w*)\(/;
 
-function usableQuestion(item){
+// Identyfikator w pytaniu bez kodu musi być znany z teorii co najmniej dwóch lekcji.
+// Inaczej to nazwa z projektu jednej lekcji, np. funkcja, której poza nią nikt nie widział.
+const IDENTIFIER=/\b(?:[a-z]+[A-Z]\w*|[A-Z][a-z]+[A-Z]\w*)\b/g;
+function identifierCounts(chapters){
+  const counts=new Map();
+  for(const chapter of chapters){
+    for(const file of fs.readdirSync(path.join(root,chapter)).filter(name=>name.endsWith('.json'))){
+      const lesson=JSON.parse(fs.readFileSync(path.join(root,chapter,file),'utf8'));
+      for(const name of new Set(JSON.stringify(lesson.theory).match(IDENTIFIER)??[]))counts.set(name,(counts.get(name)??0)+1);
+    }
+  }
+  return counts;
+}
+
+function usableQuestion(item,known){
   if(NEEDS_LESSON.test(item.question))return false;
   if(item.code)return !LOCAL_IMPORT.test(item.code)&&!LOCAL_CALL.test(item.code);
-  return !NEEDS_CODE.test(item.question);
+  if(NEEDS_CODE.test(item.question))return false;
+  return (item.question.match(IDENTIFIER)??[]).every(name=>(known.get(name)??0)>=2);
 }
 
 // Równomiernie z dostępnych, żeby jedna lekcja nie zdominowała zakładki ćwiczeń.
@@ -31,6 +47,7 @@ function pickExercises(list,limit){
 const quiz=[],exercises=[],seen=new Set(),perChapter={};
 let considered=0;
 const chapters=fs.readdirSync(root).filter(name=>/^_react_\d{2}_/.test(name)&&name!=='_react_23_podsumowanie').sort();
+const known=identifierCounts(chapters);
 for(const chapter of chapters){
   const number=chapter.slice(7,9);
   const lessons=fs.readdirSync(path.join(root,chapter)).filter(name=>name.endsWith('.json')).sort();
@@ -39,7 +56,7 @@ for(const chapter of chapters){
     assert.ok(lesson.quiz.length>0&&lesson.exercises.length>0,'Lekcja bez praktyki: '+chapter+'/'+file);
     for(const item of lesson.quiz){
       considered++;
-      if(!usableQuestion(item))continue;
+      if(!usableQuestion(item,known))continue;
       const key=item.question+'\n'+(item.code??'')+'\n'+item.options[item.correct];
       if(seen.has(key))continue;
       seen.add(key);
