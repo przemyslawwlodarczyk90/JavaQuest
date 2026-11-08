@@ -71,6 +71,1298 @@
       "body": "Migracja klas na hooki to zmiana grupowania kodu z „momentu w cyklu życia” na „cel”: stan z `this.state` rozbijasz na `useState`/`useReducer` (setter nie scala!), pary `componentDidMount`/`componentWillUnmount` i porównania w `componentDidUpdate` zastępujesz Effectami z zależnościami, pola instancji — refami, `PureComponent` — `memo`, a HOC-i i render props — własnymi hookami (z nakładką na czas przejścia). Granice błędów zostają klasami. Migrujesz stopniowo, od liści, z testami zachowania napisanymi przed zmianą. W TSX po migracji ubywa typów — zostają typy props i generyki `useState`.\n\nKryterium akceptacji: moduł raportów nie zawiera komponentów klasowych (poza granicą błędów), logika pobierania raportu jest w jednym hooku używanym we wszystkich miejscach, testy napisane przed migracją przechodzą bez zmian, a wyścig odpowiedzi przy zmianie `reportId` jest obsłużony."
     }
   ],
-  "exercises": [],
-  "quiz": []
+  "exercises": [
+    {
+      "prompt": "Zmień sposób myślenia o kodzie klasy.",
+      "hint": "Moment czy cel?",
+      "solution": "Klasa grupuje kod według momentu: montowanie, aktualizacja, odmontowanie. Hooki grupują według celu: synchronizacja z timerem, pobieranie danych. Jeden Effect zastępuje fragmenty trzech metod, więc najpierw nazwij cele, a dopiero potem pisz kod."
+    },
+    {
+      "prompt": "Napisz testy zachowania na wersji klasowej.",
+      "hint": "RTL przed migracją.",
+      "solution": "import {afterEach,describe,expect,test,vi} from \"vitest\";\nimport {act,fireEvent,render,screen} from \"@testing-library/react\";\nimport type {ComponentType} from \"react\";\nimport {ReportPanelClass} from \"./ReportPanelClass\";\nimport {ReportPanelHooks} from \"./ReportPanelHooks\";\nimport {ReportLoader,useReport,withReport,type ReportState} from \"./useReport\";\nimport {LegacySummary} from \"./LegacySummary\";\nimport {ClickTimer,ClickTimerState,mergeRight,mergeWrong,StaleSubscriber,Subscriber} from \"./pitfalls\";\nimport {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nconst report=(title:string,count=1):Report=>({title,count});\nfunction deferred<T>(){\n  let resolve!:(value:T)=>void;\n  const promise=new Promise<T>(yes=>{resolve=yes;});\n  return {promise,resolve};\n}\n\nafterEach(()=>{vi.useRealTimers();});\n\n// Ten sam zestaw dla obu wersji: testy zachowania mają przejść bez zmian.\nconst versions:[string,ComponentType<PanelProps>][]=[[\"klasa\",ReportPanelClass],[\"hooki\",ReportPanelHooks]];\ndescribe.each(versions)(\"ReportPanel: %s\",(_name,Panel)=>{\n  test(\"ładowanie i dane\",async()=>{\n    render(<Panel reportId={1} loadReport={async()=>report(\"Styczeń\",4)}/>);\n    expect(screen.getByText(\"Ładowanie raportu…\")).toBeVisible();\n    expect(await screen.findByRole(\"heading\",{name:\"Styczeń\"})).toBeVisible();\n    expect(screen.getByText(\"Zgłoszeń: 4\")).toBeVisible();\n  });\n\n  test(\"błąd\",async()=>{\n    render(<Panel reportId={1} loadReport={async()=>{throw new Error(\"x\");}}/>);\n    expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się\");\n  });\n\n  test(\"zmiana raportu i odrzucenie spóźnionej odpowiedzi\",async()=>{\n    const one=deferred<Report>(),two=deferred<Report>();\n    const load=(id:number)=>id===1?one.promise:two.promise;\n    const view=render(<Panel reportId={1} loadReport={load}/>);\n    view.rerender(<Panel reportId={2} loadReport={load}/>);\n    await act(async()=>two.resolve(report(\"Nowy\")));\n    expect(screen.getByRole(\"heading\",{name:\"Nowy\"})).toBeVisible();\n    await act(async()=>one.resolve(report(\"Stary\")));\n    expect(screen.queryByRole(\"heading\",{name:\"Stary\"})).toBeNull();\n  });\n\n  test(\"automatyczne odświeżanie i sprzątanie licznika\",async()=>{\n    vi.useFakeTimers();\n    const load=vi.fn(async()=>report(\"Raport\"));\n    const view=render(<Panel reportId={1} loadReport={load} refreshMs={1000}/>);\n    await act(async()=>{await vi.advanceTimersByTimeAsync(0);});\n    expect(load).toHaveBeenCalledTimes(1);\n    fireEvent.click(screen.getByRole(\"checkbox\"));\n    // Każdy tik osobno: act grupuje aktualizacje, więc dwa tiki naraz dałyby jedno pobranie w wersji z hookami.\n    await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});\n    await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});\n    expect(load).toHaveBeenCalledTimes(3);\n    view.unmount();\n    expect(vi.getTimerCount()).toBe(0);\n    await vi.advanceTimersByTimeAsync(5000);\n    expect(load).toHaveBeenCalledTimes(3);\n    vi.useRealTimers();\n  });\n});\n\ntest(\"hook uwspólnia logikę i odrzuca starą odpowiedź\",async()=>{\n  const one=deferred<Report>(),two=deferred<Report>();\n  const load=(id:number)=>id===1?one.promise:two.promise;\n  function View({id}:{id:number}){\n    const {data}=useReport(id,load);\n    return <p>{data?.title??\"pusto\"}</p>;\n  }\n  const view=render(<View id={1}/>);\n  view.rerender(<View id={2}/>);\n  await act(async()=>two.resolve(report(\"B\")));\n  await act(async()=>one.resolve(report(\"A\")));\n  expect(screen.getByText(\"B\")).toBeVisible();\n});\n\ntest(\"nakładka HOC przekazuje stan do starej klasy i zachowuje props\",async()=>{\n  const Wrapped=withReport(LegacySummary,async id=>report(\"Raport \"+id));\n  expect(Wrapped.displayName).toBe(\"withReport(LegacySummary)\");\n  render(<Wrapped reportId={7} prefix=\"Podsumowanie\"/>);\n  expect(await screen.findByText(\"Podsumowanie: Raport 7\")).toBeVisible();\n});\n\ntest(\"render props działają na tym samym hooku\",async()=>{\n  render(<ReportLoader reportId={1} loadReport={async()=>report(\"R\")}>{(state:ReportState)=><p>{state.data?.title??\"czekam\"}</p>}</ReportLoader>);\n  expect(screen.getByText(\"czekam\")).toBeVisible();\n  expect(await screen.findByText(\"R\")).toBeVisible();\n});\n\ntest(\"setter nie scala: dosłowne tłumaczenie gubi pole\",()=>{\n  const start={status:\"ALL\",query:\"awaria\"};\n  expect(mergeWrong(start,\"OPEN\").query).toBeUndefined();\n  expect(mergeRight(start,\"OPEN\")).toEqual({status:\"OPEN\",query:\"awaria\"});\n});\n\ntest(\"zależność userId odnawia subskrypcję, a pusta tablica zostaje przy starej\",()=>{\n  const good:string[]=[],stale:string[]=[];\n  const log=(text:string)=>good.push(text),logStale=(text:string)=>stale.push(text);\n  const a=render(<Subscriber userId={1} log={log}/>);\n  a.rerender(<Subscriber userId={2} log={log}/>);\n  expect(good).toEqual([\"subscribe 1\",\"unsubscribe 1\",\"subscribe 2\"]);\n  const b=render(<StaleSubscriber userId={1} log={logStale}/>);\n  b.rerender(<StaleSubscriber userId={2} log={logStale}/>);\n  expect(stale).toEqual([\"subscribe 1\"]);\n});\n\ntest(\"pole instancji jako ref nie powoduje renderu\",()=>{\n  const ref=vi.fn(),state=vi.fn();\n  render(<ClickTimer onRender={ref}/>);\n  fireEvent.click(screen.getByRole(\"button\",{name:\"Ref\"}));\n  expect(ref).toHaveBeenCalledTimes(1);\n  render(<ClickTimerState onRender={state}/>);\n  fireEvent.click(screen.getByRole(\"button\",{name:\"Stan\"}));\n  expect(state).toHaveBeenCalledTimes(2);\n});\n\ntest(\"mapowanie i decyzja o migracji\",()=>{\n  expect(hookFor(\"componentDidCatch\")).toBe(\"brak odpowiednika\");\n  expect(hookFor(\"inne\")).toBe(\"nieznane\");\n  const info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\n  expect(migrationDecision(info)).toBe(\"migruj\");\n  expect(migrationDecision({...info,isErrorBoundary:true})).toBe(\"zostaw klasę\");\n  expect(migrationDecision({...info,usesEnzyme:true})).toBe(\"najpierw przepisz testy\");\n  expect(migrationDecision({...info,changedRecently:false})).toBe(\"zostaw\");\n  expect(migrationDecision({...info,hasBehaviorTests:false})).toBe(\"najpierw napisz testy\");\n});\n\ntest(\"kolejność migracji od liści\",()=>{\n  expect(migrationOrder({Strona:[\"Tabela\"],Tabela:[\"Wiersz\",\"Filtr\"],Wiersz:[],Filtr:[]})).toEqual([\"Filtr\",\"Wiersz\",\"Tabela\",\"Strona\"]);\n  expect(()=>migrationOrder({a:[\"b\"],b:[\"a\"]})).toThrow(\"Cykl\");\n});"
+    },
+    {
+      "prompt": "Uruchom ten sam zestaw na obu wersjach.",
+      "hint": "describe.each z dwoma komponentami.",
+      "solution": "import {afterEach,describe,expect,test,vi} from \"vitest\";\nimport {act,fireEvent,render,screen} from \"@testing-library/react\";\nimport type {ComponentType} from \"react\";\nimport {ReportPanelClass} from \"./ReportPanelClass\";\nimport {ReportPanelHooks} from \"./ReportPanelHooks\";\nimport {ReportLoader,useReport,withReport,type ReportState} from \"./useReport\";\nimport {LegacySummary} from \"./LegacySummary\";\nimport {ClickTimer,ClickTimerState,mergeRight,mergeWrong,StaleSubscriber,Subscriber} from \"./pitfalls\";\nimport {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nconst report=(title:string,count=1):Report=>({title,count});\nfunction deferred<T>(){\n  let resolve!:(value:T)=>void;\n  const promise=new Promise<T>(yes=>{resolve=yes;});\n  return {promise,resolve};\n}\n\nafterEach(()=>{vi.useRealTimers();});\n\n// Ten sam zestaw dla obu wersji: testy zachowania mają przejść bez zmian.\nconst versions:[string,ComponentType<PanelProps>][]=[[\"klasa\",ReportPanelClass],[\"hooki\",ReportPanelHooks]];\ndescribe.each(versions)(\"ReportPanel: %s\",(_name,Panel)=>{\n  test(\"ładowanie i dane\",async()=>{\n    render(<Panel reportId={1} loadReport={async()=>report(\"Styczeń\",4)}/>);\n    expect(screen.getByText(\"Ładowanie raportu…\")).toBeVisible();\n    expect(await screen.findByRole(\"heading\",{name:\"Styczeń\"})).toBeVisible();\n    expect(screen.getByText(\"Zgłoszeń: 4\")).toBeVisible();\n  });\n\n  test(\"błąd\",async()=>{\n    render(<Panel reportId={1} loadReport={async()=>{throw new Error(\"x\");}}/>);\n    expect(await screen.findByRole(\"alert\")).toHaveTextContent(\"Nie udało się\");\n  });\n\n  test(\"zmiana raportu i odrzucenie spóźnionej odpowiedzi\",async()=>{\n    const one=deferred<Report>(),two=deferred<Report>();\n    const load=(id:number)=>id===1?one.promise:two.promise;\n    const view=render(<Panel reportId={1} loadReport={load}/>);\n    view.rerender(<Panel reportId={2} loadReport={load}/>);\n    await act(async()=>two.resolve(report(\"Nowy\")));\n    expect(screen.getByRole(\"heading\",{name:\"Nowy\"})).toBeVisible();\n    await act(async()=>one.resolve(report(\"Stary\")));\n    expect(screen.queryByRole(\"heading\",{name:\"Stary\"})).toBeNull();\n  });\n\n  test(\"automatyczne odświeżanie i sprzątanie licznika\",async()=>{\n    vi.useFakeTimers();\n    const load=vi.fn(async()=>report(\"Raport\"));\n    const view=render(<Panel reportId={1} loadReport={load} refreshMs={1000}/>);\n    await act(async()=>{await vi.advanceTimersByTimeAsync(0);});\n    expect(load).toHaveBeenCalledTimes(1);\n    fireEvent.click(screen.getByRole(\"checkbox\"));\n    // Każdy tik osobno: act grupuje aktualizacje, więc dwa tiki naraz dałyby jedno pobranie w wersji z hookami.\n    await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});\n    await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});\n    expect(load).toHaveBeenCalledTimes(3);\n    view.unmount();\n    expect(vi.getTimerCount()).toBe(0);\n    await vi.advanceTimersByTimeAsync(5000);\n    expect(load).toHaveBeenCalledTimes(3);\n    vi.useRealTimers();\n  });\n});\n\ntest(\"hook uwspólnia logikę i odrzuca starą odpowiedź\",async()=>{\n  const one=deferred<Report>(),two=deferred<Report>();\n  const load=(id:number)=>id===1?one.promise:two.promise;\n  function View({id}:{id:number}){\n    const {data}=useReport(id,load);\n    return <p>{data?.title??\"pusto\"}</p>;\n  }\n  const view=render(<View id={1}/>);\n  view.rerender(<View id={2}/>);\n  await act(async()=>two.resolve(report(\"B\")));\n  await act(async()=>one.resolve(report(\"A\")));\n  expect(screen.getByText(\"B\")).toBeVisible();\n});\n\ntest(\"nakładka HOC przekazuje stan do starej klasy i zachowuje props\",async()=>{\n  const Wrapped=withReport(LegacySummary,async id=>report(\"Raport \"+id));\n  expect(Wrapped.displayName).toBe(\"withReport(LegacySummary)\");\n  render(<Wrapped reportId={7} prefix=\"Podsumowanie\"/>);\n  expect(await screen.findByText(\"Podsumowanie: Raport 7\")).toBeVisible();\n});\n\ntest(\"render props działają na tym samym hooku\",async()=>{\n  render(<ReportLoader reportId={1} loadReport={async()=>report(\"R\")}>{(state:ReportState)=><p>{state.data?.title??\"czekam\"}</p>}</ReportLoader>);\n  expect(screen.getByText(\"czekam\")).toBeVisible();\n  expect(await screen.findByText(\"R\")).toBeVisible();\n});\n\ntest(\"setter nie scala: dosłowne tłumaczenie gubi pole\",()=>{\n  const start={status:\"ALL\",query:\"awaria\"};\n  expect(mergeWrong(start,\"OPEN\").query).toBeUndefined();\n  expect(mergeRight(start,\"OPEN\")).toEqual({status:\"OPEN\",query:\"awaria\"});\n});\n\ntest(\"zależność userId odnawia subskrypcję, a pusta tablica zostaje przy starej\",()=>{\n  const good:string[]=[],stale:string[]=[];\n  const log=(text:string)=>good.push(text),logStale=(text:string)=>stale.push(text);\n  const a=render(<Subscriber userId={1} log={log}/>);\n  a.rerender(<Subscriber userId={2} log={log}/>);\n  expect(good).toEqual([\"subscribe 1\",\"unsubscribe 1\",\"subscribe 2\"]);\n  const b=render(<StaleSubscriber userId={1} log={logStale}/>);\n  b.rerender(<StaleSubscriber userId={2} log={logStale}/>);\n  expect(stale).toEqual([\"subscribe 1\"]);\n});\n\ntest(\"pole instancji jako ref nie powoduje renderu\",()=>{\n  const ref=vi.fn(),state=vi.fn();\n  render(<ClickTimer onRender={ref}/>);\n  fireEvent.click(screen.getByRole(\"button\",{name:\"Ref\"}));\n  expect(ref).toHaveBeenCalledTimes(1);\n  render(<ClickTimerState onRender={state}/>);\n  fireEvent.click(screen.getByRole(\"button\",{name:\"Stan\"}));\n  expect(state).toHaveBeenCalledTimes(2);\n});\n\ntest(\"mapowanie i decyzja o migracji\",()=>{\n  expect(hookFor(\"componentDidCatch\")).toBe(\"brak odpowiednika\");\n  expect(hookFor(\"inne\")).toBe(\"nieznane\");\n  const info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\n  expect(migrationDecision(info)).toBe(\"migruj\");\n  expect(migrationDecision({...info,isErrorBoundary:true})).toBe(\"zostaw klasę\");\n  expect(migrationDecision({...info,usesEnzyme:true})).toBe(\"najpierw przepisz testy\");\n  expect(migrationDecision({...info,changedRecently:false})).toBe(\"zostaw\");\n  expect(migrationDecision({...info,hasBehaviorTests:false})).toBe(\"najpierw napisz testy\");\n});\n\ntest(\"kolejność migracji od liści\",()=>{\n  expect(migrationOrder({Strona:[\"Tabela\"],Tabela:[\"Wiersz\",\"Filtr\"],Wiersz:[],Filtr:[]})).toEqual([\"Filtr\",\"Wiersz\",\"Tabela\",\"Strona\"]);\n  expect(()=>migrationOrder({a:[\"b\"],b:[\"a\"]})).toThrow(\"Cykl\");\n});"
+    },
+    {
+      "prompt": "Przenieś stan na osobne useState.",
+      "hint": "Niezależne wartości osobno.",
+      "solution": "import {useEffect,useState} from \"react\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nexport function ReportPanelHooks({reportId,loadReport,refreshMs=30_000}:PanelProps){\n  const [data,setData]=useState<Report|null>(null);\n  const [error,setError]=useState<unknown>(null);\n  const [autoRefresh,setAutoRefresh]=useState(false);\n  const [version,setVersion]=useState(0);\n\n  useEffect(()=>{\n    let ignore=false;\n    setError(null);\n    loadReport(reportId).then(\n      report=>{if(!ignore)setData(report);},\n      (reason:unknown)=>{if(!ignore)setError(reason);},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,version,loadReport]);\n\n  useEffect(()=>{\n    if(!autoRefresh)return;\n    const id=setInterval(()=>setVersion(value=>value+1),refreshMs);\n    return ()=>clearInterval(id);\n  },[autoRefresh,refreshMs]);\n\n  if(error)return <p role=\"alert\">Nie udało się wczytać raportu.</p>;\n  if(!data)return <p>Ładowanie raportu…</p>;\n  return (\n    <section>\n      <h2>{data.title}</h2>\n      <label><input type=\"checkbox\" checked={autoRefresh} onChange={()=>setAutoRefresh(value=>!value)}/> Odświeżaj co 30 s</label>\n      <p>Zgłoszeń: {data.count}</p>\n    </section>\n  );\n}"
+    },
+    {
+      "prompt": "Połącz pobieranie w jeden Effect.",
+      "hint": "Zależność od reportId zamiast porównania.",
+      "solution": "import {useEffect,useState} from \"react\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nexport function ReportPanelHooks({reportId,loadReport,refreshMs=30_000}:PanelProps){\n  const [data,setData]=useState<Report|null>(null);\n  const [error,setError]=useState<unknown>(null);\n  const [autoRefresh,setAutoRefresh]=useState(false);\n  const [version,setVersion]=useState(0);\n\n  useEffect(()=>{\n    let ignore=false;\n    setError(null);\n    loadReport(reportId).then(\n      report=>{if(!ignore)setData(report);},\n      (reason:unknown)=>{if(!ignore)setError(reason);},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,version,loadReport]);\n\n  useEffect(()=>{\n    if(!autoRefresh)return;\n    const id=setInterval(()=>setVersion(value=>value+1),refreshMs);\n    return ()=>clearInterval(id);\n  },[autoRefresh,refreshMs]);\n\n  if(error)return <p role=\"alert\">Nie udało się wczytać raportu.</p>;\n  if(!data)return <p>Ładowanie raportu…</p>;\n  return (\n    <section>\n      <h2>{data.title}</h2>\n      <label><input type=\"checkbox\" checked={autoRefresh} onChange={()=>setAutoRefresh(value=>!value)}/> Odświeżaj co 30 s</label>\n      <p>Zgłoszeń: {data.count}</p>\n    </section>\n  );\n}"
+    },
+    {
+      "prompt": "Połącz timer w drugi Effect.",
+      "hint": "Trzy metody stają się jednym celem.",
+      "solution": "import {useEffect,useState} from \"react\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nexport function ReportPanelHooks({reportId,loadReport,refreshMs=30_000}:PanelProps){\n  const [data,setData]=useState<Report|null>(null);\n  const [error,setError]=useState<unknown>(null);\n  const [autoRefresh,setAutoRefresh]=useState(false);\n  const [version,setVersion]=useState(0);\n\n  useEffect(()=>{\n    let ignore=false;\n    setError(null);\n    loadReport(reportId).then(\n      report=>{if(!ignore)setData(report);},\n      (reason:unknown)=>{if(!ignore)setError(reason);},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,version,loadReport]);\n\n  useEffect(()=>{\n    if(!autoRefresh)return;\n    const id=setInterval(()=>setVersion(value=>value+1),refreshMs);\n    return ()=>clearInterval(id);\n  },[autoRefresh,refreshMs]);\n\n  if(error)return <p role=\"alert\">Nie udało się wczytać raportu.</p>;\n  if(!data)return <p>Ładowanie raportu…</p>;\n  return (\n    <section>\n      <h2>{data.title}</h2>\n      <label><input type=\"checkbox\" checked={autoRefresh} onChange={()=>setAutoRefresh(value=>!value)}/> Odświeżaj co 30 s</label>\n      <p>Zgłoszeń: {data.count}</p>\n    </section>\n  );\n}"
+    },
+    {
+      "prompt": "Obsłuż wyścig przez zmienną ignore.",
+      "hint": "Zmienna lokalna Effectu.",
+      "solution": "import {useEffect,useState} from \"react\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nexport function ReportPanelHooks({reportId,loadReport,refreshMs=30_000}:PanelProps){\n  const [data,setData]=useState<Report|null>(null);\n  const [error,setError]=useState<unknown>(null);\n  const [autoRefresh,setAutoRefresh]=useState(false);\n  const [version,setVersion]=useState(0);\n\n  useEffect(()=>{\n    let ignore=false;\n    setError(null);\n    loadReport(reportId).then(\n      report=>{if(!ignore)setData(report);},\n      (reason:unknown)=>{if(!ignore)setError(reason);},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,version,loadReport]);\n\n  useEffect(()=>{\n    if(!autoRefresh)return;\n    const id=setInterval(()=>setVersion(value=>value+1),refreshMs);\n    return ()=>clearInterval(id);\n  },[autoRefresh,refreshMs]);\n\n  if(error)return <p role=\"alert\">Nie udało się wczytać raportu.</p>;\n  if(!data)return <p>Ładowanie raportu…</p>;\n  return (\n    <section>\n      <h2>{data.title}</h2>\n      <label><input type=\"checkbox\" checked={autoRefresh} onChange={()=>setAutoRefresh(value=>!value)}/> Odświeżaj co 30 s</label>\n      <p>Zgłoszeń: {data.count}</p>\n    </section>\n  );\n}"
+    },
+    {
+      "prompt": "Zastąp pole timera zmienną lokalną.",
+      "hint": "Pole instancji bywa niepotrzebne.",
+      "solution": "import {useEffect,useState} from \"react\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nexport function ReportPanelHooks({reportId,loadReport,refreshMs=30_000}:PanelProps){\n  const [data,setData]=useState<Report|null>(null);\n  const [error,setError]=useState<unknown>(null);\n  const [autoRefresh,setAutoRefresh]=useState(false);\n  const [version,setVersion]=useState(0);\n\n  useEffect(()=>{\n    let ignore=false;\n    setError(null);\n    loadReport(reportId).then(\n      report=>{if(!ignore)setData(report);},\n      (reason:unknown)=>{if(!ignore)setError(reason);},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,version,loadReport]);\n\n  useEffect(()=>{\n    if(!autoRefresh)return;\n    const id=setInterval(()=>setVersion(value=>value+1),refreshMs);\n    return ()=>clearInterval(id);\n  },[autoRefresh,refreshMs]);\n\n  if(error)return <p role=\"alert\">Nie udało się wczytać raportu.</p>;\n  if(!data)return <p>Ładowanie raportu…</p>;\n  return (\n    <section>\n      <h2>{data.title}</h2>\n      <label><input type=\"checkbox\" checked={autoRefresh} onChange={()=>setAutoRefresh(value=>!value)}/> Odświeżaj co 30 s</label>\n      <p>Zgłoszeń: {data.count}</p>\n    </section>\n  );\n}"
+    },
+    {
+      "prompt": "Odśwież przez licznik wersji.",
+      "hint": "Zmiana stanu uruchamia Effect pobierania.",
+      "solution": "import {useEffect,useState} from \"react\";\nimport type {PanelProps,Report} from \"./reportTypes\";\n\nexport function ReportPanelHooks({reportId,loadReport,refreshMs=30_000}:PanelProps){\n  const [data,setData]=useState<Report|null>(null);\n  const [error,setError]=useState<unknown>(null);\n  const [autoRefresh,setAutoRefresh]=useState(false);\n  const [version,setVersion]=useState(0);\n\n  useEffect(()=>{\n    let ignore=false;\n    setError(null);\n    loadReport(reportId).then(\n      report=>{if(!ignore)setData(report);},\n      (reason:unknown)=>{if(!ignore)setError(reason);},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,version,loadReport]);\n\n  useEffect(()=>{\n    if(!autoRefresh)return;\n    const id=setInterval(()=>setVersion(value=>value+1),refreshMs);\n    return ()=>clearInterval(id);\n  },[autoRefresh,refreshMs]);\n\n  if(error)return <p role=\"alert\">Nie udało się wczytać raportu.</p>;\n  if(!data)return <p>Ładowanie raportu…</p>;\n  return (\n    <section>\n      <h2>{data.title}</h2>\n      <label><input type=\"checkbox\" checked={autoRefresh} onChange={()=>setAutoRefresh(value=>!value)}/> Odświeżaj co 30 s</label>\n      <p>Zgłoszeń: {data.count}</p>\n    </section>\n  );\n}"
+    },
+    {
+      "prompt": "Wydziel useReport.",
+      "hint": "Logika kopiowana w czterech klasach trafia do jednego miejsca.",
+      "solution": "import {useEffect,useState,type ComponentType} from \"react\";\nimport type {LoadReport,Report} from \"./reportTypes\";\n\nexport type ReportState={data:Report|null;error:unknown};\n\nexport function useReport(reportId:number,loadReport:LoadReport):ReportState{\n  const [state,setState]=useState<ReportState>({data:null,error:null});\n\n  useEffect(()=>{\n    let ignore=false;\n    setState({data:null,error:null});\n    loadReport(reportId).then(\n      data=>{if(!ignore)setState({data,error:null});},\n      (error:unknown)=>{if(!ignore)setState({data:null,error});},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,loadReport]);\n\n  return state;\n}\n\n// Nakładka zgodna ze starym API: klasy nadal jej używają, dopóki ich nie przepiszesz.\nexport function withReport<P extends {report:ReportState}>(WrappedComponent:ComponentType<P>,loadReport:LoadReport){\n  function WithReport(props:Omit<P,\"report\">&{reportId:number}){\n    const report=useReport(props.reportId,loadReport);\n    return <WrappedComponent {...(props as unknown as P)} report={report}/>;\n  }\n  WithReport.displayName=\"withReport(\"+(WrappedComponent.displayName??WrappedComponent.name)+\")\";\n  return WithReport;\n}\n\n// Render props: to samo API co dawniej, ale logika jest już w hooku.\nexport function ReportLoader({reportId,loadReport,children}:{reportId:number;loadReport:LoadReport;children:(state:ReportState)=>React.ReactNode}){\n  return <>{children(useReport(reportId,loadReport))}</>;\n}"
+    },
+    {
+      "prompt": "Napisz nakładkę HOC na hooku.",
+      "hint": "Stare klasy działają bez zmian.",
+      "solution": "import {useEffect,useState,type ComponentType} from \"react\";\nimport type {LoadReport,Report} from \"./reportTypes\";\n\nexport type ReportState={data:Report|null;error:unknown};\n\nexport function useReport(reportId:number,loadReport:LoadReport):ReportState{\n  const [state,setState]=useState<ReportState>({data:null,error:null});\n\n  useEffect(()=>{\n    let ignore=false;\n    setState({data:null,error:null});\n    loadReport(reportId).then(\n      data=>{if(!ignore)setState({data,error:null});},\n      (error:unknown)=>{if(!ignore)setState({data:null,error});},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,loadReport]);\n\n  return state;\n}\n\n// Nakładka zgodna ze starym API: klasy nadal jej używają, dopóki ich nie przepiszesz.\nexport function withReport<P extends {report:ReportState}>(WrappedComponent:ComponentType<P>,loadReport:LoadReport){\n  function WithReport(props:Omit<P,\"report\">&{reportId:number}){\n    const report=useReport(props.reportId,loadReport);\n    return <WrappedComponent {...(props as unknown as P)} report={report}/>;\n  }\n  WithReport.displayName=\"withReport(\"+(WrappedComponent.displayName??WrappedComponent.name)+\")\";\n  return WithReport;\n}\n\n// Render props: to samo API co dawniej, ale logika jest już w hooku.\nexport function ReportLoader({reportId,loadReport,children}:{reportId:number;loadReport:LoadReport;children:(state:ReportState)=>React.ReactNode}){\n  return <>{children(useReport(reportId,loadReport))}</>;\n}"
+    },
+    {
+      "prompt": "Zachowaj displayName nakładki.",
+      "hint": "Pomaga w DevTools.",
+      "solution": "import {useEffect,useState,type ComponentType} from \"react\";\nimport type {LoadReport,Report} from \"./reportTypes\";\n\nexport type ReportState={data:Report|null;error:unknown};\n\nexport function useReport(reportId:number,loadReport:LoadReport):ReportState{\n  const [state,setState]=useState<ReportState>({data:null,error:null});\n\n  useEffect(()=>{\n    let ignore=false;\n    setState({data:null,error:null});\n    loadReport(reportId).then(\n      data=>{if(!ignore)setState({data,error:null});},\n      (error:unknown)=>{if(!ignore)setState({data:null,error});},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,loadReport]);\n\n  return state;\n}\n\n// Nakładka zgodna ze starym API: klasy nadal jej używają, dopóki ich nie przepiszesz.\nexport function withReport<P extends {report:ReportState}>(WrappedComponent:ComponentType<P>,loadReport:LoadReport){\n  function WithReport(props:Omit<P,\"report\">&{reportId:number}){\n    const report=useReport(props.reportId,loadReport);\n    return <WrappedComponent {...(props as unknown as P)} report={report}/>;\n  }\n  WithReport.displayName=\"withReport(\"+(WrappedComponent.displayName??WrappedComponent.name)+\")\";\n  return WithReport;\n}\n\n// Render props: to samo API co dawniej, ale logika jest już w hooku.\nexport function ReportLoader({reportId,loadReport,children}:{reportId:number;loadReport:LoadReport;children:(state:ReportState)=>React.ReactNode}){\n  return <>{children(useReport(reportId,loadReport))}</>;\n}"
+    },
+    {
+      "prompt": "Napisz render props na hooku.",
+      "hint": "Stare API, nowa logika.",
+      "solution": "import {useEffect,useState,type ComponentType} from \"react\";\nimport type {LoadReport,Report} from \"./reportTypes\";\n\nexport type ReportState={data:Report|null;error:unknown};\n\nexport function useReport(reportId:number,loadReport:LoadReport):ReportState{\n  const [state,setState]=useState<ReportState>({data:null,error:null});\n\n  useEffect(()=>{\n    let ignore=false;\n    setState({data:null,error:null});\n    loadReport(reportId).then(\n      data=>{if(!ignore)setState({data,error:null});},\n      (error:unknown)=>{if(!ignore)setState({data:null,error});},\n    );\n    return ()=>{ignore=true;};\n  },[reportId,loadReport]);\n\n  return state;\n}\n\n// Nakładka zgodna ze starym API: klasy nadal jej używają, dopóki ich nie przepiszesz.\nexport function withReport<P extends {report:ReportState}>(WrappedComponent:ComponentType<P>,loadReport:LoadReport){\n  function WithReport(props:Omit<P,\"report\">&{reportId:number}){\n    const report=useReport(props.reportId,loadReport);\n    return <WrappedComponent {...(props as unknown as P)} report={report}/>;\n  }\n  WithReport.displayName=\"withReport(\"+(WrappedComponent.displayName??WrappedComponent.name)+\")\";\n  return WithReport;\n}\n\n// Render props: to samo API co dawniej, ale logika jest już w hooku.\nexport function ReportLoader({reportId,loadReport,children}:{reportId:number;loadReport:LoadReport;children:(state:ReportState)=>React.ReactNode}){\n  return <>{children(useReport(reportId,loadReport))}</>;\n}"
+    },
+    {
+      "prompt": "Podłącz starą klasę przez nakładkę.",
+      "hint": "Przejście bez przepisywania wszystkiego naraz.",
+      "solution": "import {Component} from \"react\";\nimport type {ReportState} from \"./useReport\";\n\n// Starsza klasa nadal działa przez nakładkę withReport.\nexport class LegacySummary extends Component<{report:ReportState;prefix:string}>{\n  render(){\n    const {report,prefix}=this.props;\n    return <p>{prefix}: {report.data?report.data.title:\"brak\"}</p>;\n  }\n}"
+    },
+    {
+      "prompt": "Usuń nakładkę, gdy nikt jej nie używa.",
+      "hint": "Ma być tymczasowa.",
+      "solution": "Znajdź użycia przez grep i TS. Gdy zostało ostatnie, przepisz komponent na const report=useReport(id,load) i usuń withReport. Zaplanuj to w zadaniu, bo tymczasowa nakładka łatwo zostaje na lata."
+    },
+    {
+      "prompt": "Napraw dosłowne tłumaczenie setState.",
+      "hint": "Setter nie scala.",
+      "solution": "import {useEffect,useRef,useState} from \"react\";\n\ntype Filters={status:string;query:string};\n\n// Setter nie scala: bez kopii znika pole query.\nexport function mergeWrong(_previous:Filters,status:string){\n  return {status} as Filters;\n}\n\nexport function mergeRight(previous:Filters,status:string):Filters{\n  return {...previous,status};\n}\n\nexport function Subscriber({userId,log}:{userId:number;log:(text:string)=>void}){\n  useEffect(()=>{\n    log(\"subscribe \"+userId);\n    return ()=>log(\"unsubscribe \"+userId);\n  },[userId,log]);\n  return null;\n}\n\n// Wersja z pustą tablicą zależności, czyli dosłowne tłumaczenie componentDidMount.\nexport function StaleSubscriber({userId,log}:{userId:number;log:(text:string)=>void}){\n  useEffect(()=>{\n    log(\"subscribe \"+userId);\n    return ()=>log(\"unsubscribe \"+userId);\n    // eslint-disable-next-line react-hooks/exhaustive-deps -- celowy przykład błędu\n  },[]);\n  return null;\n}\n\n// Pole instancji przepisane na ref: zmiana nie powoduje renderu.\nexport function ClickTimer({onRender}:{onRender:()=>void}){\n  const lastClick=useRef(0);\n  onRender();\n  return <button onClick={()=>{lastClick.current=Date.now();}}>Ref</button>;\n}\n\n// Dosłowne tłumaczenie pola na stan powoduje niepotrzebny render.\nexport function ClickTimerState({onRender}:{onRender:()=>void}){\n  const [,setLastClick]=useState(0);\n  onRender();\n  return <button onClick={()=>setLastClick(value=>value+1)}>Stan</button>;\n}"
+    },
+    {
+      "prompt": "Napraw Effect z pustą tablicą zależności.",
+      "hint": "Efekt czyta props.",
+      "solution": "import {useEffect,useRef,useState} from \"react\";\n\ntype Filters={status:string;query:string};\n\n// Setter nie scala: bez kopii znika pole query.\nexport function mergeWrong(_previous:Filters,status:string){\n  return {status} as Filters;\n}\n\nexport function mergeRight(previous:Filters,status:string):Filters{\n  return {...previous,status};\n}\n\nexport function Subscriber({userId,log}:{userId:number;log:(text:string)=>void}){\n  useEffect(()=>{\n    log(\"subscribe \"+userId);\n    return ()=>log(\"unsubscribe \"+userId);\n  },[userId,log]);\n  return null;\n}\n\n// Wersja z pustą tablicą zależności, czyli dosłowne tłumaczenie componentDidMount.\nexport function StaleSubscriber({userId,log}:{userId:number;log:(text:string)=>void}){\n  useEffect(()=>{\n    log(\"subscribe \"+userId);\n    return ()=>log(\"unsubscribe \"+userId);\n    // eslint-disable-next-line react-hooks/exhaustive-deps -- celowy przykład błędu\n  },[]);\n  return null;\n}\n\n// Pole instancji przepisane na ref: zmiana nie powoduje renderu.\nexport function ClickTimer({onRender}:{onRender:()=>void}){\n  const lastClick=useRef(0);\n  onRender();\n  return <button onClick={()=>{lastClick.current=Date.now();}}>Ref</button>;\n}\n\n// Dosłowne tłumaczenie pola na stan powoduje niepotrzebny render.\nexport function ClickTimerState({onRender}:{onRender:()=>void}){\n  const [,setLastClick]=useState(0);\n  onRender();\n  return <button onClick={()=>setLastClick(value=>value+1)}>Stan</button>;\n}"
+    },
+    {
+      "prompt": "Zamień Effect „po zapisie” na handler.",
+      "hint": "Logika zdarzenia w zdarzeniu.",
+      "solution": "// Źle: useEffect(()=>{if(saved)onSaved();},[saved]);\n// Dobrze:\nfunction handleSave(){\n  save();\n  onSaved();\n}\n// Effect jest potrzebny do synchronizacji z zewnętrznym systemem, a nie do reakcji na kliknięcie."
+    },
+    {
+      "prompt": "Zamień pole instancji na ref, nie na stan.",
+      "hint": "Wartości nie ma na ekranie.",
+      "solution": "import {useEffect,useRef,useState} from \"react\";\n\ntype Filters={status:string;query:string};\n\n// Setter nie scala: bez kopii znika pole query.\nexport function mergeWrong(_previous:Filters,status:string){\n  return {status} as Filters;\n}\n\nexport function mergeRight(previous:Filters,status:string):Filters{\n  return {...previous,status};\n}\n\nexport function Subscriber({userId,log}:{userId:number;log:(text:string)=>void}){\n  useEffect(()=>{\n    log(\"subscribe \"+userId);\n    return ()=>log(\"unsubscribe \"+userId);\n  },[userId,log]);\n  return null;\n}\n\n// Wersja z pustą tablicą zależności, czyli dosłowne tłumaczenie componentDidMount.\nexport function StaleSubscriber({userId,log}:{userId:number;log:(text:string)=>void}){\n  useEffect(()=>{\n    log(\"subscribe \"+userId);\n    return ()=>log(\"unsubscribe \"+userId);\n    // eslint-disable-next-line react-hooks/exhaustive-deps -- celowy przykład błędu\n  },[]);\n  return null;\n}\n\n// Pole instancji przepisane na ref: zmiana nie powoduje renderu.\nexport function ClickTimer({onRender}:{onRender:()=>void}){\n  const lastClick=useRef(0);\n  onRender();\n  return <button onClick={()=>{lastClick.current=Date.now();}}>Ref</button>;\n}\n\n// Dosłowne tłumaczenie pola na stan powoduje niepotrzebny render.\nexport function ClickTimerState({onRender}:{onRender:()=>void}){\n  const [,setLastClick]=useState(0);\n  onRender();\n  return <button onClick={()=>setLastClick(value=>value+1)}>Stan</button>;\n}"
+    },
+    {
+      "prompt": "Zmapuj elementy klasy na hooki.",
+      "hint": "Tabela do przeglądu kodu.",
+      "solution": "const MAPPING:Record<string,string>={\n  \"this.state\":\"useState lub useReducer\",\n  \"this.setState\":\"setter z useState, który nie scala\",\n  \"componentDidMount\":\"useEffect z []\",\n  \"componentWillUnmount\":\"sprzątanie w useEffect\",\n  \"componentDidUpdate\":\"useEffect z zależnościami\",\n  \"shouldComponentUpdate\":\"memo\",\n  \"PureComponent\":\"memo\",\n  \"getDerivedStateFromProps\":\"obliczenie w renderze lub key\",\n  \"createRef\":\"useRef\",\n  \"contextType\":\"useContext\",\n  \"getSnapshotBeforeUpdate\":\"useLayoutEffect\",\n  \"componentDidCatch\":\"brak odpowiednika\",\n  \"getDerivedStateFromError\":\"brak odpowiednika\",\n};\n\nexport function hookFor(name:string){\n  return MAPPING[name]??\"nieznane\";\n}\n\nexport type ComponentInfo={name:string;isErrorBoundary:boolean;usedBy:number;changedRecently:boolean;hasBehaviorTests:boolean;usesEnzyme:boolean};\n\nexport function migrationDecision(info:ComponentInfo){\n  if(info.isErrorBoundary)return \"zostaw klasę\";\n  if(info.usesEnzyme)return \"najpierw przepisz testy\";\n  if(!info.changedRecently)return \"zostaw\";\n  if(!info.hasBehaviorTests)return \"najpierw napisz testy\";\n  return \"migruj\";\n}\n\n// Od liści do korzenia: komponent bez dzieci-klas migrujemy najpierw.\nexport function migrationOrder(children:Record<string,readonly string[]>){\n  const done:string[]=[];\n  const pending=new Set(Object.keys(children));\n  while(pending.size){\n    const ready=[...pending].filter(name=>(children[name]??[]).every(child=>!pending.has(child))).sort();\n    if(!ready.length)throw new Error(\"Cykl zależności\");\n    for(const name of ready){done.push(name);pending.delete(name);}\n  }\n  return done;\n}"
+    },
+    {
+      "prompt": "Zostaw granicę błędów jako klasę.",
+      "hint": "Brak odpowiednika w hookach.",
+      "solution": "const MAPPING:Record<string,string>={\n  \"this.state\":\"useState lub useReducer\",\n  \"this.setState\":\"setter z useState, który nie scala\",\n  \"componentDidMount\":\"useEffect z []\",\n  \"componentWillUnmount\":\"sprzątanie w useEffect\",\n  \"componentDidUpdate\":\"useEffect z zależnościami\",\n  \"shouldComponentUpdate\":\"memo\",\n  \"PureComponent\":\"memo\",\n  \"getDerivedStateFromProps\":\"obliczenie w renderze lub key\",\n  \"createRef\":\"useRef\",\n  \"contextType\":\"useContext\",\n  \"getSnapshotBeforeUpdate\":\"useLayoutEffect\",\n  \"componentDidCatch\":\"brak odpowiednika\",\n  \"getDerivedStateFromError\":\"brak odpowiednika\",\n};\n\nexport function hookFor(name:string){\n  return MAPPING[name]??\"nieznane\";\n}\n\nexport type ComponentInfo={name:string;isErrorBoundary:boolean;usedBy:number;changedRecently:boolean;hasBehaviorTests:boolean;usesEnzyme:boolean};\n\nexport function migrationDecision(info:ComponentInfo){\n  if(info.isErrorBoundary)return \"zostaw klasę\";\n  if(info.usesEnzyme)return \"najpierw przepisz testy\";\n  if(!info.changedRecently)return \"zostaw\";\n  if(!info.hasBehaviorTests)return \"najpierw napisz testy\";\n  return \"migruj\";\n}\n\n// Od liści do korzenia: komponent bez dzieci-klas migrujemy najpierw.\nexport function migrationOrder(children:Record<string,readonly string[]>){\n  const done:string[]=[];\n  const pending=new Set(Object.keys(children));\n  while(pending.size){\n    const ready=[...pending].filter(name=>(children[name]??[]).every(child=>!pending.has(child))).sort();\n    if(!ready.length)throw new Error(\"Cykl zależności\");\n    for(const name of ready){done.push(name);pending.delete(name);}\n  }\n  return done;\n}"
+    },
+    {
+      "prompt": "Zdecyduj o migracji komponentu.",
+      "hint": "Stabilny kod nie musi się zmieniać.",
+      "solution": "const MAPPING:Record<string,string>={\n  \"this.state\":\"useState lub useReducer\",\n  \"this.setState\":\"setter z useState, który nie scala\",\n  \"componentDidMount\":\"useEffect z []\",\n  \"componentWillUnmount\":\"sprzątanie w useEffect\",\n  \"componentDidUpdate\":\"useEffect z zależnościami\",\n  \"shouldComponentUpdate\":\"memo\",\n  \"PureComponent\":\"memo\",\n  \"getDerivedStateFromProps\":\"obliczenie w renderze lub key\",\n  \"createRef\":\"useRef\",\n  \"contextType\":\"useContext\",\n  \"getSnapshotBeforeUpdate\":\"useLayoutEffect\",\n  \"componentDidCatch\":\"brak odpowiednika\",\n  \"getDerivedStateFromError\":\"brak odpowiednika\",\n};\n\nexport function hookFor(name:string){\n  return MAPPING[name]??\"nieznane\";\n}\n\nexport type ComponentInfo={name:string;isErrorBoundary:boolean;usedBy:number;changedRecently:boolean;hasBehaviorTests:boolean;usesEnzyme:boolean};\n\nexport function migrationDecision(info:ComponentInfo){\n  if(info.isErrorBoundary)return \"zostaw klasę\";\n  if(info.usesEnzyme)return \"najpierw przepisz testy\";\n  if(!info.changedRecently)return \"zostaw\";\n  if(!info.hasBehaviorTests)return \"najpierw napisz testy\";\n  return \"migruj\";\n}\n\n// Od liści do korzenia: komponent bez dzieci-klas migrujemy najpierw.\nexport function migrationOrder(children:Record<string,readonly string[]>){\n  const done:string[]=[];\n  const pending=new Set(Object.keys(children));\n  while(pending.size){\n    const ready=[...pending].filter(name=>(children[name]??[]).every(child=>!pending.has(child))).sort();\n    if(!ready.length)throw new Error(\"Cykl zależności\");\n    for(const name of ready){done.push(name);pending.delete(name);}\n  }\n  return done;\n}"
+    },
+    {
+      "prompt": "Ustal kolejność od liści.",
+      "hint": "Sortowanie zależności.",
+      "solution": "const MAPPING:Record<string,string>={\n  \"this.state\":\"useState lub useReducer\",\n  \"this.setState\":\"setter z useState, który nie scala\",\n  \"componentDidMount\":\"useEffect z []\",\n  \"componentWillUnmount\":\"sprzątanie w useEffect\",\n  \"componentDidUpdate\":\"useEffect z zależnościami\",\n  \"shouldComponentUpdate\":\"memo\",\n  \"PureComponent\":\"memo\",\n  \"getDerivedStateFromProps\":\"obliczenie w renderze lub key\",\n  \"createRef\":\"useRef\",\n  \"contextType\":\"useContext\",\n  \"getSnapshotBeforeUpdate\":\"useLayoutEffect\",\n  \"componentDidCatch\":\"brak odpowiednika\",\n  \"getDerivedStateFromError\":\"brak odpowiednika\",\n};\n\nexport function hookFor(name:string){\n  return MAPPING[name]??\"nieznane\";\n}\n\nexport type ComponentInfo={name:string;isErrorBoundary:boolean;usedBy:number;changedRecently:boolean;hasBehaviorTests:boolean;usesEnzyme:boolean};\n\nexport function migrationDecision(info:ComponentInfo){\n  if(info.isErrorBoundary)return \"zostaw klasę\";\n  if(info.usesEnzyme)return \"najpierw przepisz testy\";\n  if(!info.changedRecently)return \"zostaw\";\n  if(!info.hasBehaviorTests)return \"najpierw napisz testy\";\n  return \"migruj\";\n}\n\n// Od liści do korzenia: komponent bez dzieci-klas migrujemy najpierw.\nexport function migrationOrder(children:Record<string,readonly string[]>){\n  const done:string[]=[];\n  const pending=new Set(Object.keys(children));\n  while(pending.size){\n    const ready=[...pending].filter(name=>(children[name]??[]).every(child=>!pending.has(child))).sort();\n    if(!ready.length)throw new Error(\"Cykl zależności\");\n    for(const name of ready){done.push(name);pending.delete(name);}\n  }\n  return done;\n}"
+    },
+    {
+      "prompt": "Przepisz testy Enzyme przed migracją.",
+      "hint": "wrapper.state() nie przeżyje zmiany.",
+      "solution": "Sprawdzanie wrapper.state(\"loading\") zastąp asercją, że widać tekst ładowania. wrapper.instance().load() zastąp działaniem użytkownika. Enzyme nie wspiera React 18+, więc i tak trzeba to zrobić przy aktualizacji."
+    },
+    {
+      "prompt": "Usuń PropTypes po migracji.",
+      "hint": "React 19 ich nie sprawdza.",
+      "solution": "W TSX zastępują je typy props. W JSX przejdź na TS albo waliduj dane z API schematem. Same PropTypes nie dają już sprawdzania przez Reacta, więc pozostawione dają złudne poczucie ochrony."
+    },
+    {
+      "prompt": "Rozważ TanStack Query po migracji.",
+      "hint": "Własny timer można usunąć.",
+      "solution": "useQuery({queryKey:[\"report\",id],queryFn:()=>loadReport(id),refetchInterval:autoRefresh?30_000:false}). Wyścig, cache i ponowienia obsługuje biblioteka. Zrób to osobnym krokiem, bo pierwszy PR ma tylko zachować zachowanie."
+    },
+    {
+      "prompt": "Oceń różnice w typach po migracji.",
+      "hint": "Czego ubywa?",
+      "solution": "Znika typ State, deklaracje pól i Component<Props,State>. Zostają typy props i generyk tam, gdzie wartość startowa nie mówi wszystkiego, np. useState<Report|null>(null). Zmienne lokalne Effectu nie potrzebują adnotacji."
+    },
+    {
+      "prompt": "Porównaj wynik migracji.",
+      "hint": "Mierz, a nie zakładaj.",
+      "solution": "Policz linie i miejsca obsługi timera przed i po, sprawdź liczbę kopii logiki pobierania. Testy muszą przechodzić bez zmian. Wynik zapisz w opisie PR, aby było widać, czy migracja przyniosła korzyść."
+    },
+    {
+      "prompt": "Zaplanuj migrację modułu.",
+      "hint": "Jeden komponent na PR.",
+      "solution": "1. Testy zachowania. 2. Liście. 3. useReport i nakładka. 4. Pozostałe klasy. 5. Usunięcie nakładki i PropTypes. 6. Ewentualnie TanStack Query. Klasy i funkcje współpracują, więc moduł działa po każdym kroku."
+    },
+    {
+      "prompt": "Sprawdź kryterium akceptacji lekcji.",
+      "hint": "Klasy, hook, testy, wyścig.",
+      "solution": "Moduł nie ma komponentów klasowych poza granicą błędów, logika pobierania jest w jednym hooku, testy napisane przed migracją przechodzą bez zmian, a wyścig odpowiedzi przy zmianie reportId jest obsłużony."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jak klasa grupuje kod?",
+      "options": {
+        "A": "Według celu",
+        "B": "Według pliku",
+        "C": "Według momentu w cyklu życia",
+        "D": "Według typu"
+      },
+      "correct": "C",
+      "explanation": "Hooki grupują według celu."
+    },
+    {
+      "question": "Jak hooki grupują kod?",
+      "options": {
+        "A": "Według celu",
+        "B": "Według momentu",
+        "C": "Według klasy",
+        "D": "Alfabetycznie"
+      },
+      "correct": "A",
+      "explanation": "Jeden Effect to jedna synchronizacja."
+    },
+    {
+      "question": "Na co przepisać this.state z niezależnymi polami?",
+      "options": {
+        "A": "Jeden obiekt zawsze",
+        "B": "Refy",
+        "C": "Kontekst",
+        "D": "Osobne useState"
+      },
+      "correct": "D",
+      "explanation": "Łatwiej aktualizować."
+    },
+    {
+      "question": "Kiedy useReducer zamiast wielu useState?",
+      "options": {
+        "A": "Gdy pola zmieniają się razem",
+        "B": "Zawsze",
+        "C": "Nigdy",
+        "D": "Dla jednego boolean"
+      },
+      "correct": "A",
+      "explanation": "Jedna akcja może zmienić wiele pól."
+    },
+    {
+      "question": "Czy setter useState scala obiekt?",
+      "options": {
+        "A": "Nie",
+        "B": "Tak",
+        "C": "Tylko płytko",
+        "D": "Tylko w TS"
+      },
+      "correct": "A",
+      "explanation": "Trzeba skopiować poprzednie pola."
+    },
+    {
+      "question": "Na co przepisać parę mount i unmount?",
+      "options": {
+        "A": "Dwa useEffect",
+        "B": "useMemo",
+        "C": "useRef",
+        "D": "Jeden useEffect ze sprzątaniem"
+      },
+      "correct": "D",
+      "explanation": "Podłączenie i odłączenie są razem."
+    },
+    {
+      "question": "Na co przepisać porównanie prevProps?",
+      "options": {
+        "A": "useMemo",
+        "B": "useRef",
+        "C": "useEffect z zależnością",
+        "D": "Warunek w render"
+      },
+      "correct": "C",
+      "explanation": "Porównanie robi React."
+    },
+    {
+      "question": "Na co przepisać pole instancji?",
+      "options": {
+        "A": "useState zawsze",
+        "B": "useRef lub zmienną lokalną Effectu",
+        "C": "Kontekst",
+        "D": "Props"
+      },
+      "correct": "B",
+      "explanation": "Zmiana nie ma powodować renderu."
+    },
+    {
+      "question": "Na co przepisać PureComponent?",
+      "options": {
+        "A": "useMemo",
+        "B": "useCallback",
+        "C": "memo",
+        "D": "useRef"
+      },
+      "correct": "C",
+      "explanation": "Po pomiarze."
+    },
+    {
+      "question": "Na co przepisać createRef?",
+      "options": {
+        "A": "useState",
+        "B": "forwardRef",
+        "C": "useId",
+        "D": "useRef"
+      },
+      "correct": "D",
+      "explanation": "Ten sam cel."
+    },
+    {
+      "question": "Na co przepisać static contextType?",
+      "options": {
+        "A": "useContext",
+        "B": "useRef",
+        "C": "Props",
+        "D": "useReducer"
+      },
+      "correct": "A",
+      "explanation": "Czytelniejszy zapis."
+    },
+    {
+      "question": "Na co przepisać getSnapshotBeforeUpdate?",
+      "options": {
+        "A": "useEffect",
+        "B": "useMemo",
+        "C": "useLayoutEffect",
+        "D": "Nic"
+      },
+      "correct": "C",
+      "explanation": "Pomiar przed malowaniem."
+    },
+    {
+      "question": "Co nie ma odpowiednika w hookach?",
+      "options": {
+        "A": "Granica błędów",
+        "B": "useEffect",
+        "C": "useState",
+        "D": "memo"
+      },
+      "correct": "A",
+      "explanation": "Klasa lub biblioteka."
+    },
+    {
+      "question": "Na co przepisać getDerivedStateFromProps?",
+      "options": {
+        "A": "useEffect zawsze",
+        "B": "useRef",
+        "C": "Obliczenie w renderze lub key",
+        "D": "Kontekst"
+      },
+      "correct": "C",
+      "explanation": "Effect dałby dodatkowy render."
+    },
+    {
+      "question": "Czym grozi pusta tablica zależności, gdy Effect czyta props?",
+      "options": {
+        "A": "Pętlą",
+        "B": "Błędem składni",
+        "C": "Niczym",
+        "D": "Zostaje stara wartość"
+      },
+      "correct": "D",
+      "explanation": "Klasyczny błąd tłumaczenia."
+    },
+    {
+      "question": "Czy Effect zastąpi callback setState?",
+      "options": {
+        "A": "Często lepszy jest handler",
+        "B": "Tak, zawsze",
+        "C": "Nigdy",
+        "D": "Tylko w TS"
+      },
+      "correct": "A",
+      "explanation": "Logika zdarzenia należy do zdarzenia."
+    },
+    {
+      "question": "Czym grozi pole instancji przepisane na stan?",
+      "options": {
+        "A": "Wyciekiem",
+        "B": "Brakiem klucza",
+        "C": "Niepotrzebnymi renderami",
+        "D": "Błędem CSS"
+      },
+      "correct": "C",
+      "explanation": "Wartości nie ma na ekranie."
+    },
+    {
+      "question": "Czym jest HOC?",
+      "options": {
+        "A": "Hookiem",
+        "B": "Funkcją zwracającą nowy komponent",
+        "C": "Plikiem CSS",
+        "D": "Rodzajem refa"
+      },
+      "correct": "B",
+      "explanation": "Dokłada props."
+    },
+    {
+      "question": "Czym są render props?",
+      "options": {
+        "A": "Atrybut HTML",
+        "B": "Stan",
+        "C": "Trasa",
+        "D": "Prop będący funkcją zwracającą JSX"
+      },
+      "correct": "D",
+      "explanation": "Wzorzec współdzielenia logiki."
+    },
+    {
+      "question": "Jaki problem mają HOC?",
+      "options": {
+        "A": "Są wolne z definicji",
+        "B": "Nie działają w 19",
+        "C": "Zagnieżdżenie i ukryte pochodzenie props",
+        "D": "Są zabronione"
+      },
+      "correct": "C",
+      "explanation": "„Wrapper hell”."
+    },
+    {
+      "question": "Co jest ryzykiem HOC przy nazwach props?",
+      "options": {
+        "A": "Kolizja",
+        "B": "Brak typu",
+        "C": "Brak renderu",
+        "D": "Błąd CSS"
+      },
+      "correct": "A",
+      "explanation": "Dwa HOC mogą dać ten sam prop."
+    },
+    {
+      "question": "Co zastępuje HOC i render props?",
+      "options": {
+        "A": "Klasa",
+        "B": "Redux",
+        "C": "Plik JSON",
+        "D": "Własny hook"
+      },
+      "correct": "D",
+      "explanation": "Bez dodatkowych komponentów."
+    },
+    {
+      "question": "Czy hook działa w klasie?",
+      "options": {
+        "A": "Nie",
+        "B": "Tak",
+        "C": "Tylko useRef",
+        "D": "Tylko useContext"
+      },
+      "correct": "A",
+      "explanation": "Stąd nakładka HOC."
+    },
+    {
+      "question": "Po co nakładka nad hookiem?",
+      "options": {
+        "A": "Dla szybkości",
+        "B": "Dla CSS",
+        "C": "Klasy działają w trakcie przejścia",
+        "D": "Na stałe"
+      },
+      "correct": "C",
+      "explanation": "Usuń ją na końcu."
+    },
+    {
+      "question": "Po co displayName w HOC?",
+      "options": {
+        "A": "Dla produkcji",
+        "B": "Dla bezpieczeństwa",
+        "C": "Czytelne DevTools",
+        "D": "Dla SSR"
+      },
+      "correct": "C",
+      "explanation": "Inaczej widać anonimowy komponent."
+    },
+    {
+      "question": "Kiedy migrować?",
+      "options": {
+        "A": "Gdy i tak zmieniasz komponent",
+        "B": "Zawsze od razu",
+        "C": "Nigdy",
+        "D": "Tylko w piątek"
+      },
+      "correct": "A",
+      "explanation": "Migracja bez powodu to ryzyko."
+    },
+    {
+      "question": "Kiedy zostawić klasę?",
+      "options": {
+        "A": "Stabilna, przetestowana i nikt jej nie zmienia",
+        "B": "Gdy jest krótka",
+        "C": "Nigdy",
+        "D": "Gdy ma props"
+      },
+      "correct": "A",
+      "explanation": "Brak korzyści, a jest ryzyko."
+    },
+    {
+      "question": "Od czego zacząć migrację drzewa?",
+      "options": {
+        "A": "Od korzenia",
+        "B": "Od granicy błędów",
+        "C": "Od routera",
+        "D": "Od liści"
+      },
+      "correct": "D",
+      "explanation": "Małe komponenty są najprostsze."
+    },
+    {
+      "question": "Ile komponentów na pull request?",
+      "options": {
+        "A": "Wszystkie",
+        "B": "Dziesięć",
+        "C": "Żaden",
+        "D": "Jeden"
+      },
+      "correct": "D",
+      "explanation": "Łatwo przejrzeć i cofnąć."
+    },
+    {
+      "question": "Czy klasa i funkcja mogą współpracować?",
+      "options": {
+        "A": "Nie",
+        "B": "Tak",
+        "C": "Tylko przez HOC",
+        "D": "Tylko w 17"
+      },
+      "correct": "B",
+      "explanation": "Dlatego migracja może być stopniowa."
+    },
+    {
+      "question": "Czemu testy przed migracją?",
+      "options": {
+        "A": "Dowodzą braku regresji",
+        "B": "Dla pokrycia",
+        "C": "Dla CSS",
+        "D": "Bez powodu"
+      },
+      "correct": "A",
+      "explanation": "Bez nich nie wiesz, czy nic nie zepsułeś."
+    },
+    {
+      "question": "Które testy przeżyją migrację?",
+      "options": {
+        "A": "wrapper.state()",
+        "B": "wrapper.instance()",
+        "C": "Migawki wewnętrzne",
+        "D": "Sprawdzające ekran i działania użytkownika"
+      },
+      "correct": "D",
+      "explanation": "RTL nie zna implementacji."
+    },
+    {
+      "question": "Dlaczego Enzyme jest problemem?",
+      "options": {
+        "A": "Sięga do wnętrza i nie wspiera React 18+",
+        "B": "Jest wolny",
+        "C": "Nie ma typów",
+        "D": "Nie działa w CI"
+      },
+      "correct": "A",
+      "explanation": "Trzeba przepisać testy."
+    },
+    {
+      "question": "Co robi describe.each w tej lekcji?",
+      "options": {
+        "A": "Uruchamia te same testy na dwóch wersjach",
+        "B": "Tworzy klasy",
+        "C": "Mockuje React",
+        "D": "Dzieli pliki"
+      },
+      "correct": "A",
+      "explanation": "Dowód równoważności."
+    },
+    {
+      "question": "Czy wyścig zniknie sam po migracji?",
+      "options": {
+        "A": "Nie, trzeba go obsłużyć",
+        "B": "Tak",
+        "C": "Tak, z memo",
+        "D": "Tak, w TS"
+      },
+      "correct": "A",
+      "explanation": "Zmienna ignore lub AbortController."
+    },
+    {
+      "question": "Jak działa zmienna ignore?",
+      "options": {
+        "A": "Blokuje sieć",
+        "B": "Sprzątanie Effectu blokuje stary wynik",
+        "C": "Usuwa cache",
+        "D": "Zmienia zależności"
+      },
+      "correct": "B",
+      "explanation": "Nowy Effect ma swoją kopię."
+    },
+    {
+      "question": "Czy ignore przerywa żądanie?",
+      "options": {
+        "A": "Nie, tylko ignoruje wynik",
+        "B": "Tak",
+        "C": "Tak, w fetch",
+        "D": "Tak, w Node"
+      },
+      "correct": "A",
+      "explanation": "AbortController przerywa je naprawdę."
+    },
+    {
+      "question": "Co oznacza licznik version w Effect?",
+      "options": {
+        "A": "Zmiana wymusza ponowne pobranie",
+        "B": "Numer pakietu",
+        "C": "Wersję Reacta",
+        "D": "Stan timera"
+      },
+      "correct": "A",
+      "explanation": "Prosty sposób na ponowienie."
+    },
+    {
+      "question": "Czy timer musi pobierać w callbacku?",
+      "options": {
+        "A": "Musi",
+        "B": "Nie może",
+        "C": "Może zmieniać version",
+        "D": "Tylko w klasie"
+      },
+      "correct": "C",
+      "explanation": "Pobieranie zostaje w jednym miejscu."
+    },
+    {
+      "question": "Czego ubywa w TSX po migracji?",
+      "options": {
+        "A": "Typów props",
+        "B": "Typów State i pól instancji",
+        "C": "Unii",
+        "D": "Wszystkich typów"
+      },
+      "correct": "B",
+      "explanation": "Inferencja robi więcej."
+    },
+    {
+      "question": "Kiedy nadal potrzebny generyk useState?",
+      "options": {
+        "A": "Gdy startowa wartość nie mówi wszystkiego",
+        "B": "Zawsze",
+        "C": "Nigdy",
+        "D": "Tylko dla boolean"
+      },
+      "correct": "A",
+      "explanation": "np. Report|null."
+    },
+    {
+      "question": "Co zrobić z PropTypes?",
+      "options": {
+        "A": "Zostawić dla React 19",
+        "B": "Usunąć, zastąpić typami lub walidacją",
+        "C": "Dodać więcej",
+        "D": "Przenieść do CSS"
+      },
+      "correct": "B",
+      "explanation": "React już ich nie sprawdza."
+    },
+    {
+      "question": "Co oznacza „zachowanie bez zmian” w PR?",
+      "options": {
+        "A": "Brak nowych plików",
+        "B": "Brak typów",
+        "C": "Testy przechodzą bez modyfikacji",
+        "D": "Brak hooków"
+      },
+      "correct": "C",
+      "explanation": "Zmiana testów to sygnał ostrzegawczy."
+    },
+    {
+      "question": "Czy zmieniać bibliotekę w tym samym PR?",
+      "options": {
+        "A": "Tak",
+        "B": "Nie, osobnym krokiem",
+        "C": "Zawsze",
+        "D": "Tylko Redux"
+      },
+      "correct": "B",
+      "explanation": "Łatwiej znaleźć przyczynę regresji."
+    },
+    {
+      "question": "Co daje TanStack Query po migracji?",
+      "options": {
+        "A": "Cache, wyścig i refetchInterval",
+        "B": "Klasy",
+        "C": "Lepszy CSS",
+        "D": "Brak API"
+      },
+      "correct": "A",
+      "explanation": "Własny timer znika."
+    },
+    {
+      "question": "Czym jest kopia logiki w czterech klasach?",
+      "options": {
+        "A": "Dobrą praktyką",
+        "B": "Wymogiem klasy",
+        "C": "Powodem do wydzielenia hooka",
+        "D": "Problemem CSS"
+      },
+      "correct": "C",
+      "explanation": "Między klasami trudno współdzielić logikę."
+    },
+    {
+      "question": "Jaki jest główny zysk po migracji?",
+      "options": {
+        "A": "Mniejszy Node",
+        "B": "Lepszy kontrast",
+        "C": "Logika jednego celu w jednym miejscu",
+        "D": "Brak testów"
+      },
+      "correct": "C",
+      "explanation": "Timer nie jest w trzech metodach."
+    },
+    {
+      "question": "Co jest ryzykiem migracji na ślepo?",
+      "options": {
+        "A": "Mniejsza paczka",
+        "B": "Lepsze typy",
+        "C": "Regresje i niekończąca się praca",
+        "D": "Więcej testów"
+      },
+      "correct": "C",
+      "explanation": "Dlatego plan i priorytety."
+    },
+    {
+      "question": "Jak traktować ostrzeżenia exhaustive-deps?",
+      "options": {
+        "A": "Wyciszać zawsze",
+        "B": "Ignorować",
+        "C": "Jako sygnał błędu, nie do wyciszenia",
+        "D": "Wyłączyć regułę"
+      },
+      "correct": "C",
+      "explanation": "Wyjątek wymaga uzasadnienia."
+    },
+    {
+      "question": "Jak Effect z setInterval sprzątać?",
+      "options": {
+        "A": "W onClick",
+        "B": "clearInterval w funkcji sprzątającej",
+        "C": "Nie trzeba",
+        "D": "W render"
+      },
+      "correct": "B",
+      "explanation": "Inaczej powstanie wyciek."
+    },
+    {
+      "question": "Czy można używać useEffect zamiast obliczenia w renderze?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Tak, szybciej",
+        "C": "Lepiej obliczać w renderze",
+        "D": "Tak, w TS"
+      },
+      "correct": "C",
+      "explanation": "Effect dokłada render i opóźnienie."
+    },
+    {
+      "question": "Czym jest stan wyliczany?",
+      "options": {
+        "A": "Wartość, którą można obliczyć z props lub stanu",
+        "B": "Stan z API",
+        "C": "Ref",
+        "D": "Klucz"
+      },
+      "correct": "A",
+      "explanation": "Nie przechowuj go osobno."
+    },
+    {
+      "question": "Reset formularza po zmianie id?",
+      "options": {
+        "A": "key na komponencie",
+        "B": "Effect z setState",
+        "C": "forceUpdate",
+        "D": "Klasa"
+      },
+      "correct": "A",
+      "explanation": "Najprostszy zapis zamiast getDerivedStateFromProps."
+    },
+    {
+      "question": "Co robi memo?",
+      "options": {
+        "A": "Zapisuje dane",
+        "B": "Tworzy ref",
+        "C": "Zastępuje Effect",
+        "D": "Pomija render przy tych samych props"
+      },
+      "correct": "D",
+      "explanation": "Płytkie porównanie."
+    },
+    {
+      "question": "Co zrobić przed dodaniem memo przy migracji?",
+      "options": {
+        "A": "Dodać wszędzie",
+        "B": "Usunąć testy",
+        "C": "Dodać useMemo",
+        "D": "Zmierzyć"
+      },
+      "correct": "D",
+      "explanation": "Bez pomiaru to tylko złożoność."
+    },
+    {
+      "question": "Co jest pierwszym krokiem w module raportów?",
+      "options": {
+        "A": "Usunięcie klas",
+        "B": "Dodanie Query",
+        "C": "Przepisanie HOC",
+        "D": "Testy na wersji klasowej"
+      },
+      "correct": "D",
+      "explanation": "Później dowodzą braku regresji."
+    },
+    {
+      "question": "Czy granica błędów może mieć funkcyjny fallback?",
+      "options": {
+        "A": "Tak, sam fallback to zwykły komponent",
+        "B": "Nie",
+        "C": "Tylko klasa",
+        "D": "Tylko HOC"
+      },
+      "correct": "A",
+      "explanation": "Klasą jest sama granica."
+    },
+    {
+      "question": "Który komponent przepisać pierwszy?",
+      "options": {
+        "A": "Strona z pięcioma dziećmi",
+        "B": "Granicę błędów",
+        "C": "Provider całej aplikacji",
+        "D": "Liść bez zależności"
+      },
+      "correct": "D",
+      "explanation": "Najmniejsze ryzyko."
+    },
+    {
+      "question": "Jak znaleźć ostatnie użycia nakładki?",
+      "options": {
+        "A": "Pamięć",
+        "B": "Wyszukiwanie i TS",
+        "C": "Komentarz",
+        "D": "Usunąć i zobaczyć na produkcji"
+      },
+      "correct": "B",
+      "explanation": "Dopiero potem usuń."
+    },
+    {
+      "question": "Co oznacza gotowość do usunięcia klasy?",
+      "options": {
+        "A": "Mniej linii",
+        "B": "Testy zielone na wersji z hookami",
+        "C": "Nowy CSS",
+        "D": "Zgoda lintera"
+      },
+      "correct": "B",
+      "explanation": "Testy są głównym dowodem."
+    },
+    {
+      "question": "Odpowiednik componentDidMount",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"componentDidMount\"));",
+      "options": {
+        "A": "useRef",
+        "B": "memo",
+        "C": "brak odpowiednika",
+        "D": "useEffect z []"
+      },
+      "correct": "D",
+      "explanation": "Montowanie."
+    },
+    {
+      "question": "Odpowiednik componentWillUnmount",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"componentWillUnmount\"));",
+      "options": {
+        "A": "useRef",
+        "B": "sprzątanie w useEffect",
+        "C": "memo",
+        "D": "brak odpowiednika"
+      },
+      "correct": "B",
+      "explanation": "Ten sam Effect."
+    },
+    {
+      "question": "Odpowiednik componentDidUpdate",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"componentDidUpdate\"));",
+      "options": {
+        "A": "useRef",
+        "B": "memo",
+        "C": "useEffect z zależnościami",
+        "D": "brak odpowiednika"
+      },
+      "correct": "C",
+      "explanation": "Porównanie robi React."
+    },
+    {
+      "question": "Odpowiednik PureComponent",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"PureComponent\"));",
+      "options": {
+        "A": "useRef",
+        "B": "useEffect z []",
+        "C": "brak odpowiednika",
+        "D": "memo"
+      },
+      "correct": "D",
+      "explanation": "Płytkie porównanie."
+    },
+    {
+      "question": "Odpowiednik shouldComponentUpdate",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"shouldComponentUpdate\"));",
+      "options": {
+        "A": "useRef",
+        "B": "useEffect z []",
+        "C": "memo",
+        "D": "brak odpowiednika"
+      },
+      "correct": "C",
+      "explanation": "Też pomija render."
+    },
+    {
+      "question": "Odpowiednik createRef",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"createRef\"));",
+      "options": {
+        "A": "memo",
+        "B": "useEffect z []",
+        "C": "brak odpowiednika",
+        "D": "useRef"
+      },
+      "correct": "D",
+      "explanation": "Ten sam cel."
+    },
+    {
+      "question": "Odpowiednik contextType",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"contextType\"));",
+      "options": {
+        "A": "useRef",
+        "B": "memo",
+        "C": "brak odpowiednika",
+        "D": "useContext"
+      },
+      "correct": "D",
+      "explanation": "Odczyt kontekstu."
+    },
+    {
+      "question": "Odpowiednik getSnapshotBeforeUpdate",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"getSnapshotBeforeUpdate\"));",
+      "options": {
+        "A": "useRef",
+        "B": "useLayoutEffect",
+        "C": "memo",
+        "D": "brak odpowiednika"
+      },
+      "correct": "B",
+      "explanation": "Pomiar przed malowaniem."
+    },
+    {
+      "question": "Odpowiednik componentDidCatch",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"componentDidCatch\"));",
+      "options": {
+        "A": "useEffect z []",
+        "B": "memo",
+        "C": "useRef",
+        "D": "brak odpowiednika"
+      },
+      "correct": "D",
+      "explanation": "Klasa lub biblioteka."
+    },
+    {
+      "question": "Odpowiednik getDerivedStateFromError",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"getDerivedStateFromError\"));",
+      "options": {
+        "A": "useEffect z []",
+        "B": "memo",
+        "C": "brak odpowiednika",
+        "D": "useRef"
+      },
+      "correct": "C",
+      "explanation": "Klasa lub biblioteka."
+    },
+    {
+      "question": "Odpowiednik getDerivedStateFromProps",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"getDerivedStateFromProps\"));",
+      "options": {
+        "A": "useRef",
+        "B": "memo",
+        "C": "brak odpowiednika",
+        "D": "obliczenie w renderze lub key"
+      },
+      "correct": "D",
+      "explanation": "Zwykle bez stanu."
+    },
+    {
+      "question": "Nieznana nazwa",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"render\"));",
+      "options": {
+        "A": "useRef",
+        "B": "nieznane",
+        "C": "memo",
+        "D": "brak odpowiednika"
+      },
+      "correct": "B",
+      "explanation": "Render zostaje jako ciało funkcji."
+    },
+    {
+      "question": "Decyzja: zwykły komponent ze zmianami i testami",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision(info));",
+      "options": {
+        "A": "migruj",
+        "B": "zostaw",
+        "C": "zostaw klasę",
+        "D": "najpierw napisz testy"
+      },
+      "correct": "A",
+      "explanation": "Warunki spełnione."
+    },
+    {
+      "question": "Decyzja: granica błędów",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision({...info,isErrorBoundary:true}));",
+      "options": {
+        "A": "migruj",
+        "B": "zostaw",
+        "C": "najpierw napisz testy",
+        "D": "zostaw klasę"
+      },
+      "correct": "D",
+      "explanation": "Brak odpowiednika."
+    },
+    {
+      "question": "Decyzja: stabilny komponent",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision({...info,changedRecently:false}));",
+      "options": {
+        "A": "migruj",
+        "B": "zostaw klasę",
+        "C": "zostaw",
+        "D": "najpierw napisz testy"
+      },
+      "correct": "C",
+      "explanation": "Brak powodu."
+    },
+    {
+      "question": "Decyzja: brak testów",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision({...info,hasBehaviorTests:false}));",
+      "options": {
+        "A": "migruj",
+        "B": "najpierw napisz testy",
+        "C": "zostaw",
+        "D": "zostaw klasę"
+      },
+      "correct": "B",
+      "explanation": "Bez nich nie ma dowodu."
+    },
+    {
+      "question": "Decyzja: Enzyme",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision({...info,usesEnzyme:true}));",
+      "options": {
+        "A": "najpierw przepisz testy",
+        "B": "migruj",
+        "C": "zostaw",
+        "D": "najpierw napisz testy"
+      },
+      "correct": "A",
+      "explanation": "Testy nie przeżyją migracji."
+    },
+    {
+      "question": "Decyzja: Enzyme i stabilny",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision({...info,usesEnzyme:true,changedRecently:false}));",
+      "options": {
+        "A": "migruj",
+        "B": "zostaw",
+        "C": "najpierw napisz testy",
+        "D": "najpierw przepisz testy"
+      },
+      "correct": "D",
+      "explanation": "Reguła jest wyżej w tym modelu."
+    },
+    {
+      "question": "Decyzja: granica z Enzyme",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationDecision({...info,isErrorBoundary:true,usesEnzyme:true}));",
+      "options": {
+        "A": "zostaw klasę",
+        "B": "migruj",
+        "C": "zostaw",
+        "D": "najpierw przepisz testy"
+      },
+      "correct": "A",
+      "explanation": "Pierwszy warunek decyduje."
+    },
+    {
+      "question": "Liście najpierw",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationOrder({A:[\"B\"],B:[]}).join());",
+      "options": {
+        "A": "A,B",
+        "B": "B,A",
+        "C": "A",
+        "D": "B"
+      },
+      "correct": "B",
+      "explanation": "Dziecko przed rodzicem."
+    },
+    {
+      "question": "Dwa liście",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationOrder({A:[\"B\",\"C\"],B:[],C:[]}).join());",
+      "options": {
+        "A": "A,B,C",
+        "B": "C,B,A",
+        "C": "B,C,A",
+        "D": "B,A,C"
+      },
+      "correct": "C",
+      "explanation": "Remis alfabetycznie."
+    },
+    {
+      "question": "Trzy poziomy",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationOrder({A:[\"B\"],B:[\"C\"],C:[]}).join());",
+      "options": {
+        "A": "A,B,C",
+        "B": "B,C,A",
+        "C": "C,A,B",
+        "D": "C,B,A"
+      },
+      "correct": "D",
+      "explanation": "Od najgłębszego."
+    },
+    {
+      "question": "Dziecko spoza listy",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationOrder({A:[\"Funkcja\"]}).join());",
+      "options": {
+        "A": "Funkcja,A",
+        "B": "Funkcja",
+        "C": "A",
+        "D": "pusto"
+      },
+      "correct": "C",
+      "explanation": "Funkcja nie wymaga migracji."
+    },
+    {
+      "question": "Pusta lista",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationOrder({}).length);",
+      "options": {
+        "A": "1",
+        "B": "0",
+        "C": "2",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "Nic do zrobienia."
+    },
+    {
+      "question": "Cykl",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log((()=>{try{migrationOrder({A:[\"B\"],B:[\"A\"]});return \"ok\";}catch(e){return (e as Error).message;}})());",
+      "options": {
+        "A": "ok",
+        "B": "A",
+        "C": "B",
+        "D": "Cykl zależności"
+      },
+      "correct": "D",
+      "explanation": "Sygnał do rozwiązania cyklu."
+    },
+    {
+      "question": "Scalenie: złe, status",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(mergeWrong(start,\"OPEN\").status);",
+      "options": {
+        "A": "ALL",
+        "B": "OPEN",
+        "C": "undefined",
+        "D": "x"
+      },
+      "correct": "B",
+      "explanation": "Nowe pole jest."
+    },
+    {
+      "question": "Scalenie: złe, query",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(String(mergeWrong(start,\"OPEN\").query));",
+      "options": {
+        "A": "x",
+        "B": "undefined",
+        "C": "ALL",
+        "D": "OPEN"
+      },
+      "correct": "B",
+      "explanation": "Pole zniknęło."
+    },
+    {
+      "question": "Scalenie: dobre, query",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(mergeRight(start,\"OPEN\").query);",
+      "options": {
+        "A": "undefined",
+        "B": "x",
+        "C": "ALL",
+        "D": "OPEN"
+      },
+      "correct": "B",
+      "explanation": "Kopia zachowuje pole."
+    },
+    {
+      "question": "Scalenie: dobre, status",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(mergeRight(start,\"OPEN\").status);",
+      "options": {
+        "A": "ALL",
+        "B": "x",
+        "C": "OPEN",
+        "D": "undefined"
+      },
+      "correct": "C",
+      "explanation": "Pole zmienione."
+    },
+    {
+      "question": "Czy poprawne scalenie mutuje wejście?",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log((()=>{mergeRight(start,\"OPEN\");return start.status;})());",
+      "options": {
+        "A": "OPEN",
+        "B": "x",
+        "C": "undefined",
+        "D": "ALL"
+      },
+      "correct": "D",
+      "explanation": "Nowy obiekt."
+    },
+    {
+      "question": "Setter a scalanie w czystym JS",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(JSON.stringify((prev=>({status:\"OPEN\"}))({status:\"ALL\",query:\"x\"})));",
+      "options": {
+        "A": "{\"status\":\"OPEN\",\"query\":\"x\"}",
+        "B": "{\"status\":\"OPEN\"}",
+        "C": "{\"query\":\"x\"}",
+        "D": "{}"
+      },
+      "correct": "B",
+      "explanation": "Tak działa dosłowne tłumaczenie."
+    },
+    {
+      "question": "Spread z nadpisaniem",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(JSON.stringify({...{a:1,b:2},b:3}));",
+      "options": {
+        "A": "{\"a\":1,\"b\":2}",
+        "B": "{\"a\":1,\"b\":3}",
+        "C": "{\"b\":3}",
+        "D": "{\"a\":1,\"b\":2,\"b\":3}"
+      },
+      "correct": "B",
+      "explanation": "Późniejsze pole wygrywa."
+    },
+    {
+      "question": "Zmienna lokalna w domknięciu: ignore",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log((()=>{let ignore=false;const clean=()=>{ignore=true;};const seen=()=>ignore;clean();return seen();})());",
+      "options": {
+        "A": "false",
+        "B": "undefined",
+        "C": "null",
+        "D": "true"
+      },
+      "correct": "D",
+      "explanation": "Sprzątanie zmienia flagę tego przebiegu."
+    },
+    {
+      "question": "Dwa domknięcia mają osobne flagi",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log((()=>{const make=()=>{let i=false;return {clean(){i=true;},get(){return i;}};};const a=make(),b=make();a.clean();return [a.get(),b.get()].join();})());",
+      "options": {
+        "A": "true,true",
+        "B": "true,false",
+        "C": "false,false",
+        "D": "false,true"
+      },
+      "correct": "B",
+      "explanation": "Nowy Effect ma własną flagę."
+    },
+    {
+      "question": "Czy useRef zmienia się bez renderu?",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log((()=>{const ref={current:0};ref.current=5;return ref.current;})());",
+      "options": {
+        "A": "5",
+        "B": "6",
+        "C": "4",
+        "D": "7"
+      },
+      "correct": "A",
+      "explanation": "To zwykły obiekt."
+    },
+    {
+      "question": "Ile razy klasa wymagała metod dla timera?",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log([\"componentDidUpdate\",\"componentWillUnmount\",\"toggleTimer\"].length);",
+      "options": {
+        "A": "4",
+        "B": "3",
+        "C": "2",
+        "D": "5"
+      },
+      "correct": "B",
+      "explanation": "W hookach jeden Effect."
+    },
+    {
+      "question": "Liczba Effectów w ReportPanelHooks",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log([\"pobieranie\",\"timer\"].length);",
+      "options": {
+        "A": "3",
+        "B": "1",
+        "C": "2",
+        "D": "4"
+      },
+      "correct": "C",
+      "explanation": "Dwa cele, dwa Effecty."
+    },
+    {
+      "question": "Czy hookFor rozróżnia wielkość liter?",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"purecomponent\"));",
+      "options": {
+        "A": "memo",
+        "B": "nieznane",
+        "C": "useRef",
+        "D": "brak odpowiednika"
+      },
+      "correct": "B",
+      "explanation": "Klucze są dokładne."
+    },
+    {
+      "question": "Czy pusta nazwa jest znana?",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(hookFor(\"\"));",
+      "options": {
+        "A": "memo",
+        "B": "useRef",
+        "C": "nieznane",
+        "D": "brak odpowiednika"
+      },
+      "correct": "C",
+      "explanation": "Brak wpisu."
+    },
+    {
+      "question": "Kolejność nie zależy od zapisu",
+      "code": "import {hookFor,migrationDecision,migrationOrder} from \"./classToHooks\";\nimport {mergeRight,mergeWrong} from \"./pitfalls\";\nconst info={name:\"A\",isErrorBoundary:false,usedBy:1,changedRecently:true,hasBehaviorTests:true,usesEnzyme:false};\nconst start={status:\"ALL\",query:\"x\"};\nconsole.log(migrationOrder({B:[],A:[\"B\"]}).join());",
+      "options": {
+        "A": "A,B",
+        "B": "B,A",
+        "C": "A",
+        "D": "B"
+      },
+      "correct": "B",
+      "explanation": "Wynik wynika z zależności."
+    }
+  ]
 }
