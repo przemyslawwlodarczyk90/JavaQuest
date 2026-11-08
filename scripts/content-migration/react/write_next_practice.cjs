@@ -177,6 +177,8 @@ const entries = [
   ['05_BossKanbanBoard', './practice_ux_05.cjs', 30, 100, '_react_20_animacje_i_ux'],
   ['01_ProjectArchitecture', './practice_prod_01.cjs', 30, 100, '_react_21_produkcja'],
   ['02_EnvVariablesAndConfig', './practice_prod_02.cjs', 30, 100, '_react_21_produkcja'],
+  ['03_BuildAndDeployment', './practice_prod_03.cjs', 30, 100, '_react_21_produkcja'],
+  ['04_DockerNginxAndSpringStatic', './practice_prod_04.cjs', 30, 100, '_react_21_produkcja'],
 ];
 
 function build(source, exerciseCount, questionCount) {
