@@ -156,6 +156,14 @@ test("SafeLink renderuje tekst zamiast złego linku i chroni okno",()=>{
   view.unmount();
 });
 
+test("React 19 blokuje javascript w atrybucie, ale nie data",()=>{
+  const view=render(<><a href={"javascript:alert(1)"}>a</a><a href="data:text/html,x">b</a></>);
+  const [first,second]=[...view.container.querySelectorAll("a")];
+  expect(first.getAttribute("href")).toContain("React has blocked");
+  expect(second.getAttribute("href")).toBe("data:text/html,x");
+  expect(safeUrl("data:text/html,x")).toBeNull();
+});
+
 test("lista dozwolonych props odcina niebezpieczne wartości",()=>{
   const untrusted={title:"Tytuł",dangerouslySetInnerHTML:{__html:"<img onerror=x>"},onClick:"x",className:5,style:{position:"fixed"}};
   expect(pickSafeProps(untrusted)).toEqual({title:"Tytuł"});
@@ -199,7 +207,7 @@ http.headers(headers -> headers
 // server.servlet.session.cookie.http-only=true, secure=true, same-site=lax`;
 const exercises=[
 ['Pokaż, że React sam escapuje komentarz wstawiony jako tekst.','Tekst z tagami ma być widoczny dosłownie.',tests],
-['Wskaż miejsca, gdzie ochrona Reacta przestaje działać.','Szukaj HTML, adresów, DOM i spreadu.','dangerouslySetInnerHTML; href lub src z adresem javascript: od użytkownika; ref.current.innerHTML i biblioteki spoza Reacta; eval, new Function, setTimeout z tekstem; spread niezaufanego obiektu na element.'],
+['Wskaż miejsca, gdzie ochrona Reacta przestaje działać.','Szukaj HTML, adresów, DOM i spreadu.','dangerouslySetInnerHTML; adresy od użytkownika poza blokadą React 19, czyli data:, window.open i location.href, oraz javascript: w starszych wersjach; ref.current.innerHTML i biblioteki spoza Reacta; eval, new Function, setTimeout z tekstem; spread niezaufanego obiektu na element.'],
 ['Zabezpiecz HTML komentarza przez DOMPurify.','Ustaw wąską listę znaczników i atrybutów.',safeHtml],
 ['Wprowadź typ markowany SanitizedHtml.','Jedyną drogą do typu ma być funkcja sanitize.',safeHtml],
 ['Sprawdź, że SafeHtml nie przyjmie surowego tekstu.','To jest błąd kompilacji, nie test czasu wykonania.','// @ts-expect-error tekst nie jest SanitizedHtml\n<SafeHtml html={comment.html}/>;\n<SafeHtml html={sanitize(comment.html)}/>;\n// Przegląd kodu szuka już tylko rzutowań as SanitizedHtml.'],
@@ -233,7 +241,7 @@ const concepts=[
 ['Co oznacza XSS?','Wstrzyknięcie obcego kodu wykonywanego na stronie','Błąd stylów','Atak na bazę SQL','Przeciążenie serwera','Cross-Site Scripting wykonuje skrypt w kontekście ofiary.'],
 ['Przed czym React chroni domyślnie?','Przed wykonaniem tekstu wstawionego w JSX jako kod','Przed CSRF','Przed wszystkimi rodzajami XSS','Przed złym API','Tekst w JSX jest escapowany.'],
 ['Co robi dangerouslySetInnerHTML?','Wstawia HTML bez escapowania','Sanityzuje HTML','Blokuje skrypty','Zamienia HTML na tekst','Nazwa ostrzega, że odpowiedzialność jest po Twojej stronie.'],
-['Jaki adres w href jest niebezpieczny?','javascript:alert(1)','https://a.example','/tickets/1','mailto:a@b.example','Kliknięcie wykonałoby kod.'],
+['Jaki adres z tej listy służy do wykonania kodu?','javascript:alert(1)','https://a.example','/tickets/1','mailto:a@b.example','React 19 blokuje go w atrybutach, ale starsze wersje i window.open wykonałyby kod.'],
 ['Czym jest DOMPurify?','Biblioteką usuwającą niebezpieczne elementy z HTML','Linterem CSS','Pakietem do CSP','Parserem JSON','Działa na prawdziwym parserze HTML.'],
 ['Po co ALLOWED_TAGS w DOMPurify?','Zostawia tylko potrzebne znaczniki','Dodaje brakujące znaczniki','Wyłącza sanityzację','Wymusza Markdown','Wąska lista zmniejsza powierzchnię ataku.'],
 ['Czy sanityzacja na serwerze zwalnia z ostrożności w kliencie?','Nie, warto traktować to jako wiele warstw','Tak, zawsze','Tak, gdy jest Spring','Tak, gdy jest CSP','Kontekst użycia i nowe obejścia uzasadniają obronę w głąb.'],
@@ -284,7 +292,7 @@ const concepts=[
 ['Czym jest stored XSS?','Złośliwa treść zapisana na serwerze i podawana innym','Atak działający tylko raz w jednej karcie','Atak na pamięć podręczną CSS','Podmiana certyfikatu','Komentarz w tickecie to klasyczny przykład.'],
 ['Czym jest DOM XSS?','Kod klienta sam wstawia dane do niebezpiecznego miejsca DOM','Atak na serwer','Błąd SQL','Błąd CSS','Np. location.hash trafiające do innerHTML.'],
 ['Czy TSX blokuje adres javascript: w href?','Nie, href to zwykły string','Tak','Tak, w trybie strict','Tak, dzięki React','Dlatego potrzebna jest walidacja w czasie wykonania.'],
-['Jakie jest zachowanie React 19 przy href javascript:?','Wymaga własnej ochrony: nie zakładaj, że ostrzeżenie wystarczy','React zawsze sanityzuje cały HTML','React zamienia adres na https','React wyłącza link i loguje na serwerze','Odpowiedzialność za dane nadal jest po stronie aplikacji.'],
+['Jakie jest zachowanie React 19 przy href javascript:?','Zastępuje adres kodem rzucającym błąd, ale nie obejmuje data: ani window.open','Wykonuje kod po kliknięciu','Zamienia adres na https','Usuwa cały element a','Dlatego safeUrl z listą protokołów nadal ma sens.'],
 ['Które podejście do linków z ticketu jest najlepsze?','safeUrl przy renderze i walidacja na backendzie','Tylko CSS','Tylko typ string','Tylko ukrycie linku','Warstwy chronią nawet po błędzie jednej z nich.'],
 ['Co przetestować po podbiciu DOMPurify?','Testy zachowania, że dozwolona treść nadal się wyświetla','Tylko rozmiar paczki','Tylko typy','Nic','Aktualizacja może zmienić wynik sanityzacji.'],
 ['Jak zgłaszać incydent wycieku klucza?','Unieważnić klucz i ustalić zakres, nie tylko usunąć z kodu','Tylko usunąć z repozytorium','Zmienić nazwę zmiennej','Zminifikować plik','Klucz z historii lub paczki trzeba uznać za ujawniony.'],
@@ -336,9 +344,9 @@ const probeRows=[
 ['Ile znalezisk ma czysty plik?','scanBundle({"a.js":"const a=1"}).length',0,'Brak znanych wzorców.'],
 ['Co znajdzie skaner w kluczu AWS?','scanBundle({"a.js":"AKIA"+"ABCDEFGHIJKLMNOP"})[0]','a.js: Klucz AWS','Wzorzec ma prefiks i 16 znaków.',['a.js: Klucz Stripe live','brak','a.js']],
 ['Co znajdzie skaner w kluczu prywatnym?','scanBundle({"a.js":"-----BEGIN RSA PRIVATE KEY-----"})[0]','a.js: Klucz prywatny','Klucz prywatny w kliencie to krytyczny błąd.',['a.js: Klucz AWS','brak','a.js']],
-['Czy skaner oznaczy publiczny adres?','scanBundle({"a.js":"https://api.devdesk.example"}).length',0,'Publiczne API nie jest sekretem.'],
+['Czy React 19 blokuje href z javascript?','html(<a href={"javascript:alert(1)"}>x</a>).includes("React has blocked")',true,'Adres zostaje zastąpiony kodem rzucającym błąd.'],
 ['Czy skaner oznaczy adres wewnętrzny?','scanBundle({"a.js":"http://billing.internal/x"}).length',1,'Adres wewnętrzny nie powinien trafiać do paczki.'],
-['Ile plików z sekretem wskaże skaner?','scanBundle({"a.js":"sk_live_"+"abcdefghij","b.js":"x"}).length',1,'Wynik wskazuje tylko plik ze znaleziskiem.'],
+['Czy React 19 blokuje href z data?','html(<a href="data:text/html,x">x</a>).includes("React has blocked")',false,'Blokada dotyczy javascript:, więc potrzebna jest lista protokołów.'],
 ];
 const project={
 'src/SafeHtml.tsx':safeHtml,'src/SafeLink.tsx':safeLink,'src/safeProps.ts':props,'src/naive.ts':naive,'src/csp.ts':csp,'src/secrets.ts':secrets,'src/securityLab.tsx':lab,'src/security.test.tsx':tests,
