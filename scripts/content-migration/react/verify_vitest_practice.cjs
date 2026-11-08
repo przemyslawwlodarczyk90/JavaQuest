@@ -59,6 +59,10 @@ const entries=[
   ['_react_21_produkcja','06_PwaAndOffline','./practice_prod_06.cjs',30,100],
   ['_react_21_produkcja','07_MigratingJsProjectToTs','./practice_prod_07.cjs',30,100],
   ['_react_21_produkcja','08_CapstoneIssueAdmin','./practice_prod_08.cjs',30,100],
+  ['_react_22_legacy_i_platformy','01_ClassComponentsAndLifecycleMethods','./practice_legacy_01.cjs',30,100],
+  ['_react_22_legacy_i_platformy','02_MigratingClassesToHooks','./practice_legacy_02.cjs',30,100],
+  ['_react_22_legacy_i_platformy','03_ReactNativeOverview','./practice_legacy_03.cjs',30,100],
+  ['_react_22_legacy_i_platformy','04_DesktopAppsElectronAndTauri','./practice_legacy_04.cjs',30,100],
 ];
 const requested=process.argv.slice(2);
 const selected=requested.length?entries.filter(entry=>requested.includes(entry[1])):entries;

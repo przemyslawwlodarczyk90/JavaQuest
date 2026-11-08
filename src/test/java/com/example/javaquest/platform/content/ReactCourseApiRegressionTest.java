@@ -44,15 +44,7 @@ class ReactCourseApiRegressionTest {
 
     @Test
     void reactTrackServesAllChaptersAndLessons() throws Exception {
-        String email = "react-api-" + UUID.randomUUID() + "@example.invalid";
-        String password = "Validation-Local-2026";
-        User user = new User("React", "Validation", email, passwords.encode(password));
-        user.setEnabled(true);
-        users.save(user);
-        String login = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content(mapper.writeValueAsString(java.util.Map.of("email", email, "password", password))))
-                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        String token = mapper.readTree(login).path("token").asText();
+        String token = login();
 
         JsonNode chapters = read("/api/chapters?track=REACT", token);
         assertThat(chapters.size()).isEqualTo(24);
@@ -69,6 +61,29 @@ class ReactCourseApiRegressionTest {
             lessons += list.size();
         }
         assertThat(lessons).isEqualTo(184);
+    }
+
+    @Test
+    void finalTrainingServesPoolFromWholeTrack() throws Exception {
+        String token = login();
+        JsonNode exercises = read("/api/chapters/_react_23_podsumowanie/lessons/01_FinalTraining/exercises", token);
+        assertThat(exercises.size()).isGreaterThan(500);
+        String body = mvc.perform(post("/api/chapters/_react_23_podsumowanie/lessons/01_FinalTraining/quiz/attempts")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(mapper.readTree(body).path("questions").size()).isEqualTo(20);
+    }
+
+    private String login() throws Exception {
+        String email = "react-api-" + UUID.randomUUID() + "@example.invalid";
+        String password = "Validation-Local-2026";
+        User user = new User("React", "Validation", email, passwords.encode(password));
+        user.setEnabled(true);
+        users.save(user);
+        String login = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(java.util.Map.of("email", email, "password", password))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return mapper.readTree(login).path("token").asText();
     }
 
     private JsonNode read(String url, String token) throws Exception {
