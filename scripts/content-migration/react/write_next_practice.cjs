@@ -179,6 +179,8 @@ const entries = [
   ['02_EnvVariablesAndConfig', './practice_prod_02.cjs', 30, 100, '_react_21_produkcja'],
   ['03_BuildAndDeployment', './practice_prod_03.cjs', 30, 100, '_react_21_produkcja'],
   ['04_DockerNginxAndSpringStatic', './practice_prod_04.cjs', 30, 100, '_react_21_produkcja'],
+  ['05_CiCdGithubActions', './practice_prod_05.cjs', 30, 100, '_react_21_produkcja'],
+  ['06_PwaAndOffline', './practice_prod_06.cjs', 30, 100, '_react_21_produkcja'],
 ];
 
 function build(source, exerciseCount, questionCount) {
