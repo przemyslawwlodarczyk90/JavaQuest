@@ -1114,7 +1114,101 @@ public final class ChapterSeedData {
             // pytania otwarte w losowej kolejnosci (generowane przez ocp_build_all.cjs).
             new ChapterSeed("_ocp_14_podsumowanie", "Podsumowanie - trening całościowy", List.of(
                     "01_FinalTraining"
-            ), CourseTrack.OCP)
+            ), CourseTrack.OCP),
+
+            // ===== PIATY BLOK PLATFORMY: SIECI (2026-11-10) =====
+            // Sieci komputerowe dla Java Backend Developera: modele OSI i TCP/IP, Ethernet, IP i routing,
+            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie.
+            // Rozdzialy koncza sie lekcja Boss (laboratorium integrujace). Struktura generowana z
+            // scripts/content-migration/netsec/plan_part*.cjs (netsec_scaffold.cjs) - nie edytuj recznie.
+            new ChapterSeed("_ns_00_wprowadzenie", "Sieci i Security - jak działa ten tor", List.of(
+                    "01_TrackMapAndLearningCycle", "02_LabEnvironmentSetup", "03_EthicsScopeAndLaw",
+                    "04_JourneyOfOneRequest"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_01_fundamenty_sieci", "Sieci - fundamenty i modele warstwowe", List.of(
+                    "01_InternetArchitectureAndHistory", "02_NetworkBuildingBlocks", "03_OsiModelInPractice",
+                    "04_TcpIpModelAndEncapsulation", "05_PerformanceMetrics", "06_FirstPacketCapture",
+                    "07_BossPacketJourney"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_02_ethernet_lan", "Sieci - Ethernet i sieć lokalna", List.of(
+                    "01_EthernetFramesAndMtu", "02_MacAddressesAndSwitching", "03_ArpAndNeighborDiscovery",
+                    "04_UnicastBroadcastMulticast", "05_VlanTrunkingAndStp", "06_DhcpAndSlaac",
+                    "07_WifiForDevelopers", "08_DebugLanProblems"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_03_ip_i_routing", "Sieci - adresacja IP i routing", List.of(
+                    "01_Ipv4HeaderAndAddressing", "02_CidrAndSubnetting", "03_SubnettingDrill",
+                    "04_SpecialAndPrivateAddresses", "05_RoutingTablesAndDefaultGateway",
+                    "06_NatPatAndPortForwarding", "07_IcmpPingTraceroute", "08_FragmentationAndPmtud",
+                    "09_Ipv6InDepth", "10_DualStackAndTransition", "11_DynamicRoutingAndBgp",
+                    "12_BossWhereDidMyPacketGo"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_04_tcp_udp_quic", "Sieci - TCP, UDP i QUIC", List.of(
+                    "01_PortsSocketsAndEphemeralPorts", "02_TcpHandshakeAndStateMachine",
+                    "03_SequenceNumbersAndAcks", "04_RetransmissionAndRto", "05_FlowControlAndWindows",
+                    "06_CongestionControl", "07_ConnectionTeardownTimeWaitCloseWait",
+                    "08_KeepaliveNagleDelayedAck", "09_JavaNetworkExceptionsDecoded", "10_UdpAndItsUseCases",
+                    "11_QuicAndTransportEvolution", "12_WiresharkTcpAnalysisWorkshop", "13_BossTcpUnderFire"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_05_dns", "Sieci - DNS", List.of(
+                    "01_DnsResolutionEndToEnd", "02_DnsRecordTypes", "03_CachingTtlAndJvmDnsCache",
+                    "04_DnsDiagnosticsTools", "05_DnssecDohDot", "06_SplitHorizonAndInternalDns",
+                    "07_DnsInContainersAndKubernetes", "08_BossDnsOutage"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_06_http", "Sieci - HTTP od surowych bajtów do Springa", List.of(
+                    "01_Http11MessageAnatomy", "02_MethodsSemanticsAndIdempotency",
+                    "03_StatusCodesInPractice", "04_HeadersNegotiationAndCompression",
+                    "05_CookiesAndSessions", "06_HttpCachingAndConditionalRequests",
+                    "07_PersistentConnectionsAndPooling", "08_Http2FramesStreamsHpack", "09_Http3OverQuic",
+                    "10_UrlsAndRedirects", "11_CorsAndSameOriginPolicy", "12_RealtimeWebSocketSseLongPolling",
+                    "13_ApiStylesRestGrpcGraphql", "14_TrafficAnalysisDevToolsCurlPostman",
+                    "15_BossHttpDetective"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_07_tls_pki", "Sieci - TLS, HTTPS i PKI", List.of(
+                    "01_CryptoMinimumForTls", "02_Tls13HandshakeStepByStep", "03_Tls12AndLegacy",
+                    "04_X509CertificatesAndChainOfTrust", "05_PkiRevocationCtAndAcme",
+                    "06_SniAlpnResumptionAnd0Rtt", "07_JavaKeystoreTruststoreAndJsse",
+                    "08_SslHandshakeExceptionDiagnostics", "09_MutualTls",
+                    "10_HttpsInNginxCaddyAndSpringBoot", "11_CertificatePinning", "12_BossTlsTrustFailure"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_08_linux_networking", "Sieci - Linux networking i metodyka diagnozy", List.of(
+                    "01_IproutePrimer", "02_SocketsInspectionSsLsof", "03_TcpdumpMastery",
+                    "04_WiresharkDeepDive", "05_OpensslAndCurlForDiagnostics",
+                    "06_NetworkNamespacesVethBridges", "07_NftablesAndHostFirewall",
+                    "08_TrafficShapingWithTcNetem", "09_DiagnosticMethodology", "10_BossDiagnosisMarathon"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_09_kontenery_i_chmura", "Sieci - Docker, Kubernetes i chmura AWS", List.of(
+                    "01_DockerNetworkDrivers", "02_PortPublishingAndLocalhostTrap",
+                    "03_ComposeNetworksAndServiceDiscovery", "04_ContainerToDatabaseConnectivity",
+                    "05_KubernetesNetworkingModel", "06_IngressGatewayApiAndServiceMesh",
+                    "07_KubernetesNetworkPolicyBasics", "08_AwsVpcSubnetsAndRouting",
+                    "09_SecurityGroupsAndNacls", "10_LoadBalancersAndRoute53", "11_DebuggingAppsOnEc2",
+                    "12_BossAwsVpcIncident"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_10_proxy_i_load_balancing", "Sieci - reverse proxy, load balancing i ruch produkcyjny", List.of(
+                    "01_ForwardAndReverseProxy", "02_NginxAndCaddyAsReverseProxy",
+                    "03_LoadBalancingAlgorithmsAndHealthChecks", "04_Explaining502503504", "05_CdnAndEdge",
+                    "06_ApiGatewayAndRateLimiting", "07_BossProductionNetworkingMeltdown"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_11_java_networking", "Sieci - komunikacja sieciowa w Javie", List.of(
+                    "01_SocketAndServerSocketDeepDive", "02_DatagramSocketAndMulticast",
+                    "03_NioChannelsAndSelectors", "04_NettyBasics", "05_JavaHttpClient",
+                    "06_SpringHttpClients", "07_TimeoutsBudgetsAndDeadlines", "08_RetryBackoffAndIdempotency",
+                    "09_CircuitBreakerBulkheadResilience4j", "10_VirtualThreadsForIoBoundServers",
+                    "11_JdbcNetworkingAndConnectionPools", "12_SslSocketsAndCustomSslContext",
+                    "13_BossDistributedFailureLab"
+            ), CourseTrack.NETWORKING)
+            // ===== KONIEC BLOKU SIECI =====
     );
 
     private ChapterSeedData() {
