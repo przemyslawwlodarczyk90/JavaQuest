@@ -5,7 +5,7 @@
 // Przed egzaminem zawsze sprawdź aktualne „exam objectives” na stronie CompTIA (wersje się zmieniają).
 // Format jak w plan_part1_sieci.cjs: [slug, tytuł, cel, lekcje]; lekcja: [slug, tytuł, poziom, priorytet, zakres, praktyka]
 module.exports = [
-  ['_ns_12_infrastruktura_i_wan', 'Sieci - infrastruktura fizyczna, Wi-Fi i WAN', 'uzupełnienie Network+: okablowanie, sieci bezprzewodowe, WAN, VPN i architektury centrów danych [N+ D1, D2]', [
+  ['_ns_13_infrastruktura_i_wan', 'Sieci - infrastruktura fizyczna, Wi-Fi i WAN', 'uzupełnienie Network+: okablowanie, sieci bezprzewodowe, WAN, VPN i architektury centrów danych [N+ D1, D2]', [
     ['01_CablingAndConnectors', 'Okablowanie miedziane i światłowodowe', 'L1', 'W',
       'kategorie skrętki (Cat5e–Cat8), ekranowanie, PoE (802.3af/at/bt); światłowód SMF vs MMF, złącza LC/SC, moduły SFP/SFP+/QSFP; standardy T568A/B; patch panel i okablowanie strukturalne; typowe usterki (przesłuch, tłumienie, zgięcia)',
       'ćwiczenie: dobierz medium i transceiver do 8 scenariuszy (odległość, przepustowość, środowisko)'],
@@ -28,7 +28,7 @@ module.exports = [
       'integracja rozdziału: okablowanie, Wi-Fi, VLAN, adresacja, WAN i VPN do centrali', 'Architecture Lab: dokument projektowy (diagram L1/L2/L3, adresacja, lista sprzętu, polityka Wi-Fi) oceniany checklistą'],
   ]],
 
-  ['_ns_13_operacje_sieci', 'Sieci - operacje, monitoring i troubleshooting', 'utrzymanie sieci: monitoring, dokumentacja, wysoka dostępność i metodyka CompTIA [N+ D3, D5]', [
+  ['_ns_14_operacje_sieci', 'Sieci - operacje, monitoring i troubleshooting', 'utrzymanie sieci: monitoring, dokumentacja, wysoka dostępność i metodyka CompTIA [N+ D3, D5]', [
     ['01_SnmpSyslogAndNetflow', 'SNMP, syslog i NetFlow/IPFIX', 'L2', 'K',
       'SNMPv2c vs SNMPv3 (uwierzytelnianie i szyfrowanie), MIB/OID, trapy; syslog i poziomy ważności; NetFlow/IPFIX/sFlow — kto z kim rozmawia; baseline ruchu',
       'Guided Lab: eksport przepływów z labu (softflowd → nfdump), znajdź największych „rozmówców”'],
@@ -42,13 +42,13 @@ module.exports = [
       'redundancja (łącza, zasilanie, urządzenia); FHRP (VRRP/HSRP) i agregacja łączy (LACP); active-active vs active-passive; RPO, RTO, MTTR, MTBF; ośrodki hot/warm/cold; testy DR',
       'Failure Lab: keepalived z VRRP — wyłącz węzeł główny i zmierz czas przełączenia'],
     ['05_CompTiaTroubleshootingMethodology', 'Metodyka troubleshootingu CompTIA w 7 krokach', 'L2', 'K',
-      'identyfikacja problemu, teoria, test teorii, plan działania, wdrożenie, weryfikacja, dokumentacja; porównanie z metodyką warstwową z rozdziału 08; typowe problemy kabli, usług i wydajności',
+      'identyfikacja problemu, teoria, test teorii, plan działania, wdrożenie, weryfikacja, dokumentacja; porównanie z metodyką warstwową z rozdziału 09; typowe problemy kabli, usług i wydajności',
       'ćwiczenie: 10 scenariuszy w stylu PBQ — wybierz kolejny krok i narzędzie'],
     ['06_BossNetworkOperationsShift', 'Boss: dyżur operacyjny', 'L4', 'K',
       'integracja: monitoring, dokumentacja, HA i metodyka diagnozy', 'Incident Lab: seria alertów z labu (awaria łącza, przeciążenie, błąd konfiguracji) — diagnoza, naprawa i raport w formacie change/incident'],
   ]],
 
-  ['_ns_14_fundamenty_security', 'Security - fundamenty bezpieczeństwa', 'pojęcia, modele i ramy, na których opiera się każda decyzja obronna [Sec+ D1]', [
+  ['_ns_15_fundamenty_security', 'Security - fundamenty bezpieczeństwa', 'pojęcia, modele i ramy, na których opiera się każda decyzja obronna [Sec+ D1]', [
     ['01_CiaAaaAndSecurityPrinciples', 'CIA, AAA i zasady bezpieczeństwa', 'L1', 'K',
       'poufność, integralność, dostępność; uwierzytelnianie, autoryzacja, rozliczalność; niezaprzeczalność; least privilege, defense in depth, separation of duties, secure by default, fail securely',
       'ćwiczenie: oceń 12 decyzji projektowych w aplikacji JavaQuest pod kątem zasad'],
@@ -69,7 +69,7 @@ module.exports = [
       'ćwiczenie: przypisz zabezpieczenia labu do funkcji NIST CSF'],
   ]],
 
-  ['_ns_15_tozsamosc_i_dostep', 'Security - tożsamość i zarządzanie dostępem', 'IAM od haseł po passkeys, SSO i PAM [Sec+ D4, D3]', [
+  ['_ns_16_tozsamosc_i_dostep', 'Security - tożsamość i zarządzanie dostępem', 'IAM od haseł po passkeys, SSO i PAM [Sec+ D4, D3]', [
     ['01_AuthenticationFactorsAndMfa', 'Czynniki uwierzytelnienia i MFA', 'L1', 'K',
       'coś wiesz/masz/jesteś; TOTP, push, klucze sprzętowe; odporność na phishing; zmęczenie MFA i obrona (number matching); polityki haseł wg NIST SP 800-63B',
       'Build Lab: TOTP w aplikacji Spring Boot z kodami zapasowymi'],
@@ -90,7 +90,7 @@ module.exports = [
       'Defense Lab: przenieś sekrety labu z application.properties do Vault i dodaj skan sekretów w CI'],
   ]],
 
-  ['_ns_16_kryptografia_stosowana', 'Security - kryptografia stosowana', 'dobór i bezpieczne użycie kryptografii w systemach i w Javie [Sec+ D1, D3]', [
+  ['_ns_17_kryptografia_stosowana', 'Security - kryptografia stosowana', 'dobór i bezpieczne użycie kryptografii w systemach i w Javie [Sec+ D1, D3]', [
     ['01_HashingSaltingAndPasswordStorage', 'Hashowanie i przechowywanie haseł', 'L2', 'K',
       'funkcje skrótu i ich właściwości; sól i pieprz; Argon2id, bcrypt, scrypt, PBKDF2; PasswordEncoder w Spring Security i migracja algorytmów (DelegatingPasswordEncoder)',
       'Build Lab: migracja haseł z SHA-256 do Argon2id bez wymuszania resetu'],
@@ -108,7 +108,7 @@ module.exports = [
       'zadanie: inwentaryzacja algorytmów użytych w labie i plan migracji'],
   ]],
 
-  ['_ns_17_zagrozenia_sieciowe_i_obrona', 'Security - zagrożenia sieciowe: wykrywanie i obrona', 'rozpoznanie klas zagrożeń L2–L7 po śladach w ruchu i logach oraz właściwe zabezpieczenia [Sec+ D2, N+ D4]', [
+  ['_ns_18_zagrozenia_sieciowe_i_obrona', 'Security - zagrożenia sieciowe: wykrywanie i obrona', 'rozpoznanie klas zagrożeń L2–L7 po śladach w ruchu i logach oraz właściwe zabezpieczenia [Sec+ D2, N+ D4]', [
     ['01_ThreatLandscapeOverview', 'Krajobraz zagrożeń sieciowych', 'L1', 'K',
       'klasy zagrożeń: podsłuch, podszywanie, man-in-the-middle, odmowa usługi, rozpoznanie, ruch C2; na której warstwie działają i jakie zabezpieczenie je zatrzymuje; wszystkie ćwiczenia wyłącznie w izolowanym labie',
       'ćwiczenie: macierz zagrożenie → warstwa → zabezpieczenie → źródło wykrycia'],
@@ -134,7 +134,7 @@ module.exports = [
       'integracja: ochrona L2, DNS, DDoS, wykrywanie rozpoznania i MITM', 'Defense Lab: zautomatyzowany „red bot” w izolowanym labie generuje ruch z kilku klas zagrożeń — wdroż zabezpieczenia i reguły detekcji; ocena: odsetek zablokowanych i wykrytych zdarzeń'],
   ]],
 
-  ['_ns_18_architektura_bezpiecznej_sieci', 'Security - architektura bezpiecznej sieci', 'segmentacja, firewalle, IDS/IPS, WAF, proxy i bezpieczny dostęp zdalny [Sec+ D3, N+ D4]', [
+  ['_ns_19_architektura_bezpiecznej_sieci', 'Security - architektura bezpiecznej sieci', 'segmentacja, firewalle, IDS/IPS, WAF, proxy i bezpieczny dostęp zdalny [Sec+ D3, N+ D4]', [
     ['01_SegmentationAndDmz', 'Segmentacja, strefy i DMZ', 'L2', 'K',
       'strefy zaufania; DMZ i screened subnet; mikrosegmentacja; jump host; separacja sieci zarządzania (out-of-band); OT/IoT w osobnych segmentach',
       'Architecture Lab: podziel lab na strefy (edge, app, db, mgmt) w Compose i udowodnij testem brak niepożądanych ścieżek'],
@@ -160,7 +160,7 @@ module.exports = [
       'integracja rozdziału', 'Architecture Lab: otrzymujesz diagram i konfiguracje słabo zabezpieczonego systemu — raport z ryzykami, priorytetami i wdrożonymi poprawkami potwierdzonymi testami'],
   ]],
 
-  ['_ns_19_hardening_i_podatnosci', 'Security - hardening i zarządzanie podatnościami', 'utwardzanie systemów i ciągły cykl zarządzania podatnościami [Sec+ D4, CySA+ D2]', [
+  ['_ns_20_hardening_i_podatnosci', 'Security - hardening i zarządzanie podatnościami', 'utwardzanie systemów i ciągły cykl zarządzania podatnościami [Sec+ D4, CySA+ D2]', [
     ['01_LinuxAndSshHardening', 'Hardening Linuksa i SSH', 'L2', 'K',
       'CIS Benchmarks; minimalizacja usług; aktualizacje; SSH: klucze, wyłączenie haseł i roota; auditd; SELinux/AppArmor w zarysie; Lynis',
       'Defense Lab: podnieś wynik Lynis serwera labu i udokumentuj każdą zmianę'],
@@ -183,7 +183,7 @@ module.exports = [
       'integracja rozdziału', 'Defense Lab: od skanu przez priorytetyzację i naprawę do raportu dla zarządu z porównaniem przed/po'],
   ]],
 
-  ['_ns_20_bezpieczenstwo_aplikacji_i_api', 'Security - bezpieczeństwo aplikacji webowych i API', 'OWASP Top 10 i API Security Top 10 od strony obrońcy i programisty Javy [Sec+ D2, D4]', [
+  ['_ns_21_bezpieczenstwo_aplikacji_i_api', 'Security - bezpieczeństwo aplikacji webowych i API', 'OWASP Top 10 i API Security Top 10 od strony obrońcy i programisty Javy [Sec+ D2, D4]', [
     ['01_OwaspTop10Overview', 'OWASP Top 10 i API Security Top 10 — przegląd', 'L1', 'K',
       'kategorie i ich przyczyny źródłowe; CWE; ASVS jako lista wymagań; Secure SDLC i shift-left',
       'ćwiczenie: przypisz 15 opisów błędów do kategorii OWASP'],
@@ -215,7 +215,7 @@ module.exports = [
       'integracja rozdziału', 'Defense Lab: aplikacja z kilkunastoma celowo wprowadzonymi błędami bezpieczeństwa — znajdź je przeglądem kodu i skanami, popraw, udowodnij testami regresji'],
   ]],
 
-  ['_ns_21_monitoring_i_soc', 'Security - monitorowanie bezpieczeństwa i SOC', 'logi, SIEM i detection engineering — praca analityka SOC [Sec+ D4, CySA+ D1]', [
+  ['_ns_22_monitoring_i_soc', 'Security - monitorowanie bezpieczeństwa i SOC', 'logi, SIEM i detection engineering — praca analityka SOC [Sec+ D4, CySA+ D1]', [
     ['01_LoggingStrategy', 'Strategia logowania bezpieczeństwa', 'L2', 'K',
       'co logować (uwierzytelnienie, autoryzacja, zmiany konfiguracji, błędy); format ustrukturyzowany (JSON, ECS); synchronizacja czasu NTP; retencja i integralność logów; logi aplikacji Spring (audit events) bez danych wrażliwych',
       'Build Lab: zdarzenia audytowe w Spring Boot w formacie ECS wysyłane do centralnego systemu'],
@@ -241,7 +241,7 @@ module.exports = [
       'integracja rozdziału', 'Incident Lab: kilkugodzinny symulowany ruch z ukrytym incydentem — wykryj go w SIEM, zbuduj oś czasu i raport'],
   ]],
 
-  ['_ns_22_analiza_zagrozen_i_threat_hunting', 'Security - analiza zagrożeń i threat hunting', 'threat intelligence, polowanie na zagrożenia i analiza artefaktów [CySA+ D1, D2]', [
+  ['_ns_23_analiza_zagrozen_i_threat_hunting', 'Security - analiza zagrożeń i threat hunting', 'threat intelligence, polowanie na zagrożenia i analiza artefaktów [CySA+ D1, D2]', [
     ['01_ThreatIntelligence', 'Threat intelligence: źródła, IoC i STIX/TAXII', 'L2', 'W',
       'poziomy (strategiczny, taktyczny, operacyjny); IoC vs TTP i piramida bólu; MISP, STIX/TAXII; CERT Polska i CSIRT-y; ocena wiarygodności źródeł',
       'Guided Lab: MISP w kontenerze, import feedu i dopasowanie IoC do logów labu'],
@@ -264,7 +264,7 @@ module.exports = [
       'integracja rozdziału', 'Incident Lab: zestaw danych z „przejętego” labu — postaw hipotezy, znajdź ślady, zmapuj na ATT&CK i zaproponuj detekcje'],
   ]],
 
-  ['_ns_23_reagowanie_na_incydenty', 'Security - reagowanie na incydenty i informatyka śledcza', 'cykl IR, zabezpieczanie dowodów i powrót do działania [Sec+ D4, CySA+ D3, D4]', [
+  ['_ns_24_reagowanie_na_incydenty', 'Security - reagowanie na incydenty i informatyka śledcza', 'cykl IR, zabezpieczanie dowodów i powrót do działania [Sec+ D4, CySA+ D3, D4]', [
     ['01_IncidentResponseLifecycle', 'Cykl reagowania na incydenty', 'L2', 'K',
       'NIST SP 800-61r3 i powiązanie z CSF 2.0; przygotowanie, wykrycie, analiza, powstrzymanie, usunięcie, odtworzenie, wnioski; role i komunikacja',
       'zadanie: plan IR dla JavaQuest z macierzą RACI'],
@@ -282,12 +282,12 @@ module.exports = [
       'Failure Lab: odtwórz bazę labu z kopii niezmiennej i zmierz RTO/RPO'],
     ['06_ReportingAndCommunication', 'Raportowanie i komunikacja incydentu', 'L2', 'K',
       'raport techniczny vs dla zarządu; metryki; zgłoszenia NIS2 (wczesne ostrzeżenie, zgłoszenie, raport końcowy) i RODO (72 h); komunikacja z klientami; lessons learned',
-      'zadanie: raport końcowy z incydentu z bossa rozdziału 21'],
+      'zadanie: raport końcowy z incydentu z bossa rozdziału 22'],
     ['07_BossFullIncident', 'Boss: pełny incydent', 'L5', 'K',
       'integracja rozdziału', 'Incident Lab: od alertu do raportu — wykrycie, analiza, powstrzymanie, odtworzenie i zgłoszenie w limicie czasu'],
   ]],
 
-  ['_ns_24_grc_ryzyko_i_zgodnosc', 'Security - ład, ryzyko i zgodność (GRC)', 'zarządzanie programem bezpieczeństwa: ryzyko, polityki, dostawcy, audyt i świadomość [Sec+ D5]', [
+  ['_ns_25_grc_ryzyko_i_zgodnosc', 'Security - ład, ryzyko i zgodność (GRC)', 'zarządzanie programem bezpieczeństwa: ryzyko, polityki, dostawcy, audyt i świadomość [Sec+ D5]', [
     ['01_RiskManagement', 'Zarządzanie ryzykiem', 'L2', 'K',
       'identyfikacja, analiza jakościowa i ilościowa (SLE, ARO, ALE); apetyt i tolerancja; rejestr ryzyk; strategie: unikanie, ograniczanie, przeniesienie, akceptacja',
       'zadanie: rejestr 10 ryzyk dla JavaQuest z obliczeniem ALE'],
@@ -308,7 +308,7 @@ module.exports = [
       'zadanie: plan rocznego programu świadomości bezpieczeństwa'],
   ]],
 
-  ['_ns_25_egzaminy_comptia', 'Security - przygotowanie do egzaminów CompTIA', 'strategia, mapowanie celów egzaminów na lekcje toru i egzaminy próbne [N+, Sec+, CySA+]', [
+  ['_ns_26_egzaminy_comptia', 'Security - przygotowanie do egzaminów CompTIA', 'strategia, mapowanie celów egzaminów na lekcje toru i egzaminy próbne [N+, Sec+, CySA+]', [
     ['01_CertificationPathAndObjectives', 'Ścieżka certyfikacji i mapa celów egzaminów', 'L1', 'K',
       'Network+ → Security+ → CySA+ (dalej: PenTest+, CASP+/SecurityX); domeny i wagi aktualnych wersji; mapa: która lekcja toru pokrywa który cel; jak sprawdzać zmiany objectives',
       'zadanie: osobisty plan nauki z datami na podstawie samooceny'],
@@ -316,11 +316,11 @@ module.exports = [
       'typy PBQ (konfiguracja, przeciąganie, analiza logów); zarządzanie czasem; eliminacja odpowiedzi; słowa kluczowe „BEST”, „FIRST”, „MOST likely”',
       'drill: 15 symulowanych PBQ z automatycznym sprawdzaniem'],
     ['03_NetworkPlusPracticeExam', 'Egzamin próbny Network+', 'L3', 'K',
-      'pełny przekrój domen Network+ z części I oraz rozdziałów 12–13', 'egzamin próbny: 90 pytań z limitem czasu i raportem słabych domen'],
+      'pełny przekrój domen Network+ z części I oraz rozdziałów 13–14', 'egzamin próbny: 90 pytań z limitem czasu i raportem słabych domen'],
     ['04_SecurityPlusPracticeExam', 'Egzamin próbny Security+', 'L3', 'K',
-      'pełny przekrój domen Security+ z rozdziałów 14–24', 'egzamin próbny: 90 pytań z limitem czasu i raportem słabych domen'],
+      'pełny przekrój domen Security+ z rozdziałów 15–25', 'egzamin próbny: 90 pytań z limitem czasu i raportem słabych domen'],
     ['05_CysaPlusPracticeExam', 'Egzamin próbny CySA+', 'L4', 'W',
-      'operacje bezpieczeństwa, zarządzanie podatnościami, reagowanie na incydenty, raportowanie — z rozdziałów 19–23', 'egzamin próbny: 85 pytań, w tym analiza logów i scenariusze'],
+      'operacje bezpieczeństwa, zarządzanie podatnościami, reagowanie na incydenty, raportowanie — z rozdziałów 20–24', 'egzamin próbny: 85 pytań, w tym analiza logów i scenariusze'],
     ['06_BossBlueTeamCapstone', 'Boss: capstone Blue Team', 'L5', 'K',
       'integracja całego toru: architektura, hardening, detekcja, reagowanie i raport', 'Capstone: zaprojektuj, utwardź i monitoruj środowisko JavaQuest, a następnie obsłuż symulowany incydent od alertu po raport dla zarządu'],
   ]],

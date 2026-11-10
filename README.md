@@ -32,7 +32,7 @@ Przełącznik na panelu głównym — sześć równoległych torów na jednym ba
 | ⚛️ **React** | 24 | 174 | — | — | 🚧 zarys, lekcje w przygotowaniu |
 | 🐧 **Linux** | 46 | 437 | — | — | 🚧 teoria w toku |
 | 🎓 **OCP Java 21** | 14 | 38 | 2 026 | 500 | ✅ kompletny |
-| 🌐 **Sieci i Security** | 26 | 218 | — | — | 🚧 zarys, lekcje w przygotowaniu |
+| 🌐 **Sieci i Security** | 27 | 231 | — | — | 🚧 zarys, lekcje w przygotowaniu |
 
 Kurs Javy prowadzi od podstaw języka, przez OOP, kolekcje, wielowątkowość, JDBC, Hibernate i cały
 ekosystem Springa (Boot, Data JPA, Security, testy, WebFlux, messaging, Cloud), aż po algorytmy,
