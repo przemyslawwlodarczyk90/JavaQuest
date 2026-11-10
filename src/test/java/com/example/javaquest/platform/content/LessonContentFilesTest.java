@@ -47,6 +47,24 @@ class LessonContentFilesTest {
     }
 
     @Test
+    void everyTheoryImagePointsToExistingAssetWithAltText() throws IOException {
+        Path assets = Path.of("frontend/public/lesson-assets");
+        for (Path file : lessonFiles()) {
+            LessonContentFile lesson = mapper.readValue(file.toFile(), LessonContentFile.class);
+            for (int i = 0; i < lesson.theory().size(); i++) {
+                LessonContentFile.TheoryBlockJson block = lesson.theory().get(i);
+                if (block.image() == null) {
+                    continue;
+                }
+                String where = CONTENT.relativize(file) + " theory[" + i + "]";
+                assertThat(block.image()).as(where).matches("[a-z0-9_/-]+\\.(svg|png|webp)");
+                assertThat(Files.isRegularFile(assets.resolve(block.image()))).as(where + " plik").isTrue();
+                assertThat(block.imageAlt()).as(where + " imageAlt").isNotBlank();
+            }
+        }
+    }
+
+    @Test
     void quizCodeFieldIsReadFromJson() throws IOException {
         LessonContentFile lesson = mapper.readValue(
                 CONTENT.resolve("_32_algorithms_and_data_structures/01_BigONotation.json").toFile(),

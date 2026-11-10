@@ -49,18 +49,40 @@ public class ContentBlock {
     @Column(columnDefinition = "TEXT")
     private String code;
 
+    /** Opcjonalna ilustracja: sciezka wzgledem /lesson-assets/ (patrz LessonContentFile.TheoryBlockJson). */
+    @Column(length = 255)
+    private String image;
+
+    @Column(length = 500)
+    private String imageAlt;
+
     protected ContentBlock() {
         // wymagane przez JPA
     }
 
     public ContentBlock(Lesson lesson, int sortOrder, ContentBlockType type, String heading, String body,
                          String code) {
+        this(lesson, sortOrder, type, heading, body, code, null, null);
+    }
+
+    public ContentBlock(Lesson lesson, int sortOrder, ContentBlockType type, String heading, String body,
+                         String code, String image, String imageAlt) {
         this.lesson = lesson;
         this.sortOrder = sortOrder;
         this.type = type;
         this.heading = heading;
         this.body = body;
         this.code = code;
+        this.image = image;
+        this.imageAlt = imageAlt;
+    }
+
+    public String getImage() {
+        return image;
+    }
+
+    public String getImageAlt() {
+        return imageAlt;
     }
 
     public Long getId() {

@@ -96,7 +96,7 @@ class LessonContentLoader {
         for (LessonContentFile.TheoryBlockJson block : file.theory()) {
             contentBlockRepository.save(new ContentBlock(
                     lesson, order++, ContentBlockType.valueOf(block.type()), block.heading(), block.body(),
-                    block.code()));
+                    block.code(), block.image(), block.imageAlt()));
         }
 
         order = 0;

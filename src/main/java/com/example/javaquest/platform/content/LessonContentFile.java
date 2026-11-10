@@ -32,8 +32,13 @@ LessonContentFile(
         List<ExerciseJson> exercises,
         List<QuizQuestionJson> quiz) {
 
-    /** {@code code} jest opcjonalny (null) dla blokow innych niz CODE_EXAMPLE. */
-    public record TheoryBlockJson(String type, String heading, String body, String code) {
+    /**
+     * {@code code} jest opcjonalny (null) dla blokow innych niz CODE_EXAMPLE. {@code image} (opcjonalny) to
+     * sciezka ilustracji wzgledem {@code frontend/public/lesson-assets/} (np. {@code netsec/mask-ruler.svg}),
+     * {@code imageAlt} - jej tekst alternatywny.
+     */
+    public record TheoryBlockJson(String type, String heading, String body, String code, String image,
+                                  String imageAlt) {
     }
 
     public record ExerciseJson(String prompt, String hint, String solution) {

@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 class LessonContentController {
 
-    record ContentBlockDto(String type, String heading, String body, String code) {
+    record ContentBlockDto(String type, String heading, String body, String code, String image, String imageAlt) {
     }
 
     record ExerciseDto(String prompt, String hint, String solution) {
@@ -35,7 +35,8 @@ class LessonContentController {
                                                       @PathVariable String lessonSlug) {
         return withLesson(chapterSlug, lessonSlug, lesson -> contentBlockRepository
                 .findByLessonIdOrderBySortOrderAsc(lesson.getId()).stream()
-                .map(b -> new ContentBlockDto(b.getType().name(), b.getHeading(), b.getBody(), b.getCode()))
+                .map(b -> new ContentBlockDto(b.getType().name(), b.getHeading(), b.getBody(), b.getCode(),
+                        b.getImage(), b.getImageAlt()))
                 .toList());
     }
 

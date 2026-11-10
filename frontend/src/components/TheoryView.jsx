@@ -54,6 +54,12 @@ function BlockTile({ block }) {
       </div>
       {block.heading && <h3>{block.heading}</h3>}
       {block.body && <p>{block.body}</p>}
+      {block.image && (
+        <figure className="theory-block__figure">
+          <img src={`/lesson-assets/${block.image}`} alt={block.imageAlt ?? block.heading ?? ''} loading="lazy" />
+          {block.imageAlt && <figcaption>{block.imageAlt}</figcaption>}
+        </figure>
+      )}
       {block.code && (
         <pre className={`theory-block__code ${isCode ? `theory-block__code--${block.type.toLowerCase()}` : ''}`}>
           {block.code}
