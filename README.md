@@ -23,7 +23,7 @@ ten kurs i cztery kolejne, z kontem użytkownika, postępem i quizami ocenianymi
 
 ## 📚 Kursy
 
-Przełącznik na panelu głównym — pięć równoległych torów na jednym backendzie:
+Przełącznik na panelu głównym — sześć równoległych torów na jednym backendzie:
 
 | Tor | Rozdziały | Lekcje | Pytania quizowe | Zadania | Stan |
 |---|---:|---:|---:|---:|---|
@@ -32,6 +32,7 @@ Przełącznik na panelu głównym — pięć równoległych torów na jednym bac
 | ⚛️ **React** | 24 | 174 | — | — | 🚧 zarys, lekcje w przygotowaniu |
 | 🐧 **Linux** | 46 | 437 | — | — | 🚧 teoria w toku |
 | 🎓 **OCP Java 21** | 14 | 38 | 2 026 | 500 | ✅ kompletny |
+| 🌐 **Sieci** | 12 | 121 | — | — | 🚧 zarys, lekcje w przygotowaniu |
 
 Kurs Javy prowadzi od podstaw języka, przez OOP, kolekcje, wielowątkowość, JDBC, Hibernate i cały
 ekosystem Springa (Boot, Data JPA, Security, testy, WebFlux, messaging, Cloud), aż po algorytmy,
