@@ -5,7 +5,7 @@ import { getMotivationalQuote } from '../api'
 import PointsHelp from './PointsHelp'
 import './LearningDashboard.css'
 
-const names = { JAVA: 'Java', JAVASCRIPT: 'JavaScript', REACT: 'React', LINUX: 'Linux', OCP: 'OCP Java 21' }
+const names = { JAVA: 'Java', JAVASCRIPT: 'JavaScript', REACT: 'React', LINUX: 'Linux', OCP: 'OCP Java 21', NETWORKING: 'Sieci' }
 
 export default function LearningDashboard() {
   const { summary } = useProgress()
