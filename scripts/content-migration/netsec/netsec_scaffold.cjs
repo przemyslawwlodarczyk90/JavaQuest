@@ -50,7 +50,8 @@ const nl = seed.includes('\r\n') ? '\r\n' : '\n';
 const header = [
   '            // ===== PIATY BLOK PLATFORMY: SIECI (2026-11-10) =====',
   '            // Sieci komputerowe dla Java Backend Developera: modele OSI i TCP/IP, Ethernet, IP i routing,',
-  '            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie.',
+  '            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie;',
+  '            // czesc II: infrastruktura i operacje (CompTIA Network+) oraz security defensywne (Security+, CySA+).',
   '            // Rozdzialy koncza sie lekcja Boss (laboratorium integrujace). Struktura generowana z',
   '            // scripts/content-migration/netsec/plan_part*.cjs (netsec_scaffold.cjs) - nie edytuj recznie.',
 ];
@@ -101,7 +102,7 @@ if (fs.existsSync(planFile)) {
   const md = fs.readFileSync(planFile, 'utf8');
   const s = md.indexOf('<!-- LEKCJE:START -->'), e = md.indexOf('<!-- LEKCJE:END -->');
   if (s >= 0 && e > s) {
-    const strip = (t) => t.replace(/^Sieci - /, '');
+    const strip = (t) => t.replace(/^(Sieci|Security) - /, '');
     const body = plan.map(([slug, title, goal, lessons], ci) => [
       `### Rozdział ${String(ci).padStart(2, '0')} — ${strip(title)} (\`${slug}\`)`, '', `**Cel:** ${goal}`, '',
       '| # | Slug | Temat | Poziom | Priorytet | Zakres | Praktyka |', '|---|---|---|---|---|---|---|',

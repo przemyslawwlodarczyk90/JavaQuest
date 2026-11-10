@@ -1118,7 +1118,8 @@ public final class ChapterSeedData {
 
             // ===== PIATY BLOK PLATFORMY: SIECI (2026-11-10) =====
             // Sieci komputerowe dla Java Backend Developera: modele OSI i TCP/IP, Ethernet, IP i routing,
-            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie.
+            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie;
+            // czesc II: infrastruktura i operacje (CompTIA Network+) oraz security defensywne (Security+, CySA+).
             // Rozdzialy koncza sie lekcja Boss (laboratorium integrujace). Struktura generowana z
             // scripts/content-migration/netsec/plan_part*.cjs (netsec_scaffold.cjs) - nie edytuj recznie.
             new ChapterSeed("_ns_00_wprowadzenie", "Sieci i Security - jak działa ten tor", List.of(
@@ -1207,6 +1208,91 @@ public final class ChapterSeedData {
                     "09_CircuitBreakerBulkheadResilience4j", "10_VirtualThreadsForIoBoundServers",
                     "11_JdbcNetworkingAndConnectionPools", "12_SslSocketsAndCustomSslContext",
                     "13_BossDistributedFailureLab"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_12_infrastruktura_i_wan", "Sieci - infrastruktura fizyczna, Wi-Fi i WAN", List.of(
+                    "01_CablingAndConnectors", "02_WirelessStandardsAndDesign",
+                    "03_WirelessSecurityAndEnterpriseAuth", "04_WanTechnologiesAndSdWan",
+                    "05_VpnTypesIpsecWireguard", "06_DataCenterSdnAndOverlays", "07_BossDesignABranchNetwork"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_13_operacje_sieci", "Sieci - operacje, monitoring i troubleshooting", List.of(
+                    "01_SnmpSyslogAndNetflow", "02_MonitoringAndAlerting",
+                    "03_DocumentationAndChangeManagement", "04_HighAvailabilityAndDisasterRecovery",
+                    "05_CompTiaTroubleshootingMethodology", "06_BossNetworkOperationsShift"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_14_fundamenty_security", "Security - fundamenty bezpieczeństwa", List.of(
+                    "01_CiaAaaAndSecurityPrinciples", "02_SecurityControlsTaxonomy",
+                    "03_ThreatActorsAndAttackSurface", "04_ThreatModelingStrideAttack",
+                    "05_ZeroTrustArchitecture", "06_FrameworksAndLawPl"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_15_tozsamosc_i_dostep", "Security - tożsamość i zarządzanie dostępem", List.of(
+                    "01_AuthenticationFactorsAndMfa", "02_PasskeysAndFido2", "03_SsoSamlOidcOauth2",
+                    "04_AccessControlModels", "05_DirectoryServicesAndKerberos",
+                    "06_PrivilegedAccessAndSecrets"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_16_kryptografia_stosowana", "Security - kryptografia stosowana", List.of(
+                    "01_HashingSaltingAndPasswordStorage", "02_EncryptionAtRestAndInTransit",
+                    "03_KeyManagementHsmKms", "04_SignaturesIntegrityAndCodeSigning",
+                    "05_PostQuantumReadiness"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_17_zagrozenia_sieciowe_i_obrona", "Security - zagrożenia sieciowe: wykrywanie i obrona", List.of(
+                    "01_ThreatLandscapeOverview", "02_Layer2Protections", "03_DnsThreatsAndProtections",
+                    "04_DdosResilience", "05_ReconnaissanceDetection", "06_MitmAndTlsInterceptionDefense",
+                    "07_WirelessThreatsDefense", "08_BossDefendTheLab"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_18_architektura_bezpiecznej_sieci", "Security - architektura bezpiecznej sieci", List.of(
+                    "01_SegmentationAndDmz", "02_FirewallTypesAndRuleDesign", "03_IdsIpsSuricataAndZeek",
+                    "04_WafAndApiProtection", "05_SecureProtocolsChoice", "06_SecureRemoteAccessZtnaSase",
+                    "07_CloudSecurityArchitecture", "08_BossSecureArchitectureReview"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_19_hardening_i_podatnosci", "Security - hardening i zarządzanie podatnościami", List.of(
+                    "01_LinuxAndSshHardening", "02_ContainerAndKubernetesHardening",
+                    "03_VulnerabilityScanning", "04_CvssEpssKevPrioritization",
+                    "05_PatchAndRemediationProcess", "06_SupplyChainAndSbom",
+                    "07_BossVulnerabilityManagementCycle"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_20_bezpieczenstwo_aplikacji_i_api", "Security - bezpieczeństwo aplikacji webowych i API", List.of(
+                    "01_OwaspTop10Overview", "02_InjectionPrevention", "03_XssCspAndOutputEncoding",
+                    "04_BrokenAccessControlBolaIdor", "05_AuthSessionAndJwtPitfalls",
+                    "06_SsrfAndEgressControl", "07_DeserializationAndFileUpload",
+                    "08_CorsRateLimitAndApiHardening", "09_SecurityTestingInCi", "10_BossSecureTheApi"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_21_monitoring_i_soc", "Security - monitorowanie bezpieczeństwa i SOC", List.of(
+                    "01_LoggingStrategy", "02_SiemWazuhAndElastic", "03_DetectionEngineeringSigma",
+                    "04_NetworkSecurityMonitoring", "05_EndpointDetectionAndResponse",
+                    "06_AlertTriageAndSocWorkflow", "07_DeceptionAndCanaries", "08_BossSocShift"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_22_analiza_zagrozen_i_threat_hunting", "Security - analiza zagrożeń i threat hunting", List.of(
+                    "01_ThreatIntelligence", "02_ThreatHuntingMethodology",
+                    "03_C2BeaconingAndExfiltrationDetection", "04_PhishingAndEmailSecurity",
+                    "05_LogAnalysisOfWebAttacks", "06_MalwareAnalysisBasics", "07_BossThreatHunt"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_23_reagowanie_na_incydenty", "Security - reagowanie na incydenty i informatyka śledcza", List.of(
+                    "01_IncidentResponseLifecycle", "02_PlaybooksAndRunbooks", "03_ContainmentAndEradication",
+                    "04_DigitalForensicsBasics", "05_RansomwareAndBackupStrategy",
+                    "06_ReportingAndCommunication", "07_BossFullIncident"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_24_grc_ryzyko_i_zgodnosc", "Security - ład, ryzyko i zgodność (GRC)", List.of(
+                    "01_RiskManagement", "02_BiaAndBusinessContinuity", "03_PoliciesStandardsProcedures",
+                    "04_ThirdPartyAndVendorRisk", "05_PrivacyAndDataProtection",
+                    "06_AuditsAndSecurityAwareness"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_25_egzaminy_comptia", "Security - przygotowanie do egzaminów CompTIA", List.of(
+                    "01_CertificationPathAndObjectives", "02_PbqStrategy", "03_NetworkPlusPracticeExam",
+                    "04_SecurityPlusPracticeExam", "05_CysaPlusPracticeExam", "06_BossBlueTeamCapstone"
             ), CourseTrack.NETWORKING)
             // ===== KONIEC BLOKU SIECI =====
     );
