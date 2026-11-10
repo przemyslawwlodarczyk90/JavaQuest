@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 @Controller
 class SpaFallbackController {
 
-    @GetMapping({"/rozdzial/**", "/logowanie", "/rejestracja", "/potwierdz", "/js", "/linux", "/krytyczne"})
+    @GetMapping({"/rozdzial/**", "/logowanie", "/rejestracja", "/potwierdz", "/js", "/linux", "/sieci", "/krytyczne"})
     String forwardToIndex() {
         return "forward:/index.html";
     }
