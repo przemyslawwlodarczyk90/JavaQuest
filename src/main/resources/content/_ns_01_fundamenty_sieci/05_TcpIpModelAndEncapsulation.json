@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Co naprawdę wysyła twoja aplikacja",
+      "image": "netsec/ns01-05-encapsulation.svg",
+      "imageAlt": "Cztery poziomy: wiadomość HTTP; segment TCP z nagłówkiem TCP i danymi HTTP; pakiet z nagłówkiem IP, TCP i danymi; ramka z nagłówkiem Ethernet, IP, TCP, danymi i stopką FCS. Strzałka w dół oznacza kolejność dokładania nagłówków.",
+      "body": "Gdy Spring Boot zwraca `ResponseEntity`, a `RestClient` wysyła `GET /users/42`, w kodzie widzisz obiekty. Na kablu jest **ciąg bajtów**, w którym tekst żądania HTTP stanowi tylko część — przed nim stoją nagłówki TCP, IP i Ethernet, a za nim suma kontrolna ramki.\n\nTen proces to **enkapsulacja**: każda warstwa traktuje to, co dostała z góry, jako „dane” i dokłada własny nagłówek z informacjami potrzebnymi *jej* do pracy. Odbiorca zdejmuje nagłówki w odwrotnej kolejności — to **dekapsulacja**.\n\nW tej lekcji:\n- poznasz **model TCP/IP** — cztery warstwy, na których naprawdę działa Internet, i porównasz je z OSI,\n- przeczytasz **bajt po bajcie** prawdziwą ramkę z żądaniem HTTP (z poprawnymi sumami kontrolnymi),\n- policzysz **narzut nagłówków**, MTU i MSS,\n- zobaczysz, które pola **zmieniają się po drodze** (MAC, TTL, NAT), a które nie,\n- nauczysz się, dlaczego **TCP to strumień bajtów**, a nie wiadomości — co jest źródłem jednego z najczęstszych błędów w kodzie sieciowym w Javie.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Model TCP/IP: cztery warstwy i ich odpowiedniki w OSI",
+      "body": "Model TCP/IP (RFC 1122, 1989) opisuje warstwy tak, jak zaimplementowano je w systemach operacyjnych:\n- **Aplikacji** (OSI 5–7) — HTTP, DNS, TLS, SSH, SMTP, gRPC. Realizuje ją proces: JVM, Nginx, przeglądarka.\n- **Transportowa** (OSI 4) — TCP, UDP, QUIC (nad UDP). Porty, niezawodność, kontrola przepływu i przeciążenia. Realizuje ją jądro systemu (gniazda).\n- **Internetowa** (OSI 3) — IPv4, IPv6, ICMP. Adresowanie i routing między sieciami. Jądro systemu.\n- **Dostępu do sieci / łącza** (OSI 1–2) — Ethernet, Wi-Fi, PPP; sterownik i karta sieciowa.\n\nCzęsto używa się też **modelu pięciowarstwowego** (hybrydowego), który rozdziela warstwę łącza na łącza danych i fizyczną — tak opisują sieci podręczniki i Cisco.\n\nKluczowe pojęcia:\n- **Enkapsulacja / dekapsulacja** — dokładanie i zdejmowanie nagłówków.\n- **PDU** (Protocol Data Unit) — jednostka danych warstwy: wiadomość, segment/datagram, pakiet, ramka.\n- **MTU** (Maximum Transmission Unit) — największy *pakiet IP*, jaki mieści się w ramce danego łącza; w Ethernecie 1500 bajtów.\n- **MSS** (Maximum Segment Size) — największa porcja *danych* w jednym segmencie TCP: MTU − nagłówek IP − nagłówek TCP (1500 − 20 − 20 = 1460 dla IPv4 bez opcji).\n- **Multipleksacja** — pole w nagłówku mówi, komu przekazać dane wyżej: *EtherType* (który protokół L3), *Protocol / Next Header* w IP (który protokół L4), *port* w TCP/UDP (która aplikacja).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Koperta w kopercie w kopercie",
+      "body": "Piszesz list do działu kadr w oddziale firmy (dane HTTP). Wkładasz go do koperty z numerem działu i numerem strony („dział 8080, strona 1 z 1”) — to **nagłówek TCP**. Tę kopertę wkładasz do większej z adresem budynku oddziału (**nagłówek IP**). A tę z kolei kurier wkłada do swojej torby z etykietą „następny punkt: sortownia na Woli” (**nagłówek Ethernet**).\n\nW sortowni kurier wyjmuje kopertę z torby, czyta adres budynku, wybiera trasę i wkłada ją do *nowej* torby z etykietą kolejnego punktu — **adres budynku się nie zmienia, etykieta kuriera zmienia się na każdym odcinku**. Dopiero w budynku docelowym recepcja otwiera kopertę z adresem, przekazuje wewnętrzną do działu 8080, a dział wyjmuje list.\n\nDwie obserwacje, które przydadzą się przez cały tor:\n- **Każdy pośrednik otwiera tylko tyle kopert, ile musi.** Kurier (przełącznik) czyta etykietę torby; sortownia (router) — adres budynku; recepcjonista z dostępem do treści (reverse proxy) — wszystko.\n- **Koperty mają koszt.** Przy krótkim liście koperty ważą więcej niż treść — to narzut nagłówków.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Ramka z żądaniem HTTP bajt po bajcie",
+      "image": "netsec/ns01-05-frame-bytes.svg",
+      "imageAlt": "Linijka bajtów: Ethernet 14 bajtów (offset 0), IPv4 20 bajtów (offset 14), TCP 20 bajtów (offset 34), HTTP 79 bajtów (offset 54), FCS 4 bajty; legenda z opisem pól każdego nagłówka.",
+      "body": "Tak wygląda żądanie `GET /users/42` wysłane z kontenera 172.17.0.3 do aplikacji na 172.17.0.2:8080 w sieci Dockera — dokładnie w formacie panelu bajtów Wiresharka (FCS karta dokłada sama i zwykle nie widać jej w przechwyceniu):",
+      "code": "0000  02 42 ac 11 00 02 02 42 ac 11 00 03 08 00 45 00  .B.....B......E.\n0010  00 77 4c 1d 40 00 40 06 96 3c ac 11 00 03 ac 11  .wL.@.@..<......\n0020  00 02 c8 86 1f 90 5a 3c 91 e2 11 c0 de 01 50 18  ......Z<......P.\n0030  01 f6 9f 3c 00 00 47 45 54 20 2f 75 73 65 72 73  ...<..GET /users\n0040  2f 34 32 20 48 54 54 50 2f 31 2e 31 0d 0a 48 6f  /42 HTTP/1.1..Ho\n0050  73 74 3a 20 61 70 69 2e 6a 61 76 61 71 75 65 73  st: api.javaques\n0060  74 2e 6c 6f 63 61 6c 0d 0a 41 63 63 65 70 74 3a  t.local..Accept:\n0070  20 61 70 70 6c 69 63 61 74 69 6f 6e 2f 6a 73 6f   application/jso\n0080  6e 0d 0a 0d 0a                                   n....\n\nEthernet (bajty 0–13)\n  02 42 ac 11 00 02        MAC docelowy  (kontener aplikacji)\n  02 42 ac 11 00 03        MAC źródłowy  (kontener klienta)\n  08 00                    EtherType 0x0800 → w środku IPv4\nIPv4 (bajty 14–33)\n  45                       wersja 4, IHL 5 → nagłówek 5 × 4 = 20 B\n  00                       DSCP/ECN\n  00 77                    długość całkowita 119 B (IP + TCP + dane)\n  4c 1d                    identyfikator\n  40 00                    flaga DF (nie fragmentuj), offset 0\n  40                       TTL 64 (wartość domyślna Linuksa)\n  06                       protokół 6 → w środku TCP\n  96 3c                    suma kontrolna nagłówka\n  ac 11 00 03 / ac 11 00 02  IP źródłowy 172.17.0.3 / docelowy 172.17.0.2\nTCP (bajty 34–53)\n  c8 86 / 1f 90            port źródłowy 51334 (efemeryczny) / docelowy 8080\n  5a 3c 91 e2 / 11 c0 de 01  numer sekwencyjny / numer potwierdzenia\n  50 18                    data offset 5 (20 B), flagi 0x18 = PSH + ACK\n  01 f6                    okno 502 (× skala okna z handshake’u)\n  9f 3c 00 00              suma kontrolna, wskaźnik pilności\nHTTP (bajty 54–132)\n  47 45 54 20 2f 75 …      \"GET /users/42 HTTP/1.1\\r\\nHost: …\" (79 B tekstu ASCII)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Narzut nagłówków, MTU i MSS w liczbach",
+      "body": "Policzmy, ile „kosztuje” przesłanie danych. Na kablu Ethernet każdą ramkę poprzedza 8 bajtów preambuły, a po niej musi nastąpić 12-bajtowa przerwa (IFG); minimalna ramka ma 64 bajty (krótsze dopełnia się zerami).",
+      "code": "public class Overhead {\n    static int wireBytes(int payload, int ipHdr, int tcpHdr) {\n        int frame = Math.max(64, 14 + ipHdr + tcpHdr + payload + 4);   // Ethernet + IP + TCP + dane + FCS\n        return frame + 8 + 12;                                          // + preambuła/SFD + przerwa międzyramkowa\n    }\n    public static void main(String[] args) {\n        int mtu = 1500;\n        System.out.println(\"MSS IPv4      = \" + (mtu - 20 - 20));        // 1460\n        System.out.println(\"MSS IPv6      = \" + (mtu - 40 - 20));        // 1440\n        System.out.println(\"MSS IPv4 + TS = \" + (mtu - 20 - 20 - 12));   // 1448 (opcja timestamps)\n        for (int payload : new int[]{1460, 100, 10, 1}) {\n            int wire = wireBytes(payload, 20, 20);\n            System.out.printf(\"dane %4d B → na kablu %4d B → wydajność %.1f%%%n\",\n                payload, wire, 100.0 * payload / wire);\n        }\n    }\n}\n// dane 1460 B → na kablu 1538 B → wydajność 94,9%\n// dane  100 B → na kablu  178 B → wydajność 56,2%\n// dane   10 B → na kablu   88 B → wydajność 11,4%\n// dane    1 B → na kablu   84 B → wydajność 1,2%   (ramka dopełniona do 64 B)"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Od write() do read(): enkapsulacja i dekapsulacja krok po kroku",
+      "image": "netsec/ns01-05-send-receive.svg",
+      "imageAlt": "Po lewej stos nadawcy: aplikacja zapisuje do bufora gniazda, TCP dzieli na segmenty i nadaje numery, IP dodaje adresy i wybiera next hop, karta po ARP buduje ramkę z FCS. Po prawej stos odbiorcy: karta sprawdza FCS, MAC i EtherType, IP sprawdza adres i protokół, TCP porządkuje i potwierdza, aplikacja czyta z bufora.",
+      "body": "**Nadawca** (klient Java wysyła żądanie):\n1. **Aplikacja** zapisuje bajty do strumienia gniazda (`OutputStream.write`). Trafiają do *bufora nadawczego* w jądrze — `write()` wraca, zanim cokolwiek opuści komputer.\n2. **TCP** tnie strumień na segmenty nie większe niż MSS, nadaje numery sekwencyjne, dodaje porty i sumę kontrolną, pilnuje okna odbiorcy.\n3. **IP** dodaje adresy, TTL, protokół (6 = TCP), sumę kontrolną nagłówka; z tablicy routingu wybiera interfejs i **next hop** (bramę albo samego odbiorcę, jeśli jest w tej samej sieci).\n4. **Warstwa łącza** ustala MAC next hopa (ARP/ND), buduje ramkę z EtherType 0x0800 lub 0x86DD; karta dokłada FCS i zamienia bity na sygnał.\n\n**Odbiorca** (serwer Spring Boot):\n5. **Karta** sprawdza FCS (uszkodzone ramki odrzuca po cichu) i czy MAC docelowy jest jej (lub rozgłoszeniowy/multicast).\n6. **EtherType** wskazuje IPv4 → jądro sprawdza sumę nagłówka i czy adres docelowy należy do hosta; **pole protokołu** wskazuje TCP.\n7. **TCP** znajduje gniazdo po czwórce (IP i port źródła, IP i port celu), układa segmenty w kolejności, wysyła ACK, umieszcza dane w *buforze odbiorczym*.\n8. **Aplikacja** (Tomcat) czyta bajty `read()` — tyle, ile akurat jest w buforze — i parsuje HTTP.\n\nKażdy krok to też miejsce, gdzie coś może się nie udać — i gdzie obrońca może patrzeć: filtr na karcie (L2), firewall jądra nftables (L3/L4), WAF w proxy (L7).",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Pola multipleksacji: kto następny?",
+      "body": "Nagłówki tworzą łańcuch wskaźników „co jest w środku”. Te wartości warto rozpoznawać w Wiresharku i logach:",
+      "code": "EtherType (Ethernet, 2 B)          IP Protocol / IPv6 Next Header (1 B)     porty TCP/UDP (2 B)\n0x0800  IPv4                       1   ICMP                                  22    SSH\n0x86DD  IPv6                       2   IGMP                                  53    DNS\n0x0806  ARP                        6   TCP                                   80    HTTP\n0x8100  tag VLAN 802.1Q            17  UDP                                   443   HTTPS (TCP) / HTTP/3 (UDP)\n0x88A8  podwójny tag (QinQ)        47  GRE                                   5432  PostgreSQL\n0x8847  MPLS                       50  ESP (IPsec)                           6379  Redis\n0x888E  EAPOL (802.1X)             58  ICMPv6                                8080  HTTP alternatywny\n                                   89  OSPF                                  9092  Kafka\n                                   132 SCTP\n\nRozmiary nagłówków (bez opcji): Ethernet 14 B (+4 z VLAN) + FCS 4 B, IPv4 20 B (do 60), IPv6 40 B,\nTCP 20 B (do 60; typowo 32 z timestamps), UDP 8 B, ICMP 8 B, VXLAN 50 B narzutu, WireGuard 60/80 B."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Parser nagłówków w Javie: ByteBuffer na surowych bajtach",
+      "body": "Ten sam zrzut co wyżej, rozebrany kodem. Tak działają parsery protokołów (Netty, pcap4j, sondy IDS). `ByteBuffer` domyślnie czyta w kolejności sieciowej (big-endian), a `& 0xFF` / `& 0xFFFF` zamienia wartości ze znakiem na bez znaku.",
+      "code": "import java.nio.ByteBuffer;\nimport java.util.HexFormat;\n\npublic class FrameParser {\n    public static void main(String[] args) {\n        byte[] raw = HexFormat.of().parseHex(args[0]);          // ramka jako hex bez spacji\n        ByteBuffer b = ByteBuffer.wrap(raw);\n\n        int etherType = b.getShort(12) & 0xFFFF;                // 0x0800\n        if (etherType != 0x0800) throw new IllegalArgumentException(\"to nie IPv4\");\n        int ip = 14;\n        int ihl = (b.get(ip) & 0x0F) * 4;                       // 20\n        int totalLen = b.getShort(ip + 2) & 0xFFFF;             // 119\n        int ttl = b.get(ip + 8) & 0xFF;                         // 64\n        int proto = b.get(ip + 9) & 0xFF;                       // 6 = TCP\n        String src = ipv4(b, ip + 12), dst = ipv4(b, ip + 16);\n\n        int tcp = ip + ihl;\n        int sport = b.getShort(tcp) & 0xFFFF;                   // 51334\n        int dport = b.getShort(tcp + 2) & 0xFFFF;               // 8080\n        int dataOffset = ((b.get(tcp + 12) & 0xF0) >> 4) * 4;  // 20\n        int flags = b.get(tcp + 13) & 0xFF;                     // 0x18 = PSH|ACK\n        int payload = tcp + dataOffset;\n        String http = new String(raw, payload, ip + totalLen - payload, java.nio.charset.StandardCharsets.US_ASCII);\n\n        System.out.printf(\"%s:%d → %s:%d TTL=%d proto=%d flags=0x%02x%n\", src, sport, dst, dport, ttl, proto, flags);\n        System.out.println(http.lines().findFirst().orElse(\"\"));   // GET /users/42 HTTP/1.1\n    }\n    static String ipv4(ByteBuffer b, int off) {\n        return (b.get(off) & 0xFF) + \".\" + (b.get(off + 1) & 0xFF) + \".\" + (b.get(off + 2) & 0xFF) + \".\" + (b.get(off + 3) & 0xFF);\n    }\n}"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Co widzi i co zmienia każdy element na drodze",
+      "image": "netsec/ns01-05-hop-changes.svg",
+      "imageAlt": "Tabela sześciu punktów drogi: laptop, przełącznik, router z NAT, routery ISP, reverse proxy, aplikacja. Adresy MAC zmieniają się na routerach i proxy, TTL i suma kontrolna IP na routerach, IP i port źródłowy na routerze z NAT, połączenie TCP i TLS na reverse proxy.",
+      "body": "Enkapsulacja wyjaśnia, *gdzie* szukać dowodów i *dlaczego* adresy w logach się różnią:\n- **Przełącznik** nie zmienia niczego — przekazuje ramkę po MAC.\n- **Router** zdejmuje ramkę, zmniejsza TTL (i przelicza sumę kontrolną IP), buduje nową ramkę z nowymi adresami MAC. Adresy IP zostają.\n- **NAT/PAT** podmienia IP i port źródłowy — dlatego serwer widzi publiczny adres routera, a nie laptopa.\n- **Reverse proxy / load balancer L7** kończy połączenie TCP i TLS i otwiera *nowe* do aplikacji. Aplikacja widzi IP proxy; prawdziwy adres klienta trafia do nagłówka `X-Forwarded-For` lub `Forwarded` (Spring: `server.forward-headers-strategy`), a na L4 do PROXY protocol.\n- **Tunel (VPN, VXLAN, GRE)** wkłada cały pakiet lub ramkę jako *dane* do nowego pakietu — powstaje enkapsulacja w enkapsulacji, która zmniejsza dostępne MTU.\n\nDla obrońcy:\n- Logi z różnych punktów pokazują **różne adresy tego samego połączenia** (NAT, proxy) — korelacja wymaga tabel NAT, nagłówków X-Forwarded-For i identyfikatorów żądań.\n- **Tunelowanie** to także technika napastników: dane wyprowadzane w zapytaniach DNS, w ICMP albo w HTTPS do nietypowej domeny. Wykrywa się je po anomaliach rozmiaru, częstotliwości i entropii (rozdział o analizie ruchu).\n- Nagłówek `X-Forwarded-For` od klienta jest **niezaufany** — ufaj mu tylko, gdy ustawiło go twoje proxy.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Pułapki: MTU, MSS, offloading i strumień bajtów",
+      "body": "- **TCP nie ma granic wiadomości.** Dwa `write()` po 100 B mogą dojść jako jeden `read()` 200 B albo trzy kawałki. Protokół aplikacyjny musi sam oznaczać granice (długość, separator, HTTP Content-Length). To najczęstszy błąd w ręcznie pisanym kodzie na gniazdach.\n- **MTU ≠ MSS.** MTU dotyczy pakietu IP (1500), MSS danych TCP (1460). W tunelach oba maleją: WireGuard domyślnie MTU 1420, VXLAN wymaga 1550 w podkładzie albo 1450 w nakładce.\n- **Za duże pakiety w tunelu** bez działającego PMTUD giną po cichu — handshake TLS (duże certyfikaty) wisi, choć ping działa.\n- **Offloading karty (TSO/GSO/GRO)** — Wireshark na nadawcy pokazuje „segmenty” po 64 kB i „błędne sumy kontrolne”, bo dzieli je i liczy sumy dopiero karta. To nie błąd sieci.\n- **Liczenie narzutu tylko nagłówkami** — na kablu dochodzą preambuła, przerwa międzyramkowa i dopełnienie do 64 B; przy małych wiadomościach (IoT, telemetria) wydajność spada do kilku procent.\n- **IPv6 ma większy nagłówek** (40 B) — MSS 1440 zamiast 1460.\n- **Zaufanie do X-Forwarded-For** z Internetu pozwala sfałszować adres klienta w logach i ominąć allow-listy IP.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: jeden read() = jedna wiadomość",
+      "body": "Prosty protokół „komenda w jednym pakiecie”. Działa na localhoście, psuje się w prawdziwej sieci: dłuższe wiadomości przychodzą w kawałkach, krótkie sklejają się w jeden `read()`.",
+      "code": "try (Socket s = server.accept()) {\n    InputStream in = s.getInputStream();\n    byte[] buf = new byte[4096];\n    int n = in.read(buf);                        // ZAKŁADA, że cała wiadomość przyszła naraz\n    String command = new String(buf, 0, n, StandardCharsets.UTF_8);\n    handle(command);                             // raz pół komendy, raz dwie sklejone\n}\n// Objawy: losowe błędy parsowania JSON przy większym ruchu, „działa lokalnie, nie działa na produkcji”,\n// problemy pojawiające się dopiero przez VPN (mniejsze MTU → więcej kawałków)."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: ramkowanie wiadomości długością",
+      "body": "Każda wiadomość zaczyna się 4-bajtową długością (big-endian), a odbiorca czyta dokładnie tyle bajtów (`readFully`). Do tego limit rozmiaru — bez niego napastnik zadeklaruje 2 GB i wyczerpie pamięć (to także kwestia bezpieczeństwa).",
+      "code": "static final int MAX_MESSAGE = 1 << 20;          // 1 MiB — ochrona przed DoS\n\nstatic void send(DataOutputStream out, String msg) throws IOException {\n    byte[] data = msg.getBytes(StandardCharsets.UTF_8);\n    out.writeInt(data.length);                   // nagłówek: długość\n    out.write(data);\n    out.flush();\n}\n\nstatic String receive(DataInputStream in) throws IOException {\n    int len = in.readInt();                      // czeka na pełne 4 bajty\n    if (len < 0 || len > MAX_MESSAGE) throw new IOException(\"Nieprawidłowa długość: \" + len);\n    byte[] data = new byte[len];\n    in.readFully(data);                          // czyta, aż zbierze dokładnie len bajtów\n    return new String(data, StandardCharsets.UTF_8);\n}\n// W Netty to samo robią LengthFieldBasedFrameDecoder i LengthFieldPrepender."
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy schodzić do poziomu bajtów i nagłówków",
+      "body": "- **Diagnoza „dziwnych” problemów** — zawieszone TLS przez VPN, połączenia zrywane przez proxy, ruch idący nie tam — pomaga tylko capture i czytanie nagłówków.\n- **Planowanie wydajności** — przy małych wiadomościach (telemetria, gRPC streaming, IoT, gry) narzut nagłówków dominuje; łączenie wiadomości (batching) i kompresja mają duży wpływ.\n- **Tunele i chmura** — przy VXLAN, WireGuard, IPsec i sieciach overlay Kubernetesa zawsze policz MTU/MSS.\n- **Własne protokoły na gniazdach** — zawsze ramkowanie (długość lub separator), limity rozmiaru, kolejność bajtów.\n- **Bezpieczeństwo i forensyka** — analiza ruchu w incydencie, pisanie reguł IDS (Suricata dopasowuje do pól nagłówków i buforów protokołów), wykrywanie tunelowania i eksfiltracji.\n- **Na co dzień** — wystarczą narzędzia wyższego poziomu (curl -v, logi), ale wiedza o enkapsulacji pozwala zrozumieć, *co* pokazują.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Model TCP/IP ma 4 warstwy: aplikacji (OSI 5–7), transportową (4), internetową (3), dostępu do sieci (1–2).\n- **Enkapsulacja**: dane → segment (TCP) → pakiet (IP) → ramka (Ethernet + FCS) → bity; **dekapsulacja** w odwrotnej kolejności.\n- Multipleksacja: EtherType (0x0800 IPv4, 0x86DD IPv6, 0x0806 ARP) → protokół IP (6 TCP, 17 UDP, 1 ICMP) → port.\n- Nagłówki: Ethernet 14 B + FCS 4 B, IPv4 20 B, IPv6 40 B, TCP 20 B (typowo 32), UDP 8 B.\n- **MTU 1500 → MSS 1460** (IPv4), 1440 (IPv6), mniej w tunelach.\n- Po drodze zmieniają się MAC (każdy odcinek), TTL (każdy router), IP/port źródłowy (NAT), a proxy L7 tworzy nowe połączenie TCP.\n- **TCP to strumień bajtów** — ramkuj wiadomości i ograniczaj ich rozmiar.\n- Następna lekcja: **przepustowość, opóźnienie, jitter i utrata pakietów** — jak mierzyć jakość tej drogi.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj EtherType (bajty 12–13) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "0x08 0x00 → 0x0800 = IPv4."
+    },
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj wersję i długość nagłówka IP (bajt 14) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "0x45 → wersja 4, IHL 5 → 5 × 4 = 20 bajtów."
+    },
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj długość całkowitą pakietu IP (bajty 16–17) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "0x0077 = 119 bajtów = 20 (IP) + 20 (TCP) + 79 (HTTP)."
+    },
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj TTL i protokół (bajty 22–23) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "0x40 = 64 (Linux), 0x06 = TCP."
+    },
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj adres IP źródłowy (bajty 26–29) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "ac 11 00 03 → 172.17.0.3."
+    },
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj porty TCP (bajty 34–37) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "c8 86 → 51334 (efemeryczny klienta), 1f 90 → 8080 (aplikacja)."
+    },
+    {
+      "prompt": "Na podstawie zrzutu ramki z lekcji odczytaj flagi TCP (bajt 47) i zinterpretuj wartość.",
+      "hint": "Policz offset: Ethernet 0–13, IPv4 od 14, TCP od 34.",
+      "solution": "0x18 = 0001 1000 → PSH (0x08) + ACK (0x10)."
+    },
+    {
+      "prompt": "Policz MSS dla łącza: Ethernet, IPv4, bez opcji TCP (MTU 1500).",
+      "hint": "MSS = MTU − nagłówek IP − nagłówek TCP (20 B + 12 B przy timestamps).",
+      "solution": "MSS = 1500 − 20 − 20 = 1460 B."
+    },
+    {
+      "prompt": "Policz MSS dla łącza: Ethernet, IPv6, opcja timestamps (MTU 1500).",
+      "hint": "MSS = MTU − nagłówek IP − nagłówek TCP (20 B + 12 B przy timestamps).",
+      "solution": "MSS = 1500 − 40 − 20 − 12 = 1428 B."
+    },
+    {
+      "prompt": "Policz MSS dla łącza: PPPoE (DSL), IPv4 (MTU 1492).",
+      "hint": "MSS = MTU − nagłówek IP − nagłówek TCP (20 B + 12 B przy timestamps).",
+      "solution": "MSS = 1492 − 20 − 20 = 1452 B. PPPoE zabiera 8 B z 1500."
+    },
+    {
+      "prompt": "Policz MSS dla łącza: tunel WireGuard, IPv4 w środku (MTU 1420).",
+      "hint": "MSS = MTU − nagłówek IP − nagłówek TCP (20 B + 12 B przy timestamps).",
+      "solution": "MSS = 1420 − 20 − 20 = 1380 B. WireGuard ustawia MTU 1420, rezerwując 80 B na nagłówki (IPv6 + UDP + WireGuard)."
+    },
+    {
+      "prompt": "Policz MSS dla łącza: nakładka VXLAN na podkładzie z MTU 1500, IPv4 (MTU 1450).",
+      "hint": "MSS = MTU − nagłówek IP − nagłówek TCP (20 B + 12 B przy timestamps).",
+      "solution": "MSS = 1450 − 20 − 20 − 12 = 1398 B. VXLAN dokłada 50 B."
+    },
+    {
+      "prompt": "Ile bajtów zajmuje na kablu Ethernet (z preambułą i przerwą międzyramkową) segment TCP/IPv4 z 1460 B danych bez opcji? Jaka jest wydajność?",
+      "hint": "Ramka = 14 + 20 + 20 + dane + 4 (min. 64 B); na kablu + 8 (preambuła) + 12 (IFG).",
+      "solution": "Ramka: 1518 B; na kablu 1538 B; wydajność 1460/1538 = 94,9%."
+    },
+    {
+      "prompt": "Ile bajtów zajmuje na kablu Ethernet (z preambułą i przerwą międzyramkową) segment TCP/IPv4 z 200 B danych bez opcji? Jaka jest wydajność?",
+      "hint": "Ramka = 14 + 20 + 20 + dane + 4 (min. 64 B); na kablu + 8 (preambuła) + 12 (IFG).",
+      "solution": "Ramka: 258 B; na kablu 278 B; wydajność 200/278 = 71,9%."
+    },
+    {
+      "prompt": "Ile bajtów zajmuje na kablu Ethernet (z preambułą i przerwą międzyramkową) segment TCP/IPv4 z 20 B danych bez opcji? Jaka jest wydajność?",
+      "hint": "Ramka = 14 + 20 + 20 + dane + 4 (min. 64 B); na kablu + 8 (preambuła) + 12 (IFG).",
+      "solution": "Ramka: 78 B; na kablu 98 B; wydajność 20/98 = 20,4%."
+    },
+    {
+      "prompt": "Ułóż od zewnątrz do środka nagłówki ramki VXLAN przenoszącej żądanie HTTP między podami Kubernetesa na dwóch węzłach.",
+      "hint": "VXLAN przenosi całą ramkę L2 jako dane UDP.",
+      "solution": "Ethernet (węzeł → węzeł/brama) → IP zewnętrzne (adresy węzłów) → UDP (port 4789) → nagłówek VXLAN (VNI) → Ethernet wewnętrzny (MAC podów) → IP wewnętrzne (adresy podów) → TCP → HTTP. Narzut ok. 50 B, dlatego MTU w nakładce to zwykle 1450."
+    },
+    {
+      "prompt": "Klient z laptopa (192.168.1.20) łączy się przez router domowy z NAT (publiczny 83.10.5.7) z aplikacją za reverse proxy (203.0.113.10 → aplikacja 10.0.1.5). Jakie IP źródłowe zobaczy w logach: router ISP, reverse proxy, aplikacja? Jak aplikacja może poznać prawdziwy adres klienta?",
+      "hint": "NAT podmienia adres; proxy otwiera nowe połączenie.",
+      "solution": "Router ISP: 83.10.5.7 (po NAT). Reverse proxy: 83.10.5.7. Aplikacja: adres wewnętrzny proxy (np. 10.0.0.4). Prawdziwy adres (publiczny 83.10.5.7, bo prywatny 192.168.1.20 znika za NAT) przekazuje proxy w nagłówku X-Forwarded-For/Forwarded; Spring: server.forward-headers-strategy=framework i lista zaufanych proxy. Adres prywatny laptopa nie jest znany nikomu poza siecią domową."
+    },
+    {
+      "prompt": "Napisz w Javie metodę int ipv4Checksum(byte[] header), liczącą sumę kontrolną nagłówka IPv4 (suma 16-bitowych słów w arytmetyce z przeniesieniem, negacja). Sprawdź ją na nagłówku z lekcji: wynik dla nagłówka z wpisaną sumą powinien wynosić 0.",
+      "hint": "Sumuj słowa jako liczby bez znaku, przenoś nadmiar z bitu 16 na początek.",
+      "solution": "static int ipv4Checksum(byte[] h) {\n    int sum = 0;\n    for (int i = 0; i < h.length; i += 2) {\n        sum += ((h[i] & 0xFF) << 8) | (h[i + 1] & 0xFF);\n    }\n    while ((sum >> 16) != 0) sum = (sum & 0xFFFF) + (sum >> 16);\n    return ~sum & 0xFFFF;\n}\nDla nagłówka z polem sumy wyzerowanym wynik to 0x963c; po wpisaniu tej wartości funkcja zwraca 0 (nagłówek poprawny)."
+    },
+    {
+      "prompt": "Uruchom w labie Docker dwa kontenery (klient z curl i aplikację), przechwyć ruch tcpdump -i any -w http.pcap port 8080, otwórz w Wiresharku i odszukaj w panelu bajtów te same pola co w lekcji. Co jest inne?",
+      "hint": "Zwróć uwagę na nagłówek „Linux cooked capture” przy -i any oraz opcje TCP.",
+      "solution": "Różnice: przy -i any zamiast Ethernetu jest pseudo-nagłówek Linux cooked capture (SLL/SLL2); segmenty TCP zwykle mają opcje (timestamps → nagłówek 32 B, data offset 8); inne numery sekwencyjne, ID i porty efemeryczne; suma kontrolna może być oznaczona jako niezweryfikowana z powodu offloadingu."
+    },
+    {
+      "prompt": "Napisz serwer i klienta w Javie, którzy wymieniają wiadomości JSON z ramkowaniem długością (4 bajty big-endian). Przetestuj, wysyłając 1000 wiadomości o losowych rozmiarach 10 B–100 kB, i sprawdź, że żadna nie została sklejona ani ucięta.",
+      "hint": "Użyj DataOutputStream.writeInt i DataInputStream.readFully; dodaj limit rozmiaru.",
+      "solution": "Szkic: klient w pętli wysyła send(out, json) z licznikiem w treści; serwer w pętli receive(in), parsuje JSON i sprawdza kolejny numer. Test przechodzi, gdy wszystkie 1000 numerów przyszło w kolejności, a rozmiary się zgadzają. Dla porównania wersja z jednym read() na wiadomość zgłasza błędy parsowania już przy wiadomościach > kilkunastu kB."
+    },
+    {
+      "prompt": "Analityk zauważył, że host wysyła co 30 sekund zapytania DNS o nazwy typu 4a6f686e446f65.x7k.example.net. Dlaczego może to być tunelowanie danych i jak to wykryć?",
+      "hint": "Zwróć uwagę na etykietę przed domeną.",
+      "solution": "4a6f686e446f65 to hex tekstu ASCII („JohnDoe”) — dane zakodowane w nazwie hosta i wysyłane jako zapytania DNS (enkapsulacja danych w protokole aplikacyjnym). Wskaźniki: długie, losowo wyglądające etykiety, wysoka entropia, wiele unikalnych subdomen jednej domeny, regularność czasowa. Wykrywanie: logi DNS w SIEM, reguły na długość i entropię etykiet, Zeek dns.log; blokada: wymuszenie firmowego resolvera i filtrowanie domen."
+    },
+    {
+      "prompt": "Odczytaj ze zrzutu adres IP docelowy (bajty 30–33) i port docelowy, a następnie powiedz, do którego kontenera i usługi trafia żądanie.",
+      "hint": "Adres docelowy stoi po adresie źródłowym.",
+      "solution": "ac 11 00 02 → 172.17.0.2, port 0x1f90 = 8080 → kontener aplikacji Spring Boot nasłuchujący na 8080 w sieci bridge Dockera."
+    },
+    {
+      "prompt": "Ile bajtów danych HTTP niesie pakiet z lekcji? Policz to wyłącznie z nagłówków (długość całkowita IP, IHL, data offset TCP), bez liczenia znaków.",
+      "hint": "Dane = total length − nagłówek IP − nagłówek TCP.",
+      "solution": "119 − 20 − 20 = 79 bajtów. Tak samo robi Wireshark, wyświetlając „TCP payload (79 bytes)”."
+    },
+    {
+      "prompt": "Wireshark pokazuje „Frame 1: 133 bytes on wire”, a karta wysłała 137 bajtów. Skąd różnica i czego jeszcze nie widać w przechwyceniu?",
+      "hint": "Co karta dokłada sama?",
+      "solution": "Brakuje 4 bajtów FCS — karta liczy i dokłada CRC sama, a przy odbiorze zwykle je usuwa przed przekazaniem do systemu. Nie widać też preambuły z SFD (8 B) ani przerwy międzyramkowej (12 B) — to elementy warstwy fizycznej."
+    },
+    {
+      "prompt": "Rozpisz enkapsulację zapytania DNS o api.javaquest.local wysłanego przez kontener do resolvera Dockera 127.0.0.11. Wymień nagłówki od zewnątrz i pola multipleksacji.",
+      "hint": "DNS zwykle używa UDP.",
+      "solution": "Uwaga: 127.0.0.11 to adres pętli zwrotnej w przestrzeni nazw kontenera, więc pakiet nie wychodzi na bridge — idzie przez interfejs lo. Kolejność: IPv4 (Protocol = 17) → UDP (port docelowy 53, źródłowy efemeryczny) → komunikat DNS (ID, flagi, pytanie typu A). Gdyby resolver był w sieci: Ethernet (EtherType 0x0800) → IPv4 → UDP → DNS."
+    },
+    {
+      "prompt": "Użytkownicy VPN skarżą się, że strony ładują się częściowo, a duże pobrania wiszą. Ping działa. Przeprowadź rozumowanie z MTU i zaproponuj dwie poprawki.",
+      "hint": "Tunel zmniejsza MTU; co, jeśli ICMP jest blokowane?",
+      "solution": "Tunel dokłada nagłówki, więc efektywne MTU jest mniejsze niż 1500. Pakiety z DF większe niż MTU tunelu wymagają ICMP „fragmentation needed”; jeśli firewall je blokuje, duże pakiety giną (PMTUD black hole), małe (ping, początek strony) przechodzą. Poprawki: MSS clamping na bramie VPN (np. tcp option maxseg size set rt mtu w nftables), mniejsze MTU na interfejsie tunelu, odblokowanie ICMP typu 3 kod 4."
+    },
+    {
+      "prompt": "Sprawdź narzędziami MTU interfejsów na swoim komputerze i w kontenerze Dockera (ip link / Get-NetIPInterface) oraz MSS ogłaszane w SYN przy połączeniu curl (tcpdump -nv). Porównaj wyniki.",
+      "hint": "MSS widać w opcjach segmentu SYN.",
+      "solution": "Typowo: eth0/Wi-Fi MTU 1500 → MSS 1460 w SYN; docker0 i veth 1500; w WSL2 lub VPN może być 1400–1420 → MSS 1360–1380. tcpdump: „Flags [S], ... options [mss 1460,sackOK,TS ...,nop,wscale 7]”."
+    },
+    {
+      "prompt": "Dlaczego mikroserwis wysyłający tysiące małych wiadomości telemetrycznych (po 30 B) osobnymi pakietami marnuje łącze? Policz wydajność i zaproponuj zmianę.",
+      "hint": "Użyj wzoru na bajty na kablu z lekcji.",
+      "solution": "30 B danych → ramka 88 B → na kablu 108 B → wydajność 27,8%. Zmiana: łączenie wiadomości w paczki (batching, np. co 100 ms lub 64 kB), kompresja, jedno długotrwałe połączenie ze strumieniowaniem (gRPC), co podnosi wydajność powyżej 90%."
+    },
+    {
+      "prompt": "Zaprojektuj prosty format binarnej wiadomości dla własnego protokołu (wersja, typ, długość, dane) i napisz w Javie metody encode/decode z ByteBuffer. Uzasadnij kolejność bajtów i limity.",
+      "hint": "Wzoruj się na nagłówkach IP/TCP: stałe pola na początku, potem dane.",
+      "solution": "Przykład: [wersja 1 B][typ 1 B][długość 4 B big-endian][dane]. encode: ByteBuffer.allocate(6 + len).put(ver).put(type).putInt(len).put(data). decode: najpierw 6 B nagłówka, walidacja wersji i 0 ≤ długość ≤ limit, potem readFully(data). Big-endian (kolejność sieciowa) — zgodność z narzędziami i ByteBuffer; limit chroni przed DoS; pole wersji pozwala rozwijać protokół."
+    },
+    {
+      "prompt": "Porównaj, co widzi o tym samym żądaniu HTTPS: przełącznik w biurze, firewall stanowy na brzegu, dostawca Internetu i reverse proxy firmy. Uwzględnij adresy, porty, nazwę hosta (SNI), ścieżkę URL i treść.",
+      "hint": "Pomyśl, które nagłówki są zaszyfrowane TLS.",
+      "solution": "Przełącznik: przekazuje ramki po MAC, niczego wyżej nie interpretuje. Firewall stanowy: IP, porty, stan; SNI z ClientHello (o ile nie ma ECH), treść tylko przy inspekcji TLS. ISP: IP, porty, SNI (bez ECH), rozmiary i czasy — bez ścieżki i treści. Reverse proxy (kończy TLS): wszystko — host, ścieżka, nagłówki, treść. Wniosek: ścieżka URL i treść są chronione TLS aż do miejsca jego zakończenia."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Ile warstw ma model TCP/IP według RFC 1122?",
+      "options": {
+        "A": "3",
+        "B": "7",
+        "C": "5",
+        "D": "4"
+      },
+      "correct": "D",
+      "explanation": "Aplikacji, transportowa, internetowa, dostępu do sieci (łącza)."
+    },
+    {
+      "question": "Której warstwie OSI odpowiada warstwa internetowa modelu TCP/IP?",
+      "options": {
+        "A": "Łącza danych (2)",
+        "B": "Sieciowej (3)",
+        "C": "Transportowej (4)",
+        "D": "Aplikacji (7)"
+      },
+      "correct": "B",
+      "explanation": "IP i ICMP to warstwa 3."
+    },
+    {
+      "question": "Którym warstwom OSI odpowiada warstwa aplikacji TCP/IP?",
+      "options": {
+        "A": "Warstwom 1 i 2",
+        "B": "Warstwom 4–7",
+        "C": "Warstwom 5, 6 i 7",
+        "D": "Tylko warstwie 7"
+      },
+      "correct": "C",
+      "explanation": "Sesja, prezentacja i aplikacja są w TCP/IP realizowane przez proces aplikacji."
+    },
+    {
+      "question": "Którym warstwom OSI odpowiada warstwa dostępu do sieci TCP/IP?",
+      "options": {
+        "A": "Fizycznej i łącza danych (1–2)",
+        "B": "Sesji (5)",
+        "C": "Sieciowej (3)",
+        "D": "Transportowej (4)"
+      },
+      "correct": "A",
+      "explanation": "Ethernet, Wi-Fi, sterowniki i karta sieciowa."
+    },
+    {
+      "question": "Co to jest enkapsulacja?",
+      "options": {
+        "A": "Szyfrowanie danych",
+        "B": "Dokładanie przez każdą warstwę własnego nagłówka do danych warstwy wyższej",
+        "C": "Usuwanie nagłówków przez odbiorcę",
+        "D": "Kompresja nagłówków"
+      },
+      "correct": "B",
+      "explanation": "Usuwanie nagłówków po stronie odbiorcy to dekapsulacja."
+    },
+    {
+      "question": "Jaka jest poprawna kolejność enkapsulacji od aplikacji?",
+      "options": {
+        "A": "bity → ramka → pakiet → segment → dane",
+        "B": "dane → pakiet → segment → ramka → bity",
+        "C": "dane → segment → pakiet → ramka → bity",
+        "D": "ramka → pakiet → segment → dane → bity"
+      },
+      "correct": "C",
+      "explanation": "TCP dokłada nagłówek do danych, IP do segmentu, Ethernet do pakietu."
+    },
+    {
+      "question": "Co oznacza MTU 1500 w Ethernecie?",
+      "options": {
+        "A": "Ramka ma zawsze 1500 bajtów",
+        "B": "Łącze ma przepustowość 1500 Mb/s",
+        "C": "Dane TCP mogą mieć 1500 bajtów",
+        "D": "Największy pakiet IP, który zmieści się w jednej ramce, ma 1500 bajtów"
+      },
+      "correct": "D",
+      "explanation": "Ramka z nagłówkiem i FCS ma do 1518 B (1522 z VLAN)."
+    },
+    {
+      "question": "Ile wynosi MSS dla IPv4 i TCP bez opcji przy MTU 1500?",
+      "options": {
+        "A": "1460",
+        "B": "1440",
+        "C": "1480",
+        "D": "1500"
+      },
+      "correct": "A",
+      "explanation": "1500 − 20 (IP) − 20 (TCP)."
+    },
+    {
+      "question": "Dlaczego MSS dla IPv6 przy MTU 1500 wynosi 1440?",
+      "options": {
+        "A": "Nagłówek IPv6 ma 40 bajtów zamiast 20",
+        "B": "IPv6 wymaga MTU 1280",
+        "C": "IPv6 szyfruje dane",
+        "D": "IPv6 nie ma nagłówka TCP"
+      },
+      "correct": "A",
+      "explanation": "1500 − 40 − 20 = 1440."
+    },
+    {
+      "question": "Co oznacza pole EtherType 0x86DD?",
+      "options": {
+        "A": "W ramce jest pakiet IPv4",
+        "B": "Ramka zawiera ARP",
+        "C": "Ramka ma tag VLAN",
+        "D": "W ramce jest pakiet IPv6"
+      },
+      "correct": "D",
+      "explanation": "0x0800 IPv4, 0x86DD IPv6, 0x0806 ARP, 0x8100 VLAN."
+    },
+    {
+      "question": "Jaką wartość ma pole Protocol w nagłówku IPv4 dla UDP?",
+      "options": {
+        "A": "1",
+        "B": "58",
+        "C": "17",
+        "D": "6"
+      },
+      "correct": "C",
+      "explanation": "6 TCP, 17 UDP, 1 ICMP, 58 ICMPv6."
+    },
+    {
+      "question": "Jaka jest minimalna długość ramki Ethernet (z FCS)?",
+      "options": {
+        "A": "46 bajtów",
+        "B": "64 bajty",
+        "C": "1500 bajtów",
+        "D": "14 bajtów"
+      },
+      "correct": "B",
+      "explanation": "Krótsze ramki są dopełniane (padding) do 64 B."
+    },
+    {
+      "question": "Ile bajtów ma nagłówek UDP?",
+      "options": {
+        "A": "40",
+        "B": "8",
+        "C": "4",
+        "D": "20"
+      },
+      "correct": "B",
+      "explanation": "Port źródłowy, docelowy, długość i suma kontrolna — po 2 B."
+    },
+    {
+      "question": "Ile bajtów ma nagłówek IPv4 bez opcji?",
+      "options": {
+        "A": "40",
+        "B": "14",
+        "C": "8",
+        "D": "20"
+      },
+      "correct": "D",
+      "explanation": "Pole IHL = 5 oznacza 5 słów 32-bitowych."
+    },
+    {
+      "question": "Co oznacza bajt 0x45 na początku nagłówka IPv4?",
+      "options": {
+        "A": "Wersja 4 i długość nagłówka 5 słów (20 bajtów)",
+        "B": "TTL 69",
+        "C": "Długość pakietu 69 bajtów",
+        "D": "Protokół 45"
+      },
+      "correct": "A",
+      "explanation": "Górny nibble = wersja, dolny = IHL."
+    },
+    {
+      "question": "Które pole zmienia każdy router na drodze pakietu IPv4?",
+      "options": {
+        "A": "Numer sekwencyjny TCP",
+        "B": "Adres IP docelowy",
+        "C": "TTL (oraz w konsekwencji suma kontrolna nagłówka)",
+        "D": "Port docelowy"
+      },
+      "correct": "C",
+      "explanation": "Router dekrementuje TTL i przelicza sumę kontrolną nagłówka."
+    },
+    {
+      "question": "Co dzieje się z adresami MAC, gdy pakiet przechodzi przez router?",
+      "options": {
+        "A": "Adresy MAC są szyfrowane",
+        "B": "Router usuwa adres MAC docelowy",
+        "C": "Adresy MAC pozostają do końca drogi",
+        "D": "Router tworzy nową ramkę z nowymi adresami MAC dla kolejnego odcinka"
+      },
+      "correct": "D",
+      "explanation": "MAC ma znaczenie tylko w obrębie jednego segmentu L2."
+    },
+    {
+      "question": "Dlaczego aplikacja za reverse proxy widzi adres IP proxy zamiast klienta?",
+      "options": {
+        "A": "Proxy kończy połączenie TCP klienta i otwiera nowe do aplikacji",
+        "B": "Bo aplikacja działa na warstwie 2",
+        "C": "Bo TCP nie przenosi adresów",
+        "D": "Bo proxy szyfruje adres klienta"
+      },
+      "correct": "A",
+      "explanation": "Prawdziwy adres przekazuje się w X-Forwarded-For/Forwarded lub PROXY protocol."
+    },
+    {
+      "question": "Kiedy można ufać nagłówkowi X-Forwarded-For?",
+      "options": {
+        "A": "Tylko w HTTP/1.0",
+        "B": "Tylko gdy ustawiło go zaufane proxy własnej infrastruktury",
+        "C": "Zawsze",
+        "D": "Nigdy, nawet z własnego proxy"
+      },
+      "correct": "B",
+      "explanation": "Klient może wysłać dowolną wartość — trzeba ufać tylko ostatniemu wpisowi dodanemu przez własne proxy."
+    },
+    {
+      "question": "Co jest prawdą o TCP z punktu widzenia aplikacji?",
+      "options": {
+        "A": "TCP dzieli dane zawsze po 1460 bajtów na read()",
+        "B": "TCP zachowuje granice wiadomości jak UDP",
+        "C": "TCP dostarcza strumień bajtów bez granic wiadomości",
+        "D": "Każdy write() odpowiada jednemu read()"
+      },
+      "correct": "C",
+      "explanation": "Granice wiadomości musi wyznaczać protokół aplikacyjny."
+    },
+    {
+      "question": "Który sposób poprawnie odczytuje wiadomość o znanej długości z gniazda w Javie?",
+      "options": {
+        "A": "InputStream.available()",
+        "B": "DataInputStream.readFully(bufor)",
+        "C": "Socket.getReceiveBufferSize()",
+        "D": "Jedno InputStream.read(bufor)"
+      },
+      "correct": "B",
+      "explanation": "readFully czyta, aż zbierze dokładnie tyle bajtów, ile ma bufor."
+    },
+    {
+      "question": "Dlaczego przy ramkowaniu długością należy sprawdzać maksymalny rozmiar wiadomości?",
+      "options": {
+        "A": "Bo nagłówek długości jest szyfrowany",
+        "B": "Bo TCP odrzuca długie wiadomości",
+        "C": "Bo Java nie obsługuje tablic większych niż 1 kB",
+        "D": "Bez limitu napastnik może zadeklarować ogromną długość i wyczerpać pamięć serwera"
+      },
+      "correct": "D",
+      "explanation": "To klasyczna ochrona przed DoS w parserach protokołów."
+    },
+    {
+      "question": "Wireshark na nadawcy pokazuje segmenty TCP po 64 kB i ostrzeżenia o błędnej sumie kontrolnej. Najbardziej prawdopodobna przyczyna to:",
+      "options": {
+        "A": "Uszkodzony kabel",
+        "B": "Błąd w aplikacji Java",
+        "C": "Offloading karty sieciowej (TSO/checksum offload)",
+        "D": "Atak MITM"
+      },
+      "correct": "C",
+      "explanation": "Jądro przekazuje karcie duże bufory; dzieli je i liczy sumy dopiero sprzęt."
+    },
+    {
+      "question": "Jaki narzut dokłada enkapsulacja VXLAN?",
+      "options": {
+        "A": "Około 50 bajtów",
+        "B": "0 bajtów",
+        "C": "8 bajtów",
+        "D": "500 bajtów"
+      },
+      "correct": "A",
+      "explanation": "Zewnętrzny Ethernet 14 + IP 20 + UDP 8 + VXLAN 8."
+    },
+    {
+      "question": "Jaki port UDP używa VXLAN?",
+      "options": {
+        "A": "443",
+        "B": "1194",
+        "C": "4500",
+        "D": "4789"
+      },
+      "correct": "D",
+      "explanation": "IANA przydzieliła 4789; 4500 to IPsec NAT-T, 1194 OpenVPN."
+    },
+    {
+      "question": "Do czego służy suma FCS w ramce Ethernet?",
+      "options": {
+        "A": "Do wykrycia uszkodzenia ramki podczas transmisji",
+        "B": "Do numerowania ramek",
+        "C": "Do wyboru trasy",
+        "D": "Do szyfrowania ramki"
+      },
+      "correct": "A",
+      "explanation": "CRC-32; uszkodzone ramki są odrzucane bez powiadomienia nadawcy."
+    },
+    {
+      "question": "Co robi odbiorca, gdy suma FCS się nie zgadza?",
+      "options": {
+        "A": "Wysyła ICMP do nadawcy",
+        "B": "Odrzuca ramkę po cichu; ewentualne ponowienie zapewni TCP",
+        "C": "Naprawia błędne bity",
+        "D": "Przekazuje ramkę z ostrzeżeniem"
+      },
+      "correct": "B",
+      "explanation": "Niezawodność to zadanie TCP (retransmisja), nie Ethernetu."
+    },
+    {
+      "question": "Który element sieci NIE zmienia żadnego pola ramki przy przekazywaniu?",
+      "options": {
+        "A": "Reverse proxy",
+        "B": "NAT",
+        "C": "Przełącznik (bez tagowania VLAN)",
+        "D": "Router"
+      },
+      "correct": "C",
+      "explanation": "Przełącznik przekazuje ramkę po adresie MAC bez modyfikacji."
+    },
+    {
+      "question": "Co oznacza flaga DF w nagłówku IPv4?",
+      "options": {
+        "A": "Pakiet jest ostatnim fragmentem",
+        "B": "Pakiet ma wysoki priorytet",
+        "C": "Pakietu nie wolno fragmentować po drodze",
+        "D": "Pakiet jest zaszyfrowany"
+      },
+      "correct": "C",
+      "explanation": "DF jest podstawą Path MTU Discovery: zbyt duży pakiet wywołuje ICMP „fragmentation needed”."
+    },
+    {
+      "question": "Które pole wskazuje odbiorcy, że w pakiecie IPv4 znajduje się segment TCP?",
+      "options": {
+        "A": "Port = 6",
+        "B": "Protocol = 6",
+        "C": "EtherType = 6",
+        "D": "TTL = 6"
+      },
+      "correct": "B",
+      "explanation": "Każda warstwa ma pole wskazujące następny protokół."
+    },
+    {
+      "question": "Jak nazywa się w modelu TCP/IP mechanizm kierowania danych do właściwej aplikacji na hoście?",
+      "options": {
+        "A": "Fragmentacja",
+        "B": "Routing",
+        "C": "Enkapsulacja VLAN",
+        "D": "Multipleksacja z użyciem portów"
+      },
+      "correct": "D",
+      "explanation": "Gniazdo identyfikuje czwórka: IP i port źródła oraz celu."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1500, IPv4 i TCP bez opcji?",
+      "options": {
+        "A": "1460",
+        "B": "1440",
+        "C": "1472",
+        "D": "1480"
+      },
+      "correct": "A",
+      "explanation": "1500 − 20 − 20 = 1460."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1500, IPv4 i opcji TCP timestamps (12 B)?",
+      "options": {
+        "A": "1460",
+        "B": "1428",
+        "C": "1448",
+        "D": "1480"
+      },
+      "correct": "C",
+      "explanation": "1500 − 20 − 20 − 12 = 1448."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1500, IPv6 i TCP bez opcji?",
+      "options": {
+        "A": "1440",
+        "B": "1420",
+        "C": "1480",
+        "D": "1452"
+      },
+      "correct": "A",
+      "explanation": "1500 − 40 − 20 = 1440."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1500, IPv6 i opcji TCP timestamps (12 B)?",
+      "options": {
+        "A": "1408",
+        "B": "1440",
+        "C": "1480",
+        "D": "1428"
+      },
+      "correct": "D",
+      "explanation": "1500 − 40 − 20 − 12 = 1428."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1492, IPv4 i TCP bez opcji?",
+      "options": {
+        "A": "1464",
+        "B": "1452",
+        "C": "1472",
+        "D": "1432"
+      },
+      "correct": "B",
+      "explanation": "1492 − 20 − 20 = 1452."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1420, IPv4 i TCP bez opcji?",
+      "options": {
+        "A": "1360",
+        "B": "1380",
+        "C": "1400",
+        "D": "1392"
+      },
+      "correct": "B",
+      "explanation": "1420 − 20 − 20 = 1380."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1420, IPv6 i TCP bez opcji?",
+      "options": {
+        "A": "1400",
+        "B": "1340",
+        "C": "1372",
+        "D": "1360"
+      },
+      "correct": "D",
+      "explanation": "1420 − 40 − 20 = 1360."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1450, IPv4 i opcji TCP timestamps (12 B)?",
+      "options": {
+        "A": "1398",
+        "B": "1378",
+        "C": "1410",
+        "D": "1430"
+      },
+      "correct": "A",
+      "explanation": "1450 − 20 − 20 − 12 = 1398."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 9000, IPv4 i TCP bez opcji?",
+      "options": {
+        "A": "8940",
+        "B": "8980",
+        "C": "8960",
+        "D": "8972"
+      },
+      "correct": "C",
+      "explanation": "9000 − 20 − 20 = 8960."
+    },
+    {
+      "question": "Jaki jest MSS przy MTU 1280, IPv6 i TCP bez opcji?",
+      "options": {
+        "A": "1220",
+        "B": "1232",
+        "C": "1260",
+        "D": "1200"
+      },
+      "correct": "A",
+      "explanation": "1280 − 40 − 20 = 1220."
+    },
+    {
+      "question": "Co oznacza EtherType 0x0800?",
+      "options": {
+        "A": "IPv6",
+        "B": "Tag VLAN 802.1Q",
+        "C": "IPv4",
+        "D": "ARP"
+      },
+      "correct": "C",
+      "explanation": "0x0800 → IPv4."
+    },
+    {
+      "question": "Co oznacza EtherType 0x0806?",
+      "options": {
+        "A": "Tag VLAN 802.1Q",
+        "B": "ARP",
+        "C": "IPv4",
+        "D": "IPv6"
+      },
+      "correct": "B",
+      "explanation": "0x0806 → ARP."
+    },
+    {
+      "question": "Co oznacza EtherType 0x8100?",
+      "options": {
+        "A": "ARP",
+        "B": "IPv6",
+        "C": "IPv4",
+        "D": "Tag VLAN 802.1Q"
+      },
+      "correct": "D",
+      "explanation": "0x8100 → Tag VLAN 802.1Q."
+    },
+    {
+      "question": "Co oznacza EtherType 0x888E?",
+      "options": {
+        "A": "IPv6",
+        "B": "ARP",
+        "C": "EAPOL (802.1X)",
+        "D": "IPv4"
+      },
+      "correct": "C",
+      "explanation": "0x888E → EAPOL (802.1X)."
+    },
+    {
+      "question": "Który protokół oznacza wartość 1 w polu Protocol/Next Header?",
+      "options": {
+        "A": "ESP (IPsec)",
+        "B": "TCP",
+        "C": "UDP",
+        "D": "ICMP"
+      },
+      "correct": "D",
+      "explanation": "1 = ICMP."
+    },
+    {
+      "question": "Który protokół oznacza wartość 6 w polu Protocol/Next Header?",
+      "options": {
+        "A": "UDP",
+        "B": "TCP",
+        "C": "ICMP",
+        "D": "ESP (IPsec)"
+      },
+      "correct": "B",
+      "explanation": "6 = TCP."
+    },
+    {
+      "question": "Który protokół oznacza wartość 50 w polu Protocol/Next Header?",
+      "options": {
+        "A": "ESP (IPsec)",
+        "B": "TCP",
+        "C": "ICMP",
+        "D": "UDP"
+      },
+      "correct": "A",
+      "explanation": "50 = ESP (IPsec)."
+    },
+    {
+      "question": "Który protokół oznacza wartość 89 w polu Protocol/Next Header?",
+      "options": {
+        "A": "ICMP",
+        "B": "UDP",
+        "C": "TCP",
+        "D": "OSPF"
+      },
+      "correct": "D",
+      "explanation": "89 = OSPF."
+    },
+    {
+      "question": "Który protokół oznacza wartość 58 w polu Protocol/Next Header?",
+      "options": {
+        "A": "TCP",
+        "B": "ICMP",
+        "C": "ICMPv6",
+        "D": "UDP"
+      },
+      "correct": "C",
+      "explanation": "58 = ICMPv6."
+    },
+    {
+      "question": "Ile bajtów zajmie na kablu Ethernet (z preambułą 8 B i przerwą 12 B) segment TCP/IPv4 bez opcji z 1460 B danych?",
+      "options": {
+        "A": "1518",
+        "B": "1538",
+        "C": "1542",
+        "D": "1500"
+      },
+      "correct": "B",
+      "explanation": "Ramka max(64, 14 + 20 + 20 + 1460 + 4) = 1518 B, plus 20 B → 1538 B. Wydajność 94,9%."
+    },
+    {
+      "question": "Ile bajtów zajmie na kablu Ethernet (z preambułą 8 B i przerwą 12 B) segment TCP/IPv4 bez opcji z 512 B danych?",
+      "options": {
+        "A": "590",
+        "B": "570",
+        "C": "552",
+        "D": "594"
+      },
+      "correct": "A",
+      "explanation": "Ramka max(64, 14 + 20 + 20 + 512 + 4) = 570 B, plus 20 B → 590 B. Wydajność 86,8%."
+    },
+    {
+      "question": "Ile bajtów zajmie na kablu Ethernet (z preambułą 8 B i przerwą 12 B) segment TCP/IPv4 bez opcji z 100 B danych?",
+      "options": {
+        "A": "178",
+        "B": "182",
+        "C": "140",
+        "D": "158"
+      },
+      "correct": "A",
+      "explanation": "Ramka max(64, 14 + 20 + 20 + 100 + 4) = 158 B, plus 20 B → 178 B. Wydajność 56,2%."
+    },
+    {
+      "question": "Ile bajtów zajmie na kablu Ethernet (z preambułą 8 B i przerwą 12 B) segment TCP/IPv4 bez opcji z 40 B danych?",
+      "options": {
+        "A": "122",
+        "B": "118",
+        "C": "80",
+        "D": "98"
+      },
+      "correct": "B",
+      "explanation": "Ramka max(64, 14 + 20 + 20 + 40 + 4) = 98 B, plus 20 B → 118 B. Wydajność 33,9%."
+    },
+    {
+      "question": "Ile bajtów zajmie na kablu Ethernet (z preambułą 8 B i przerwą 12 B) segment TCP/IPv4 bez opcji z 10 B danych?",
+      "options": {
+        "A": "92",
+        "B": "50",
+        "C": "88",
+        "D": "68"
+      },
+      "correct": "C",
+      "explanation": "Ramka max(64, 14 + 20 + 20 + 10 + 4) = 68 B, plus 20 B → 88 B. Wydajność 11,4%."
+    },
+    {
+      "question": "Ile bajtów zajmie na kablu Ethernet (z preambułą 8 B i przerwą 12 B) segment TCP/IPv4 bez opcji z 1 B danych?",
+      "options": {
+        "A": "59",
+        "B": "64",
+        "C": "88",
+        "D": "84"
+      },
+      "correct": "D",
+      "explanation": "Ramka max(64, 14 + 20 + 20 + 1 + 4) = 64 B, plus 20 B → 84 B. Wydajność 1,2%."
+    },
+    {
+      "question": "Jaką wartość dziesiętną ma 16-bitowe pole zapisane w zrzucie jako „c8 86” (kolejność sieciowa)?",
+      "options": {
+        "A": "51335",
+        "B": "34504",
+        "C": "51334",
+        "D": "51078"
+      },
+      "correct": "C",
+      "explanation": "c8 86 = 0xc886 = 51334 (najstarszy bajt pierwszy)."
+    },
+    {
+      "question": "Jaką wartość dziesiętną ma 16-bitowe pole zapisane w zrzucie jako „1f 90” (kolejność sieciowa)?",
+      "options": {
+        "A": "36895",
+        "B": "7824",
+        "C": "8081",
+        "D": "8080"
+      },
+      "correct": "D",
+      "explanation": "1f 90 = 0x1f90 = 8080 (najstarszy bajt pierwszy)."
+    },
+    {
+      "question": "Jaką wartość dziesiętną ma 16-bitowe pole zapisane w zrzucie jako „01 bb” (kolejność sieciowa)?",
+      "options": {
+        "A": "47873",
+        "B": "443",
+        "C": "444",
+        "D": "187"
+      },
+      "correct": "B",
+      "explanation": "01 bb = 0x01bb = 443 (najstarszy bajt pierwszy)."
+    },
+    {
+      "question": "Jaką wartość dziesiętną ma 16-bitowe pole zapisane w zrzucie jako „00 35” (kolejność sieciowa)?",
+      "options": {
+        "A": "53",
+        "B": "54",
+        "C": "13568",
+        "D": "309"
+      },
+      "correct": "A",
+      "explanation": "00 35 = 0x0035 = 53 (najstarszy bajt pierwszy)."
+    },
+    {
+      "question": "Jaką wartość dziesiętną ma 16-bitowe pole zapisane w zrzucie jako „14 46” (kolejność sieciowa)?",
+      "options": {
+        "A": "5190",
+        "B": "17940",
+        "C": "4934",
+        "D": "5191"
+      },
+      "correct": "A",
+      "explanation": "14 46 = 0x1446 = 5190 (najstarszy bajt pierwszy)."
+    },
+    {
+      "question": "Jaką wartość dziesiętną ma 16-bitowe pole zapisane w zrzucie jako „00 77” (kolejność sieciowa)?",
+      "options": {
+        "A": "30464",
+        "B": "120",
+        "C": "119",
+        "D": "375"
+      },
+      "correct": "C",
+      "explanation": "00 77 = 0x0077 = 119 (najstarszy bajt pierwszy)."
+    },
+    {
+      "question": "Pierwszy bajt nagłówka IPv4 to 0x46. Co z niego wynika?",
+      "options": {
+        "A": "IHL 4 → 16 B",
+        "B": "wersja 6 → IPv6",
+        "C": "TTL 70",
+        "D": "IHL 6 → nagłówek 24 B (z opcjami)"
+      },
+      "correct": "D",
+      "explanation": "Górny nibble 4 = IPv4, dolny 6 = 6 słów × 4 B = 24 B."
+    },
+    {
+      "question": "Bajt flag TCP ma wartość 0x18. Jakie flagi są ustawione?",
+      "options": {
+        "A": "FIN + ACK",
+        "B": "PSH + ACK",
+        "C": "SYN + ACK",
+        "D": "RST"
+      },
+      "correct": "B",
+      "explanation": "Bity flag: FIN 0x01, SYN 0x02, RST 0x04, PSH 0x08, ACK 0x10, URG 0x20."
+    },
+    {
+      "question": "Bajt flag TCP ma wartość 0x12. Jakie flagi są ustawione?",
+      "options": {
+        "A": "SYN + ACK",
+        "B": "PSH + ACK",
+        "C": "FIN",
+        "D": "SYN"
+      },
+      "correct": "A",
+      "explanation": "Bity flag: FIN 0x01, SYN 0x02, RST 0x04, PSH 0x08, ACK 0x10, URG 0x20."
+    },
+    {
+      "question": "Bajt flag TCP ma wartość 0x02. Jakie flagi są ustawione?",
+      "options": {
+        "A": "FIN",
+        "B": "SYN",
+        "C": "RST + ACK",
+        "D": "ACK"
+      },
+      "correct": "B",
+      "explanation": "Bity flag: FIN 0x01, SYN 0x02, RST 0x04, PSH 0x08, ACK 0x10, URG 0x20."
+    },
+    {
+      "question": "Ile bajtów zajmuje nagłówek TCP z opcją timestamps (typowy w Linuksie)?",
+      "options": {
+        "A": "40",
+        "B": "60",
+        "C": "20",
+        "D": "32"
+      },
+      "correct": "D",
+      "explanation": "20 B podstawy + 12 B opcji (timestamps 10 B + 2 B NOP) → data offset 8."
+    },
+    {
+      "question": "Jaka jest maksymalna długość nagłówka IPv4 z opcjami?",
+      "options": {
+        "A": "40 bajtów",
+        "B": "20 bajtów",
+        "C": "60 bajtów",
+        "D": "1500 bajtów"
+      },
+      "correct": "C",
+      "explanation": "IHL ma 4 bity: maksymalnie 15 słów × 4 B = 60 B."
+    },
+    {
+      "question": "Ile bajtów ma tag VLAN 802.1Q dokładany do ramki?",
+      "options": {
+        "A": "2",
+        "B": "4",
+        "C": "12",
+        "D": "8"
+      },
+      "correct": "B",
+      "explanation": "TPID 0x8100 (2 B) + priorytet, DEI i VLAN ID (2 B)."
+    },
+    {
+      "question": "Dlaczego przy wysyłaniu 1 bajtu danych przez TCP wydajność łącza jest bardzo niska?",
+      "options": {
+        "A": "Bo dane są szyfrowane",
+        "B": "Bo Ethernet nie obsługuje małych ramek",
+        "C": "Nagłówki, minimalna długość ramki i preambuła zajmują ponad 80 bajtów na każdy taki segment",
+        "D": "Bo TCP wysyła każdy bajt dwa razy"
+      },
+      "correct": "C",
+      "explanation": "Dlatego stosuje się buforowanie i łączenie małych zapisów (Nagle, batching)."
+    },
+    {
+      "question": "Co nagłówek IP zawiera, a czego nie zawiera?",
+      "options": {
+        "A": "Zawiera adresy IP źródła i celu, ale nie zawiera numerów portów",
+        "B": "Zawiera ścieżkę URL",
+        "C": "Zawiera porty, ale nie adresy",
+        "D": "Zawiera adresy MAC"
+      },
+      "correct": "A",
+      "explanation": "Porty są w nagłówku warstwy transportowej (TCP/UDP)."
+    },
+    {
+      "question": "Tunel VPN typu site-to-site to przykład:",
+      "options": {
+        "A": "Dekapsulacji",
+        "B": "Fragmentacji IPv6",
+        "C": "Multipleksacji portów",
+        "D": "Enkapsulacji pakietu IP jako danych w innym pakiecie (często zaszyfrowanym)"
+      },
+      "correct": "D",
+      "explanation": "Wewnętrzny pakiet podróżuje „w kopercie” zewnętrznego."
+    },
+    {
+      "question": "Dlaczego tunelowanie interesuje analityków SOC?",
+      "options": {
+        "A": "Bo tunele zawsze oznaczają atak",
+        "B": "Bo napastnicy ukrywają dane i komunikację C2 w innych protokołach (DNS, ICMP, HTTPS)",
+        "C": "Bo tunele wyłączają logowanie",
+        "D": "Bo tunele działają tylko w warstwie 1"
+      },
+      "correct": "B",
+      "explanation": "Wykrywa się je po anomaliach: rozmiarze, częstotliwości, entropii i celach ruchu."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się EtherType w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "12",
+        "B": "10",
+        "C": "26",
+        "D": "14"
+      },
+      "correct": "A",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; EtherType zaczyna się od bajtu 12."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się pierwszy bajt nagłówka IPv4 w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "28",
+        "B": "12",
+        "C": "14",
+        "D": "16"
+      },
+      "correct": "C",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; pierwszy bajt nagłówka IPv4 zaczyna się od bajtu 14."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się pole TTL w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "36",
+        "B": "24",
+        "C": "20",
+        "D": "22"
+      },
+      "correct": "D",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; pole TTL zaczyna się od bajtu 22."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się pole Protocol w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "25",
+        "B": "23",
+        "C": "37",
+        "D": "21"
+      },
+      "correct": "B",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; pole Protocol zaczyna się od bajtu 23."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się adres IP źródłowy w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "26",
+        "B": "40",
+        "C": "28",
+        "D": "24"
+      },
+      "correct": "A",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; adres IP źródłowy zaczyna się od bajtu 26."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się adres IP docelowy w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "28",
+        "B": "44",
+        "C": "30",
+        "D": "32"
+      },
+      "correct": "C",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; adres IP docelowy zaczyna się od bajtu 30."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się port źródłowy TCP w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "48",
+        "B": "36",
+        "C": "32",
+        "D": "34"
+      },
+      "correct": "D",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; port źródłowy TCP zaczyna się od bajtu 34."
+    },
+    {
+      "question": "Od którego bajtu (licząc od 0) zaczyna się bajt flag TCP w ramce Ethernet z IPv4 bez opcji i TCP?",
+      "options": {
+        "A": "61",
+        "B": "47",
+        "C": "45",
+        "D": "49"
+      },
+      "correct": "B",
+      "explanation": "Ethernet zajmuje bajty 0–13, IPv4 14–33, TCP od 34; bajt flag TCP zaczyna się od bajtu 47."
+    },
+    {
+      "question": "Ile bajtów nagłówków ma: Ethernet + IPv4 + TCP (bez opcji, bez FCS)?",
+      "options": {
+        "A": "58",
+        "B": "74",
+        "C": "54",
+        "D": "46"
+      },
+      "correct": "C",
+      "explanation": "Ethernet 14 (+4 VLAN), IPv4 20, IPv6 40, TCP 20 (32 z timestamps), UDP 8."
+    },
+    {
+      "question": "Ile bajtów nagłówków ma: Ethernet + IPv6 + TCP (bez opcji, bez FCS)?",
+      "options": {
+        "A": "74",
+        "B": "94",
+        "C": "78",
+        "D": "66"
+      },
+      "correct": "A",
+      "explanation": "Ethernet 14 (+4 VLAN), IPv4 20, IPv6 40, TCP 20 (32 z timestamps), UDP 8."
+    },
+    {
+      "question": "Ile bajtów nagłówków ma: Ethernet + IPv4 + UDP (bez FCS)?",
+      "options": {
+        "A": "34",
+        "B": "62",
+        "C": "46",
+        "D": "42"
+      },
+      "correct": "D",
+      "explanation": "Ethernet 14 (+4 VLAN), IPv4 20, IPv6 40, TCP 20 (32 z timestamps), UDP 8."
+    },
+    {
+      "question": "Ile bajtów nagłówków ma: Ethernet z tagiem VLAN + IPv4 + TCP (bez FCS)?",
+      "options": {
+        "A": "58",
+        "B": "50",
+        "C": "78",
+        "D": "62"
+      },
+      "correct": "A",
+      "explanation": "Ethernet 14 (+4 VLAN), IPv4 20, IPv6 40, TCP 20 (32 z timestamps), UDP 8."
+    },
+    {
+      "question": "Ile bajtów nagłówków ma: Ethernet + IPv4 + TCP z timestamps (bez FCS)?",
+      "options": {
+        "A": "58",
+        "B": "70",
+        "C": "86",
+        "D": "66"
+      },
+      "correct": "D",
+      "explanation": "Ethernet 14 (+4 VLAN), IPv4 20, IPv6 40, TCP 20 (32 z timestamps), UDP 8."
+    },
+    {
+      "question": "Ile bajtów nagłówków ma: Ethernet + IPv6 + UDP (bez FCS)?",
+      "options": {
+        "A": "54",
+        "B": "62",
+        "C": "66",
+        "D": "82"
+      },
+      "correct": "B",
+      "explanation": "Ethernet 14 (+4 VLAN), IPv4 20, IPv6 40, TCP 20 (32 z timestamps), UDP 8."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 22?",
+      "options": {
+        "A": "DNS",
+        "B": "HTTPS",
+        "C": "SSH",
+        "D": "PostgreSQL"
+      },
+      "correct": "C",
+      "explanation": "Port 22 — SSH. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 53?",
+      "options": {
+        "A": "HTTPS",
+        "B": "SSH",
+        "C": "DNS",
+        "D": "PostgreSQL"
+      },
+      "correct": "C",
+      "explanation": "Port 53 — DNS. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 443?",
+      "options": {
+        "A": "HTTPS",
+        "B": "DNS",
+        "C": "PostgreSQL",
+        "D": "SSH"
+      },
+      "correct": "A",
+      "explanation": "Port 443 — HTTPS. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 5432?",
+      "options": {
+        "A": "SSH",
+        "B": "HTTPS",
+        "C": "DNS",
+        "D": "PostgreSQL"
+      },
+      "correct": "D",
+      "explanation": "Port 5432 — PostgreSQL. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 6379?",
+      "options": {
+        "A": "HTTPS",
+        "B": "Redis",
+        "C": "DNS",
+        "D": "SSH"
+      },
+      "correct": "B",
+      "explanation": "Port 6379 — Redis. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 9092?",
+      "options": {
+        "A": "DNS",
+        "B": "SSH",
+        "C": "Kafka",
+        "D": "HTTPS"
+      },
+      "correct": "C",
+      "explanation": "Port 9092 — Kafka. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Jaka usługa domyślnie używa portu 3306?",
+      "options": {
+        "A": "MySQL",
+        "B": "SSH",
+        "C": "HTTPS",
+        "D": "DNS"
+      },
+      "correct": "A",
+      "explanation": "Port 3306 — MySQL. Port w nagłówku TCP/UDP wskazuje aplikację na hoście."
+    },
+    {
+      "question": "Które pole w nagłówku IP pozwala odbiorcy złożyć fragmenty jednego pakietu?",
+      "options": {
+        "A": "DSCP",
+        "B": "Identification (ID) wraz z flagami i offsetem fragmentu",
+        "C": "TTL",
+        "D": "Protocol"
+      },
+      "correct": "B",
+      "explanation": "Fragmenty mają ten sam ID; offset wskazuje ich miejsce."
+    },
+    {
+      "question": "Co z poniższych NIE jest zadaniem warstwy transportowej TCP?",
+      "options": {
+        "A": "Identyfikacja aplikacji portami",
+        "B": "Numerowanie bajtów i potwierdzenia",
+        "C": "Kontrola przepływu",
+        "D": "Wybór trasy między sieciami"
+      },
+      "correct": "D",
+      "explanation": "Routing to zadanie warstwy internetowej (IP)."
+    },
+    {
+      "question": "Jak nazywa się pseudo-nagłówek, który Wireshark pokazuje zamiast Ethernetu przy przechwytywaniu tcpdump -i any na Linuksie?",
+      "options": {
+        "A": "802.1Q",
+        "B": "Linux cooked capture (SLL)",
+        "C": "PPP",
+        "D": "VXLAN"
+      },
+      "correct": "B",
+      "explanation": "Interfejs „any” nie ma jednego typu łącza, więc libpcap używa pseudo-nagłówka SLL/SLL2."
+    },
+    {
+      "question": "W jakiej kolejności bajtów zapisywane są liczby w nagłówkach protokołów internetowych?",
+      "options": {
+        "A": "Big-endian (najstarszy bajt pierwszy)",
+        "B": "Zależnej od systemu operacyjnego nadawcy",
+        "C": "Losowej",
+        "D": "Little-endian"
+      },
+      "correct": "A",
+      "explanation": "Kolejność sieciowa = big-endian; Java ByteBuffer domyślnie też."
+    },
+    {
+      "question": "Co zrobi router z pakietem IPv4, gdy TTL po zmniejszeniu wynosi 0?",
+      "options": {
+        "A": "Przekaże go dalej z TTL 255",
+        "B": "Podzieli go na fragmenty",
+        "C": "Odrzuci go i odeśle ICMP Time Exceeded",
+        "D": "Wyśle go z powrotem do nadawcy"
+      },
+      "correct": "C",
+      "explanation": "Na tym mechanizmie opiera się traceroute."
+    },
+    {
+      "question": "Która informacja jest potrzebna, by zbudować ramkę do hosta w innej sieci?",
+      "options": {
+        "A": "Adres IP przełącznika",
+        "B": "Adres MAC hosta docelowego w innej sieci",
+        "C": "Numer portu bramy",
+        "D": "Adres MAC bramy domyślnej (next hop)"
+      },
+      "correct": "D",
+      "explanation": "Ramka trafia do next hopa; adres IP docelowy w pakiecie pozostaje adresem odległego hosta."
+    }
+  ]
 }
