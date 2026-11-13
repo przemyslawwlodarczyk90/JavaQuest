@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Boss: jedno żądanie, trzy punkty obserwacji",
+      "image": "netsec/ns01-08-lab-topology.svg",
+      "imageAlt": "Trzy kolorowe sieci: lan z laptopem 10.10.1.10, wan z routerem NAT (10.10.1.1 i 10.20.0.2) i reverse proxy Caddy (10.20.0.10), app z interfejsem proxy 10.30.0.10 i aplikacją Spring Boot 10.30.0.20:8080. Czerwone znaczniki P1, P2 i P3 na łączach oznaczają punkty przechwytywania.",
+      "body": "To laboratorium zamyka rozdział o fundamentach. Nie ma tu nowej teorii — jest **misja**: prześledzić jedno żądanie `GET /users/42` z laptopa do aplikacji Spring Boot przez **router z NAT** i **reverse proxy**, przechwycić ruch w trzech punktach i wyjaśnić *każdą* zmianę adresów, portów i TTL.\n\nWykorzystasz wszystko z rozdziału: topologię (lekcja 03), warstwy OSI (04), enkapsulację i pola nagłówków (05), pomiar czasu (06) i warsztat przechwytywania (07).\n\n**Zasady Bossa:**\n- Lab uruchamiasz lokalnie z dostarczonego `docker-compose.yml`; wszystkie sieci są izolowane (`internal: true`).\n- Treść lekcji opisuje cel, narzędzia i kryteria — ale **nie podaje gotowych odpowiedzi** do Twoich plików pcap. Wartości w tabeli tej lekcji to *oczekiwania*: Twój lab może mieć inne porty efemeryczne lub TTL, a Twoim zadaniem jest wyjaśnić, *dlaczego*.\n- **Artefakty do oddania:** diagram z opisanymi zmianami (P1 → P2 → P3), trzy pliki pcap z sumami SHA-256, tabela korelacji żądania w czterech źródłach (pcap, conntrack, log proxy, log aplikacji) i krótki raport z odpowiedziami na pytania kontrolne.\n\nTen sam schemat — klient, NAT, proxy, aplikacja — spotkasz w każdej firmie: biuro za NAT-em, WAF lub ingress w Kubernetesie i mikroserwis. Analityk SOC, który umie przejść po nim krok po kroku, potrafi odpowiedzieć na najważniejsze pytanie incydentu: **kto naprawdę wysłał to żądanie?**",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Co musisz umieć wyjaśnić po tym laboratorium",
+      "body": "Lista kompetencji, które sprawdza Boss (każda wraca w pytaniach kontrolnych):\n- **Rola bramy domyślnej** — dlaczego laptop wysyła ramkę z żądaniem do proxy na **MAC routera**, a nie proxy (inna podsieć → next hop = brama).\n- **ARP** — kiedy laptop pyta o MAC bramy, a kiedy korzysta z cache (`ip neigh`).\n- **Zmiana MAC na każdym odcinku L3** — router buduje nową ramkę z własnym MAC źródłowym na interfejsie WAN.\n- **TTL** — router zmniejsza TTL o 1; proxy *nie* przekazuje pakietu, tylko tworzy nowy, więc TTL w P3 zaczyna od wartości domyślnej systemu proxy.\n- **NAT (masquerade)** — podmiana IP źródłowego z 10.10.1.10 na 10.20.0.2; port źródłowy zwykle zostaje (jeśli nie koliduje); wpis w tablicy **conntrack** pozwala odwrócić translację dla odpowiedzi.\n- **Reverse proxy = dwa połączenia TCP** — nowy handshake, nowy port efemeryczny proxy, nowy port docelowy aplikacji (8080).\n- **X-Forwarded-For** — proxy dopisuje adres, z którego *ono* widziało klienta (10.20.0.2 — adres po NAT, nie laptopa!).\n- **Korelacja** — jak połączyć wpisy z pcap, conntrack, logu proxy i logu aplikacji: czas, porty, tabela NAT, XFF, identyfikator żądania.\n- **Granice widoczności** — czego nie da się ustalić z jednego punktu i dlaczego obrońca potrzebuje logów z wielu warstw.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Paczka przez sortownię i recepcję",
+      "body": "Wysyłasz paczkę z biura (laptop) do działu w innej firmie (aplikacja):\n- **Sortownia w Twoim biurowcu (router z NAT)** zdejmuje Twoją wewnętrzną etykietę „pokój 10” i nakleja adres zwrotny całego biurowca. Zapisuje w zeszycie: „paczka nr 45678 z pokoju 10”. Gdy przyjdzie odpowiedź na adres biurowca z numerem 45678, sortownia wie, do którego pokoju ją zanieść (conntrack).\n- **Recepcja firmy docelowej (reverse proxy)** odbiera paczkę, *przepakowuje* ją do wewnętrznej koperty i wysyła wewnętrzną pocztą do działu. Na kopercie dopisuje: „nadawca: biurowiec przy ul. X” (X-Forwarded-For) — bo tylko tyle wie. Pokoju 10 nie zna.\n- **Kurier na każdym odcinku (MAC)** jest inny, a licznik przystanków (TTL) maleje tylko tam, gdzie paczka jest przekazywana dalej bez przepakowania (router).\n\nGdy dział zgłosi „podejrzaną paczkę”, ustalenie, kto ją wysłał, wymaga zajrzenia **do zeszytu sortowni i do książki recepcji** — dokładnie jak w incydencie: logi NAT i proxy są niezbędne do identyfikacji źródła.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Oczekiwane wartości pól w P1, P2 i P3",
+      "image": "netsec/ns01-08-header-table.svg",
+      "imageAlt": "Tabela: w P1 MAC laptopa do MAC routera, IP 10.10.1.10 do 10.20.0.10, porty 45678 do 80, TTL 64; w P2 MAC routera WAN do MAC proxy, IP źródłowy 10.20.0.2, te same porty, TTL 63; w P3 MAC proxy do MAC aplikacji, IP 10.30.0.10 do 10.30.0.20, porty 38210 do 8080, TTL 64, X-Forwarded-For 10.20.0.2, nowe połączenie TCP.",
+      "body": "Tak powinno wyglądać żądanie HTTP w trzech punktach (port efemeryczny klienta i proxy w Twoim labie będzie inny — ważne są *relacje*):",
+      "code": "P1  LAN: między laptopem a routerem\n    Ethernet  02:42:0a:0a:01:0a → 02:42:0a:0a:01:01\n    IPv4      10.10.1.10 → 10.20.0.10   TTL 64\n    TCP       45678 → 80   (połączenie 1 (klient ↔ proxy))\n    HTTP      GET /users/42   X-Forwarded-For: —\n\nP2  WAN: między routerem a proxy\n    Ethernet  02:42:0a:14:00:02 → 02:42:0a:14:00:0a\n    IPv4      10.20.0.2 → 10.20.0.10   TTL 63\n    TCP       45678 → 80   (połączenie 1 (po NAT))\n    HTTP      GET /users/42   X-Forwarded-For: —\n\nP3  APP: między proxy a aplikacją\n    Ethernet  02:42:0a:1e:00:0a → 02:42:0a:1e:00:14\n    IPv4      10.30.0.10 → 10.30.0.20   TTL 64\n    TCP       38210 → 8080   (połączenie 2 (proxy ↔ aplikacja))\n    HTTP      GET /users/42   X-Forwarded-For: 10.20.0.2\n\nKontrole spójności:\n  P1→P2: IP docelowy, porty i dane bez zmian; IP źródłowy podmieniony (NAT); TTL −1; nowe MAC\n  P2→P3: wszystko nowe poza treścią żądania — to inne połączenie TCP; XFF niesie adres z P2\n  Odpowiedź 200 w P2 ma cel 10.20.0.2:45678, w P1 — 10.10.1.10:45678 (odwrotna translacja NAT)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Środowisko labu: docker-compose.yml",
+      "body": "Lab składa się z czterech kontenerów i trzech izolowanych sieci. Router to zwykły kontener Linux z włączonym przekazywaniem pakietów (`ip_forward`) i regułą `masquerade` w nftables; laptop ma trasę domyślną przez router. Uruchomienie: `docker compose up -d`, sprzątanie: `docker compose down`.",
+      "code": "# docker-compose.yml — lab „Packet Journey” (tylko lokalnie, sieci izolowane)\nservices:\n  client:\n    image: nicolaka/netshoot\n    cap_add: [NET_ADMIN]\n    command: sh -c \"ip route replace default via 10.10.1.1 && sleep infinity\"\n    networks: { lan: { ipv4_address: 10.10.1.10 } }\n  router:\n    image: nicolaka/netshoot\n    cap_add: [NET_ADMIN]\n    sysctls: { net.ipv4.ip_forward: 1 }\n    command: >\n      sh -c \"nft add table ip nat &&\n             nft add chain ip nat post '{ type nat hook postrouting priority 100; }' &&\n             nft add rule ip nat post oifname eth1 masquerade && sleep infinity\"\n    networks:\n      lan: { ipv4_address: 10.10.1.1 }     # eth0\n      wan: { ipv4_address: 10.20.0.2 }     # eth1 (kolejność interfejsów sprawdź: ip -br addr)\n  proxy:\n    image: caddy:2\n    command: caddy reverse-proxy --from :80 --to app:8080\n    networks:\n      wan: { ipv4_address: 10.20.0.10 }\n      app: { ipv4_address: 10.30.0.10 }\n  app:\n    image: javaquest/lab-users:1.0          # Spring Boot z GET /users/{id}, port 8080\n    networks: { app: { ipv4_address: 10.30.0.20 } }\n\nnetworks:\n  lan: { internal: true, ipam: { config: [{ subnet: 10.10.1.0/24, gateway: 10.10.1.254 }] } }\n  wan: { internal: true, ipam: { config: [{ subnet: 10.20.0.0/24, gateway: 10.20.0.254 }] } }\n  app: { internal: true, ipam: { config: [{ subnet: 10.30.0.0/24, gateway: 10.30.0.254 }] } }"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Przebieg laboratorium",
+      "image": "netsec/ns01-08-sequence.svg",
+      "imageAlt": "Diagram sekwencji z czterema uczestnikami: laptop, router, proxy, aplikacja. Kolejno: zapytanie i odpowiedź ARP o bramę, handshake TCP laptopa z proxy przez router, żądanie GET, osobny handshake proxy z aplikacją, żądanie z X-Forwarded-For, odpowiedź 200 od aplikacji do proxy i od proxy do laptopa.",
+      "body": "1. **Uruchom lab** i sprawdź adresy: `docker compose exec router ip -br addr` (który interfejs to LAN, a który WAN?), `docker compose exec client ip route` (brama 10.10.1.1).\n2. **Wyczyść cache ARP laptopa**, by zobaczyć ARP w przechwyceniu: `docker compose exec client ip neigh flush all`.\n3. **Uruchom trzy przechwytywania** (każde w osobnym terminalu, z zapisem do katalogu `./cap`):\n   - P1: interfejs LAN routera (`docker run --rm --net container:<router> -v $PWD/cap:/cap nicolaka/netshoot tcpdump -i eth0 -nn -w /cap/p1.pcap`),\n   - P2: interfejs WAN routera (`-i eth1 -w /cap/p2.pcap`),\n   - P3: interfejs proxy w sieci app (`--net container:<proxy>`, właściwy interfejs ustal `ip -br addr`).\n4. **Wygeneruj ruch** z laptopa: `ping -c 3 10.20.0.10`, potem `curl -s -H 'X-Request-ID: boss-001' http://10.20.0.10/users/42`.\n5. **Zrzuć tablicę NAT** w trakcie lub tuż po: `docker compose exec router conntrack -L` (lub `cat /proc/net/nf_conntrack`).\n6. **Zatrzymaj przechwytywania**, policz skróty: `sha256sum cap/*.pcap > cap/SHA256SUMS`.\n7. **Analiza w Wiresharku** — dla każdego pliku: ARP (kto pyta, kto odpowiada), ICMP echo (TTL w P1 i P2), TCP/HTTP (adresy, porty, TTL, nagłówki). Dodaj kolumny `eth.src`, `eth.dst`, `ip.ttl`, `tcp.srcport`, `http.x_forwarded_for`.\n8. **Zestaw tabelę zmian** P1 → P2 → P3 i wyjaśnij każdą zmianę mechanizmem (brama, router, NAT, proxy).\n9. **Skoreluj** żądanie w czterech źródłach: pcap, conntrack, log Caddy, log Spring Boot (identyfikator `X-Request-ID`).\n10. **Odpowiedz na pytania kontrolne** (zadania tej lekcji) i przygotuj raport.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Jak łączyć dowody z różnych punktów",
+      "image": "netsec/ns01-08-correlation.svg",
+      "imageAlt": "Cztery ramki połączone strzałkami: pcap P1 z połączeniem 10.10.1.10:45678 do 10.20.0.10:80, wpis conntrack z translacją na 10.20.0.2:45678, log Caddy z remote_ip 10.20.0.2 i identyfikatorem żądania oraz log Spring Boot z remoteAddr 10.30.0.10, XFF 10.20.0.2 i tym samym identyfikatorem.",
+      "body": "W incydencie rzadko masz jeden plik, który mówi wszystko. Uczysz się teraz techniki, którą stosuje każdy zespół IR:",
+      "code": "klucz korelacji          gdzie go znajdziesz                         co łączy\nczas                     wszystkie źródła (zsynchronizowane NTP)     zawęża okno; ±1 s to często za mało przy dużym ruchu\nport źródłowy klienta    pcap P1/P2, conntrack                       P1 ↔ P2 (NAT zwykle zachowuje port)\ntablica NAT (conntrack)  router, firewall, NAT Gateway (flow logs)   adres prywatny ↔ publiczny\nX-Forwarded-For          nagłówek w P3, log aplikacji                proxy ↔ aplikacja (adres widziany przez proxy)\nidentyfikator żądania    X-Request-ID, traceparent (W3C Trace Ctx)   proxy ↔ aplikacja ↔ dalsze usługi\ntreść / rozmiar          pcap (przy HTTP), log z rozmiarem odpowiedzi  potwierdzenie, że to „to samo” żądanie\n\nW Wiresharku: View → Time Display Format → UTC Date and Time; przy kilku plikach\nmergecap -w all.pcap p1.pcap p2.pcap p3.pcap łączy je chronologicznie (znaczniki czasu z jednego hosta).\nW chmurze rolę conntrack pełnią VPC Flow Logs / logi NAT Gateway — bez nich adres publiczny w logu WAF\nnie wskaże konkretnej instancji."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Analiza bez klikania: tshark dla trzech plików",
+      "body": "Gdy masz trzy pliki i dziesiątki żądań, tabela z `tshark` jest szybsza niż Wireshark. To samo polecenie dla każdego punktu daje porównywalne wiersze.",
+      "code": "for p in p1 p2 p3; do\n  echo \"== $p\"\n  tshark -r cap/$p.pcap -Y 'http.request' -T fields -E separator=' | ' \\\n    -e frame.time_epoch -e eth.src -e eth.dst -e ip.src -e ip.dst -e ip.ttl \\\n    -e tcp.srcport -e tcp.dstport -e http.request.uri -e http.x_forwarded_for -e http.request.line\ndone\n\n# ARP i ICMP w P1 i P2\ntshark -r cap/p1.pcap -Y 'arp || icmp' -T fields -e frame.number -e eth.src -e arp.opcode -e arp.src.proto_ipv4 -e ip.src -e ip.dst -e ip.ttl\ntshark -r cap/p2.pcap -Y 'icmp' -T fields -e frame.number -e ip.src -e ip.dst -e ip.ttl -e icmp.type\n\n# Połączenia TCP w każdym punkcie (powinno być: 1 w P1, 1 w P2, 1 w P3 — ale P3 to INNE połączenie)\ntshark -r cap/p3.pcap -q -z conv,tcp\n\n# NAT na routerze\ndocker compose exec router conntrack -L -p tcp --dport 80\n# tcp 6 117 TIME_WAIT src=10.10.1.10 dst=10.20.0.10 sport=45678 dport=80 src=10.20.0.10 dst=10.20.0.2 sport=80 dport=45678 [ASSURED] ..."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Ten sam schemat w prawdziwej firmie",
+      "body": "Lab jest miniaturą typowej ścieżki ruchu:\n- **Użytkownik w biurze** → firewall z NAT → Internet → **WAF/CDN** → **load balancer / ingress** → **pod w Kubernetesie**. Każdy z tych elementów zmienia adresy lub tworzy nowe połączenie.\n- **W chmurze AWS**: instancja w podsieci prywatnej → **NAT Gateway** (VPC Flow Logs pokazują translację) → usługa zewnętrzna; ruch przychodzący: **ALB** (nowe połączenie, nagłówek X-Forwarded-For) → instancja lub kontener.\n- **W Javie**: Spring Boot za proxy widzi `request.getRemoteAddr()` = adres proxy. Prawdziwy klient (o ile proxy jest zaufane) jest w `X-Forwarded-For`/`Forwarded`; konfiguruje się to przez `server.forward-headers-strategy` i listę zaufanych proxy (`server.tomcat.remoteip.internal-proxies`).\n\n**Znaczenie dla obrońcy:**\n- **Atrybucja w incydencie** — alert WAF z adresem 83.x.x.x to dopiero początek; kto w firmie to był, ustala się z logów NAT/firewalla i DHCP. Brak tych logów = brak odpowiedzi.\n- **Retencja logów** — zgodnie z KSC/NIS2 i dobrą praktyką logi NAT, proxy i uwierzytelnienia muszą być przechowywane i zsynchronizowane czasowo, inaczej nie da się odtworzyć łańcucha zdarzeń.\n- **Fałszowanie nagłówków** — napastnik może dodać własny `X-Forwarded-For: 127.0.0.1`, licząc na aplikację, która ufa mu bezkrytycznie (obejście allow-listy IP, fałszywe wpisy w logach). Ufaj tylko wpisom dodanym przez własne proxy.\n- **Segmentacja** — w labie laptop nie ma żadnej trasy do sieci `app`; jedyna droga do aplikacji prowadzi przez proxy (punkt kontroli i logowania). Tak samo projektuje się DMZ.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Pułapki, na które trafia większość podchodzących do Bossa",
+      "body": "- **Pomylone interfejsy routera** — Docker nie gwarantuje, że `lan` to `eth0`. Zawsze sprawdź `ip -br addr`; inaczej reguła masquerade trafi na zły interfejs, a P1 i P2 zamienią się miejscami.\n- **Brak ARP w przechwyceniu** — cache był ciepły. Wyczyść `ip neigh flush all` przed testem.\n- **„NAT zmienił port”** — zwykle nie zmienia; zmieni, gdy port jest zajęty przez inne połączenie (PAT). Jeśli widzisz zmianę, wyjaśnij ją.\n- **Oczekiwanie TTL 62 w P3** — proxy nie przekazuje pakietu, tylko tworzy nowy, więc TTL zaczyna od wartości domyślnej (64 w Linuksie).\n- **XFF = adres laptopa?** — nie. Proxy widzi tylko 10.20.0.2 (adres po NAT). Adres 10.10.1.10 zna wyłącznie router.\n- **Dwa połączenia czy jedno?** — Caddy może utrzymywać połączenia do backendu (keep-alive); przy kolejnych żądaniach w P3 nie będzie nowego handshake’u. Do analizy wygodnie zrestartować proxy przed testem albo opisać to zjawisko.\n- **Offloading i „złe sumy”** — w przechwyceniach na hostach wysyłających sumy kontrolne mogą być oznaczone jako błędne. To nie jest usterka labu.\n- **Różne zegary** — wszystkie kontenery korzystają z zegara hosta, więc w labie problem nie wystąpi; w prawdziwej sieci bez NTP korelacja czasem zawodzi.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: aplikacja, która nie wie, kto jest klientem",
+      "body": "Aplikacja za proxy loguje i stosuje allow-listę na podstawie `getRemoteAddr()` (zawsze adres proxy), a w innym miejscu ślepo ufa pierwszemu wpisowi `X-Forwarded-For` od klienta.",
+      "code": "@GetMapping(\"/admin/report\")\nResponseEntity<?> report(HttpServletRequest req) {\n    String ip = req.getRemoteAddr();                       // za proxy ZAWSZE 10.30.0.10\n    log.info(\"admin report from {}\", ip);                  // log bezużyteczny w incydencie\n    String xff = req.getHeader(\"X-Forwarded-For\");\n    String client = xff != null ? xff.split(\",\")[0].trim() : ip;   // pierwszy wpis = kontrolowany przez klienta!\n    if (!client.startsWith(\"10.\")) return ResponseEntity.status(403).build();\n    return ResponseEntity.ok(service.report());\n}\n// Atak: curl -H 'X-Forwarded-For: 10.0.0.1' https://app/admin/report → dostęp przyznany"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: zaufane proxy, poprawny adres i identyfikator żądania",
+      "body": "Tomcat (RemoteIpValve) przetwarza `X-Forwarded-For` od prawej strony i ufa tylko adresom zdefiniowanym jako wewnętrzne proxy. Aplikacja dostaje właściwy `getRemoteAddr()`, loguje go razem z identyfikatorem żądania, a autoryzacja nie opiera się wyłącznie na IP.",
+      "code": "# application.yml\nserver:\n  forward-headers-strategy: native            # Tomcat RemoteIpValve\n  tomcat:\n    remoteip:\n      internal-proxies: \"10\\\\.30\\\\.0\\\\.10\"         # regex: tylko nasze proxy jest zaufane\n      remote-ip-header: x-forwarded-for\n      protocol-header: x-forwarded-proto\n\n// Filtr: identyfikator żądania w MDC (trafia do każdego wpisu logu)\n@Component\nclass RequestIdFilter extends OncePerRequestFilter {\n    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)\n            throws ServletException, IOException {\n        String id = Optional.ofNullable(req.getHeader(\"X-Request-ID\")).filter(v -> v.matches(\"[\\\\w-]{1,64}\"))\n                            .orElse(UUID.randomUUID().toString());\n        MDC.put(\"requestId\", id); MDC.put(\"clientIp\", req.getRemoteAddr());\n        res.setHeader(\"X-Request-ID\", id);\n        try { chain.doFilter(req, res); } finally { MDC.clear(); }\n    }\n}\n// Dostęp do /admin/** — Spring Security: uwierzytelnienie + rola ADMIN; IP to najwyżej dodatkowy warunek."
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kryteria zaliczenia Bossa",
+      "body": "Ocena artefaktów (każde kryterium: spełnione / częściowo / niespełnione):\n- **Diagram** — trzy sieci, urządzenia, adresy, punkty P1–P3; strzałki z opisem zmian (MAC, IP, porty, TTL, nowe połączenie).\n- **Pliki pcap** — trzy pliki z ARP, ICMP i HTTP; sumy SHA-256; opis, gdzie i kiedy przechwycono.\n- **Tabela zmian** — dla każdego pola wartość w P1, P2, P3 i *mechanizm*, który ją zmienił (lub dlaczego jej nie zmienił).\n- **Korelacja** — żądanie `boss-001` odnalezione w czterech źródłach z kluczami korelacji.\n- **Pytania kontrolne** — poprawne odpowiedzi z odwołaniem do numerów ramek w pcap.\n- **Wniosek obrońcy** — krótko: jakie logi musiałaby mieć firma, by w incydencie wskazać laptop jako źródło żądania, i jakie ryzyko niesie zaufanie do nagłówka XFF.\n\n**Poziom ekspercki (opcjonalnie):** powtórz lab z HTTPS na proxy (certyfikat z prywatnego CA) i odszyfruj P1 kluczami sesji curl; dodaj drugie proxy w łańcuchu i pokaż, jak rośnie XFF; zmień NAT na statyczny SNAT i opisz różnicę w conntrack.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie rozdziału",
+      "body": "- Jedno żądanie przechodzi przez **kilka odcinków L2** (nowe MAC na każdym) i **jeden lub więcej routerów** (TTL −1).\n- **NAT** podmienia adres źródłowy (i czasem port); odwrotność zna tylko tablica conntrack urządzenia NAT.\n- **Reverse proxy** kończy połączenie i otwiera nowe: nowe adresy, porty, TTL; klienta opisuje nagłówek **X-Forwarded-For** — i to tylko w zakresie, w jakim proxy go widziało.\n- Aplikacja za proxy musi wiedzieć, którym proxy ufa (`server.forward-headers-strategy`, internal-proxies); ślepe zaufanie do XFF to luka.\n- **Korelacja** dowodów wymaga zsynchronizowanego czasu, logów NAT, logów proxy, identyfikatorów żądań — to fundament pracy SOC i IR.\n- Zamykasz rozdział 01: wiesz, jak zbudowana jest sieć, jak warstwy dzielą odpowiedzialność, jak wygląda pakiet bajt po bajcie, jak mierzyć wydajność i jak przechwytywać ruch.\n- Następny rozdział: **Ethernet, switching i sieć lokalna** — warstwa, od której zaczyna się każda podróż pakietu.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Pytanie kontrolne: Dlaczego w P1 MAC docelowy ramki z żądaniem to MAC routera (10.10.1.1), a nie proxy?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Proxy (10.20.0.10) jest w innej podsieci niż laptop (10.10.1.0/24), więc laptop wysyła ramkę do next hopa — bramy domyślnej 10.10.1.1. Adres IP docelowy w pakiecie pozostaje adresem proxy."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Którą ramkę ARP zobaczysz w P1 przed żądaniem i kto na nią odpowiada? Czy w P2 też będzie ARP od laptopa?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Laptop pyta „who-has 10.10.1.1 tell 10.10.1.10”, odpowiada router „10.10.1.1 is-at 02:42:0a:0a:01:01”. W P2 nie ma ARP laptopa — ARP nie przechodzi przez router; w P2 może być ARP routera o MAC proxy (10.20.0.10)."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Jak zmienia się TTL pakietu ICMP echo od laptopa między P1 a P2 i dlaczego?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "P1: 64, P2: 63 — router zmniejsza TTL o 1 przy przekazywaniu pakietu (i przelicza sumę kontrolną). Odpowiedź echo reply z proxy ma w P2 TTL 64, a w P1 63."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Które pola żądania HTTP są identyczne w P1 i P2, a które różne? Wyjaśnij mechanizm każdej różnicy.",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Identyczne: IP docelowy 10.20.0.10, porty (45678 → 80), numery sekwencyjne, treść HTTP. Różne: MAC źródłowy i docelowy (nowy odcinek L2, ramkę zbudował router), IP źródłowy 10.10.1.10 → 10.20.0.2 (masquerade), TTL 64 → 63 (router), suma kontrolna IP i TCP (zmiana adresu i TTL)."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Dlaczego w P3 widzisz zupełnie inne porty i adresy niż w P2?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Proxy zakończyło połączenie klienta i otworzyło nowe połączenie TCP do aplikacji: źródło 10.30.0.10 z nowym portem efemerycznym, cel 10.30.0.20:8080. To osobny handshake (SYN, SYN-ACK, ACK) i osobna sesja TCP."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Jaką wartość ma X-Forwarded-For w P3 i dlaczego nie jest to adres laptopa?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "X-Forwarded-For: 10.20.0.2 — proxy wpisuje adres, z którego przyszło połączenie. Z powodu NAT na routerze proxy nigdy nie widziało adresu 10.10.1.10."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Na podstawie wpisu conntrack routera wyjaśnij, jak odpowiedź 200 trafia z powrotem do laptopa.",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Wpis zawiera krotkę oryginalną (10.10.1.10:45678 → 10.20.0.10:80) i odwrotną (10.20.0.10:80 → 10.20.0.2:45678). Odpowiedź przychodzi na 10.20.0.2:45678; router znajduje wpis i podmienia adres docelowy z powrotem na 10.10.1.10, po czym wysyła ramkę do MAC laptopa."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Ile połączeń TCP widzi aplikacja Spring Boot, gdy laptop wyśle 5 żądań w ciągu sekundy przez keep-alive? A ile proxy od strony klienta?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Od strony klienta: jedno połączenie (curl z keep-alive w jednej sesji) lub pięć (osobne wywołania curl). Od strony aplikacji: zależy od puli połączeń proxy do backendu — Caddy utrzymuje połączenia keep-alive, więc zwykle jedno lub kilka, niezależnie od liczby połączeń klientów. Liczba połączeń po obu stronach proxy jest niezależna."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Co zobaczyłaby aplikacja w request.getRemoteAddr() bez konfiguracji forward-headers i dlaczego to problem dla audytu?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "10.30.0.10 — adres proxy. Wszystkie żądania wyglądałyby na pochodzące z jednego adresu: brak rozróżnienia klientów w logach, rate limiting i blokady IP przestają działać, a w incydencie nie da się wskazać źródła."
+    },
+    {
+      "prompt": "Pytanie kontrolne: Wskaż w pcap P3 numer ramki z nagłówkiem X-Request-ID: boss-001 i odpowiadający wpis w logu Spring Boot. Jakie pola potwierdzają, że to to samo żądanie?",
+      "hint": "Odwołaj się do konkretnych ramek w swoich plikach pcap.",
+      "solution": "Filtr: http.request && http contains \"boss-001\" (lub pole http.request.line). Potwierdzenie: ten sam identyfikator w logu (MDC requestId), zgodny czas (± ms), ścieżka /users/42, adres proxy 10.30.0.10 jako remoteAddr i XFF 10.20.0.2, rozmiar odpowiedzi."
+    },
+    {
+      "prompt": "Wariant: Dodaj drugie proxy (Nginx) przed Caddy w sieci wan. Jak będzie wyglądał nagłówek X-Forwarded-For w P3 i co zmieni się w konfiguracji zaufanych proxy w Spring?",
+      "hint": "Zmień jeden element labu i przewidź skutki przed pomiarem.",
+      "solution": "XFF: „10.20.0.2, <adres Nginx>” — każde proxy dopisuje adres swojego klienta na końcu. W Spring internal-proxies musi obejmować oba proxy, a RemoteIpValve, idąc od prawej, pominie zaufane adresy i wybierze 10.20.0.2 jako klienta."
+    },
+    {
+      "prompt": "Wariant: Zmień regułę masquerade na statyczny SNAT na adres 10.20.0.100 (dodatkowy adres na interfejsie WAN). Co zmieni się w P2, conntrack i XFF?",
+      "hint": "Zmień jeden element labu i przewidź skutki przed pomiarem.",
+      "solution": "IP źródłowy w P2 = 10.20.0.100 zamiast 10.20.0.2; conntrack pokazuje translację na 10.20.0.100; XFF w P3 = 10.20.0.100. Proxy musi znać trasę powrotną do 10.20.0.100 (ten sam segment — ARP na routerze musi odpowiadać za ten adres)."
+    },
+    {
+      "prompt": "Wariant: Włącz HTTPS na proxy (certyfikat z prywatnego CA) i powtórz pomiar. Co zobaczysz w P1/P2, a co w P3? Jak odszyfrować P1?",
+      "hint": "Zmień jeden element labu i przewidź skutki przed pomiarem.",
+      "solution": "P1/P2: handshake TLS (ClientHello z SNI) i zaszyfrowane Application Data — bez ścieżki i nagłówków. P3: nadal HTTP jawne (proxy kończy TLS), chyba że skonfigurujesz TLS do backendu. Odszyfrowanie P1: SSLKEYLOGFILE dla curl i wskazanie pliku kluczy w Wiresharku."
+    },
+    {
+      "prompt": "Wariant: Przenieś laptop do sieci wan (bez routera). Co zniknie z obrazu i jakie ryzyko architektoniczne to ilustruje?",
+      "hint": "Zmień jeden element labu i przewidź skutki przed pomiarem.",
+      "solution": "Znika NAT i router: proxy widzi prawdziwy adres laptopa, TTL w P2 = 64, brak ARP o bramę (laptop pyta bezpośrednio o MAC proxy). Ilustruje to brak segmentacji — klient w tej samej sieci co serwery brzegowe, bez punktu kontroli (firewall/NAT) pomiędzy."
+    },
+    {
+      "prompt": "Wariant: Spróbuj z laptopa połączyć się bezpośrednio z aplikacją 10.30.0.20:8080. Co pokaże curl i przechwycenie w P1? Dlaczego?",
+      "hint": "Zmień jeden element labu i przewidź skutki przed pomiarem.",
+      "solution": "Laptop wyśle pakiety do bramy (router), ale router nie ma trasy do 10.30.0.0/24 (zna tylko lan i wan) — odeśle ICMP Network Unreachable lub pakiety zginą; curl: „No route to host” lub timeout. To zamierzona segmentacja: jedyna droga do aplikacji prowadzi przez proxy."
+    },
+    {
+      "prompt": "Zmierz czas żądania curl -w z laptopa i porównaj z czasem odpowiedzi w logu aplikacji oraz w logu Caddy. Skąd biorą się różnice?",
+      "hint": "Każdy element mierzy inny odcinek.",
+      "solution": "curl mierzy całość z perspektywy klienta (DNS, TCP z proxy, czekanie, transfer); Caddy mierzy od przyjęcia żądania do wysłania odpowiedzi (obejmuje połączenie do aplikacji i jej czas); aplikacja mierzy tylko przetwarzanie w Spring. Różnice to czas sieci między odcinkami, handshake proxy–aplikacja (jeśli nowe połączenie) i buforowanie w proxy."
+    },
+    {
+      "prompt": "Przygotuj w Wiresharku profil „Boss” z kolumnami: eth.src, eth.dst, ip.src, ip.dst, ip.ttl, tcp.srcport, tcp.dstport, http.x_forwarded_for, tcp.stream. Wyeksportuj go i opisz, do czego służy każda kolumna w tym labie.",
+      "hint": "Edit → Configuration Profiles; kolumny dodasz przez Apply as Column.",
+      "solution": "Profil ułatwia porównanie trzech plików: MAC pokazują odcinki L2, IP i porty — NAT i nowe połączenie, TTL — przejście przez router, XFF — informację przekazaną przez proxy, tcp.stream — granice połączeń. Eksport profilu (folder profilu) pozwala powtórzyć analizę w zespole."
+    },
+    {
+      "prompt": "Zapisz w raporcie „wniosek obrońcy”: jakie logi i ustawienia musiałaby mieć firma o takiej architekturze, by po alercie z aplikacji wskazać konkretny laptop?",
+      "hint": "Myśl o każdym punkcie, który zmienia adresy.",
+      "solution": "Wymagane: logi aplikacji z identyfikatorem żądania i adresem klienta z XFF (przetworzonym przez zaufane proxy); logi proxy (adres źródłowy, czas, identyfikator); logi NAT/firewalla z translacjami (conntrack/NetFlow z NAT, retencja co najmniej kilka miesięcy); logi DHCP (adres IP → MAC → urządzenie) i ewentualnie 802.1X (urządzenie → użytkownik); synchronizacja czasu NTP we wszystkich systemach; centralny SIEM z korelacją."
+    },
+    {
+      "prompt": "Zaproponuj trzy reguły detekcji, które w tej architekturze wykryłyby próbę fałszowania nagłówka X-Forwarded-For przez klienta.",
+      "hint": "Porównaj to, co dodało proxy, z tym, co przysłał klient.",
+      "solution": "1) W proxy: zapisuj nagłówek XFF otrzymany od klienta (przed modyfikacją); alert, gdy klient z Internetu przysyła XFF zawierający adresy prywatne lub 127.0.0.1. 2) W aplikacji: alert, gdy łańcuch XFF ma więcej wpisów niż liczba proxy w architekturze. 3) W SIEM: korelacja — ten sam identyfikator sesji z różnymi „adresami klienta” w krótkim czasie. Dodatkowo: proxy brzegowe powinno usuwać XFF od klienta lub nadpisywać go (Caddy/Nginx: konfiguracja trusted_proxies / real_ip)."
+    },
+    {
+      "prompt": "Oblicz, ile ramek ARP, ICMP i TCP zobaczysz minimalnie w P1 dla sekwencji: ping -c 3 10.20.0.10, a potem jedno curl (bez keep-alive po zakończeniu). Uzasadnij.",
+      "hint": "ARP raz (cache), ICMP 3 × 2, TCP: handshake, żądanie, odpowiedź, ACK-i, zamknięcie.",
+      "solution": "ARP: 2 (request + reply) — dalej cache. ICMP: 6 (3 echo request + 3 echo reply). TCP: handshake 3, żądanie 1, ACK serwera 0–1 (może być sklejony z odpowiedzią), odpowiedź 1–2, ACK klienta 1, zamknięcie 3–4 (FIN/ACK w obie strony) — razem ok. 9–12. Dokładna liczba zależy od sklejania ACK i podziału odpowiedzi; w raporcie podaj liczby z własnego pliku."
+    },
+    {
+      "prompt": "Na podstawie rozdziału przygotuj „kartę ścieżki pakietu” dla swojej aplikacji w pracy lub projektu: wszystkie elementy od klienta do bazy, które zmieniają adresy lub tworzą nowe połączenia, i gdzie zbierane są ich logi.",
+      "hint": "Uwzględnij CDN/WAF, load balancer, ingress, sidecar service mesh, pule połączeń do bazy.",
+      "solution": "Przykład: przeglądarka → CDN (nowe połączenie, XFF) → ALB (nowe połączenie, XFF dopisany, logi ALB w S3) → ingress NGINX w K8s (nowe połączenie, logi ingress) → pod Spring Boot (logi aplikacji, traceId) → HikariCP → PostgreSQL (połączenia z puli, adres poda/węzła po SNAT, logi PostgreSQL). Dla każdego: jaki adres widzi, gdzie loguje, jak długo przechowuje."
+    },
+    {
+      "prompt": "Uruchom w labie ten sam scenariusz, ale z IPv6 (dodaj podsieci IPv6 do sieci lan/wan/app i usuń NAT). Jakie różnice zaobserwujesz w P1–P3?",
+      "hint": "IPv6 nie potrzebuje NAT; zamiast ARP działa Neighbor Discovery; zamiast TTL — Hop Limit.",
+      "solution": "Różnice: Neighbor Solicitation/Advertisement (ICMPv6) zamiast ARP; Hop Limit zamiast TTL (zmniejszany przez router); brak NAT — proxy widzi globalny/ULA adres laptopa, więc XFF zawiera prawdziwy adres klienta; nagłówek IPv6 ma 40 B. Bezpieczeństwo nie wynika już z NAT — potrzebny jawny firewall na routerze."
+    },
+    {
+      "prompt": "W pliku P2 znajdź zapytanie ARP wysłane przez router. O jaki adres pyta i dlaczego?",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "Router pyta „who-has 10.20.0.10 tell 10.20.0.2” — musi poznać MAC proxy, by zbudować ramkę na odcinku WAN. Każdy router rozwiązuje adres następnego skoku w swojej sieci."
+    },
+    {
+      "prompt": "Opisz odpowiedź HTTP 200 w P2: adresy, porty i TTL. Czym różni się od tej samej odpowiedzi w P1?",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "P2: 10.20.0.10:80 → 10.20.0.2:45678, TTL 64 (prosto z proxy). P1: 10.20.0.10:80 → 10.10.1.10:45678, TTL 63 — router odwrócił NAT (adres docelowy) i zmniejszył TTL, ramkę zbudował z MAC LAN routera do MAC laptopa."
+    },
+    {
+      "prompt": "Na proxy uruchom ss -tn podczas trwania połączenia. Ile gniazd TCP zobaczysz dla jednego żądania i jakie mają adresy?",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "Dwa: 10.20.0.10:80 ⇄ 10.20.0.2:45678 (od strony klienta) oraz 10.30.0.10:38210 ⇄ 10.30.0.20:8080 (do backendu). To bezpośredni dowód, że proxy utrzymuje dwa niezależne połączenia."
+    },
+    {
+      "prompt": "Wpis conntrack ma stan ASSURED i TIME_WAIT. Co oznaczają te stany?",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "ASSURED — połączenie widziało ruch w obu kierunkach i nie zostanie usunięte przy przepełnieniu tablicy w pierwszej kolejności. TIME_WAIT — połączenie zostało zamknięte (FIN), a wpis jest jeszcze przez chwilę utrzymywany, by obsłużyć spóźnione pakiety; potem wygasa."
+    },
+    {
+      "prompt": "Dodaj na odcinku WAN tc netem z utratą 5% pakietów i powtórz żądanie 20 razy. Gdzie (P1, P2, P3) zobaczysz retransmisje i dlaczego?",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "Retransmisje połączenia klient–proxy zobaczysz w P1 i P2 (segmenty gubione na odcinku WAN; w P1 ponowienia od klienta i zduplikowane ACK). W P3 nie — połączenie proxy–aplikacja nie przechodzi przez uszkodzony odcinek. Wniosek: przechwytywanie z wielu punktów lokalizuje odcinek z problemem."
+    },
+    {
+      "prompt": "Przygotuj tabelę korelacji żądania boss-001 w czterech źródłach (pcap P1, conntrack, log Caddy, log Spring Boot) z kolumnami: czas, adres źródłowy, port, identyfikator, uwagi.",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "Przykład wiersza Caddy: 14:02:11.482, remote_ip 10.20.0.2, remote_port 45678, X-Request-ID boss-001, uri /users/42, status 200. Spring: 14:02:11.490, remoteAddr 10.20.0.2 (po konfiguracji RemoteIpValve) lub 10.30.0.10 (bez), requestId boss-001. conntrack: 10.10.1.10:45678 ↔ 10.20.0.2:45678. pcap P1: ramka N, 10.10.1.10:45678 → 10.20.0.10:80."
+    },
+    {
+      "prompt": "Zrób przegląd raportu kolegi (peer review): sprawdź, czy każdy wniosek ma odwołanie do ramki, czy tabela zmian zawiera mechanizm każdej zmiany i czy wniosek obrońcy wymienia logi NAT i DHCP.",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "Lista kontrolna recenzji: odwołania do ramek; spójność wartości między tabelą a pcap; poprawna interpretacja TTL w P3 i XFF; sumy SHA-256 zgodne z plikami; wniosek obrońcy obejmuje czas (NTP), NAT, proxy, aplikację, DHCP/802.1X oraz ryzyko fałszowania XFF."
+    },
+    {
+      "prompt": "Posprzątaj lab i potwierdź, że nie zostały po nim sieci, kontenery i pliki z danymi. Dlaczego to element dobrej praktyki?",
+      "hint": "Sprawdź w swoich plikach i opisz z odwołaniem do ramek.",
+      "solution": "docker compose down --remove-orphans; docker network ls (brak sieci lab), usunięcie lub zaszyfrowane zarchiwizowanie katalogu cap/. Higiena labów zapobiega konfliktom adresów w kolejnych ćwiczeniach, a pliki pcap — nawet z danymi testowymi — są artefaktami, które trzeba świadomie przechowywać lub usuwać."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki jest MAC źródłowy żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "02:42:0a:0a:01:01",
+        "B": "02:42:0a:0a:01:0a",
+        "C": "02:42:0a:14:00:02",
+        "D": "02:42:0a:1e:00:0a"
+      },
+      "correct": "B",
+      "explanation": "P1: MAC źródłowy = 02:42:0a:0a:01:0a."
+    },
+    {
+      "question": "Jaki jest MAC docelowy żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "02:42:0a:14:00:0a",
+        "B": "02:42:0a:0a:01:0a",
+        "C": "02:42:0a:0a:01:01",
+        "D": "02:42:0a:1e:00:14"
+      },
+      "correct": "C",
+      "explanation": "P1: MAC docelowy = 02:42:0a:0a:01:01."
+    },
+    {
+      "question": "Jaki jest adres IP źródłowy żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "10.10.1.10",
+        "B": "10.20.0.2",
+        "C": "10.30.0.10",
+        "D": "10.10.1.1"
+      },
+      "correct": "A",
+      "explanation": "P1: adres IP źródłowy = 10.10.1.10."
+    },
+    {
+      "question": "Jaki jest adres IP docelowy żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "10.10.1.10",
+        "B": "10.30.0.20",
+        "C": "10.10.1.1",
+        "D": "10.20.0.10"
+      },
+      "correct": "D",
+      "explanation": "P1: adres IP docelowy = 10.20.0.10."
+    },
+    {
+      "question": "Jaki jest port źródłowy TCP żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "45678",
+        "B": "53",
+        "C": "38210",
+        "D": "443"
+      },
+      "correct": "A",
+      "explanation": "P1: port źródłowy TCP = 45678."
+    },
+    {
+      "question": "Jaki jest port docelowy TCP żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "8080",
+        "B": "443",
+        "C": "80",
+        "D": "53"
+      },
+      "correct": "C",
+      "explanation": "P1: port docelowy TCP = 80."
+    },
+    {
+      "question": "Jaki jest TTL żądania HTTP w punkcie P1 (LAN: między laptopem a routerem)?",
+      "options": {
+        "A": "62",
+        "B": "65",
+        "C": "63",
+        "D": "64"
+      },
+      "correct": "D",
+      "explanation": "P1: TTL = 64."
+    },
+    {
+      "question": "Jaki jest MAC źródłowy żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "02:42:0a:1e:00:0a",
+        "B": "02:42:0a:14:00:02",
+        "C": "02:42:0a:0a:01:01",
+        "D": "02:42:0a:0a:01:0a"
+      },
+      "correct": "B",
+      "explanation": "P2: MAC źródłowy = 02:42:0a:14:00:02."
+    },
+    {
+      "question": "Jaki jest MAC docelowy żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "02:42:0a:14:00:0a",
+        "B": "02:42:0a:0a:01:0a",
+        "C": "02:42:0a:1e:00:14",
+        "D": "02:42:0a:0a:01:01"
+      },
+      "correct": "A",
+      "explanation": "P2: MAC docelowy = 02:42:0a:14:00:0a."
+    },
+    {
+      "question": "Jaki jest adres IP źródłowy żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "10.10.1.10",
+        "B": "10.20.0.2",
+        "C": "10.10.1.1",
+        "D": "10.30.0.10"
+      },
+      "correct": "B",
+      "explanation": "P2: adres IP źródłowy = 10.20.0.2."
+    },
+    {
+      "question": "Jaki jest adres IP docelowy żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "10.10.1.1",
+        "B": "10.30.0.20",
+        "C": "10.20.0.10",
+        "D": "10.10.1.10"
+      },
+      "correct": "C",
+      "explanation": "P2: adres IP docelowy = 10.20.0.10."
+    },
+    {
+      "question": "Jaki jest port źródłowy TCP żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "443",
+        "B": "38210",
+        "C": "53",
+        "D": "45678"
+      },
+      "correct": "D",
+      "explanation": "P2: port źródłowy TCP = 45678."
+    },
+    {
+      "question": "Jaki jest port docelowy TCP żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "53",
+        "B": "80",
+        "C": "443",
+        "D": "8080"
+      },
+      "correct": "B",
+      "explanation": "P2: port docelowy TCP = 80."
+    },
+    {
+      "question": "Jaki jest TTL żądania HTTP w punkcie P2 (WAN: między routerem a proxy)?",
+      "options": {
+        "A": "62",
+        "B": "65",
+        "C": "63",
+        "D": "64"
+      },
+      "correct": "C",
+      "explanation": "P2: TTL = 63."
+    },
+    {
+      "question": "Jaki jest MAC źródłowy żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "02:42:0a:1e:00:0a",
+        "B": "02:42:0a:0a:01:01",
+        "C": "02:42:0a:0a:01:0a",
+        "D": "02:42:0a:14:00:02"
+      },
+      "correct": "A",
+      "explanation": "P3: MAC źródłowy = 02:42:0a:1e:00:0a."
+    },
+    {
+      "question": "Jaki jest MAC docelowy żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "02:42:0a:14:00:0a",
+        "B": "02:42:0a:0a:01:0a",
+        "C": "02:42:0a:0a:01:01",
+        "D": "02:42:0a:1e:00:14"
+      },
+      "correct": "D",
+      "explanation": "P3: MAC docelowy = 02:42:0a:1e:00:14."
+    },
+    {
+      "question": "Jaki jest adres IP źródłowy żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "10.10.1.10",
+        "B": "10.20.0.2",
+        "C": "10.30.0.10",
+        "D": "10.10.1.1"
+      },
+      "correct": "C",
+      "explanation": "P3: adres IP źródłowy = 10.30.0.10."
+    },
+    {
+      "question": "Jaki jest adres IP docelowy żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "10.10.1.1",
+        "B": "10.30.0.20",
+        "C": "10.10.1.10",
+        "D": "10.20.0.10"
+      },
+      "correct": "B",
+      "explanation": "P3: adres IP docelowy = 10.30.0.20."
+    },
+    {
+      "question": "Jaki jest port źródłowy TCP żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "443",
+        "B": "45678",
+        "C": "53",
+        "D": "38210"
+      },
+      "correct": "D",
+      "explanation": "P3: port źródłowy TCP = 38210."
+    },
+    {
+      "question": "Jaki jest port docelowy TCP żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "8080",
+        "B": "443",
+        "C": "80",
+        "D": "53"
+      },
+      "correct": "A",
+      "explanation": "P3: port docelowy TCP = 8080."
+    },
+    {
+      "question": "Jaki jest TTL żądania HTTP w punkcie P3 (APP: między proxy a aplikacją)?",
+      "options": {
+        "A": "62",
+        "B": "64",
+        "C": "63",
+        "D": "65"
+      },
+      "correct": "B",
+      "explanation": "P3: TTL = 64."
+    },
+    {
+      "question": "Który element labu zmienia adres IP źródłowy żądania między P1 a P2?",
+      "options": {
+        "A": "Router z regułą masquerade (NAT)",
+        "B": "Aplikacja Spring Boot",
+        "C": "Przełącznik (bridge) Dockera",
+        "D": "Reverse proxy"
+      },
+      "correct": "A",
+      "explanation": "Masquerade podmienia adres źródłowy na adres interfejsu wyjściowego."
+    },
+    {
+      "question": "Który element labu tworzy nowe połączenie TCP?",
+      "options": {
+        "A": "Router z NAT",
+        "B": "Laptop przy każdym pakiecie",
+        "C": "Bridge Dockera",
+        "D": "Reverse proxy"
+      },
+      "correct": "D",
+      "explanation": "Proxy kończy połączenie klienta i otwiera własne do backendu."
+    },
+    {
+      "question": "Gdzie zapisane jest powiązanie 10.10.1.10:45678 ⇄ 10.20.0.2:45678?",
+      "options": {
+        "A": "W nagłówku X-Forwarded-For",
+        "B": "W tablicy ARP proxy",
+        "C": "W tablicy conntrack routera",
+        "D": "W logu aplikacji"
+      },
+      "correct": "C",
+      "explanation": "Tylko urządzenie NAT zna translację."
+    },
+    {
+      "question": "Jaki adres zapisze w X-Forwarded-For reverse proxy w tym labie?",
+      "options": {
+        "A": "10.20.0.2",
+        "B": "10.20.0.10",
+        "C": "10.30.0.10",
+        "D": "10.10.1.10"
+      },
+      "correct": "A",
+      "explanation": "Proxy widzi połączenie przychodzące z adresu po NAT."
+    },
+    {
+      "question": "Co zwróci request.getRemoteAddr() w aplikacji bez konfiguracji forward-headers?",
+      "options": {
+        "A": "10.20.0.2",
+        "B": "10.30.0.10",
+        "C": "10.10.1.10",
+        "D": "10.30.0.20"
+      },
+      "correct": "B",
+      "explanation": "Bez przetwarzania XFF aplikacja widzi adres proxy."
+    },
+    {
+      "question": "Dlaczego TTL w P3 wynosi 64, a nie 62?",
+      "options": {
+        "A": "Bo NAT resetuje TTL",
+        "B": "Bo aplikacja ustawia TTL",
+        "C": "Bo proxy zwiększa TTL o 2",
+        "D": "Proxy tworzy nowy pakiet w nowym połączeniu z domyślnym TTL swojego systemu"
+      },
+      "correct": "D",
+      "explanation": "TTL zmniejsza się tylko przy przekazywaniu pakietu przez router."
+    },
+    {
+      "question": "Dlaczego laptop wysyła ramkę z żądaniem do MAC routera?",
+      "options": {
+        "A": "Bo proxy nie ma adresu MAC",
+        "B": "Bo router ma najkrótszy MAC",
+        "C": "Bo proxy jest w innej podsieci, więc next hopem jest brama domyślna",
+        "D": "Bo ARP jest wyłączony"
+      },
+      "correct": "C",
+      "explanation": "IP docelowy pozostaje adresem proxy, MAC docelowy to brama."
+    },
+    {
+      "question": "Czy w P2 zobaczysz zapytanie ARP wysłane przez laptop?",
+      "options": {
+        "A": "Tylko przy IPv6",
+        "B": "Tak, ARP przechodzi przez routery",
+        "C": "Tak, ale z adresem NAT",
+        "D": "Nie — ARP działa tylko w obrębie segmentu L2 laptopa"
+      },
+      "correct": "D",
+      "explanation": "W P2 może pojawić się ARP routera o MAC proxy."
+    },
+    {
+      "question": "Port źródłowy klienta po masquerade w P2 zwykle:",
+      "options": {
+        "A": "Znika z nagłówka",
+        "B": "Zmienia się na 80",
+        "C": "Pozostaje taki sam, o ile nie koliduje z innym połączeniem",
+        "D": "Zawsze zmienia się na 1024"
+      },
+      "correct": "C",
+      "explanation": "Zmiana portu (PAT) następuje przy kolizji."
+    },
+    {
+      "question": "Które pole najlepiej łączy wpis logu proxy z wpisem logu aplikacji?",
+      "options": {
+        "A": "Adres MAC",
+        "B": "Identyfikator żądania (X-Request-ID / traceparent)",
+        "C": "Port docelowy 80",
+        "D": "TTL"
+      },
+      "correct": "B",
+      "explanation": "Identyfikator przechodzi przez całą ścieżkę i trafia do MDC."
+    },
+    {
+      "question": "Jaki skutek ma zaufanie aplikacji do pierwszego wpisu X-Forwarded-For przysłanego przez klienta?",
+      "options": {
+        "A": "Klient może podać dowolny adres i obejść allow-listę IP lub sfałszować logi",
+        "B": "Błąd TLS",
+        "C": "Brak skutków",
+        "D": "Spadek wydajności"
+      },
+      "correct": "A",
+      "explanation": "Ufaj tylko wpisom dodanym przez własne proxy."
+    },
+    {
+      "question": "Do czego służy w Spring Boot server.tomcat.remoteip.internal-proxies?",
+      "options": {
+        "A": "Włącza HTTP/2",
+        "B": "Określa adresy proxy, którym ufamy przy przetwarzaniu X-Forwarded-For",
+        "C": "Ustawia port serwera",
+        "D": "Blokuje ruch z proxy"
+      },
+      "correct": "B",
+      "explanation": "RemoteIpValve pomija zaufane proxy, idąc od prawej strony XFF."
+    },
+    {
+      "question": "Która opcja Docker Compose odcina sieć od wyjścia do Internetu?",
+      "options": {
+        "A": "internal: true",
+        "B": "driver: host",
+        "C": "attachable: true",
+        "D": "external: true"
+      },
+      "correct": "A",
+      "explanation": "Lab jest izolowany — ruch nie wydostanie się poza host."
+    },
+    {
+      "question": "Jakim poleceniem wyświetlisz tablicę translacji NAT na routerze Linux?",
+      "options": {
+        "A": "ip neigh",
+        "B": "ss -tlnp",
+        "C": "arp -a",
+        "D": "conntrack -L"
+      },
+      "correct": "D",
+      "explanation": "Alternatywnie /proc/net/nf_conntrack."
+    },
+    {
+      "question": "Dlaczego przed testem czyści się cache ARP laptopa?",
+      "options": {
+        "A": "Aby przyspieszyć ping",
+        "B": "Aby wyłączyć NAT",
+        "C": "Aby w przechwyceniu pojawiła się wymiana ARP o MAC bramy",
+        "D": "Aby zmienić TTL"
+      },
+      "correct": "C",
+      "explanation": "Przy ciepłym cache ARP nie zostanie wysłany."
+    },
+    {
+      "question": "Jaki element w prawdziwej chmurze AWS pełni rolę routera z NAT dla instancji w podsieci prywatnej?",
+      "options": {
+        "A": "Internet Gateway dla podsieci prywatnej",
+        "B": "NAT Gateway",
+        "C": "Route 53",
+        "D": "Security Group"
+      },
+      "correct": "B",
+      "explanation": "Translacje widać w VPC Flow Logs."
+    },
+    {
+      "question": "Jaki element AWS odpowiada reverse proxy z labu (nowe połączenie, X-Forwarded-For)?",
+      "options": {
+        "A": "Network Load Balancer w trybie TCP passthrough",
+        "B": "NAT Gateway",
+        "C": "VPC peering",
+        "D": "Application Load Balancer"
+      },
+      "correct": "D",
+      "explanation": "ALB kończy połączenia i dodaje XFF; NLB domyślnie przekazuje połączenia na poziomie L4."
+    },
+    {
+      "question": "Których logów potrzebuje firma, by wskazać laptop jako źródło żądania widocznego w aplikacji?",
+      "options": {
+        "A": "Wystarczy pcap z P3",
+        "B": "Tylko logów DNS",
+        "C": "Logów aplikacji, proxy, NAT/firewalla i DHCP, zsynchronizowanych czasowo",
+        "D": "Tylko logów aplikacji"
+      },
+      "correct": "C",
+      "explanation": "Każdy punkt zmieniający adresy musi zostawić ślad."
+    },
+    {
+      "question": "Co oznacza w pliku pcap P3 nowy handshake SYN, SYN-ACK, ACK między 10.30.0.10 a 10.30.0.20?",
+      "options": {
+        "A": "Proxy otwiera osobne połączenie do aplikacji",
+        "B": "Odpowiedź NAT",
+        "C": "Retransmisję połączenia klienta",
+        "D": "Atak SYN flood"
+      },
+      "correct": "A",
+      "explanation": "To dowód, że proxy działa w warstwie 7."
+    },
+    {
+      "question": "Dlaczego w P3 przy kolejnych żądaniach może nie być nowego handshake’u?",
+      "options": {
+        "A": "Bo TTL wygasł",
+        "B": "Bo aplikacja wyłącza TCP",
+        "C": "Proxy utrzymuje połączenia keep-alive do backendu i używa ich ponownie",
+        "D": "Bo NAT zapamiętał połączenie"
+      },
+      "correct": "C",
+      "explanation": "Pula połączeń proxy jest niezależna od połączeń klientów."
+    },
+    {
+      "question": "Laptop próbuje połączyć się bezpośrednio z 10.30.0.20. Czego się spodziewasz?",
+      "options": {
+        "A": "Odpowiedzi od proxy z kodem 200",
+        "B": "Połączenia przez ARP",
+        "C": "Połączenia przez NAT",
+        "D": "Braku połączenia — router nie ma trasy do sieci app (segmentacja)"
+      },
+      "correct": "D",
+      "explanation": "Jedyna droga do aplikacji prowadzi przez proxy."
+    },
+    {
+      "question": "Co zmienia się między P1 a P2 w nagłówku TCP?",
+      "options": {
+        "A": "Suma kontrolna (z powodu zmiany adresu IP w pseudo-nagłówku)",
+        "B": "Flagi",
+        "C": "Numer sekwencyjny",
+        "D": "Port docelowy"
+      },
+      "correct": "A",
+      "explanation": "Suma kontrolna TCP obejmuje pseudo-nagłówek z adresami IP."
+    },
+    {
+      "question": "Jak w tshark wypisać nagłówek X-Forwarded-For z żądań HTTP?",
+      "options": {
+        "A": "tshark -r p3.pcap -e xff",
+        "B": "tshark -r p3.pcap -Y http.request -T fields -e http.x_forwarded_for",
+        "C": "tcpdump -r p3.pcap xff",
+        "D": "tshark -r p3.pcap -z xff"
+      },
+      "correct": "B",
+      "explanation": "Pole dekodera HTTP: http.x_forwarded_for."
+    },
+    {
+      "question": "Jaką rolę pełni X-Request-ID w tym labie?",
+      "options": {
+        "A": "Pozwala odnaleźć to samo żądanie w logach proxy, aplikacji i w pcap",
+        "B": "Szyfruje żądanie",
+        "C": "Zmienia trasę",
+        "D": "Zastępuje uwierzytelnienie"
+      },
+      "correct": "A",
+      "explanation": "Identyfikator przekazywany przez wszystkie warstwy i zapisywany w MDC."
+    },
+    {
+      "question": "Który element jest punktem kontroli i logowania całego ruchu do aplikacji w tym labie?",
+      "options": {
+        "A": "Interfejs pętli zwrotnej",
+        "B": "Bridge sieci lan",
+        "C": "Laptop",
+        "D": "Reverse proxy"
+      },
+      "correct": "D",
+      "explanation": "Tak projektuje się DMZ: jedna kontrolowana droga do usług wewnętrznych."
+    },
+    {
+      "question": "W IPv6 (bez NAT) X-Forwarded-For w P3 zawierałby:",
+      "options": {
+        "A": "Pusty ciąg",
+        "B": "Prawdziwy adres IPv6 laptopa",
+        "C": "Adres routera",
+        "D": "Adres proxy"
+      },
+      "correct": "B",
+      "explanation": "Brak translacji adresów — proxy widzi źródło bezpośrednio."
+    },
+    {
+      "question": "Dlaczego w P2 adres docelowy żądania nadal wynosi 10.20.0.10?",
+      "options": {
+        "A": "Bo proxy podmienia adres",
+        "B": "Bo router zawsze kieruje do bramy",
+        "C": "NAT typu masquerade zmienia tylko adres źródłowy",
+        "D": "Bo TTL jest za niski"
+      },
+      "correct": "C",
+      "explanation": "Zmianę adresu docelowego robi DNAT (np. port forwarding)."
+    },
+    {
+      "question": "Który plik dołącza się do pcapów jako dowód integralności?",
+      "options": {
+        "A": "Plik docker-compose.yml",
+        "B": "Zrzut ekranu Wiresharka",
+        "C": "SHA256SUMS z sumami SHA-256 plików",
+        "D": "Plik z kluczami TLS"
+      },
+      "correct": "C",
+      "explanation": "Skrót pozwala wykazać, że plik nie był modyfikowany."
+    },
+    {
+      "question": "Co oznacza „połączenie 1” w P1 i P2 w tabeli lekcji?",
+      "options": {
+        "A": "Dwa różne połączenia",
+        "B": "Połączenie proxy z aplikacją",
+        "C": "Połączenie UDP",
+        "D": "To samo połączenie TCP widziane przed i po NAT"
+      },
+      "correct": "D",
+      "explanation": "NAT nie tworzy nowego połączenia, tylko tłumaczy adresy w istniejącym."
+    },
+    {
+      "question": "Po co w raporcie z Bossa odwołania do numerów ramek?",
+      "options": {
+        "A": "Aby każdy wniosek był weryfikowalny w dostarczonym pliku pcap",
+        "B": "Bo Wireshark tego wymaga",
+        "C": "Bo tak jest szybciej",
+        "D": "Bo numery ramek szyfrują raport"
+      },
+      "correct": "A",
+      "explanation": "Weryfikowalność to podstawa pracy analitycznej i dowodowej."
+    },
+    {
+      "question": "Jaka jest główna lekcja Bossa dla analityka SOC?",
+      "options": {
+        "A": "X-Forwarded-For zawsze wskazuje klienta",
+        "B": "Identyfikacja źródła żądania wymaga korelacji logów z każdego punktu zmieniającego adresy",
+        "C": "NAT zapewnia bezpieczeństwo",
+        "D": "Wystarczy log aplikacji"
+      },
+      "correct": "B",
+      "explanation": "Atrybucja = pcap/NetFlow + NAT + proxy + aplikacja + DHCP + czas."
+    },
+    {
+      "question": "Które polecenie ustali, który interfejs routera należy do sieci lan?",
+      "options": {
+        "A": "ss -s",
+        "B": "ip -br addr",
+        "C": "nft list ruleset",
+        "D": "ip route get 8.8.8.8"
+      },
+      "correct": "B",
+      "explanation": "Docker nie gwarantuje kolejności eth0/eth1."
+    },
+    {
+      "question": "Co powinno zrobić proxy brzegowe z nagłówkiem X-Forwarded-For otrzymanym od klienta z Internetu?",
+      "options": {
+        "A": "Zamienić na adres MAC",
+        "B": "Przekazać go bez zmian jako pierwszy wpis",
+        "C": "Nie ufać mu: usunąć lub nadpisać zgodnie z listą zaufanych proxy",
+        "D": "Zaszyfrować"
+      },
+      "correct": "C",
+      "explanation": "Klient kontroluje ten nagłówek w całości."
+    },
+    {
+      "question": "Jaki typ NAT stosuje się, aby udostępnić usługę z sieci wewnętrznej na adresie zewnętrznym (port forwarding)?",
+      "options": {
+        "A": "DNAT (zmiana adresu docelowego)",
+        "B": "NAT64",
+        "C": "SNAT",
+        "D": "Masquerade"
+      },
+      "correct": "A",
+      "explanation": "Masquerade/SNAT zmieniają adres źródłowy ruchu wychodzącego."
+    },
+    {
+      "question": "Ile połączeń TCP minimalnie uczestniczy w obsłudze jednego żądania laptopa w tym labie?",
+      "options": {
+        "A": "3",
+        "B": "1",
+        "C": "4",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "Klient ↔ proxy (przez NAT) oraz proxy ↔ aplikacja."
+    },
+    {
+      "question": "Dlaczego segmentacja w labie (brak trasy z lan do app) jest ważna dla obrony?",
+      "options": {
+        "A": "Wyłącza TLS",
+        "B": "Zastępuje uwierzytelnianie",
+        "C": "Wymusza przejście przez proxy, gdzie ruch jest kontrolowany i logowany",
+        "D": "Przyspiesza aplikację"
+      },
+      "correct": "C",
+      "explanation": "Ogranicza też ruch boczny po przejęciu laptopa."
+    },
+    {
+      "question": "Jaki jest MAC źródłowy odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "02:42:0a:0a:01:0a",
+        "B": "02:42:0a:1e:00:14",
+        "C": "02:42:0a:14:00:0a",
+        "D": "02:42:0a:0a:01:01"
+      },
+      "correct": "D",
+      "explanation": "P1 (odpowiedź): MAC źródłowy = 02:42:0a:0a:01:01."
+    },
+    {
+      "question": "Jaki jest MAC docelowy odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "02:42:0a:14:00:02",
+        "B": "02:42:0a:0a:01:0a",
+        "C": "02:42:0a:1e:00:0a",
+        "D": "02:42:0a:0a:01:01"
+      },
+      "correct": "B",
+      "explanation": "P1 (odpowiedź): MAC docelowy = 02:42:0a:0a:01:0a."
+    },
+    {
+      "question": "Jaki jest adres IP źródłowy odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "10.20.0.10",
+        "B": "10.10.1.10",
+        "C": "10.30.0.20",
+        "D": "10.20.0.2"
+      },
+      "correct": "A",
+      "explanation": "P1 (odpowiedź): adres IP źródłowy = 10.20.0.10."
+    },
+    {
+      "question": "Jaki jest adres IP docelowy odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "10.10.1.10",
+        "B": "10.30.0.10",
+        "C": "10.20.0.2",
+        "D": "10.20.0.10"
+      },
+      "correct": "A",
+      "explanation": "P1 (odpowiedź): adres IP docelowy = 10.10.1.10."
+    },
+    {
+      "question": "Jaki jest port źródłowy TCP odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "8080",
+        "B": "38210",
+        "C": "45678",
+        "D": "80"
+      },
+      "correct": "D",
+      "explanation": "P1 (odpowiedź): port źródłowy TCP = 80."
+    },
+    {
+      "question": "Jaki jest port docelowy TCP odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "80",
+        "B": "8080",
+        "C": "45678",
+        "D": "38210"
+      },
+      "correct": "C",
+      "explanation": "P1 (odpowiedź): port docelowy TCP = 45678."
+    },
+    {
+      "question": "Jaki jest TTL odpowiedzi HTTP 200 w punkcie P1?",
+      "options": {
+        "A": "64",
+        "B": "63",
+        "C": "65",
+        "D": "62"
+      },
+      "correct": "B",
+      "explanation": "P1 (odpowiedź): TTL = 63."
+    },
+    {
+      "question": "Jaki jest MAC źródłowy odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "02:42:0a:1e:00:14",
+        "B": "02:42:0a:0a:01:0a",
+        "C": "02:42:0a:0a:01:01",
+        "D": "02:42:0a:14:00:0a"
+      },
+      "correct": "D",
+      "explanation": "P2 (odpowiedź): MAC źródłowy = 02:42:0a:14:00:0a."
+    },
+    {
+      "question": "Jaki jest MAC docelowy odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "02:42:0a:0a:01:01",
+        "B": "02:42:0a:1e:00:0a",
+        "C": "02:42:0a:14:00:02",
+        "D": "02:42:0a:0a:01:0a"
+      },
+      "correct": "C",
+      "explanation": "P2 (odpowiedź): MAC docelowy = 02:42:0a:14:00:02."
+    },
+    {
+      "question": "Jaki jest adres IP źródłowy odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "10.20.0.2",
+        "B": "10.20.0.10",
+        "C": "10.10.1.10",
+        "D": "10.30.0.20"
+      },
+      "correct": "B",
+      "explanation": "P2 (odpowiedź): adres IP źródłowy = 10.20.0.10."
+    },
+    {
+      "question": "Jaki jest adres IP docelowy odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "10.20.0.2",
+        "B": "10.30.0.10",
+        "C": "10.10.1.10",
+        "D": "10.20.0.10"
+      },
+      "correct": "A",
+      "explanation": "P2 (odpowiedź): adres IP docelowy = 10.20.0.2."
+    },
+    {
+      "question": "Jaki jest port źródłowy TCP odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "45678",
+        "B": "38210",
+        "C": "80",
+        "D": "8080"
+      },
+      "correct": "C",
+      "explanation": "P2 (odpowiedź): port źródłowy TCP = 80."
+    },
+    {
+      "question": "Jaki jest port docelowy TCP odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "45678",
+        "B": "8080",
+        "C": "38210",
+        "D": "80"
+      },
+      "correct": "A",
+      "explanation": "P2 (odpowiedź): port docelowy TCP = 45678."
+    },
+    {
+      "question": "Jaki jest TTL odpowiedzi HTTP 200 w punkcie P2?",
+      "options": {
+        "A": "65",
+        "B": "64",
+        "C": "62",
+        "D": "63"
+      },
+      "correct": "B",
+      "explanation": "P2 (odpowiedź): TTL = 64."
+    },
+    {
+      "question": "Jaki jest MAC źródłowy odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "02:42:0a:0a:01:0a",
+        "B": "02:42:0a:0a:01:01",
+        "C": "02:42:0a:14:00:0a",
+        "D": "02:42:0a:1e:00:14"
+      },
+      "correct": "D",
+      "explanation": "P3 (odpowiedź): MAC źródłowy = 02:42:0a:1e:00:14."
+    },
+    {
+      "question": "Jaki jest MAC docelowy odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "02:42:0a:0a:01:0a",
+        "B": "02:42:0a:1e:00:0a",
+        "C": "02:42:0a:0a:01:01",
+        "D": "02:42:0a:14:00:02"
+      },
+      "correct": "B",
+      "explanation": "P3 (odpowiedź): MAC docelowy = 02:42:0a:1e:00:0a."
+    },
+    {
+      "question": "Jaki jest adres IP źródłowy odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "10.30.0.20",
+        "B": "10.10.1.10",
+        "C": "10.20.0.2",
+        "D": "10.20.0.10"
+      },
+      "correct": "A",
+      "explanation": "P3 (odpowiedź): adres IP źródłowy = 10.30.0.20."
+    },
+    {
+      "question": "Jaki jest adres IP docelowy odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "10.20.0.2",
+        "B": "10.20.0.10",
+        "C": "10.10.1.10",
+        "D": "10.30.0.10"
+      },
+      "correct": "D",
+      "explanation": "P3 (odpowiedź): adres IP docelowy = 10.30.0.10."
+    },
+    {
+      "question": "Jaki jest port źródłowy TCP odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "45678",
+        "B": "80",
+        "C": "8080",
+        "D": "38210"
+      },
+      "correct": "C",
+      "explanation": "P3 (odpowiedź): port źródłowy TCP = 8080."
+    },
+    {
+      "question": "Jaki jest port docelowy TCP odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "45678",
+        "B": "38210",
+        "C": "8080",
+        "D": "80"
+      },
+      "correct": "B",
+      "explanation": "P3 (odpowiedź): port docelowy TCP = 38210."
+    },
+    {
+      "question": "Jaki jest TTL odpowiedzi HTTP 200 w punkcie P3?",
+      "options": {
+        "A": "63",
+        "B": "65",
+        "C": "62",
+        "D": "64"
+      },
+      "correct": "D",
+      "explanation": "P3 (odpowiedź): TTL = 64."
+    },
+    {
+      "question": "Jaki TTL ma pakiet ICMP echo request laptopa w P1?",
+      "options": {
+        "A": "62",
+        "B": "128",
+        "C": "64",
+        "D": "63"
+      },
+      "correct": "C",
+      "explanation": "Laptop (Linux) wysyła z TTL 64."
+    },
+    {
+      "question": "Jaki TTL ma pakiet ICMP echo request laptopa w P2?",
+      "options": {
+        "A": "63",
+        "B": "1",
+        "C": "62",
+        "D": "64"
+      },
+      "correct": "A",
+      "explanation": "Router zmniejszył TTL o 1."
+    },
+    {
+      "question": "Jaki TTL ma odpowiedź ICMP echo reply od proxy w P2?",
+      "options": {
+        "A": "63",
+        "B": "128",
+        "C": "64",
+        "D": "62"
+      },
+      "correct": "C",
+      "explanation": "Proxy wysyła odpowiedź z domyślnym TTL 64; w P2 jeszcze nie przeszła przez router."
+    },
+    {
+      "question": "Jaki TTL ma odpowiedź ICMP echo reply od proxy w P1?",
+      "options": {
+        "A": "64",
+        "B": "63",
+        "C": "62",
+        "D": "65"
+      },
+      "correct": "B",
+      "explanation": "Router zmniejszył TTL odpowiedzi o 1."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: MAC źródłowy między P1 a P2?",
+      "options": {
+        "A": "Router (buduje nową ramkę na interfejsie WAN)",
+        "B": "Reverse proxy (nowe połączenie do aplikacji)",
+        "C": "Router — reguła masquerade (NAT)",
+        "D": "Aplikacja Spring Boot"
+      },
+      "correct": "A",
+      "explanation": "Router (buduje nową ramkę na interfejsie WAN)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: IP źródłowy między P1 a P2?",
+      "options": {
+        "A": "Router (buduje nową ramkę na interfejsie WAN)",
+        "B": "Reverse proxy (nowe połączenie do aplikacji)",
+        "C": "Aplikacja Spring Boot",
+        "D": "Router — reguła masquerade (NAT)"
+      },
+      "correct": "D",
+      "explanation": "Router — reguła masquerade (NAT)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: TTL między P1 a P2?",
+      "options": {
+        "A": "Router — reguła masquerade (NAT)",
+        "B": "Router (buduje nową ramkę na interfejsie WAN)",
+        "C": "Reverse proxy (nowe połączenie do aplikacji)",
+        "D": "Router (zmniejsza o 1 przy przekazywaniu)"
+      },
+      "correct": "D",
+      "explanation": "Router (zmniejsza o 1 przy przekazywaniu)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: IP docelowy między P2 a P3?",
+      "options": {
+        "A": "Router (buduje nową ramkę na interfejsie WAN)",
+        "B": "Reverse proxy (nowe połączenie do aplikacji)",
+        "C": "Aplikacja Spring Boot",
+        "D": "Router — reguła masquerade (NAT)"
+      },
+      "correct": "B",
+      "explanation": "Reverse proxy (nowe połączenie do aplikacji)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: port docelowy między P2 a P3?",
+      "options": {
+        "A": "Reverse proxy (łączy się z backendem na 8080)",
+        "B": "Reverse proxy (nowe połączenie do aplikacji)",
+        "C": "Router (buduje nową ramkę na interfejsie WAN)",
+        "D": "Router — reguła masquerade (NAT)"
+      },
+      "correct": "A",
+      "explanation": "Reverse proxy (łączy się z backendem na 8080)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: IP docelowy odpowiedzi między P2 a P1?",
+      "options": {
+        "A": "Router — reguła masquerade (NAT)",
+        "B": "Reverse proxy (nowe połączenie do aplikacji)",
+        "C": "Router — odwrotna translacja NAT z conntrack",
+        "D": "Router (buduje nową ramkę na interfejsie WAN)"
+      },
+      "correct": "C",
+      "explanation": "Router — odwrotna translacja NAT z conntrack."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: nagłówek X-Forwarded-For między P2 a P3?",
+      "options": {
+        "A": "Reverse proxy (dopisuje adres swojego klienta)",
+        "B": "Router (buduje nową ramkę na interfejsie WAN)",
+        "C": "Router — reguła masquerade (NAT)",
+        "D": "Reverse proxy (nowe połączenie do aplikacji)"
+      },
+      "correct": "A",
+      "explanation": "Reverse proxy (dopisuje adres swojego klienta)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: port źródłowy między P2 a P3?",
+      "options": {
+        "A": "Reverse proxy (nowe połączenie do aplikacji)",
+        "B": "Router (buduje nową ramkę na interfejsie WAN)",
+        "C": "Router — reguła masquerade (NAT)",
+        "D": "Reverse proxy (nowy port efemeryczny)"
+      },
+      "correct": "D",
+      "explanation": "Reverse proxy (nowy port efemeryczny)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: MAC docelowy między P2 a P3?",
+      "options": {
+        "A": "Reverse proxy (nowe połączenie do aplikacji)",
+        "B": "Reverse proxy (ramka do MAC aplikacji w sieci app)",
+        "C": "Router — reguła masquerade (NAT)",
+        "D": "Router (buduje nową ramkę na interfejsie WAN)"
+      },
+      "correct": "B",
+      "explanation": "Reverse proxy (ramka do MAC aplikacji w sieci app)."
+    },
+    {
+      "question": "Który element i dlaczego zmienia: suma kontrolna nagłówka IP między P1 a P2?",
+      "options": {
+        "A": "Reverse proxy (nowe połączenie do aplikacji)",
+        "B": "Router — reguła masquerade (NAT)",
+        "C": "Router (zmiana TTL i adresu wymaga przeliczenia)",
+        "D": "Router (buduje nową ramkę na interfejsie WAN)"
+      },
+      "correct": "C",
+      "explanation": "Router (zmiana TTL i adresu wymaga przeliczenia)."
+    },
+    {
+      "question": "Co widzi router w tym labie?",
+      "options": {
+        "A": "Adresy IP i porty obu stron połączenia klient–proxy oraz translację NAT, ale nie treść HTTPS",
+        "B": "Adres po NAT (10.20.0.2), pełne żądanie HTTP i odpowiedź aplikacji",
+        "C": "Połączenie od proxy, żądanie HTTP i nagłówek X-Forwarded-For z adresem po NAT",
+        "D": "Tylko połączenie z adresem proxy 10.20.0.10 — nic nie wie o sieci app ani o NAT"
+      },
+      "correct": "A",
+      "explanation": "Adresy IP i porty obu stron połączenia klient–proxy oraz translację NAT, ale nie treść HTTPS."
+    },
+    {
+      "question": "Co widzi reverse proxy w tym labie?",
+      "options": {
+        "A": "Adresy IP i porty obu stron połączenia klient–proxy oraz translację NAT, ale nie treść HTTPS",
+        "B": "Adres po NAT (10.20.0.2), pełne żądanie HTTP i odpowiedź aplikacji",
+        "C": "Połączenie od proxy, żądanie HTTP i nagłówek X-Forwarded-For z adresem po NAT",
+        "D": "Tylko połączenie z adresem proxy 10.20.0.10 — nic nie wie o sieci app ani o NAT"
+      },
+      "correct": "B",
+      "explanation": "Adres po NAT (10.20.0.2), pełne żądanie HTTP i odpowiedź aplikacji."
+    },
+    {
+      "question": "Co widzi aplikacja Spring Boot w tym labie?",
+      "options": {
+        "A": "Adres po NAT (10.20.0.2), pełne żądanie HTTP i odpowiedź aplikacji",
+        "B": "Adresy IP i porty obu stron połączenia klient–proxy oraz translację NAT, ale nie treść HTTPS",
+        "C": "Połączenie od proxy, żądanie HTTP i nagłówek X-Forwarded-For z adresem po NAT",
+        "D": "Tylko połączenie z adresem proxy 10.20.0.10 — nic nie wie o sieci app ani o NAT"
+      },
+      "correct": "C",
+      "explanation": "Połączenie od proxy, żądanie HTTP i nagłówek X-Forwarded-For z adresem po NAT."
+    },
+    {
+      "question": "Co widzi laptop w tym labie?",
+      "options": {
+        "A": "Połączenie od proxy, żądanie HTTP i nagłówek X-Forwarded-For z adresem po NAT",
+        "B": "Adresy IP i porty obu stron połączenia klient–proxy oraz translację NAT, ale nie treść HTTPS",
+        "C": "Adres po NAT (10.20.0.2), pełne żądanie HTTP i odpowiedź aplikacji",
+        "D": "Tylko połączenie z adresem proxy 10.20.0.10 — nic nie wie o sieci app ani o NAT"
+      },
+      "correct": "D",
+      "explanation": "Tylko połączenie z adresem proxy 10.20.0.10 — nic nie wie o sieci app ani o NAT."
+    },
+    {
+      "question": "Który plik pcap pozwoli ustalić prywatny adres laptopa bez dostępu do routera?",
+      "options": {
+        "A": "P2",
+        "B": "P3",
+        "C": "P1 — przechwycony w sieci LAN przed NAT",
+        "D": "Żaden — adres jest zawsze ukryty"
+      },
+      "correct": "C",
+      "explanation": "Po NAT adres prywatny znika z pakietów."
+    },
+    {
+      "question": "Który plik pcap pokaże nagłówek X-Forwarded-For?",
+      "options": {
+        "A": "Wszystkie trzy",
+        "B": "P3",
+        "C": "P2",
+        "D": "P1"
+      },
+      "correct": "B",
+      "explanation": "Nagłówek dodaje proxy w nowym połączeniu do aplikacji."
+    },
+    {
+      "question": "W którym punkcie zobaczysz handshake TCP z portem docelowym 8080?",
+      "options": {
+        "A": "W P1 i P2",
+        "B": "P1",
+        "C": "P2",
+        "D": "P3"
+      },
+      "correct": "D",
+      "explanation": "Port 8080 dotyczy wyłącznie połączenia proxy–aplikacja."
+    },
+    {
+      "question": "Po zmianie labu na IPv6 bez NAT, co zastąpi ARP w P1?",
+      "options": {
+        "A": "Neighbor Discovery (ICMPv6 Neighbor Solicitation/Advertisement)",
+        "B": "Nic — IPv6 nie potrzebuje adresów MAC",
+        "C": "RARP",
+        "D": "DHCPv6"
+      },
+      "correct": "A",
+      "explanation": "ND pełni w IPv6 rolę ARP."
+    }
+  ]
 }
