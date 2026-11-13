@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Co się dzieje między Enterem a wierszem w bazie",
+      "image": "netsec/ns00-04-journey-map.svg",
+      "imageAlt": "Dwanaście ponumerowanych kart: parsowanie URL, cache i HSTS, DNS, trasa i ARP, handshake TCP, handshake TLS 1.3, żądanie HTTP/2, reverse proxy, Tomcat i filtry, DispatcherServlet i kontroler, HikariCP i protokół PostgreSQL, odpowiedź i droga powrotna; przy każdej numer rozdziału toru.",
+      "body": "Wpisujesz w przeglądarce `https://api.javaquest.local/users/42` i po kilkudziesięciu milisekundach widzisz JSON. Pomiędzy Enterem a odpowiedzią dzieje się co najmniej **12 etapów** w kilku systemach: przeglądarce, resolverze DNS, jądrze systemu, sieci, reverse proxy, JVM z Tomcatem i Springiem, puli połączeń i bazie PostgreSQL.\n\nTa lekcja to **mapa całego toru w jednym żądaniu**. Każdy etap opisujemy krótko i wskazujemy rozdział, który rozwija go szczegółowo. Dzięki temu:\n- przy każdej awarii wiesz, **na którym etapie** szukać (DNS? TLS? pula połączeń?),\n- rozumiesz, **gdzie mija czas** — i dlaczego zwykle nie w Twoim kodzie,\n- jako obrońca widzisz **gdzie powstają dowody**: logi DNS, przepływy sieciowe, logi proxy, logi aplikacji, logi bazy.\n\nNa końcu wykonasz Packet Lab: jedno przechwycenie całej drogi w lab-zero, w którym oznaczysz każdy etap i zmierzysz jego czas.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Dwanaście etapów w jednym zdaniu każdy",
+      "body": "- **1. Parsowanie URL** (przeglądarka / klient) — schemat https, host api.javaquest.local, port 443 (domyślny), ścieżka /users/42. Rozdział 06 — HTTP.\n- **2. Cache i HSTS** (przeglądarka) — czy odpowiedź jest w cache HTTP; czy domena ma HSTS (wymuszenie HTTPS). Rozdział 06 — HTTP.\n- **3. Rozwiązanie nazwy (DNS)** (resolver systemu → serwer DNS) — zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL. Rozdział 05 — DNS.\n- **4. Trasa i ARP** (jądro systemu) — tablica routingu → brama domyślna; ARP o MAC bramy. Rozdział 02 — Ethernet i switching.\n- **5. Handshake TCP** (jądro klienta ↔ serwera) — SYN, SYN-ACK, ACK na port 443 (1 RTT). Rozdział 04 — TCP, UDP i QUIC.\n- **6. Handshake TLS 1.3** (biblioteka TLS) — ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT). Rozdział 07 — TLS i PKI.\n- **7. Żądanie HTTP/2** (klient → reverse proxy) — ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji. Rozdział 06 — HTTP.\n- **8. Reverse proxy** (Nginx / Caddy / ALB) — zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie. Rozdział 11 — proxy i load balancing.\n- **9. Tomcat i filtry** (JVM: Tomcat, Spring Security) — wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie. Rozdział 12 — sieci w Javie.\n- **10. DispatcherServlet i kontroler** (Spring MVC) — mapowanie /users/{id}, walidacja, wywołanie serwisu. Rozdział 06 — HTTP.\n- **11. HikariCP i protokół PostgreSQL** (JDBC → baza) — połączenie z puli, zapytanie SELECT … WHERE id = $1, wynik. Rozdział 12 — sieci w Javie.\n- **12. Odpowiedź i droga powrotna** (serializacja JSON → proxy → klient) — Jackson → HTTP 200 → proxy → TLS → klient, render w przeglądarce. Rozdział 06 — HTTP.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Zamówienie w restauracji",
+      "body": "Żądanie HTTP przypomina zamówienie w dużej restauracji:\n- **URL** to karta dania: „zupa dnia, stolik 42”.\n- **DNS** to recepcja, która mówi, w której sali jest Twój kelner (adres).\n- **TCP** to nawiązanie kontaktu z kelnerem: „dzień dobry — dzień dobry — mogę przyjąć zamówienie”.\n- **TLS** to ustalenie, że rozmawiacie szeptem w języku, którego inni goście nie rozumieją, i że kelner ma identyfikator restauracji (certyfikat).\n- **Reverse proxy** to kierownik sali — przyjmuje zamówienia od wszystkich gości i przekazuje je do właściwej kuchni.\n- **Tomcat i filtry** to wejście do kuchni: sprawdzenie, czy zamówienie jest poprawne i czy gość ma prawo je złożyć (uwierzytelnienie).\n- **Kontroler i serwis** to kucharz, który wie, co przygotować.\n- **HikariCP i baza** to spiżarnia: kucharz nie chodzi do sklepu po każdy składnik (nowe połączenie), tylko bierze z gotowego zapasu (pula połączeń).\n- **Odpowiedź** to danie niesione tą samą drogą z powrotem.\n\nNajdłużej często trwa nie gotowanie, tylko **chodzenie** — dojście kelnera (RTT), szukanie sali (DNS), formalności (TLS). Tak samo w sieci: kod Javy wykonuje się w milisekundach, a podróże pakietów w dziesiątkach milisekund.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Wodospad czasu jednego żądania",
+      "image": "netsec/ns00-04-waterfall.svg",
+      "imageAlt": "Wodospad: dwanaście poziomych pasków w kolejności etapów; najdłuższe to DNS (12 ms), handshake TCP (20 ms) i TLS 1.3 (21 ms); etapy w Javie trwają 1–3 ms, zapytanie do bazy 6 ms, odpowiedź 8 ms; razem około 75,3 ms.",
+      "body": "Przykładowy pomiar pierwszego żądania (zimny cache DNS, nowe połączenie, RTT do serwera ok. 20 ms):",
+      "code": " 1. Parsowanie URL                       0,1 ms   L7\n 2. Cache i HSTS                         0,2 ms   L7\n 3. Rozwiązanie nazwy (DNS)               12 ms   L7 (DNS)\n 4. Trasa i ARP                            1 ms   L2–L3\n 5. Handshake TCP                         20 ms   L4\n 6. Handshake TLS 1.3                     21 ms   L6\n 7. Żądanie HTTP/2                         1 ms   L7\n 8. Reverse proxy                          2 ms   L7\n 9. Tomcat i filtry                        3 ms   aplikacja\n10. DispatcherServlet i kontroler          1 ms   aplikacja\n11. HikariCP i protokół PostgreSQL         6 ms   L7 (PG)\n12. Odpowiedź i droga powrotna             8 ms   L7\n    RAZEM                               75,3 ms\n\nDrugie żądanie po tym samym połączeniu (keep-alive, DNS w cache): etapy 3–6 znikają\n→ ok. 21,3 ms. Dlatego pule połączeń i HTTP/2 tak bardzo przyspieszają aplikacje."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Zmierz etapy sam: curl -w i log aplikacji",
+      "body": "Najprostszy pomiar etapów od strony klienta i od strony serwera. Porównanie obu daje odpowiedź na pytanie „sieć czy aplikacja?”.",
+      "code": "# klient: fazy połączenia (wartości narastające w sekundach)\ncurl -sk -o /dev/null -w 'dns=%{time_namelookup} tcp=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}\\n' \\\n     https://127.0.0.1:8443/api/users/42\n# dns=0.000012 tcp=0.000310 tls=0.004120 ttfb=0.015900 total=0.016050   (lab lokalny: RTT ≈ 0)\n\n# serwer: czas obsługi w Spring Boot (application.yml)\n# logging.level.org.springframework.web.servlet.DispatcherServlet: DEBUG\n# server.tomcat.accesslog.enabled: true\n# server.tomcat.accesslog.pattern: '%h %t \"%r\" %s %b %Dms'     # %D = czas obsługi w ms\n\n# Access log Tomcata:\n# 172.20.0.3 [13/Nov/2026:14:02:11 +0100] \"GET /api/users/42 HTTP/1.1\" 200 58 11ms\n# → z 15,9 ms TTFB po stronie klienta 11 ms to aplikacja, reszta to proxy i sieć"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Packet Lab: cała droga w jednym przechwyceniu",
+      "body": "Ćwiczenie z planu lekcji, wykonywane w lab-zero (Caddy → Spring Boot → PostgreSQL):\n1. **Wyczyść cache** w kontenerze klienta (np. uruchom nowy kontener netshoot) — chcemy zobaczyć DNS i nowe połączenia.\n2. **Uruchom przechwytywanie na obu sieciach**: na bridge’u sieci edge (klient ↔ Caddy) i backend (Caddy ↔ app ↔ postgres) — np. dwa kontenery netshoot z `--net container:caddy` i `--net container:app`, zapis do `edge.pcap` i `backend.pcap`.\n3. **Wygeneruj żądanie**: `curl -sk https://caddy/api/users/42` z kontenera klienta w sieci edge.\n4. **Zatrzymaj przechwytywanie** i złącz pliki: `mergecap -w journey.pcap edge.pcap backend.pcap`.\n5. **Oznacz etapy w Wiresharku** (prawy klik → *Packet Comment*):\n   - DNS: `dns` — zapytanie i odpowiedź o `caddy` (resolver Dockera 127.0.0.11; w pcap z interfejsu eth0 może go nie być — zapisz dlaczego),\n   - TCP: `tcp.flags.syn == 1` — handshake klient → 443 oraz Caddy → app:8080 i app → postgres:5432 (jeśli pula otwiera nowe połączenie),\n   - TLS: `tls.handshake` — ClientHello z SNI i ALPN,\n   - HTTP: żądanie Caddy → app (jawne w sieci backend) i odpowiedź,\n   - PostgreSQL: `pgsql` — zapytanie i wynik.\n6. **Zmierz czas każdego etapu**: `View → Time Display Format → Seconds Since Previous Displayed Packet` dla przefiltrowanych pakietów; zapisz tabelę etap → czas.\n7. **Porównaj** z `curl -w` i access logiem Tomcata. Ile czasu zajęła aplikacja, a ile sieć i TLS?\n8. **Powtórz** żądanie w tym samym kontenerze — które etapy zniknęły (cache DNS? keep-alive? pula Hikari)?",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Wnętrze JVM: gdzie żądanie czeka w kolejce",
+      "image": "netsec/ns00-04-jvm-inside.svg",
+      "imageAlt": "Osiem kart połączonych strzałkami: Tomcat (acceptor i wątek z puli), filtry Spring Security, DispatcherServlet, UserController, UserService z transakcją tylko do odczytu, UserRepository ze Spring Data JPA i Hibernate, HikariCP z otwartym połączeniem, PostgreSQL z wymianą Parse/Bind/Execute.",
+      "body": "Wewnątrz aplikacji żądanie przechodzi przez kilka **pul i kolejek** — każda może stać się wąskim gardłem:",
+      "code": "element              zasób ograniczony                     domyślnie (Spring Boot 3)          objaw wyczerpania\nTomcat               wątki obsługi (server.tomcat.threads.max)  200 (lub wątki wirtualne)       rośnie TTFB, kolejka połączeń\n                     kolejka akceptora (accept-count)           100                               odrzucanie połączeń\nSpring Security      CPU (np. hashowanie haseł przy logowaniu)  —                                 wolne logowanie\nHikariCP             połączenia (maximum-pool-size)             10                                SQLTransientConnectionException\n                     czas oczekiwania (connection-timeout)      30 s                              długie wiszenie wątków\nPostgreSQL           max_connections, blokady, I/O              100                               „too many clients”, wolne zapytania\nKlient HTTP (dalsze  pula połączeń, timeouty                    zależnie od klienta               timeouty, kaskady awarii\nwywołania)\n\nPrawo Little’a (rozdz. 01): 300 żądań/s × 0,05 s w bazie = 15 połączeń zajętych jednocześnie\n→ pula 10 połączeń za mała przy tym ruchu."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Ten sam przepływ w kodzie Spring Boot",
+      "body": "Minimalny kod endpointu z lab-zero. Komentarze wskazują, który etap podróży obsługuje dana linijka i gdzie zostaje ślad dla obrońcy.",
+      "code": "@RestController\n@RequestMapping(\"/api/users\")\nclass UserController {                                   // etap 10: DispatcherServlet → kontroler\n    private final UserService service;\n    UserController(UserService service) { this.service = service; }\n\n    @GetMapping(\"/{id}\")\n    ResponseEntity<UserDto> get(@PathVariable @Positive long id, Authentication auth) {   // etap 9: filtry ustawiły auth\n        log.info(\"user lookup id={} by={}\", id, auth.getName());   // ślad: log aplikacji (kto, co, kiedy)\n        return service.find(id)\n            .map(ResponseEntity::ok)                      // etap 12: Jackson → JSON\n            .orElse(ResponseEntity.notFound().build());\n    }\n}\n\n@Service\nclass UserService {\n    private final UserRepository repo;\n    UserService(UserRepository repo) { this.repo = repo; }\n\n    @Transactional(readOnly = true)                       // etap 11: połączenie z puli HikariCP\n    Optional<UserDto> find(long id) {\n        return repo.findById(id).map(UserDto::from);      // SELECT ... FROM users WHERE id = ? (parametr, nie konkatenacja)\n    }\n}\n\n# application.yml — widoczność etapów\nserver.tomcat.accesslog.enabled: true                     # etap 9: czas obsługi i status\nspring.datasource.hikari.leak-detection-threshold: 2000   # etap 11: połączenia trzymane > 2 s\nmanagement.endpoints.web.exposure.include: health,metrics # metryki pul: hikaricp.connections.*, tomcat.threads.*"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Ta sama droga oczami obrońcy: gdzie powstają dowody",
+      "image": "netsec/ns00-04-failure-map.svg",
+      "imageAlt": "Tabela dwunastu etapów z typowym błędem i rozdziałem: m.in. DNS — UnknownHostException (rozdział 05), TCP — Connection refused (04), TLS — PKIX i wygasły certyfikat (07), reverse proxy — 502, 503, 504 (11), Tomcat i filtry — 401, 403 i wyczerpana pula (12), HikariCP — SQLTransientConnectionException (12).",
+      "body": "Każdy etap to nie tylko potencjalna awaria, ale też **źródło telemetrii**. W incydencie analityk SOC składa historię z tych właśnie śladów:\n- **DNS (etap 3)** — logi resolvera: która maszyna pytała o jaką domenę. Najlepsze źródło do wykrywania C2, phishingu i tunelowania (rozdziały 28, 30).\n- **Sieć (etapy 4–5)** — NetFlow/VPC Flow Logs, logi firewalla: kto z kim się łączył, ile danych (rozdział 28).\n- **TLS (etap 6)** — SNI, certyfikaty, odciski JA4: nietypowi klienci i serwery (rozdział 28).\n- **Reverse proxy / WAF (etap 8)** — pełne żądania HTTP: ścieżki, kody, czasy, adres klienta (X-Forwarded-For), blokady WAF (rozdziały 11, 21, 23).\n- **Aplikacja (etapy 9–10)** — logi uwierzytelnienia i autoryzacji, zdarzenia bezpieczeństwa (OWASP A09), identyfikator żądania (rozdziały 16, 23, 27).\n- **Baza (etap 11)** — logi zapytań i audytu: kto czytał jakie dane (rozdział 25 i 38).\n\n**Korelacja** — identyfikator żądania (`traceparent` z W3C Trace Context, `X-Request-ID`) przekazywany od proxy przez aplikację do logów bazy pozwala połączyć te ślady w jedną oś czasu. To ta sama technika, którą ćwiczyłeś w Bossie rozdziału 01.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Najczęstsze błędne założenia o drodze żądania",
+      "body": "- **„Wolne żądanie = wolny kod”** — w pierwszym żądaniu większość czasu to DNS, TCP i TLS. Profiluj dopiero, gdy wiesz, że czas spędzany jest w aplikacji (access log, tracing).\n- **„DNS zawsze działa”** — cache w JVM, w kontenerze (resolver Dockera 127.0.0.11), w systemie i w przeglądarce może podawać stare adresy po zmianie rekordu.\n- **„Aplikacja widzi adres klienta”** — za proxy widzi adres proxy; prawdziwy klient jest w X-Forwarded-For (tylko od zaufanego proxy).\n- **„Połączenie do bazy jest za darmo”** — nowe połączenie to TCP + TLS + uwierzytelnienie PostgreSQL (dziesiątki ms). Dlatego pula.\n- **„Większa pula = szybciej”** — zbyt duża pula przenosi kolejkę do bazy (max_connections, blokady) i pogarsza wydajność.\n- **„HTTPS kończy się w aplikacji”** — często TLS kończy się na proxy, a ruch proxy → aplikacja jest jawny w sieci wewnętrznej. To decyzja architektoniczna z konsekwencjami dla bezpieczeństwa (rozdział 07: mTLS).\n- **„Każdy etap ma ten sam timeout”** — proxy (np. 60 s), klient (30 s) i baza (statement timeout) muszą mieć spójne limity; inaczej klient dostaje 504, a zapytanie nadal zajmuje bazę.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: brak timeoutów i nowe połączenie przy każdym wywołaniu",
+      "body": "Klient wywołujący inną usługę w każdym żądaniu tworzy nowego klienta HTTP (nowe połączenie TCP + TLS), bez timeoutów. Przy awarii zależności wątki Tomcata wiszą, a pula się wyczerpuje.",
+      "code": "@GetMapping(\"/orders/{id}\")\nOrderView order(@PathVariable long id) throws Exception {\n    HttpClient client = HttpClient.newHttpClient();                       // nowy klient = nowe połączenia, brak puli\n    HttpRequest req = HttpRequest.newBuilder(URI.create(\"https://users.internal/api/users/\" + id)).build();\n    String body = client.send(req, HttpResponse.BodyHandlers.ofString()).body();   // brak timeoutu odczytu\n    return OrderView.of(repo.findById(id).orElseThrow(), body);\n}\n// Efekt: każdy request płaci DNS + TCP + TLS; przy zawieszonym users.internal wątek czeka w nieskończoność."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: jeden klient, pula, timeouty i identyfikator żądania",
+      "body": "Klient współdzielony (pula i keep-alive), jawne timeouty spójne z timeoutem proxy, propagacja identyfikatora żądania do zależności.",
+      "code": "@Configuration\nclass HttpConfig {\n    @Bean\n    RestClient usersClient(RestClient.Builder builder) {\n        var factory = new JdkClientHttpRequestFactory(HttpClient.newBuilder()\n                .connectTimeout(Duration.ofSeconds(2))       // etap 5: nie czekamy wiecznie na SYN-ACK\n                .build());                                   // jeden klient = pula połączeń i keep-alive\n        factory.setReadTimeout(Duration.ofSeconds(3));       // krócej niż timeout proxy (np. 10 s)\n        return builder.baseUrl(\"https://users.internal\")\n                .requestFactory(factory)\n                .requestInterceptor((req, body, exec) -> {   // korelacja w logach wszystkich usług\n                    String id = MDC.get(\"requestId\");\n                    if (id != null) req.getHeaders().set(\"X-Request-ID\", id);\n                    return exec.execute(req, body);\n                })\n                .build();\n    }\n}\n// Dodatkowo: micrometer-tracing (traceparent) i circuit breaker (rozdz. 12)."
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak korzystać z tej mapy przy awarii i incydencie",
+      "body": "- **Awaria „nie działa”** — zacznij od komunikatu błędu i przypisz go do etapu (mapa błędów). `UnknownHostException` → etap 3, `Connection refused` → 5, `PKIX` → 6, `502/504` → 8, `401/403` → 9, `SQLTransientConnectionException` → 11.\n- **Awaria „wolno działa”** — zmierz etapy: `curl -w` (klient), access log proxy i Tomcata (serwer), metryki pul (`tomcat.threads.busy`, `hikaricp.connections.pending`), tracing.\n- **Incydent bezpieczeństwa** — dla każdego etapu zapytaj: jaki ślad zostawił napastnik i gdzie go zbieramy? Braki w logach na którymś etapie to luka w widoczności do naprawienia.\n- **Projekt nowej usługi** — przejdź mapę i dla każdego etapu zdecyduj: timeouty, pule, szyfrowanie, logowanie, kontrola dostępu.\n- **Nauka** — gdy któryś etap jest dla Ciebie „czarną skrzynką”, idź do wskazanego rozdziału.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Jedno żądanie HTTPS przechodzi przez ok. 12 etapów: URL, cache/HSTS, DNS, trasa i ARP, TCP, TLS, HTTP/2, reverse proxy, Tomcat i filtry, kontroler, pula połączeń i baza, odpowiedź.\n- W pierwszym żądaniu najwięcej czasu zajmują DNS i rundy TCP/TLS (RTT); kolejne żądania korzystają z cache i keep-alive.\n- Wewnątrz JVM żądanie czeka w pulach (wątki Tomcata, HikariCP) — tam rodzą się przeciążenia (prawo Little’a).\n- Każdy etap ma typowy błąd i własny rozdział toru — to mapa do diagnozy.\n- Każdy etap zostawia ślady (DNS, przepływy, TLS, proxy, aplikacja, baza) — dla obrońcy to mapa źródeł telemetrii, łączonych identyfikatorem żądania.\n- Następna lekcja: **mapa certyfikatów** — jak tor przekłada się na Network+, CCNA, Security+, CySA+ i egzaminy praktyczne.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Etap 1 — „Parsowanie URL”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "schemat https, host api.javaquest.local, port 443 (domyślny), ścieżka /users/42. Gdzie: przeglądarka / klient. Typowy błąd: zły schemat lub port, literówka w hoście. Rozdział 06 — HTTP."
+    },
+    {
+      "prompt": "Etap 2 — „Cache i HSTS”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "czy odpowiedź jest w cache HTTP; czy domena ma HSTS (wymuszenie HTTPS). Gdzie: przeglądarka. Typowy błąd: nieaktualna odpowiedź z cache, ostrzeżenie HSTS. Rozdział 06 — HTTP."
+    },
+    {
+      "prompt": "Etap 3 — „Rozwiązanie nazwy (DNS)”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL. Gdzie: resolver systemu → serwer DNS. Typowy błąd: UnknownHostException, zły rekord, stary cache. Rozdział 05 — DNS."
+    },
+    {
+      "prompt": "Etap 4 — „Trasa i ARP”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "tablica routingu → brama domyślna; ARP o MAC bramy. Gdzie: jądro systemu. Typowy błąd: No route to host, brak odpowiedzi ARP. Rozdział 02 — Ethernet i switching."
+    },
+    {
+      "prompt": "Etap 5 — „Handshake TCP”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "SYN, SYN-ACK, ACK na port 443 (1 RTT). Gdzie: jądro klienta ↔ serwera. Typowy błąd: Connection refused, connect timed out. Rozdział 04 — TCP, UDP i QUIC."
+    },
+    {
+      "prompt": "Etap 6 — „Handshake TLS 1.3”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT). Gdzie: biblioteka TLS. Typowy błąd: SSLHandshakeException, PKIX, wygasły certyfikat. Rozdział 07 — TLS i PKI."
+    },
+    {
+      "prompt": "Etap 7 — „Żądanie HTTP/2”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji. Gdzie: klient → reverse proxy. Typowy błąd: 400, 413, problemy z HTTP/2. Rozdział 06 — HTTP."
+    },
+    {
+      "prompt": "Etap 8 — „Reverse proxy”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie. Gdzie: Nginx / Caddy / ALB. Typowy błąd: 502, 503, 504. Rozdział 11 — proxy i load balancing."
+    },
+    {
+      "prompt": "Etap 9 — „Tomcat i filtry”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie. Gdzie: JVM: Tomcat, Spring Security. Typowy błąd: 401, 403, wyczerpana pula wątków. Rozdział 12 — sieci w Javie."
+    },
+    {
+      "prompt": "Etap 10 — „DispatcherServlet i kontroler”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "mapowanie /users/{id}, walidacja, wywołanie serwisu. Gdzie: Spring MVC. Typowy błąd: 404, 400, 500 z wyjątku. Rozdział 06 — HTTP."
+    },
+    {
+      "prompt": "Etap 11 — „HikariCP i protokół PostgreSQL”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "połączenie z puli, zapytanie SELECT … WHERE id = $1, wynik. Gdzie: JDBC → baza. Typowy błąd: SQLTransientConnectionException, timeout zapytania. Rozdział 12 — sieci w Javie."
+    },
+    {
+      "prompt": "Etap 12 — „Odpowiedź i droga powrotna”: opisz, co się dzieje, gdzie (który system) i jaki jest typowy błąd na tym etapie. Wskaż rozdział toru, który go rozwija.",
+      "hint": "Skorzystaj z mapy podróży i mapy błędów z lekcji.",
+      "solution": "Jackson → HTTP 200 → proxy → TLS → klient, render w przeglądarce. Gdzie: serializacja JSON → proxy → klient. Typowy błąd: błędy serializacji, ucięta odpowiedź, timeouty. Rozdział 06 — HTTP."
+    },
+    {
+      "prompt": "Diagnoza na mapie podróży: Użytkownik zgłasza: „strona ładuje się 3 sekundy tylko przy pierwszym wejściu rano”. curl -w pokazuje dns=2.8. Wskaż etap i uzasadnij.",
+      "hint": "Przypisz objaw do etapu, potem wybierz narzędzie.",
+      "solution": "Etap 3 (DNS): powolne rozwiązywanie nazwy przy zimnym cache — np. timeout pierwszego resolvera i przejście na drugi, długi łańcuch CNAME, problem z IPv6 (AAAA). Diagnoza: dig +trace, sprawdzenie resolverów (/etc/resolv.conf, resolvectl), czasów odpowiedzi; rozdział 05."
+    },
+    {
+      "prompt": "Diagnoza na mapie podróży: Aplikacja zwraca 504 Gateway Timeout po dokładnie 60 s, a w logach aplikacji zapytanie kończy się po 75 s. Wskaż etap i uzasadnij.",
+      "hint": "Przypisz objaw do etapu, potem wybierz narzędzie.",
+      "solution": "Etap 8 (proxy) i 11 (baza): proxy ma timeout 60 s, a zapytanie do bazy trwa 75 s — klient dostaje 504, aplikacja dalej pracuje. Naprawa: optymalizacja zapytania, timeouty spójne (statement timeout < read timeout < timeout proxy), ewentualnie praca asynchroniczna."
+    },
+    {
+      "prompt": "Diagnoza na mapie podróży: Po wdrożeniu nowego certyfikatu część klientów Java zgłasza PKIX path building failed, a przeglądarki działają. Wskaż etap i uzasadnij.",
+      "hint": "Przypisz objaw do etapu, potem wybierz narzędzie.",
+      "solution": "Etap 6 (TLS): serwer prawdopodobnie nie wysyła certyfikatu pośredniego — przeglądarki potrafią go dociągnąć (AIA fetching/cache), JVM nie. Diagnoza: openssl s_client -showcerts; naprawa: pełny łańcuch w konfiguracji serwera. Rozdział 07."
+    },
+    {
+      "prompt": "Diagnoza na mapie podróży: W szczycie ruchu pojawia się SQLTransientConnectionException: Connection is not available, request timed out after 30000ms. Wskaż etap i uzasadnij.",
+      "hint": "Przypisz objaw do etapu, potem wybierz narzędzie.",
+      "solution": "Etap 11 (HikariCP): wszystkie połączenia z puli są zajęte (wolne zapytania, wycieki połączeń, za mała pula względem ruchu). Diagnoza: metryki hikaricp.connections.active/pending, leak-detection-threshold, wolne zapytania w PostgreSQL (pg_stat_activity). Rozdział 12."
+    },
+    {
+      "prompt": "Diagnoza na mapie podróży: Analityk SOC widzi w logach WAF żądanie z adresu 83.10.5.7 próbujące SQL injection. Skąd wiadomo, który użytkownik firmy (jeśli to wewnętrzny) je wysłał? Wskaż etap i uzasadnij.",
+      "hint": "Przypisz objaw do etapu, potem wybierz narzędzie.",
+      "solution": "Ślady z etapów: log WAF/proxy (adres i czas), logi NAT/firewalla (translacja na adres wewnętrzny), DHCP (adres → urządzenie), log aplikacji z identyfikatorem żądania i ewentualnie zalogowanym użytkownikiem. Korelacja czasem (NTP) i identyfikatorami — jak w Bossie rozdziału 01."
+    },
+    {
+      "prompt": "Wykonaj Packet Lab z lekcji w lab-zero i przygotuj tabelę: etap → filtr Wiresharka → numer pierwszej ramki → czas trwania. Których etapów nie widać w przechwyceniu i dlaczego?",
+      "hint": "Pomyśl o DNS przez 127.0.0.11, TLS kończonym na Caddy i połączeniach z puli otwartych wcześniej.",
+      "solution": "Nie widać zwykle: etapów 1–2 (przeglądarka/curl, bez ruchu), ARP (jeśli cache ciepły), DNS (resolver Dockera na pętli zwrotnej kontenera — widoczny tylko na interfejsie lo), nowego połączenia do PostgreSQL (Hikari otworzył je przy starcie). Widać: TCP i TLS klient→Caddy, HTTP Caddy→app (jawne), zapytanie pgsql app→postgres."
+    },
+    {
+      "prompt": "Porównaj czasy pierwszego i drugiego żądania z tego samego klienta (curl z --keepalive w jednej sesji lub dwa żądania w jednym wywołaniu curl). Które etapy zniknęły?",
+      "hint": "curl https://... https://... w jednym poleceniu używa tego samego połączenia.",
+      "solution": "Drugie żądanie nie ma etapów 3–6 (DNS z cache, połączenie TCP i sesja TLS ponownie użyte) — czas spada do kilku ms (proxy + aplikacja + baza). To praktyczne uzasadnienie dla pul połączeń, HTTP keep-alive i HTTP/2."
+    },
+    {
+      "prompt": "Włącz access log Tomcata ze wzorcem %D i porównaj czas obsługi aplikacji z TTFB z curl -w dla 10 żądań. Ile milisekund zajmuje „otoczenie” (proxy, sieć, TLS)?",
+      "hint": "TTFB klienta − czas aplikacji ≈ narzut proxy, sieci i TLS.",
+      "solution": "Przykład w lab-zero: TTFB 15,9 ms, %D = 11 ms → ok. 5 ms narzutu (TLS na Caddy, przekazanie do aplikacji). W środowisku rozproszonym (inny region) różnica rośnie o kilka RTT. Ćwiczenie uczy rozdzielania odpowiedzialności: sieć vs aplikacja."
+    },
+    {
+      "prompt": "Dodaj do aplikacji lab-zero filtr ustawiający X-Request-ID w MDC i odpowiedzi, a w Caddy włącz przekazywanie nagłówka. Znajdź jedno żądanie w logach Caddy i Spring Boot po identyfikatorze.",
+      "hint": "Caddy: header_up X-Request-ID {http.request.uuid} (lub przekazanie istniejącego).",
+      "solution": "W Caddyfile: reverse_proxy app:8080 { header_up X-Request-ID {http.request.uuid} }. W aplikacji: filtr z lekcji Bossa rozdziału 01 (MDC.put(\"requestId\", ...)) i wzorzec logu z %X{requestId}. Wynik: ten sam identyfikator w logu dostępu Caddy i w logach aplikacji — gotowa korelacja."
+    },
+    {
+      "prompt": "Zaprojektuj spójne timeouty dla łańcucha: przeglądarka → ALB (timeout bezczynności 60 s) → Spring Boot → zależność HTTP → PostgreSQL. Podaj wartości i uzasadnij kolejność.",
+      "hint": "Wewnętrzne limity muszą być krótsze niż zewnętrzne.",
+      "solution": "Przykład: statement_timeout PostgreSQL 5 s; HikariCP connection-timeout 2 s; klient HTTP do zależności: connect 1 s, read 3 s; całkowity czas obsługi żądania w aplikacji (deadline) ok. 8 s; ALB 60 s (zostaje zapas na wolne pobierania). Zasada: każdy element niżej w łańcuchu kończy się wcześniej niż wyżej, by błąd wrócił jako kontrolowana odpowiedź, a nie 504 z proxy."
+    },
+    {
+      "prompt": "Dla każdego z 12 etapów wskaż jedno źródło telemetrii przydatne dla SOC i czy w Twoim środowisku (praca lub lab) jest ono zbierane.",
+      "hint": "Zrób tabelę: etap, źródło, zbierane tak/nie.",
+      "solution": "Przykład: DNS — logi resolvera (często NIE zbierane — luka!); sieć — VPC Flow Logs/NetFlow; TLS — logi proxy z SNI lub Zeek ssl.log; proxy — access log; aplikacja — logi uwierzytelnienia i zdarzeń bezpieczeństwa; baza — log audytu (pgaudit). Etapy bez zbieranych śladów to priorytety do uzupełnienia."
+    },
+    {
+      "prompt": "Wyjaśnij na przykładzie tej podróży, dlaczego zmiana rekordu DNS (migracja serwera) może nie zadziałać od razu dla działającej aplikacji Java.",
+      "hint": "Cache na kilku poziomach i otwarte połączenia.",
+      "solution": "Aplikacja ma otwarte połączenia (keep-alive, pule) do starego adresu — będą używane, dopóki się nie zamkną; JVM cache’uje wyniki DNS (networkaddress.cache.ttl, domyślnie 30 s bez SecurityManagera, ale konfiguracje bywają inne); resolver systemu i serwery DNS respektują TTL rekordu. Rozwiązanie: niskie TTL przed migracją, ograniczony czas życia połączeń w pulach (maxLifetime w Hikari, max-life w klientach HTTP)."
+    },
+    {
+      "prompt": "Zrób „mapę podróży” dla jednego endpointu w swojej aplikacji (praca lub projekt): wypisz wszystkie etapy od klienta do bazy i zależności zewnętrznych, z timeoutami i miejscami logowania.",
+      "hint": "Uwzględnij CDN, WAF, LB, ingress, sidecary, kolejki.",
+      "solution": "Przykład: przeglądarka → CDN (cache, WAF) → ALB (60 s) → ingress NGINX (proxy-read-timeout 60 s) → pod Spring Boot (Tomcat 200 wątków) → Redis (cache, timeout 200 ms) → PostgreSQL (Hikari 20, statement 5 s) → zewnętrzne API płatności (connect 1 s, read 5 s, circuit breaker). Logi: CDN, ALB w S3, ingress, aplikacja (JSON + traceId), PostgreSQL (wolne zapytania)."
+    },
+    {
+      "prompt": "Policz, ile czasu zajęłoby 20 sekwencyjnych wywołań tego samego endpointu z nowym połączeniem za każdym razem (bez keep-alive), a ile z jednym połączeniem, przy RTT 20 ms i czasie aplikacji 10 ms.",
+      "hint": "Nowe połączenie: DNS (z cache ≈ 0) + TCP 1 RTT + TLS 1 RTT + żądanie 1 RTT + aplikacja.",
+      "solution": "Bez keep-alive (DNS w cache): 20 × (20 + 20 + 20 + 10) = 20 × 70 = 1400 ms. Z jednym połączeniem: 40 ms na TCP + TLS raz, potem 20 × (20 + 10) = 600 ms → razem ok. 640 ms. Ponowne użycie połączeń skraca czas ponad dwukrotnie."
+    },
+    {
+      "prompt": "Sprawdź metryki pul w lab-zero przez Actuator: /actuator/metrics/hikaricp.connections.active, hikaricp.connections.pending, tomcat.threads.busy (jeśli dostępne). Wygeneruj obciążenie (np. 50 równoległych curl) i obserwuj zmiany.",
+      "hint": "Do obciążenia: seq 1 50 | xargs -P 50 -I{} curl -sk -o /dev/null https://127.0.0.1:8443/api/users/42",
+      "solution": "Przy obciążeniu active rośnie do maximum-pool-size (10), a pending > 0 oznacza, że wątki czekają na połączenie. Przy szybkich zapytaniach pending pozostaje bliskie 0. Ćwiczenie pokazuje, gdzie powstaje kolejka (prawo Little’a) i jak ją obserwować metrykami."
+    },
+    {
+      "prompt": "Wymień trzy miejsca na drodze żądania, w których mogą zostać ujawnione dane wrażliwe (np. token, dane osobowe), i zaproponuj zabezpieczenie dla każdego.",
+      "hint": "Myśl o logach, ruchu jawnym i cache.",
+      "solution": "1) Logi proxy/aplikacji z pełnymi nagłówkami (Authorization, Cookie) — maskowanie, nielogowanie nagłówków wrażliwych. 2) Ruch jawny proxy → aplikacja lub aplikacja → baza — TLS/mTLS w sieci wewnętrznej, sslmode=verify-full w JDBC. 3) Cache HTTP (CDN, przeglądarka) z odpowiedziami zawierającymi dane osobowe — nagłówki Cache-Control: no-store dla danych prywatnych."
+    },
+    {
+      "prompt": "Na podstawie mapy podróży napisz checklistę „pierwsze 5 minut” dla dyżurnego przy zgłoszeniu „API nie działa”.",
+      "hint": "Od najszybszych testów do najbardziej szczegółowych.",
+      "solution": "1) curl -v na endpoint health z zewnątrz (czy DNS, TCP, TLS, HTTP działają — komunikat błędu wskazuje etap). 2) Status i logi proxy/LB (502/503/504?). 3) Status aplikacji: health, metryki pul wątków i Hikari. 4) Zależności: baza (pg_isready, wolne zapytania), API zewnętrzne. 5) Ostatnie zmiany (wdrożenia, certyfikaty, DNS, reguły firewalla). Zapisuj czas i wyniki w kanale incydentu."
+    },
+    {
+      "prompt": "Wyjaśnij, czym różni się podróż żądania przez HTTP/1.1 od HTTP/3 (QUIC) na etapach 5–7.",
+      "hint": "QUIC działa nad UDP i łączy transport z TLS 1.3.",
+      "solution": "HTTP/1.1 i HTTP/2: TCP handshake (1 RTT) + TLS 1.3 (1 RTT), potem żądanie. HTTP/3: QUIC nad UDP łączy nawiązanie transportu i TLS 1.3 w jednej wymianie (1 RTT, 0-RTT przy wznowieniu), bez osobnego handshake’u TCP; strumienie są niezależne, więc utrata pakietu w jednym nie blokuje innych. Dla obrońcy: inny wzorzec ruchu (UDP/443), wymaga innych reguł i narzędzi analizy."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Który etap następuje po „Parsowanie URL” w podróży żądania?",
+      "options": {
+        "A": "Rozwiązanie nazwy (DNS)",
+        "B": "Trasa i ARP",
+        "C": "Cache i HSTS",
+        "D": "Handshake TCP"
+      },
+      "correct": "C",
+      "explanation": "Kolejność: … Parsowanie URL → Cache i HSTS …"
+    },
+    {
+      "question": "Który etap następuje po „Cache i HSTS” w podróży żądania?",
+      "options": {
+        "A": "Handshake TCP",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "Trasa i ARP",
+        "D": "Handshake TLS 1.3"
+      },
+      "correct": "B",
+      "explanation": "Kolejność: … Cache i HSTS → Rozwiązanie nazwy (DNS) …"
+    },
+    {
+      "question": "Który etap następuje po „Rozwiązanie nazwy (DNS)” w podróży żądania?",
+      "options": {
+        "A": "Trasa i ARP",
+        "B": "Handshake TLS 1.3",
+        "C": "Handshake TCP",
+        "D": "Żądanie HTTP/2"
+      },
+      "correct": "A",
+      "explanation": "Kolejność: … Rozwiązanie nazwy (DNS) → Trasa i ARP …"
+    },
+    {
+      "question": "Który etap następuje po „Trasa i ARP” w podróży żądania?",
+      "options": {
+        "A": "Handshake TLS 1.3",
+        "B": "Reverse proxy",
+        "C": "Żądanie HTTP/2",
+        "D": "Handshake TCP"
+      },
+      "correct": "D",
+      "explanation": "Kolejność: … Trasa i ARP → Handshake TCP …"
+    },
+    {
+      "question": "Który etap następuje po „Handshake TCP” w podróży żądania?",
+      "options": {
+        "A": "Tomcat i filtry",
+        "B": "Reverse proxy",
+        "C": "Handshake TLS 1.3",
+        "D": "Żądanie HTTP/2"
+      },
+      "correct": "C",
+      "explanation": "Kolejność: … Handshake TCP → Handshake TLS 1.3 …"
+    },
+    {
+      "question": "Który etap następuje po „Handshake TLS 1.3” w podróży żądania?",
+      "options": {
+        "A": "Żądanie HTTP/2",
+        "B": "Cache i HSTS",
+        "C": "Rozwiązanie nazwy (DNS)",
+        "D": "Parsowanie URL"
+      },
+      "correct": "A",
+      "explanation": "Kolejność: … Handshake TLS 1.3 → Żądanie HTTP/2 …"
+    },
+    {
+      "question": "Który etap następuje po „Żądanie HTTP/2” w podróży żądania?",
+      "options": {
+        "A": "Trasa i ARP",
+        "B": "Reverse proxy",
+        "C": "Cache i HSTS",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "B",
+      "explanation": "Kolejność: … Żądanie HTTP/2 → Reverse proxy …"
+    },
+    {
+      "question": "Który etap następuje po „Reverse proxy” w podróży żądania?",
+      "options": {
+        "A": "Handshake TCP",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "Trasa i ARP",
+        "D": "Tomcat i filtry"
+      },
+      "correct": "D",
+      "explanation": "Kolejność: … Reverse proxy → Tomcat i filtry …"
+    },
+    {
+      "question": "Który etap następuje po „Tomcat i filtry” w podróży żądania?",
+      "options": {
+        "A": "Handshake TCP",
+        "B": "DispatcherServlet i kontroler",
+        "C": "Trasa i ARP",
+        "D": "Handshake TLS 1.3"
+      },
+      "correct": "B",
+      "explanation": "Kolejność: … Tomcat i filtry → DispatcherServlet i kontroler …"
+    },
+    {
+      "question": "Który etap następuje po „DispatcherServlet i kontroler” w podróży żądania?",
+      "options": {
+        "A": "HikariCP i protokół PostgreSQL",
+        "B": "Żądanie HTTP/2",
+        "C": "Handshake TCP",
+        "D": "Handshake TLS 1.3"
+      },
+      "correct": "A",
+      "explanation": "Kolejność: … DispatcherServlet i kontroler → HikariCP i protokół PostgreSQL …"
+    },
+    {
+      "question": "Który etap następuje po „HikariCP i protokół PostgreSQL” w podróży żądania?",
+      "options": {
+        "A": "Cache i HSTS",
+        "B": "Parsowanie URL",
+        "C": "Odpowiedź i droga powrotna",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "C",
+      "explanation": "Kolejność: … HikariCP i protokół PostgreSQL → Odpowiedź i droga powrotna …"
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Parsowanie URL”?",
+      "options": {
+        "A": "07 — TLS i PKI",
+        "B": "08 — protokoły aplikacyjne",
+        "C": "05 — DNS",
+        "D": "06 — HTTP"
+      },
+      "correct": "D",
+      "explanation": "Etap 1 rozwija rozdział 06 — HTTP."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Cache i HSTS”?",
+      "options": {
+        "A": "05 — DNS",
+        "B": "06 — HTTP",
+        "C": "08 — protokoły aplikacyjne",
+        "D": "07 — TLS i PKI"
+      },
+      "correct": "B",
+      "explanation": "Etap 2 rozwija rozdział 06 — HTTP."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Rozwiązanie nazwy (DNS)”?",
+      "options": {
+        "A": "05 — DNS",
+        "B": "07 — TLS i PKI",
+        "C": "06 — HTTP",
+        "D": "04 — TCP, UDP i QUIC"
+      },
+      "correct": "A",
+      "explanation": "Etap 3 rozwija rozdział 05 — DNS."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Trasa i ARP”?",
+      "options": {
+        "A": "03 — adresacja IP i routing",
+        "B": "01 — fundamenty i modele warstw",
+        "C": "02 — Ethernet i switching",
+        "D": "04 — TCP, UDP i QUIC"
+      },
+      "correct": "C",
+      "explanation": "Etap 4 rozwija rozdział 02 — Ethernet i switching."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Handshake TCP”?",
+      "options": {
+        "A": "03 — adresacja IP i routing",
+        "B": "06 — HTTP",
+        "C": "05 — DNS",
+        "D": "04 — TCP, UDP i QUIC"
+      },
+      "correct": "D",
+      "explanation": "Etap 5 rozwija rozdział 04 — TCP, UDP i QUIC."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Handshake TLS 1.3”?",
+      "options": {
+        "A": "07 — TLS i PKI",
+        "B": "09 — Linux networking",
+        "C": "08 — protokoły aplikacyjne",
+        "D": "06 — HTTP"
+      },
+      "correct": "A",
+      "explanation": "Etap 6 rozwija rozdział 07 — TLS i PKI."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Żądanie HTTP/2”?",
+      "options": {
+        "A": "08 — protokoły aplikacyjne",
+        "B": "06 — HTTP",
+        "C": "07 — TLS i PKI",
+        "D": "05 — DNS"
+      },
+      "correct": "B",
+      "explanation": "Etap 7 rozwija rozdział 06 — HTTP."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Reverse proxy”?",
+      "options": {
+        "A": "09 — Linux networking",
+        "B": "12 — sieci w Javie",
+        "C": "11 — proxy i load balancing",
+        "D": "10 — Docker, Kubernetes, AWS"
+      },
+      "correct": "C",
+      "explanation": "Etap 8 rozwija rozdział 11 — proxy i load balancing."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Tomcat i filtry”?",
+      "options": {
+        "A": "09 — Linux networking",
+        "B": "11 — proxy i load balancing",
+        "C": "10 — Docker, Kubernetes, AWS",
+        "D": "12 — sieci w Javie"
+      },
+      "correct": "D",
+      "explanation": "Etap 9 rozwija rozdział 12 — sieci w Javie."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „DispatcherServlet i kontroler”?",
+      "options": {
+        "A": "07 — TLS i PKI",
+        "B": "05 — DNS",
+        "C": "06 — HTTP",
+        "D": "08 — protokoły aplikacyjne"
+      },
+      "correct": "C",
+      "explanation": "Etap 10 rozwija rozdział 06 — HTTP."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „HikariCP i protokół PostgreSQL”?",
+      "options": {
+        "A": "11 — proxy i load balancing",
+        "B": "09 — Linux networking",
+        "C": "10 — Docker, Kubernetes, AWS",
+        "D": "12 — sieci w Javie"
+      },
+      "correct": "D",
+      "explanation": "Etap 11 rozwija rozdział 12 — sieci w Javie."
+    },
+    {
+      "question": "W którym rozdziale toru szczegółowo omówiono etap „Odpowiedź i droga powrotna”?",
+      "options": {
+        "A": "08 — protokoły aplikacyjne",
+        "B": "06 — HTTP",
+        "C": "07 — TLS i PKI",
+        "D": "05 — DNS"
+      },
+      "correct": "B",
+      "explanation": "Etap 12 rozwija rozdział 06 — HTTP."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „UnknownHostException”?",
+      "options": {
+        "A": "Rozwiązanie nazwy (DNS)",
+        "B": "Cache i HSTS",
+        "C": "Parsowanie URL",
+        "D": "Trasa i ARP"
+      },
+      "correct": "A",
+      "explanation": "UnknownHostException → etap „Rozwiązanie nazwy (DNS)”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „Connection refused”?",
+      "options": {
+        "A": "Parsowanie URL",
+        "B": "Cache i HSTS",
+        "C": "Rozwiązanie nazwy (DNS)",
+        "D": "Handshake TCP"
+      },
+      "correct": "D",
+      "explanation": "Connection refused → etap „Handshake TCP”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „PKIX path building failed”?",
+      "options": {
+        "A": "Handshake TLS 1.3",
+        "B": "Parsowanie URL",
+        "C": "Cache i HSTS",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "A",
+      "explanation": "PKIX path building failed → etap „Handshake TLS 1.3”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „502 Bad Gateway”?",
+      "options": {
+        "A": "Parsowanie URL",
+        "B": "Cache i HSTS",
+        "C": "Reverse proxy",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "C",
+      "explanation": "502 Bad Gateway → etap „Reverse proxy”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „403 Forbidden z Spring Security”?",
+      "options": {
+        "A": "Parsowanie URL",
+        "B": "Tomcat i filtry",
+        "C": "Cache i HSTS",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "B",
+      "explanation": "403 Forbidden z Spring Security → etap „Tomcat i filtry”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „SQLTransientConnectionException”?",
+      "options": {
+        "A": "Cache i HSTS",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "Parsowanie URL",
+        "D": "HikariCP i protokół PostgreSQL"
+      },
+      "correct": "D",
+      "explanation": "SQLTransientConnectionException → etap „HikariCP i protokół PostgreSQL”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „No route to host”?",
+      "options": {
+        "A": "Trasa i ARP",
+        "B": "Cache i HSTS",
+        "C": "Rozwiązanie nazwy (DNS)",
+        "D": "Parsowanie URL"
+      },
+      "correct": "A",
+      "explanation": "No route to host → etap „Trasa i ARP”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „404 dla nieistniejącego mapowania”?",
+      "options": {
+        "A": "Cache i HSTS",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "DispatcherServlet i kontroler",
+        "D": "Parsowanie URL"
+      },
+      "correct": "C",
+      "explanation": "404 dla nieistniejącego mapowania → etap „DispatcherServlet i kontroler”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „connect timed out”?",
+      "options": {
+        "A": "Parsowanie URL",
+        "B": "Handshake TCP",
+        "C": "Cache i HSTS",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "B",
+      "explanation": "connect timed out → etap „Handshake TCP”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „certificate has expired”?",
+      "options": {
+        "A": "Parsowanie URL",
+        "B": "Handshake TLS 1.3",
+        "C": "Cache i HSTS",
+        "D": "Rozwiązanie nazwy (DNS)"
+      },
+      "correct": "B",
+      "explanation": "certificate has expired → etap „Handshake TLS 1.3”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „504 Gateway Timeout”?",
+      "options": {
+        "A": "Parsowanie URL",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "Reverse proxy",
+        "D": "Cache i HSTS"
+      },
+      "correct": "C",
+      "explanation": "504 Gateway Timeout → etap „Reverse proxy”."
+    },
+    {
+      "question": "Na którym etapie podróży powstaje błąd „błąd serializacji JSON (HttpMessageNotWritableException)”?",
+      "options": {
+        "A": "Cache i HSTS",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "Parsowanie URL",
+        "D": "Odpowiedź i droga powrotna"
+      },
+      "correct": "D",
+      "explanation": "błąd serializacji JSON (HttpMessageNotWritableException) → etap „Odpowiedź i droga powrotna”."
+    },
+    {
+      "question": "Które etapy znikają przy drugim żądaniu w tym samym połączeniu keep-alive?",
+      "options": {
+        "A": "DNS, handshake TCP i handshake TLS",
+        "B": "Zapytanie do bazy",
+        "C": "Tylko parsowanie URL",
+        "D": "Serializacja JSON"
+      },
+      "correct": "A",
+      "explanation": "Połączenie i sesja TLS są ponownie używane, a adres jest w cache."
+    },
+    {
+      "question": "Dlaczego aplikacja korzysta z puli połączeń HikariCP?",
+      "options": {
+        "A": "Bo PostgreSQL nie obsługuje nowych połączeń",
+        "B": "Bo nowe połączenie do bazy wymaga TCP, często TLS i uwierzytelnienia — to kosztowne",
+        "C": "Bo bez puli nie da się użyć JPA",
+        "D": "Bo pula szyfruje zapytania"
+      },
+      "correct": "B",
+      "explanation": "Pula utrzymuje gotowe połączenia."
+    },
+    {
+      "question": "Jaki jest domyślny rozmiar puli HikariCP w Spring Boot?",
+      "options": {
+        "A": "200",
+        "B": "1",
+        "C": "10",
+        "D": "100"
+      },
+      "correct": "C",
+      "explanation": "maximum-pool-size domyślnie 10."
+    },
+    {
+      "question": "Jaka jest domyślna maksymalna liczba wątków Tomcata w Spring Boot?",
+      "options": {
+        "A": "50",
+        "B": "1000",
+        "C": "10",
+        "D": "200"
+      },
+      "correct": "D",
+      "explanation": "server.tomcat.threads.max = 200 (przy wątkach platformowych)."
+    },
+    {
+      "question": "Co oznacza %D we wzorcu access logu Tomcata?",
+      "options": {
+        "A": "Czas obsługi żądania w milisekundach",
+        "B": "Datę żądania",
+        "C": "Adres klienta",
+        "D": "Rozmiar odpowiedzi"
+      },
+      "correct": "A",
+      "explanation": "Pozwala oddzielić czas aplikacji od czasu sieci."
+    },
+    {
+      "question": "Co jest najlepszym kluczem do połączenia logów proxy, aplikacji i bazy dla jednego żądania?",
+      "options": {
+        "A": "Identyfikator żądania (X-Request-ID / traceparent)",
+        "B": "Nazwa hosta proxy",
+        "C": "Adres MAC",
+        "D": "Numer portu 443"
+      },
+      "correct": "A",
+      "explanation": "Propagowany przez wszystkie warstwy."
+    },
+    {
+      "question": "Dlaczego w pierwszym żądaniu kod Javy rzadko jest największym kosztem czasu?",
+      "options": {
+        "A": "Bo Java jest kompilowana",
+        "B": "Bo baza zawsze odpowiada w 0 ms",
+        "C": "Bo dominują rundy sieciowe: DNS, handshake TCP i TLS",
+        "D": "Bo HTTP/2 nie ma narzutu"
+      },
+      "correct": "C",
+      "explanation": "Każda runda to co najmniej jedno RTT."
+    },
+    {
+      "question": "Gdzie zwykle kończy się TLS w architekturze z reverse proxy?",
+      "options": {
+        "A": "W przeglądarce",
+        "B": "Na reverse proxy (chyba że skonfigurowano TLS lub mTLS do backendu)",
+        "C": "Zawsze w bazie danych",
+        "D": "Na przełączniku"
+      },
+      "correct": "B",
+      "explanation": "Ruch proxy → aplikacja bywa jawny w sieci wewnętrznej."
+    },
+    {
+      "question": "Co oznacza ALPN h2 w ClientHello?",
+      "options": {
+        "A": "Port 2",
+        "B": "Drugi certyfikat",
+        "C": "Wersję TLS 2",
+        "D": "Klient proponuje HTTP/2 jako protokół aplikacyjny w tym połączeniu TLS"
+      },
+      "correct": "D",
+      "explanation": "Negocjacja protokołu odbywa się w handshake’u TLS."
+    },
+    {
+      "question": "Co sprawdza przeglądarka w etapie „Cache i HSTS”?",
+      "options": {
+        "A": "Adres MAC serwera",
+        "B": "Wersję Javy",
+        "C": "Hasło użytkownika",
+        "D": "Czy ma aktualną odpowiedź w cache i czy domena wymaga HTTPS"
+      },
+      "correct": "D",
+      "explanation": "HSTS wymusza HTTPS bez próby HTTP."
+    },
+    {
+      "question": "Jaki adres ma resolver DNS widziany przez kontenery w sieciach użytkownika Dockera?",
+      "options": {
+        "A": "8.8.8.8",
+        "B": "127.0.0.11",
+        "C": "127.0.0.53",
+        "D": "10.0.0.1"
+      },
+      "correct": "B",
+      "explanation": "Wbudowany DNS Dockera w przestrzeni nazw kontenera."
+    },
+    {
+      "question": "Które źródło telemetrii jest szczególnie cenne do wykrywania C2 i tunelowania?",
+      "options": {
+        "A": "Logi zapytań DNS",
+        "B": "Logi kompilacji Maven",
+        "C": "Metryki CPU",
+        "D": "Pliki README"
+      },
+      "correct": "A",
+      "explanation": "Etap 3 — każda komunikacja zaczyna się od nazwy."
+    },
+    {
+      "question": "Dlaczego timeout odczytu klienta HTTP w aplikacji powinien być krótszy niż timeout proxy?",
+      "options": {
+        "A": "Bo timeouty są zawsze równe",
+        "B": "Bo proxy nie ma timeoutów",
+        "C": "By aplikacja zwróciła kontrolowany błąd, zanim proxy zwróci klientowi 504",
+        "D": "Bo krótszy timeout szyfruje dane"
+      },
+      "correct": "C",
+      "explanation": "Spójne limity od dołu do góry łańcucha."
+    },
+    {
+      "question": "Co oznacza SQLTransientConnectionException w HikariCP?",
+      "options": {
+        "A": "Wygasły certyfikat bazy",
+        "B": "Brak sieci",
+        "C": "Brak wolnego połączenia w puli w czasie connection-timeout",
+        "D": "Błąd składni SQL"
+      },
+      "correct": "C",
+      "explanation": "Typowo: wolne zapytania, wycieki połączeń, za mała pula."
+    },
+    {
+      "question": "Dlaczego tworzenie nowego HttpClient przy każdym żądaniu jest złą praktyką?",
+      "options": {
+        "A": "Bo to zabronione w Javie",
+        "B": "Bo zużywa GPU",
+        "C": "Bo HttpClient nie działa wielowątkowo",
+        "D": "Bo za każdym razem płacimy DNS, TCP i TLS, tracąc pulę i keep-alive"
+      },
+      "correct": "D",
+      "explanation": "Klienta tworzy się raz i współdzieli."
+    },
+    {
+      "question": "Czego dotyczy parametr leak-detection-threshold w HikariCP?",
+      "options": {
+        "A": "Wykrywania połączeń trzymanych dłużej niż próg (potencjalne wycieki)",
+        "B": "Wielkości puli wątków Tomcata",
+        "C": "Czasu życia certyfikatu",
+        "D": "Szyfrowania haseł"
+      },
+      "correct": "A",
+      "explanation": "Loguje ostrzeżenie ze stosem wywołań."
+    },
+    {
+      "question": "Co jest pierwszym krokiem przy zgłoszeniu „aplikacja jest wolna”?",
+      "options": {
+        "A": "Zakup szybszego łącza",
+        "B": "Zmierzenie, który etap zajmuje czas (curl -w, access logi, metryki pul)",
+        "C": "Zwiększenie RAM serwera",
+        "D": "Przepisanie aplikacji"
+      },
+      "correct": "B",
+      "explanation": "Diagnoza przed optymalizacją."
+    },
+    {
+      "question": "W którym etapie Spring Security ustala tożsamość użytkownika?",
+      "options": {
+        "A": "HikariCP i protokół PostgreSQL",
+        "B": "Rozwiązanie nazwy (DNS)",
+        "C": "DispatcherServlet i kontroler",
+        "D": "Tomcat i filtry"
+      },
+      "correct": "D",
+      "explanation": "Łańcuch filtrów przed DispatcherServlet."
+    },
+    {
+      "question": "Dlaczego zapytanie JPA findById jest bezpieczne przed SQL injection?",
+      "options": {
+        "A": "Bo identyfikator trafia jako parametr zapytania, a nie przez sklejanie tekstu SQL",
+        "B": "Bo id jest liczbą",
+        "C": "Bo działa w transakcji",
+        "D": "Bo PostgreSQL nie obsługuje injection"
+      },
+      "correct": "A",
+      "explanation": "Parametryzacja oddziela kod od danych."
+    },
+    {
+      "question": "Ile rund (RTT) dokłada w przybliżeniu handshake TCP i TLS 1.3 przy nowym połączeniu?",
+      "options": {
+        "A": "0",
+        "B": "10",
+        "C": "2 (1 RTT TCP + 1 RTT TLS 1.3)",
+        "D": "5"
+      },
+      "correct": "C",
+      "explanation": "TLS 1.2 dokładał 2 RTT; TLS 1.3 — 1 RTT (0-RTT przy wznowieniu z ograniczeniami)."
+    },
+    {
+      "question": "Której warstwy (w uproszczeniu) dotyczy etap „Handshake TCP”?",
+      "options": {
+        "A": "L7 (DNS)",
+        "B": "L4",
+        "C": "L6",
+        "D": "L2–L3"
+      },
+      "correct": "B",
+      "explanation": "Handshake TCP: L4."
+    },
+    {
+      "question": "Której warstwy (w uproszczeniu) dotyczy etap „Handshake TLS 1.3”?",
+      "options": {
+        "A": "L7 (DNS)",
+        "B": "L2–L3",
+        "C": "L6",
+        "D": "L4"
+      },
+      "correct": "C",
+      "explanation": "Handshake TLS 1.3: L6."
+    },
+    {
+      "question": "Której warstwy (w uproszczeniu) dotyczy etap „Trasa i ARP”?",
+      "options": {
+        "A": "L4",
+        "B": "L2–L3",
+        "C": "L6",
+        "D": "L7 (DNS)"
+      },
+      "correct": "B",
+      "explanation": "Trasa i ARP: L2–L3."
+    },
+    {
+      "question": "Której warstwy (w uproszczeniu) dotyczy etap „Rozwiązanie nazwy (DNS)”?",
+      "options": {
+        "A": "L7 (DNS)",
+        "B": "L2–L3",
+        "C": "L6",
+        "D": "L4"
+      },
+      "correct": "A",
+      "explanation": "Rozwiązanie nazwy (DNS): L7 (DNS)."
+    },
+    {
+      "question": "Której warstwy (w uproszczeniu) dotyczy etap „Reverse proxy”?",
+      "options": {
+        "A": "L2–L3",
+        "B": "L6",
+        "C": "L4",
+        "D": "L7"
+      },
+      "correct": "D",
+      "explanation": "Reverse proxy: L7."
+    },
+    {
+      "question": "Jakie źródło dowodów dla SOC odpowiada etapowi „Rozwiązanie nazwy (DNS)”?",
+      "options": {
+        "A": "Logi uwierzytelnienia i autoryzacji aplikacji",
+        "B": "Logi zapytań resolvera DNS",
+        "C": "Access log proxy i logi WAF",
+        "D": "NetFlow / VPC Flow Logs i logi firewalla"
+      },
+      "correct": "B",
+      "explanation": "Rozwiązanie nazwy (DNS): logi zapytań resolvera dns."
+    },
+    {
+      "question": "Jakie źródło dowodów dla SOC odpowiada etapowi „Handshake TCP”?",
+      "options": {
+        "A": "Access log proxy i logi WAF",
+        "B": "Logi zapytań resolvera DNS",
+        "C": "NetFlow / VPC Flow Logs i logi firewalla",
+        "D": "Logi uwierzytelnienia i autoryzacji aplikacji"
+      },
+      "correct": "C",
+      "explanation": "Handshake TCP: netflow / vpc flow logs i logi firewalla."
+    },
+    {
+      "question": "Jakie źródło dowodów dla SOC odpowiada etapowi „Reverse proxy”?",
+      "options": {
+        "A": "Access log proxy i logi WAF",
+        "B": "NetFlow / VPC Flow Logs i logi firewalla",
+        "C": "Logi uwierzytelnienia i autoryzacji aplikacji",
+        "D": "Logi zapytań resolvera DNS"
+      },
+      "correct": "A",
+      "explanation": "Reverse proxy: access log proxy i logi waf."
+    },
+    {
+      "question": "Jakie źródło dowodów dla SOC odpowiada etapowi „Tomcat i filtry”?",
+      "options": {
+        "A": "NetFlow / VPC Flow Logs i logi firewalla",
+        "B": "Logi zapytań resolvera DNS",
+        "C": "Access log proxy i logi WAF",
+        "D": "Logi uwierzytelnienia i autoryzacji aplikacji"
+      },
+      "correct": "D",
+      "explanation": "Tomcat i filtry: logi uwierzytelnienia i autoryzacji aplikacji."
+    },
+    {
+      "question": "Jakie źródło dowodów dla SOC odpowiada etapowi „HikariCP i protokół PostgreSQL”?",
+      "options": {
+        "A": "Logi zapytań resolvera DNS",
+        "B": "NetFlow / VPC Flow Logs i logi firewalla",
+        "C": "Access log proxy i logi WAF",
+        "D": "Logi audytu i wolnych zapytań bazy"
+      },
+      "correct": "D",
+      "explanation": "HikariCP i protokół PostgreSQL: logi audytu i wolnych zapytań bazy."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Parsowanie URL”?",
+      "options": {
+        "A": "jądro klienta ↔ serwera",
+        "B": "resolver systemu → serwer DNS",
+        "C": "przeglądarka / klient",
+        "D": "jądro systemu"
+      },
+      "correct": "C",
+      "explanation": "Parsowanie URL: przeglądarka / klient."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Cache i HSTS”?",
+      "options": {
+        "A": "przeglądarka",
+        "B": "jądro systemu",
+        "C": "biblioteka TLS",
+        "D": "jądro klienta ↔ serwera"
+      },
+      "correct": "A",
+      "explanation": "Cache i HSTS: przeglądarka."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Rozwiązanie nazwy (DNS)”?",
+      "options": {
+        "A": "biblioteka TLS",
+        "B": "resolver systemu → serwer DNS",
+        "C": "jądro klienta ↔ serwera",
+        "D": "klient → reverse proxy"
+      },
+      "correct": "B",
+      "explanation": "Rozwiązanie nazwy (DNS): resolver systemu → serwer DNS."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Trasa i ARP”?",
+      "options": {
+        "A": "resolver systemu → serwer DNS",
+        "B": "przeglądarka / klient",
+        "C": "przeglądarka",
+        "D": "jądro systemu"
+      },
+      "correct": "D",
+      "explanation": "Trasa i ARP: jądro systemu."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Handshake TCP”?",
+      "options": {
+        "A": "jądro klienta ↔ serwera",
+        "B": "jądro systemu",
+        "C": "przeglądarka",
+        "D": "resolver systemu → serwer DNS"
+      },
+      "correct": "A",
+      "explanation": "Handshake TCP: jądro klienta ↔ serwera."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Handshake TLS 1.3”?",
+      "options": {
+        "A": "resolver systemu → serwer DNS",
+        "B": "biblioteka TLS",
+        "C": "jądro klienta ↔ serwera",
+        "D": "jądro systemu"
+      },
+      "correct": "B",
+      "explanation": "Handshake TLS 1.3: biblioteka TLS."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Żądanie HTTP/2”?",
+      "options": {
+        "A": "biblioteka TLS",
+        "B": "jądro klienta ↔ serwera",
+        "C": "klient → reverse proxy",
+        "D": "jądro systemu"
+      },
+      "correct": "C",
+      "explanation": "Żądanie HTTP/2: klient → reverse proxy."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Reverse proxy”?",
+      "options": {
+        "A": "przeglądarka",
+        "B": "przeglądarka / klient",
+        "C": "resolver systemu → serwer DNS",
+        "D": "Nginx / Caddy / ALB"
+      },
+      "correct": "D",
+      "explanation": "Reverse proxy: Nginx / Caddy / ALB."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Tomcat i filtry”?",
+      "options": {
+        "A": "jądro systemu",
+        "B": "JVM: Tomcat, Spring Security",
+        "C": "przeglądarka",
+        "D": "resolver systemu → serwer DNS"
+      },
+      "correct": "B",
+      "explanation": "Tomcat i filtry: JVM: Tomcat, Spring Security."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „DispatcherServlet i kontroler”?",
+      "options": {
+        "A": "Spring MVC",
+        "B": "resolver systemu → serwer DNS",
+        "C": "jądro klienta ↔ serwera",
+        "D": "jądro systemu"
+      },
+      "correct": "A",
+      "explanation": "DispatcherServlet i kontroler: Spring MVC."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „HikariCP i protokół PostgreSQL”?",
+      "options": {
+        "A": "jądro klienta ↔ serwera",
+        "B": "biblioteka TLS",
+        "C": "JDBC → baza",
+        "D": "jądro systemu"
+      },
+      "correct": "C",
+      "explanation": "HikariCP i protokół PostgreSQL: JDBC → baza."
+    },
+    {
+      "question": "Który system lub komponent obsługuje etap „Odpowiedź i droga powrotna”?",
+      "options": {
+        "A": "przeglądarka / klient",
+        "B": "serializacja JSON → proxy → klient",
+        "C": "resolver systemu → serwer DNS",
+        "D": "przeglądarka"
+      },
+      "correct": "B",
+      "explanation": "Odpowiedź i droga powrotna: serializacja JSON → proxy → klient."
+    },
+    {
+      "question": "Co dzieje się na etapie „Parsowanie URL”?",
+      "options": {
+        "A": "schemat https, host api.javaquest.local, port 443 (domyślny), ścieżka /users/42",
+        "B": "ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT)",
+        "C": "SYN, SYN-ACK, ACK na port 443 (1 RTT)",
+        "D": "tablica routingu → brama domyślna; ARP o MAC bramy"
+      },
+      "correct": "A",
+      "explanation": "Parsowanie URL: schemat https, host api.javaquest.local, port 443 (domyślny), ścieżka /users/42."
+    },
+    {
+      "question": "Co dzieje się na etapie „Cache i HSTS”?",
+      "options": {
+        "A": "ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji",
+        "B": "ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT)",
+        "C": "zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie",
+        "D": "czy odpowiedź jest w cache HTTP; czy domena ma HSTS (wymuszenie HTTPS)"
+      },
+      "correct": "D",
+      "explanation": "Cache i HSTS: czy odpowiedź jest w cache HTTP; czy domena ma HSTS (wymuszenie HTTPS)."
+    },
+    {
+      "question": "Co dzieje się na etapie „Rozwiązanie nazwy (DNS)”?",
+      "options": {
+        "A": "mapowanie /users/{id}, walidacja, wywołanie serwisu",
+        "B": "zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie",
+        "C": "zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL",
+        "D": "wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie"
+      },
+      "correct": "C",
+      "explanation": "Rozwiązanie nazwy (DNS): zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL."
+    },
+    {
+      "question": "Co dzieje się na etapie „Trasa i ARP”?",
+      "options": {
+        "A": "mapowanie /users/{id}, walidacja, wywołanie serwisu",
+        "B": "tablica routingu → brama domyślna; ARP o MAC bramy",
+        "C": "Jackson → HTTP 200 → proxy → TLS → klient, render w przeglądarce",
+        "D": "połączenie z puli, zapytanie SELECT … WHERE id = $1, wynik"
+      },
+      "correct": "B",
+      "explanation": "Trasa i ARP: tablica routingu → brama domyślna; ARP o MAC bramy."
+    },
+    {
+      "question": "Co dzieje się na etapie „Handshake TCP”?",
+      "options": {
+        "A": "tablica routingu → brama domyślna; ARP o MAC bramy",
+        "B": "zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL",
+        "C": "SYN, SYN-ACK, ACK na port 443 (1 RTT)",
+        "D": "czy odpowiedź jest w cache HTTP; czy domena ma HSTS (wymuszenie HTTPS)"
+      },
+      "correct": "C",
+      "explanation": "Handshake TCP: SYN, SYN-ACK, ACK na port 443 (1 RTT)."
+    },
+    {
+      "question": "Co dzieje się na etapie „Handshake TLS 1.3”?",
+      "options": {
+        "A": "ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT)",
+        "B": "SYN, SYN-ACK, ACK na port 443 (1 RTT)",
+        "C": "ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji",
+        "D": "tablica routingu → brama domyślna; ARP o MAC bramy"
+      },
+      "correct": "A",
+      "explanation": "Handshake TLS 1.3: ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT)."
+    },
+    {
+      "question": "Co dzieje się na etapie „Żądanie HTTP/2”?",
+      "options": {
+        "A": "wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie",
+        "B": "zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie",
+        "C": "ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT)",
+        "D": "ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji"
+      },
+      "correct": "D",
+      "explanation": "Żądanie HTTP/2: ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji."
+    },
+    {
+      "question": "Co dzieje się na etapie „Reverse proxy”?",
+      "options": {
+        "A": "zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie",
+        "B": "mapowanie /users/{id}, walidacja, wywołanie serwisu",
+        "C": "wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie",
+        "D": "połączenie z puli, zapytanie SELECT … WHERE id = $1, wynik"
+      },
+      "correct": "A",
+      "explanation": "Reverse proxy: zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie."
+    },
+    {
+      "question": "Co dzieje się na etapie „Tomcat i filtry”?",
+      "options": {
+        "A": "schemat https, host api.javaquest.local, port 443 (domyślny), ścieżka /users/42",
+        "B": "wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie",
+        "C": "czy odpowiedź jest w cache HTTP; czy domena ma HSTS (wymuszenie HTTPS)",
+        "D": "zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL"
+      },
+      "correct": "B",
+      "explanation": "Tomcat i filtry: wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie."
+    },
+    {
+      "question": "Co dzieje się na etapie „DispatcherServlet i kontroler”?",
+      "options": {
+        "A": "zapytanie A/AAAA o api.javaquest.local, odpowiedź z adresem i TTL",
+        "B": "tablica routingu → brama domyślna; ARP o MAC bramy",
+        "C": "SYN, SYN-ACK, ACK na port 443 (1 RTT)",
+        "D": "mapowanie /users/{id}, walidacja, wywołanie serwisu"
+      },
+      "correct": "D",
+      "explanation": "DispatcherServlet i kontroler: mapowanie /users/{id}, walidacja, wywołanie serwisu."
+    },
+    {
+      "question": "Co dzieje się na etapie „HikariCP i protokół PostgreSQL”?",
+      "options": {
+        "A": "SYN, SYN-ACK, ACK na port 443 (1 RTT)",
+        "B": "ClientHello (SNI, ALPN h2), certyfikat, klucze sesji (1 RTT)",
+        "C": "połączenie z puli, zapytanie SELECT … WHERE id = $1, wynik",
+        "D": "ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji"
+      },
+      "correct": "C",
+      "explanation": "HikariCP i protokół PostgreSQL: połączenie z puli, zapytanie SELECT … WHERE id = $1, wynik."
+    },
+    {
+      "question": "Co dzieje się na etapie „Odpowiedź i droga powrotna”?",
+      "options": {
+        "A": "Jackson → HTTP 200 → proxy → TLS → klient, render w przeglądarce",
+        "B": "zakończenie TLS, routing do backendu, X-Forwarded-For, nowe połączenie",
+        "C": "ramki HEADERS: GET /users/42, nagłówki, ciasteczko sesji",
+        "D": "wątek z puli, parsowanie HTTP, łańcuch filtrów, uwierzytelnienie"
+      },
+      "correct": "A",
+      "explanation": "Odpowiedź i droga powrotna: Jackson → HTTP 200 → proxy → TLS → klient, render w przeglądarce."
+    },
+    {
+      "question": "Ile trwa 10 sekwencyjnych żądań HTTPS przy RTT 20 ms i czasie aplikacji 10 ms, jeśli KAŻDE otwiera nowe połączenie (TCP + TLS 1.3, DNS w cache)?",
+      "options": {
+        "A": "340 ms",
+        "B": "700 ms",
+        "C": "1400 ms",
+        "D": "300 ms"
+      },
+      "correct": "B",
+      "explanation": "Każde żądanie: 1 RTT TCP + 1 RTT TLS + 1 RTT żądanie + aplikacja = 70 ms; razem 10 × 70 = 700 ms. Z keep-alive: 340 ms."
+    },
+    {
+      "question": "Ile trwa 50 sekwencyjnych żądań HTTPS przy RTT 5 ms i czasie aplikacji 2 ms, jeśli KAŻDE otwiera nowe połączenie (TCP + TLS 1.3, DNS w cache)?",
+      "options": {
+        "A": "1700 ms",
+        "B": "350 ms",
+        "C": "360 ms",
+        "D": "850 ms"
+      },
+      "correct": "D",
+      "explanation": "Każde żądanie: 1 RTT TCP + 1 RTT TLS + 1 RTT żądanie + aplikacja = 17 ms; razem 50 × 17 = 850 ms. Z keep-alive: 360 ms."
+    },
+    {
+      "question": "Ile trwa 5 sekwencyjnych żądań HTTPS przy RTT 100 ms i czasie aplikacji 20 ms, jeśli KAŻDE otwiera nowe połączenie (TCP + TLS 1.3, DNS w cache)?",
+      "options": {
+        "A": "800 ms",
+        "B": "3200 ms",
+        "C": "1600 ms",
+        "D": "600 ms"
+      },
+      "correct": "C",
+      "explanation": "Każde żądanie: 1 RTT TCP + 1 RTT TLS + 1 RTT żądanie + aplikacja = 320 ms; razem 5 × 320 = 1600 ms. Z keep-alive: 800 ms."
+    },
+    {
+      "question": "Ile trwa 100 sekwencyjnych żądań HTTPS przy RTT 1 ms i czasie aplikacji 1 ms, jeśli KAŻDE otwiera nowe połączenie (TCP + TLS 1.3, DNS w cache)?",
+      "options": {
+        "A": "202 ms",
+        "B": "800 ms",
+        "C": "200 ms",
+        "D": "400 ms"
+      },
+      "correct": "D",
+      "explanation": "Każde żądanie: 1 RTT TCP + 1 RTT TLS + 1 RTT żądanie + aplikacja = 4 ms; razem 100 × 4 = 400 ms. Z keep-alive: 202 ms."
+    },
+    {
+      "question": "Ile trwa 20 sekwencyjnych żądań HTTPS przy RTT 50 ms i czasie aplikacji 5 ms, jeśli KAŻDE otwiera nowe połączenie (TCP + TLS 1.3, DNS w cache)?",
+      "options": {
+        "A": "1200 ms",
+        "B": "1100 ms",
+        "C": "3100 ms",
+        "D": "6200 ms"
+      },
+      "correct": "C",
+      "explanation": "Każde żądanie: 1 RTT TCP + 1 RTT TLS + 1 RTT żądanie + aplikacja = 155 ms; razem 20 × 155 = 3100 ms. Z keep-alive: 1200 ms."
+    },
+    {
+      "question": "Usługa obsługuje 200 żądań/s, a każde trzyma połączenie z bazy przez 50 ms. Ile połączeń jest średnio zajętych jednocześnie?",
+      "options": {
+        "A": "10",
+        "B": "200",
+        "C": "5",
+        "D": "20"
+      },
+      "correct": "A",
+      "explanation": "Prawo Little’a: 200 × 0.05 s = 10. Pula musi to pomieścić z zapasem."
+    },
+    {
+      "question": "Usługa obsługuje 1000 żądań/s, a każde trzyma połączenie z bazy przez 20 ms. Ile połączeń jest średnio zajętych jednocześnie?",
+      "options": {
+        "A": "40",
+        "B": "20",
+        "C": "10",
+        "D": "1000"
+      },
+      "correct": "B",
+      "explanation": "Prawo Little’a: 1000 × 0.02 s = 20. Pula musi to pomieścić z zapasem."
+    },
+    {
+      "question": "Usługa obsługuje 50 żądań/s, a każde trzyma połączenie z bazy przez 400 ms. Ile połączeń jest średnio zajętych jednocześnie?",
+      "options": {
+        "A": "10",
+        "B": "50",
+        "C": "40",
+        "D": "20"
+      },
+      "correct": "D",
+      "explanation": "Prawo Little’a: 50 × 0.4 s = 20. Pula musi to pomieścić z zapasem."
+    },
+    {
+      "question": "Usługa obsługuje 500 żądań/s, a każde trzyma połączenie z bazy przez 100 ms. Ile połączeń jest średnio zajętych jednocześnie?",
+      "options": {
+        "A": "100",
+        "B": "500",
+        "C": "50",
+        "D": "25"
+      },
+      "correct": "C",
+      "explanation": "Prawo Little’a: 500 × 0.1 s = 50. Pula musi to pomieścić z zapasem."
+    },
+    {
+      "question": "Usługa obsługuje 80 żądań/s, a każde trzyma połączenie z bazy przez 250 ms. Ile połączeń jest średnio zajętych jednocześnie?",
+      "options": {
+        "A": "20",
+        "B": "80",
+        "C": "40",
+        "D": "10"
+      },
+      "correct": "A",
+      "explanation": "Prawo Little’a: 80 × 0.25 s = 20. Pula musi to pomieścić z zapasem."
+    },
+    {
+      "question": "Usługa obsługuje 300 żądań/s, a każde trzyma połączenie z bazy przez 30 ms. Ile połączeń jest średnio zajętych jednocześnie?",
+      "options": {
+        "A": "300",
+        "B": "9",
+        "C": "18",
+        "D": "4.5"
+      },
+      "correct": "B",
+      "explanation": "Prawo Little’a: 300 × 0.03 s = 9. Pula musi to pomieścić z zapasem."
+    }
+  ]
 }
