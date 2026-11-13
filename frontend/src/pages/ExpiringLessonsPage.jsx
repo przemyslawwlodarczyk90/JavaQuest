@@ -4,7 +4,7 @@ import { getExpiringLessons } from '../api'
 import { useProgress } from '../useProgress'
 import MasteryStars from '../components/MasteryStars'
 
-const names = { JAVA: 'Java', JAVASCRIPT: 'JavaScript', REACT: 'React', LINUX: 'Linux', OCP: 'OCP Java 21', NETWORKING: 'Sieci' }
+const names = { JAVA: 'Java', JAVASCRIPT: 'JavaScript', REACT: 'React', LINUX: 'Linux', OCP: 'OCP Java 21', NETWORKING: 'Sieci i Cyberbezpieczeństwo' }
 
 export default function ExpiringLessonsPage() {
   const { summary } = useProgress()

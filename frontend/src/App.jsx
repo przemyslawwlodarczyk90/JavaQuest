@@ -20,7 +20,7 @@ const TRACKS = [
   { path: '/react', label: 'React' },
   { path: '/linux', label: 'Linux' },
   { path: '/ocp', label: 'OCP' },
-  { path: '/sieci', label: 'Sieci' },
+  { path: '/sieci', label: 'Sieci i Cyberbezpieczeństwo' },
 ]
 
 function TrackSwitcher() {
