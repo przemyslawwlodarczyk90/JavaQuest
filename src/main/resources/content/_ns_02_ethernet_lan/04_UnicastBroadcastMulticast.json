@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Do kogo właściwie wysyłasz pakiet?",
+      "image": "netsec/ns02-04-modes.svg",
+      "imageAlt": "Cztery panele: unicast — nadawca łączy się z jednym hostem; broadcast — z wszystkimi hostami w segmencie; multicast — tylko z hostami zapisanymi do grupy (IGMP/MLD join); anycast — z najbliższym z wielu serwerów o tym samym adresie. Podpis: IPv6 nie ma broadcastu, rolę przejął multicast.",
+      "body": "Prawie cały ruch Twojej aplikacji to **unicast** — jeden nadawca, jeden odbiorca: żądanie HTTP, zapytanie do bazy, wiadomość do Kafki. Ale sieć potrafi więcej:\n- **broadcast** — „do wszystkich w segmencie” (ARP, DHCP Discover, stary NetBIOS),\n- **multicast** — „do wszystkich zainteresowanych” (mDNS, SSDP, OSPF, VRRP, strumienie wideo, wykrywanie węzłów klastra),\n- **anycast** — „do najbliższego z wielu” (publiczne resolvery DNS, serwery główne DNS, CDN).\n\nDlaczego developer i obrońca powinni to rozumieć?\n- **Diagnoza**: klaster Hazelcast/JGroups, który „nie widzi węzłów” w chmurze, bo multicast tam nie działa; burze rozgłoszeniowe kładące VLAN; zachowanie DNS zależne od lokalizacji (anycast).\n- **Wydajność**: każdy broadcast przerywa pracę *wszystkich* hostów w segmencie; duże VLAN-y płacą za to procesorem i opóźnieniami.\n- **Bezpieczeństwo**: protokoły rozgłoszeniowe i multicastowe rozwiązywania nazw (LLMNR, NBT-NS, mDNS) to jeden z najczęstszych sposobów przechwytywania poświadczeń w sieciach Windows; SSDP i inne usługi UDP bywają wzmacniaczami DDoS; anycast to z kolei narzędzie obrony przed DDoS.\n\nW tej lekcji poznasz zakresy adresów (224.0.0.0/4, ff00::/8), mapowanie multicastu na adresy MAC, IGMP/MLD i snooping, granice broadcastu, anycast oraz przechwycisz mDNS i SSDP w sieci domowej.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Tryby adresowania i ich adresy",
+      "body": "- **Unicast** — jeden odbiorca; adresy „zwykłe” (IPv4 poza zakresami specjalnymi, IPv6 GUA/ULA/link-local), MAC z bitem I/G = 0.\n- **Broadcast (IPv4)** — wszyscy w domenie rozgłoszeniowej:\n  - **ograniczony** `255.255.255.255` — tylko lokalny segment, nigdy nie routowany (np. DHCP Discover),\n  - **ukierunkowany (directed)** — adres broadcast podsieci, np. `192.168.1.255` dla `192.168.1.0/24`; routery domyślnie go nie przekazują (ochrona przed atakiem Smurf),\n  - w L2: MAC `ff:ff:ff:ff:ff:ff`.\n- **Multicast IPv4** — `224.0.0.0/4` (dawna klasa D): `224.0.0.0/24` lokalny łącza (TTL 1, np. 224.0.0.5 OSPF, 224.0.0.18 VRRP, 224.0.0.251 mDNS, 224.0.0.252 LLMNR), `232.0.0.0/8` SSM, `239.0.0.0/8` administracyjny (prywatny, np. 239.255.255.250 SSDP).\n- **Multicast IPv6** — `ff00::/8`; czwarta cyfra to zasięg (*scope*): `ff02::` łącze, `ff05::` ośrodek, `ff0e::` globalny. Przykłady: `ff02::1` wszystkie węzły, `ff02::2` routery, `ff02::fb` mDNS, `ff02::1:3` LLMNR.\n- **MAC dla multicastu** — IPv4: `01:00:5e` + dolne 23 bity adresu IP; IPv6: `33:33` + dolne 32 bity.\n- **IGMP / MLD** — protokoły, którymi hosty zgłaszają routerowi (i przełącznikom ze *snoopingiem*) członkostwo w grupach (IPv4 / IPv6).\n- **IGMP/MLD snooping** — przełącznik podsłuchuje zgłoszenia i wysyła ruch grupy tylko na porty członków.\n- **Anycast** — ten sam adres przypisany wielu serwerom w różnych miejscach; routing (BGP) kieruje klienta do najbliższego.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Rozmowa, megafon, newsletter i infolinia",
+      "body": "- **Unicast** to rozmowa telefoniczna: jeden dzwoni do jednego.\n- **Broadcast** to ogłoszenie przez **megafon** na hali: słyszą wszyscy, czy chcą, czy nie — i każdy musi na chwilę przerwać pracę, by ocenić, czy to do niego. Megafon słychać tylko na tej hali (broadcast nie przechodzi przez router).\n- **Multicast** to **newsletter**: dostają go tylko ci, którzy się zapisali (IGMP join). Poczta (przełącznik ze snoopingiem) wie, do których skrzynek go dostarczyć. Bez tej wiedzy poczta wrzucałaby newsletter wszystkim (zalewanie jak broadcast).\n- **Anycast** to **infolinia z jednym numerem**: dzwonisz pod ten sam numer z Gdańska i z Krakowa, ale odbiera najbliższe biuro obsługi. Gdy jedno biuro jest przeciążone lub zamknięte, połączenie trafia do innego.\n\nProblem bezpieczeństwa megafonu i newslettera: odpowiedzieć może każdy. Jeśli zapytasz przez megafon „kto jest serwerem plików FILESRV?”, a prawdziwy serwer milczy (bo literówka), może odezwać się ktoś, kto tylko udaje — i dostanie Twoje poświadczenia. Tak działa nadużywanie LLMNR i NBT-NS w sieciach Windows.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Multicast IPv4 na adres MAC",
+      "image": "netsec/ns02-04-mcast-mac.svg",
+      "imageAlt": "Adres 224.0.0.251 rozpisany na 32 bity: pierwsze 4 bity 1110 oznaczają multicast, kolejnych 5 bitów ginie, dolne 23 bity trafiają do adresu MAC 01:00:5e:00:00:fb. Ramka z ostrzeżeniem o niejednoznaczności 32 do 1 i regułą dla IPv6: MAC 33:33 plus dolne 32 bity.",
+      "body": "Ramka do grupy multicast musi mieć docelowy adres MAC, a ten wyznacza się z adresu grupy. Przykłady (sprawdź obliczenia bit po bicie):",
+      "code": "224.0.0.1          → 01:00:5e:00:00:01   multicast lokalny łącza (224.0.0.0/24, nie routowany)\n224.0.0.5          → 01:00:5e:00:00:05   multicast lokalny łącza (224.0.0.0/24, nie routowany)\n224.0.0.18         → 01:00:5e:00:00:12   multicast lokalny łącza (224.0.0.0/24, nie routowany)\n224.0.0.251        → 01:00:5e:00:00:fb   multicast lokalny łącza (224.0.0.0/24, nie routowany)\n224.0.0.252        → 01:00:5e:00:00:fc   multicast lokalny łącza (224.0.0.0/24, nie routowany)\n239.255.255.250    → 01:00:5e:7f:ff:fa   multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)\n232.10.20.30       → 01:00:5e:0a:14:1e   multicast SSM (232.0.0.0/8)\n225.128.1.2        → 01:00:5e:00:01:02   multicast (224.0.0.0/4)\n\nReguła: MAC = 01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet\nNiejednoznaczność: 2^5 = 32 adresy IP dzielą jeden MAC (np. 224.0.0.251 i 239.128.0.251)\n\nIPv6 (33:33 + dolne 32 bity):\nff02::1     → 33:33:00:00:00:01     ff02::fb    → 33:33:00:00:00:fb\nff02::2     → 33:33:00:00:00:02     ff02::1:3   → 33:33:00:01:00:03"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Multicast w Javie: nadawca i odbiorca",
+      "body": "Java obsługuje multicast UDP przez `MulticastSocket` lub `DatagramChannel` (NIO). Odbiorca musi dołączyć do grupy na konkretnym interfejsie — to wysyła IGMP/MLD join.",
+      "code": "import java.net.*;\nimport java.nio.charset.StandardCharsets;\n\npublic class McastDemo {\n    static final InetAddress GROUP = InetAddress.ofLiteral(\"239.1.2.3\");    // Java 22+; wcześniej getByName\n    static final int PORT = 4446;\n\n    static void receiver(String ifName) throws Exception {\n        NetworkInterface nif = NetworkInterface.getByName(ifName);        // np. \"eth0\"\n        try (MulticastSocket s = new MulticastSocket(PORT)) {\n            s.joinGroup(new InetSocketAddress(GROUP, PORT), nif);         // → IGMP Membership Report\n            byte[] buf = new byte[1500];\n            DatagramPacket p = new DatagramPacket(buf, buf.length);\n            s.receive(p);\n            System.out.println(\"od \" + p.getAddress() + \": \" + new String(p.getData(), 0, p.getLength(), StandardCharsets.UTF_8));\n            s.leaveGroup(new InetSocketAddress(GROUP, PORT), nif);        // → IGMP Leave\n        }\n    }\n\n    static void sender() throws Exception {\n        try (MulticastSocket s = new MulticastSocket()) {\n            s.setTimeToLive(1);                                           // tylko lokalny segment (nie przez routery)\n            byte[] msg = \"ping grupy\".getBytes(StandardCharsets.UTF_8);\n            s.send(new DatagramPacket(msg, msg.length, GROUP, PORT));\n        }\n    }\n}\n// Broadcast w Javie: DatagramSocket.setBroadcast(true) i adres 255.255.255.255 lub broadcast podsieci."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Packet Lab: mDNS i SSDP w Twojej sieci domowej",
+      "image": "netsec/ns02-04-igmp.svg",
+      "imageAlt": "Router w roli querier, przełącznik z IGMP snooping i cztery hosty; H1 i H3 wysłały IGMP join do grupy 239.1.1.1 i tylko do nich trafia strumień, H2 i H4 są niezapisane. Podpis: bez snoopingu przełącznik zalałby strumieniem wszystkie porty.",
+      "body": "Ćwiczenie z planu lekcji — wyłącznie we własnej sieci domowej (to Twój ruch i Twoje urządzenia):\n1. **Uruchom przechwytywanie** na swoim komputerze w sieci domowej: Wireshark z filtrem przechwytywania `udp port 5353 or udp port 1900 or igmp` (lub `tcpdump -i <if> -nn -w home.pcap 'udp port 5353 or udp port 1900 or igmp'`) na 5–10 minut.\n2. **Pobudź ruch**: otwórz w telefonie aplikację, która szuka urządzeń (np. udostępnianie ekranu, drukowanie), albo w Linuksie `avahi-browse -at`.\n3. **mDNS** (filtr `mdns`, 224.0.0.251/ff02::fb, port 5353): zapytania typu PTR `_googlecast._tcp.local`, `_ipp._tcp.local`, `_airplay._tcp.local` i odpowiedzi z nazwami urządzeń, adresami, portami usług.\n4. **SSDP** (filtr `ssdp`, 239.255.255.250:1900): ogłoszenia `NOTIFY` z polami `LOCATION` (URL opisu urządzenia UPnP) i `SERVER` (system, wersja).\n5. **IGMP** (filtr `igmp`): raporty członkostwa wysyłane przez urządzenia (Membership Report) i zapytania routera (Membership Query).\n6. **Zinwentaryzuj urządzenia**: zrób tabelę adres IP → nazwa → usługi → producent (OUI z lekcji 02). Zwykle znajdziesz telewizor, drukarkę, router, telefony.\n7. **Wniosek obrońcy**: zapisz, ile informacji o sieci ujawniają te protokoły każdemu, kto jest w tym samym segmencie (nazwy, modele, wersje firmware) — dlatego w sieciach firmowych ogranicza się je do potrzebnych segmentów.\n8. **Usuń plik** po ćwiczeniu lub przechowuj go poza repozytorium.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Dobrze znane adresy multicast i broadcast",
+      "body": "Adresy, które zobaczysz w każdym przechwyceniu — warto rozpoznawać je odruchowo:",
+      "code": "adres                    protokół / znaczenie                 port      uwagi bezpieczeństwa\n255.255.255.255          broadcast ograniczony (DHCP)          67/68     rogue DHCP — DHCP snooping\nx.x.x.255 (/24)          broadcast ukierunkowany               —         routery blokują (Smurf)\n224.0.0.1 / ff02::1      wszystkie hosty / węzły                —\n224.0.0.2 / ff02::2      wszystkie routery                      —\n224.0.0.5, .6 / ff02::5  OSPF (routery, DR)                     IP 89    uwierzytelnianie OSPF\n224.0.0.18               VRRP                                   IP 112   ogłoszenia mastera\n224.0.0.22               IGMPv3 (raporty)                       IP 2\n224.0.0.251 / ff02::fb   mDNS (Bonjour, Avahi)                  5353     ujawnia nazwy i usługi\n224.0.0.252 / ff02::1:3  LLMNR (Windows)                        5355     przechwytywanie poświadczeń → wyłączyć\nx.x.x.255 (NetBIOS)      NBT-NS (NetBIOS Name Service)          137      jw. → wyłączyć\n239.255.255.250          SSDP / UPnP                            1900     wzmacnianie DDoS, ujawnianie urządzeń\nff02::1:2                serwery/relay DHCPv6                   547      DHCPv6 Guard"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Narzędzia: grupy, routing multicastu i diagnoza",
+      "body": "Gdzie sprawdzić członkostwo w grupach, trasy multicast i statystyki broadcastu:",
+      "code": "# Linux: do jakich grup należą interfejsy\nip maddr show dev eth0              # inet 224.0.0.251, inet6 ff02::fb, link 01:00:5e:00:00:fb ...\ncat /proc/net/igmp\nss -ulnp | grep -E '5353|1900|5355' # kto nasłuchuje mDNS/SSDP/LLMNR\n\n# Windows\nnetsh interface ipv4 show joins\nGet-NetUDPEndpoint -LocalPort 5353,5355,1900\n\n# Wysyłanie testowe (lab): socat do grupy 239.1.2.3\nsocat - UDP4-DATAGRAM:239.1.2.3:4446,ip-multicast-ttl=1\nsocat UDP4-RECV:4446,ip-add-membership=239.1.2.3:eth0 -\n\n# Przełącznik Cisco\nshow ip igmp snooping groups\nshow interfaces counters | include Broad    # liczniki broadcastów na portach (burza?)\nstorm-control broadcast level 1.00          # limit ruchu rozgłoszeniowego na porcie\n\n# Hazelcast: wykrywanie członków bez multicastu (chmura/Kubernetes)\n# hazelcast.network.join.multicast.enabled: false\n# hazelcast.network.join.kubernetes.enabled: true"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz: od klastra Javy po Responder i DDoS",
+      "image": "netsec/ns02-04-anycast.svg",
+      "imageAlt": "Trzy lokalizacje resolvera DNS we Frankfurcie, Warszawie i Londynie z tym samym adresem 9.9.9.9; użytkownicy z Krakowa, Paryża i Dublina trafiają do najbliższej lokalizacji wybranej przez BGP. Podpis: zastosowania anycastu w serwerach głównych DNS, publicznych resolverach, CDN i ochronie przed DDoS.",
+      "body": "**Developer / SRE:**\n- **Wykrywanie węzłów klastra** (Hazelcast, JGroups/Infinispan, stare Eureka/EhCache) przez multicast działa w biurze, ale nie w AWS/Azure/GCP i zwykle nie w Kubernetesie — w chmurze używa się wykrywania przez API platformy, DNS lub listę adresów.\n- **Usługi lokalne**: Spring Boot DevTools, drukarki, Chromecast — mDNS/SSDP; w kontenerach multicast wymaga sieci host lub macvlan.\n- **Anycast** sprawia, że `8.8.8.8` czy `1.1.1.1` odpowiadają z lokalizacji blisko Ciebie; CDN i DNS dostawców chmury działają tak samo — stąd różne odpowiedzi i opóźnienia z różnych regionów.\n- **Broadcast** w dużych sieciach — przy tysiącach hostów w jednym VLAN-ie ruch rozgłoszeniowy (ARP, DHCP, mDNS) zajmuje zauważalną część pasma i CPU.\n\n**Blue team:**\n- **LLMNR/NBT-NS/mDNS poisoning** (ATT&CK T1557.001): gdy DNS nie zna nazwy (literówka, nieistniejący udział), Windows pyta multicastem/broadcastem; napastnik w segmencie odpowiada „to ja” i przechwytuje skrót NetNTLMv2 (narzędzia typu Responder). Obrona: **wyłączenie LLMNR i NBT-NS przez GPO**, SMB signing, ograniczenie NTLM, monitorowanie odpowiedzi LLMNR z nieoczekiwanych hostów.\n- **Ujawnianie informacji** — mDNS/SSDP rozgłaszają nazwy, modele i wersje urządzeń; w sieciach firmowych i gościnnych ogranicza się je VLAN-ami i filtrami.\n- **Wzmacnianie DDoS** — usługi UDP odpowiadające dużym pakietem na mały (SSDP, wcześniej NTP monlist, DNS, memcached) wystawione do Internetu są wykorzystywane jako wzmacniacze. Nie wystawiaj UPnP/SSDP na WAN.\n- **Burze rozgłoszeniowe** — pętle L2 i błędne urządzenia; obrona: STP, storm control, monitoring liczników broadcastu.\n- **Anycast jako obrona** — rozproszenie ataku DDoS na wiele lokalizacji (scrubbing centers, CDN).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste nieporozumienia",
+      "body": "- **„Broadcast przechodzi przez router”** — nie; broadcast ograniczony nigdy, ukierunkowany — zwykle zablokowany (`no ip directed-broadcast` to domyślne ustawienie). DHCP działa między sieciami dzięki **DHCP relay**, a nie broadcastowi przez router.\n- **„IPv6 ma broadcast”** — nie ma; zastępuje go multicast (`ff02::1`) i adresy solicited-node.\n- **„Multicast zadziała w chmurze”** — w większości VPC nie (wyjątki: specjalne funkcje, np. AWS Transit Gateway multicast). Klastry Java trzeba konfigurować z innym mechanizmem wykrywania.\n- **Brak IGMP snooping** — multicast wideo lub z klastrów zalewa wszystkie porty jak broadcast i obciąża całą sieć.\n- **TTL multicastu** — domyślny TTL 1 w Javie (`MulticastSocket`) ogranicza ruch do segmentu; zwiększanie bez potrzeby rozsyła ruch dalej (jeśli routery to przepuszczą).\n- **Adres 255.255.255.255 vs broadcast podsieci** — aplikacja wysyłająca na ograniczony broadcast działa tylko w lokalnym segmencie, niezależnie od maski.\n- **Anycast z protokołami stanowymi** — przy zmianie trasy w trakcie połączenia TCP klient może trafić do innego serwera; anycast najlepiej sprawdza się dla UDP (DNS) i krótkich połączeń lub z odpowiednią architekturą.\n- **„LLMNR jest potrzebny”** — w sieciach z działającym DNS zwykle nie; jego wyłączenie to jedna z najtańszych i najskuteczniejszych poprawek bezpieczeństwa w Windows.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: klaster Hazelcast z wykrywaniem przez multicast „na produkcję”",
+      "body": "Konfiguracja działa na laptopie i w biurze, a po wdrożeniu do Kubernetesa każdy pod tworzy osobny „klaster” z jednego członka (multicast nie dociera) — dane w cache się rozjeżdżają, a w sieci płaskiej każdy, kto dołączy do grupy, może podłączyć się do klastra.",
+      "code": "# hazelcast.yaml\nhazelcast:\n  cluster-name: dev\n  network:\n    join:\n      multicast:\n        enabled: true\n        multicast-group: 224.2.2.3\n        multicast-port: 54327\n# Efekty: w K8s/AWS brak wykrycia członków (split-brain od startu),\n# w sieci biurowej — każdy host z Hazelcastem i tą samą nazwą klastra może dołączyć."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: wykrywanie przez API platformy i zabezpieczony klaster",
+      "body": "W Kubernetesie członkowie są wykrywani przez API (lub DNS usługi headless), klaster ma unikatową nazwę, a komunikację ogranicza NetworkPolicy (i TLS w edycji, która go wspiera).",
+      "code": "# hazelcast.yaml\nhazelcast:\n  cluster-name: orders-cache-prod\n  network:\n    join:\n      multicast:\n        enabled: false\n      kubernetes:\n        enabled: true\n        service-name: orders-cache      # usługa headless\n        namespace: orders\n\n# NetworkPolicy: ruch na port Hazelcasta tylko od podów tej samej aplikacji\n# podSelector: app=orders  →  ingress from podSelector app=orders, port 5701\n# Windows/AD po stronie sieci biurowej (GPO):\n#   Computer Configuration → Administrative Templates → Network → DNS Client →\n#   „Turn off multicast name resolution” = Enabled (wyłącza LLMNR); NetBIOS over TCP/IP wyłączony"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy który tryb ma sens",
+      "body": "- **Unicast** — domyślnie dla wszystkiego, co ma konkretnego odbiorcę (HTTP, bazy, kolejki).\n- **Broadcast** — tylko tam, gdzie nie znasz jeszcze odbiorcy w segmencie i protokół tego wymaga (ARP, DHCP Discover). Nie projektuj nowych protokołów aplikacyjnych na broadcaście.\n- **Multicast** — dystrybucja tych samych danych do wielu odbiorców w sieci, którą kontrolujesz: IPTV, giełdowe strumienie danych rynkowych, protokoły routingu i redundancji (OSPF, VRRP), wykrywanie usług w LAN (mDNS). Wymaga IGMP snooping i przemyślanej segmentacji.\n- **Anycast** — usługi globalne o krótkich, bezstanowych interakcjach: DNS, CDN, NTP, ochrona przed DDoS; wymaga BGP i własnej przestrzeni adresowej (lub usługi dostawcy, np. globalnych load balancerów chmury).\n- **W chmurze** — zamiast multicastu: wykrywanie przez API/DNS, kolejki pub/sub (Kafka, SNS/SQS), service discovery.\n- **Bezpieczeństwo** — ograniczaj protokoły rozgłoszeniowe rozwiązywania nazw (LLMNR, NBT-NS), filtruj mDNS/SSDP między segmentami, nie wystawiaj UDP z możliwością wzmocnienia do Internetu.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Unicast: jeden odbiorca; broadcast: wszyscy w segmencie (255.255.255.255, broadcast podsieci, MAC ff:ff:ff:ff:ff:ff); multicast: zapisani do grupy; anycast: najbliższy z wielu.\n- Multicast IPv4: 224.0.0.0/4 (224.0.0.0/24 lokalny łącza, 239.0.0.0/8 administracyjny, 232.0.0.0/8 SSM); IPv6: ff00::/8 z zasięgiem w czwartej cyfrze (ff02 łącze).\n- MAC multicastu: 01:00:5e + dolne 23 bity (IPv4, niejednoznaczność 32:1); 33:33 + dolne 32 bity (IPv6).\n- IGMP/MLD zgłaszają członkostwo; snooping ogranicza ruch grupy do zainteresowanych portów.\n- Broadcast nie przechodzi przez routery (DHCP relay); IPv6 nie ma broadcastu.\n- W chmurze multicast zwykle nie działa — klastry Java konfiguruj z wykrywaniem przez API/DNS.\n- Bezpieczeństwo: wyłącz LLMNR/NBT-NS, ogranicz mDNS/SSDP, nie wystawiaj wzmacniaczy UDP, storm control; anycast pomaga w obronie przed DDoS.\n- Następna lekcja: **VLAN, trunking i podstawy STP**.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Wyznacz adres MAC dla grupy multicast 224.0.0.5 i sklasyfikuj adres.",
+      "hint": "01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet.",
+      "solution": "MAC: 01:00:5e:00:00:05. Typ: multicast lokalny łącza (224.0.0.0/24, nie routowany)."
+    },
+    {
+      "prompt": "Wyznacz adres MAC dla grupy multicast 224.0.0.252 i sklasyfikuj adres.",
+      "hint": "01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet.",
+      "solution": "MAC: 01:00:5e:00:00:fc. Typ: multicast lokalny łącza (224.0.0.0/24, nie routowany)."
+    },
+    {
+      "prompt": "Wyznacz adres MAC dla grupy multicast 239.255.255.250 i sklasyfikuj adres.",
+      "hint": "01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet.",
+      "solution": "MAC: 01:00:5e:7f:ff:fa. Typ: multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)."
+    },
+    {
+      "prompt": "Wyznacz adres MAC dla grupy multicast 232.1.2.3 i sklasyfikuj adres.",
+      "hint": "01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet.",
+      "solution": "MAC: 01:00:5e:01:02:03. Typ: multicast SSM (232.0.0.0/8)."
+    },
+    {
+      "prompt": "Wyznacz adres MAC dla grupy multicast 238.200.17.99 i sklasyfikuj adres.",
+      "hint": "01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet.",
+      "solution": "MAC: 01:00:5e:48:11:63. Typ: multicast (224.0.0.0/4)."
+    },
+    {
+      "prompt": "Wyznacz adres MAC dla grupy multicast 225.255.0.1 i sklasyfikuj adres.",
+      "hint": "01:00:5e + (drugi oktet AND 0x7f) + trzeci + czwarty oktet.",
+      "solution": "MAC: 01:00:5e:7f:00:01. Typ: multicast (224.0.0.0/4)."
+    },
+    {
+      "prompt": "Jaki jest adres broadcast ukierunkowany podsieci, do której należy 192.168.1.77/24? Czy router domyślnie przekaże pakiet na ten adres z innej sieci?",
+      "hint": "Broadcast = wszystkie bity hosta ustawione na 1 (lekcja o masce).",
+      "solution": "Broadcast: 192.168.1.255. Routery domyślnie nie przekazują broadcastu ukierunkowanego (ochrona przed atakami typu Smurf)."
+    },
+    {
+      "prompt": "Jaki jest adres broadcast ukierunkowany podsieci, do której należy 10.20.30.40/22? Czy router domyślnie przekaże pakiet na ten adres z innej sieci?",
+      "hint": "Broadcast = wszystkie bity hosta ustawione na 1 (lekcja o masce).",
+      "solution": "Broadcast: 10.20.31.255. Routery domyślnie nie przekazują broadcastu ukierunkowanego (ochrona przed atakami typu Smurf)."
+    },
+    {
+      "prompt": "Jaki jest adres broadcast ukierunkowany podsieci, do której należy 172.16.5.200/25? Czy router domyślnie przekaże pakiet na ten adres z innej sieci?",
+      "hint": "Broadcast = wszystkie bity hosta ustawione na 1 (lekcja o masce).",
+      "solution": "Broadcast: 172.16.5.255. Routery domyślnie nie przekazują broadcastu ukierunkowanego (ochrona przed atakami typu Smurf)."
+    },
+    {
+      "prompt": "Jaki jest adres broadcast ukierunkowany podsieci, do której należy 10.0.0.9/30? Czy router domyślnie przekaże pakiet na ten adres z innej sieci?",
+      "hint": "Broadcast = wszystkie bity hosta ustawione na 1 (lekcja o masce).",
+      "solution": "Broadcast: 10.0.0.11. Routery domyślnie nie przekazują broadcastu ukierunkowanego (ochrona przed atakami typu Smurf)."
+    },
+    {
+      "prompt": "Wykonaj Packet Lab z lekcji w swojej sieci domowej i przygotuj tabelę urządzeń wykrytych przez mDNS/SSDP: IP, nazwa, usługi, producent.",
+      "hint": "Filtry mdns, ssdp; pola dns.ptr.domain_name, ssdp.server.",
+      "solution": "Przykład: 192.168.1.20 — „Salon-TV._googlecast._tcp.local” — Chromecast (OUI Google); 192.168.1.30 — „HP-LaserJet._ipp._tcp.local” — drukarka; 192.168.1.1 — SSDP SERVER: „Linux/5.x UPnP/1.0 …” — router z włączonym UPnP. Wniosek: każdy w sieci zna modele i wersje urządzeń."
+    },
+    {
+      "prompt": "Uruchom nadawcę i odbiorcę multicastu z lekcji (Java) w dwóch kontenerach na tej samej sieci Dockera i przechwyć ruch. Jaki adres MAC ma ramka i co pokazuje ip maddr w kontenerze odbiorcy?",
+      "hint": "Sieć bridge przekazuje multicast; odbiorca musi dołączyć do grupy.",
+      "solution": "Ramka do 239.1.2.3 ma MAC 01:00:5e:01:02:03; w kontenerze odbiorcy ip maddr show eth0 zawiera inet 239.1.2.3 (po joinGroup). W przechwyceniu widać IGMP Membership Report wysłany przy dołączaniu."
+    },
+    {
+      "prompt": "Przenieś test multicastu do dwóch instancji EC2 w tym samym VPC (lub opisz). Dlaczego odbiorca nic nie dostanie i jak skonfigurować klaster Hazelcast w AWS?",
+      "hint": "Multicast w VPC nie jest wspierany bez specjalnych mechanizmów.",
+      "solution": "Standardowy VPC nie przekazuje multicastu między instancjami (wyjątek: Transit Gateway z obsługą multicast). Hazelcast w AWS: discovery przez wtyczkę AWS (tagi, Security Group) lub stała lista członków; w EKS — wykrywanie przez Kubernetes API."
+    },
+    {
+      "prompt": "Sprawdź w Windows (lub opisz dla domeny), czy LLMNR i NetBIOS over TCP/IP są włączone, i przygotuj zmianę GPO, która je wyłącza. Jakie jest ryzyko pozostawienia ich włączonych?",
+      "hint": "GPO: DNS Client → Turn off multicast name resolution; NetBIOS: ustawienia karty/DHCP option 001.",
+      "solution": "LLMNR: GPO „Turn off multicast name resolution” = Enabled. NBT-NS: wyłączenie NetBIOS over TCP/IP w ustawieniach karty, przez skrypt/registry (NetbiosOptions = 2) lub opcję DHCP. Ryzyko: napastnik w segmencie odpowiada na zapytania o nieistniejące nazwy i przechwytuje skróty NetNTLMv2 (łamanie offline lub relay), co prowadzi do przejęcia kont."
+    },
+    {
+      "prompt": "Napisz regułę detekcji (pseudokod SIEM/Zeek) dla podejrzanych odpowiedzi LLMNR/NBT-NS w sieci, w której protokoły te powinny być wyłączone.",
+      "hint": "Każda odpowiedź LLMNR (UDP 5355) lub NBT-NS (UDP 137) jest podejrzana, gdy polityka je wyłącza.",
+      "solution": "Alert: ruch UDP z portu źródłowego 5355 (odpowiedź LLMNR) lub odpowiedzi NBNS z hosta, który nie jest serwerem WINS; w szczególności jeden host odpowiadający na wiele różnych nazw w krótkim czasie. Dodatkowo: logowania NTLM z kont użytkowników do nietypowych hostów tuż po zapytaniach LLMNR (korelacja)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego SSDP wystawiony do Internetu może posłużyć jako wzmacniacz DDoS. Jak sprawdzić, czy Twój router domowy nie odpowiada na SSDP od strony WAN?",
+      "hint": "Mały pakiet M-SEARCH, duża odpowiedź; podszywanie adresu źródłowego w UDP.",
+      "solution": "Napastnik wysyła mały M-SEARCH z adresem źródłowym ofiary; urządzenie odsyła ofierze wielokrotnie większą odpowiedź (współczynnik wzmocnienia rzędu kilkudziesięciu). Sprawdzenie: wyłącz UPnP w routerze, a test z zewnątrz (np. z serwera, za zgodą — Twojego publicznego IP) nie powinien dawać odpowiedzi na UDP 1900; skanery publiczne (np. Shodan) pokazują, czy adres jest widoczny."
+    },
+    {
+      "prompt": "Policz, ile adresów IPv4 multicast mapuje się na adres MAC 01:00:5e:7f:ff:fa i podaj trzy z nich.",
+      "hint": "Niejednoznaczność 32:1; zmieniają się bity 5–9.",
+      "solution": "32 adresy. Przykłady: 239.255.255.250 (SSDP), 224.127.255.250, 225.255.255.250, 239.127.255.250 — wszystkie mają dolne 23 bity 0x7ffffa (drugi oktet AND 0x7f = 0x7f, trzeci 0xff, czwarty 0xfa)."
+    },
+    {
+      "prompt": "Opisz, jak działa DHCP między podsieciami, skoro broadcast DHCP Discover nie przechodzi przez router.",
+      "hint": "DHCP relay (ip helper-address).",
+      "solution": "Router (lub przełącznik L3) z skonfigurowanym DHCP relay (Cisco: ip helper-address 10.0.0.10) odbiera broadcast Discover na interfejsie klienta i przesyła go unicastem do serwera DHCP, wpisując w pole giaddr adres swojego interfejsu — serwer wie, z której puli przydzielić adres, i odpowiada do relay, który przekazuje odpowiedź klientowi."
+    },
+    {
+      "prompt": "Na przełączniku ustaw storm control dla broadcastu na portach dostępowych. Jak dobrać próg i jaką akcję wybrać?",
+      "hint": "Próg w % pasma lub pakietach/s; akcje: odrzucanie nadmiaru, trap, shutdown.",
+      "solution": "Przykład: storm-control broadcast level 1.00 0.50 (próg włączenia 1%, wyłączenia 0,5% pasma), storm-control action trap (alert SNMP) lub shutdown dla portów użytkowników. Próg dobiera się z baseline (normalnie broadcast to ułamek procenta); zbyt niski może blokować legalny ruch (np. DHCP przy starcie wielu stacji)."
+    },
+    {
+      "prompt": "Wyjaśnij, jak anycast pomaga w obronie przed DDoS i jakie ma ograniczenia dla połączeń TCP.",
+      "hint": "Ruch rozkłada się na wiele lokalizacji; zmiana trasy w trakcie sesji.",
+      "solution": "Ten sam adres ogłaszany z wielu lokalizacji powoduje, że ruch ataku z różnych regionów trafia do różnych centrów (rozproszenie, lokalne filtrowanie), zamiast skumulować się w jednym. Ograniczenie: przy zmianie trasy BGP w trakcie długiego połączenia TCP klient może trafić do innego serwera bez stanu sesji — dlatego anycast stosuje się głównie dla DNS (UDP), krótkich połączeń lub z warstwą, która ten problem obsługuje (CDN)."
+    },
+    {
+      "prompt": "W Wiresharku znajdź zapytanie IGMP Membership Query od routera domowego i odczytaj wersję IGMP i interwał. Co by się stało, gdyby w sieci nie było żadnego routera wysyłającego zapytania, a przełącznik miał włączony snooping?",
+      "hint": "Querier jest potrzebny, by snooping utrzymywał stan grup.",
+      "solution": "Typowo IGMPv2/v3, Max Resp Time 10 s, zapytania co ~125 s. Bez queriera hosty przestają odświeżać członkostwo, wpisy snoopingu wygasają i ruch multicast do grup może przestać docierać (lub zależnie od implementacji — być zalewany). Rozwiązanie: włączyć IGMP querier na przełączniku."
+    },
+    {
+      "prompt": "Porównaj, ile hostów musi przetworzyć jedno zapytanie ARP (broadcast) w VLAN-ie z 1000 hostów i jedno zapytanie ND (solicited-node) w IPv6.",
+      "hint": "Broadcast trafia do wszystkich, solicited-node zwykle do jednego.",
+      "solution": "ARP: wszystkie 999 pozostałych hostów odbiera i przetwarza ramkę (przerwanie, porównanie adresu). ND: z MLD snooping ramka trafia tylko do hosta(-ów) zapisanych do danej grupy solicited-node — zwykle jednego; bez snoopingu karty i tak odrzucają ją sprzętowo po MAC (33:33:ff:…), nie angażując systemu."
+    },
+    {
+      "prompt": "Zaprojektuj segmentację domowej lub firmowej sieci tak, by urządzenia IoT (telewizor, drukarka) były w osobnym VLAN-ie, a mimo to drukowanie i Chromecast działały. Co z mDNS?",
+      "hint": "mDNS nie przechodzi przez router — potrzebny reflektor/gateway mDNS.",
+      "solution": "VLAN użytkowników i VLAN IoT; firewall: ruch z VLAN użytkowników do IoT tylko na potrzebne porty (IPP 631, Chromecast 8008/8009), z IoT do użytkowników — tylko odpowiedzi. mDNS: reflektor (np. Avahi z enable-reflector lub funkcja mDNS gateway w kontrolerze Wi-Fi/routerze) przekazujący ogłoszenia między VLAN-ami, najlepiej z filtrowaniem typów usług."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między multicastem administracyjnym 239.0.0.0/8 a 224.0.0.0/24 i podaj, który zakres wybierzesz dla aplikacji wewnętrznej rozsyłającej dane rynkowe w sieci firmy.",
+      "hint": "Zasięg i routowanie.",
+      "solution": "224.0.0.0/24 to multicast lokalny łącza — nie jest routowany (TTL 1), zarezerwowany dla protokołów sieciowych (OSPF, VRRP, mDNS). 239.0.0.0/8 to zakres administracyjny (odpowiednik adresów prywatnych), routowany wewnątrz organizacji, filtrowany na brzegu. Dla aplikacji firmowej — adres z 239.0.0.0/8 (np. 239.10.1.1), z ustalonym TTL i konfiguracją PIM na routerach."
+    },
+    {
+      "prompt": "Wyznacz adres MAC dla grup IPv6 ff02::1, ff02::fb i ff05::1:3.",
+      "hint": "MAC = 33:33 + dolne 32 bity adresu.",
+      "solution": "33:33:00:00:00:01, 33:33:00:00:00:fb, 33:33:00:01:00:03."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego ping na adres broadcast podsieci (np. ping -b 192.168.1.255) często nie dostaje odpowiedzi od współczesnych systemów.",
+      "hint": "Systemy domyślnie ignorują echo na broadcast (ochrona przed Smurf).",
+      "solution": "Linux ma domyślnie net.ipv4.icmp_echo_ignore_broadcasts = 1, Windows również nie odpowiada na echo do broadcastu. To obrona przed atakiem Smurf, w którym zapytania z podrobionym źródłem na adres broadcast generowały lawinę odpowiedzi do ofiary."
+    },
+    {
+      "prompt": "Zaprojektuj test, który pokaże różnicę między przełącznikiem z IGMP snooping i bez (np. bridge Linuksa: multicast_snooping 0/1).",
+      "hint": "ip link set br0 type bridge mcast_snooping 1; trzy namespace’y, jeden zapisany do grupy.",
+      "solution": "Bez snoopingu (mcast_snooping 0): tcpdump w niezapisanym namespace widzi strumień do 239.1.2.3. Ze snoopingiem i querierem (mcast_querier 1): tylko zapisany namespace otrzymuje ruch; bridge mdb show pokazuje porty członków grupy."
+    },
+    {
+      "prompt": "Napisz w Javie metodę zwracającą adres MAC dla dowolnego adresu multicast IPv4 lub IPv6 (InetAddress).",
+      "hint": "Rozróżnij Inet4Address i Inet6Address; pracuj na bajtach.",
+      "solution": "static String mcastMac(InetAddress a) {\n  byte[] b = a.getAddress();\n  if (!a.isMulticastAddress()) throw new IllegalArgumentException();\n  return a instanceof Inet4Address\n    ? String.format(\"01:00:5e:%02x:%02x:%02x\", b[1] & 0x7f, b[2] & 0xff, b[3] & 0xff)\n    : String.format(\"33:33:%02x:%02x:%02x:%02x\", b[12] & 0xff, b[13] & 0xff, b[14] & 0xff, b[15] & 0xff);\n}"
+    },
+    {
+      "prompt": "Przygotuj listę kontrolną (5 punktów) ograniczania ryzyka protokołów rozgłoszeniowych i multicastowych w sieci firmowej.",
+      "hint": "Rozwiązywanie nazw, UPnP, segmentacja, monitoring, storm control.",
+      "solution": "1) Wyłączyć LLMNR i NBT-NS (GPO), zostawić DNS. 2) Wyłączyć UPnP/SSDP na routerach i urządzeniach brzegowych; blokować SSDP z Internetu. 3) Ograniczać mDNS/SSDP do segmentów, które ich potrzebują (VLAN IoT, reflektory z filtrem). 4) Storm control i IGMP snooping na przełącznikach. 5) Detekcje: odpowiedzi LLMNR/NBNS, nietypowe źródła RA/DHCP, skoki broadcastu."
+    },
+    {
+      "prompt": "Sprawdź, które publiczne resolvery DNS korzystają z anycastu, i porównaj RTT z dwóch lokalizacji (np. laptop i serwer w chmurze w innym regionie). Co pokazuje traceroute?",
+      "hint": "Ten sam adres, różne ścieżki i różne lokalizacje końcowe.",
+      "solution": "Resolvery 1.1.1.1, 8.8.8.8, 9.9.9.9 są anycastowe: z Polski RTT zwykle kilka–kilkanaście ms, z innego kontynentu podobnie niski, bo odpowiada lokalna instancja. traceroute kończy się w różnych miastach (widoczne w nazwach routerów lub w identyfikatorze lokalizacji, np. dig CH TXT id.server @1.1.1.1 zwraca kod lotniska)."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.1?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "01:00:5e:80:00:01",
+        "C": "01:00:5e:00:00:01",
+        "D": "33:33:e0:00:00:01"
+      },
+      "correct": "C",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 1 → 01:00:5e:00:00:01."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.2?",
+      "options": {
+        "A": "33:33:e0:00:00:02",
+        "B": "01:00:5e:00:00:02",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "01:00:5e:80:00:02"
+      },
+      "correct": "B",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 2 → 01:00:5e:00:00:02."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.5?",
+      "options": {
+        "A": "01:00:5e:00:00:05",
+        "B": "01:00:5e:80:00:05",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:e0:00:00:05"
+      },
+      "correct": "A",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 5 → 01:00:5e:00:00:05."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.9?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "01:00:5e:80:00:09",
+        "C": "33:33:e0:00:00:09",
+        "D": "01:00:5e:00:00:09"
+      },
+      "correct": "D",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 9 → 01:00:5e:00:00:09."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.18?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "33:33:e0:00:00:12",
+        "C": "01:00:5e:80:00:12",
+        "D": "01:00:5e:00:00:12"
+      },
+      "correct": "D",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 18 → 01:00:5e:00:00:12."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.251?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "01:00:5e:80:00:fb",
+        "C": "01:00:5e:00:00:fb",
+        "D": "33:33:e0:00:00:fb"
+      },
+      "correct": "C",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 251 → 01:00:5e:00:00:fb."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.0.0.252?",
+      "options": {
+        "A": "33:33:e0:00:00:fc",
+        "B": "01:00:5e:00:00:fc",
+        "C": "01:00:5e:80:00:fc",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "B",
+      "explanation": "01:00:5e + (drugi oktet 0 AND 0x7f = 0) + 0 + 252 → 01:00:5e:00:00:fc."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 239.255.255.250?",
+      "options": {
+        "A": "01:00:5e:7f:ff:fa",
+        "B": "01:00:5e:ff:ff:fa",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:ef:ff:ff:fa"
+      },
+      "correct": "A",
+      "explanation": "01:00:5e + (drugi oktet 255 AND 0x7f = 127) + 255 + 250 → 01:00:5e:7f:ff:fa."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 239.1.2.3?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "01:00:5e:01:02:03",
+        "C": "33:33:ef:01:02:03",
+        "D": "01:00:5e:81:02:03"
+      },
+      "correct": "B",
+      "explanation": "01:00:5e + (drugi oktet 1 AND 0x7f = 1) + 2 + 3 → 01:00:5e:01:02:03."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 232.5.6.7?",
+      "options": {
+        "A": "01:00:5e:85:06:07",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:5e:05:06:07",
+        "D": "33:33:e8:05:06:07"
+      },
+      "correct": "C",
+      "explanation": "01:00:5e + (drugi oktet 5 AND 0x7f = 5) + 6 + 7 → 01:00:5e:05:06:07."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 225.10.20.30?",
+      "options": {
+        "A": "01:00:5e:0a:14:1e",
+        "B": "01:00:5e:8a:14:1e",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:e1:0a:14:1e"
+      },
+      "correct": "A",
+      "explanation": "01:00:5e + (drugi oktet 10 AND 0x7f = 10) + 20 + 30 → 01:00:5e:0a:14:1e."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 238.129.4.5?",
+      "options": {
+        "A": "33:33:ee:81:04:05",
+        "B": "01:00:5e:81:04:05",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "01:00:5e:01:04:05"
+      },
+      "correct": "D",
+      "explanation": "01:00:5e + (drugi oktet 129 AND 0x7f = 1) + 4 + 5 → 01:00:5e:01:04:05."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 239.192.0.1?",
+      "options": {
+        "A": "01:00:5e:c0:00:01",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:5e:40:00:01",
+        "D": "33:33:ef:c0:00:01"
+      },
+      "correct": "C",
+      "explanation": "01:00:5e + (drugi oktet 192 AND 0x7f = 64) + 0 + 1 → 01:00:5e:40:00:01."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka wysyłana do grupy 224.1.1.1?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "01:00:5e:01:01:01",
+        "C": "01:00:5e:81:01:01",
+        "D": "33:33:e0:01:01:01"
+      },
+      "correct": "B",
+      "explanation": "01:00:5e + (drugi oktet 1 AND 0x7f = 1) + 1 + 1 → 01:00:5e:01:01:01."
+    },
+    {
+      "question": "Jak sklasyfikować adres 224.0.0.5?",
+      "options": {
+        "A": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "B": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)",
+        "C": "unicast",
+        "D": "multicast SSM (232.0.0.0/8)"
+      },
+      "correct": "A",
+      "explanation": "Zakres: multicast lokalny łącza (224.0.0.0/24, nie routowany)."
+    },
+    {
+      "question": "Jak sklasyfikować adres 239.255.255.250?",
+      "options": {
+        "A": "multicast SSM (232.0.0.0/8)",
+        "B": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "C": "unicast",
+        "D": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)"
+      },
+      "correct": "D",
+      "explanation": "Zakres: multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)."
+    },
+    {
+      "question": "Jak sklasyfikować adres 232.1.1.1?",
+      "options": {
+        "A": "unicast",
+        "B": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "C": "multicast SSM (232.0.0.0/8)",
+        "D": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)"
+      },
+      "correct": "C",
+      "explanation": "Zakres: multicast SSM (232.0.0.0/8)."
+    },
+    {
+      "question": "Jak sklasyfikować adres 226.3.4.5?",
+      "options": {
+        "A": "unicast",
+        "B": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)",
+        "C": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "D": "multicast (224.0.0.0/4)"
+      },
+      "correct": "D",
+      "explanation": "Zakres: multicast (224.0.0.0/4)."
+    },
+    {
+      "question": "Jak sklasyfikować adres 255.255.255.255?",
+      "options": {
+        "A": "broadcast ograniczony (limited broadcast)",
+        "B": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "C": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)",
+        "D": "unicast"
+      },
+      "correct": "A",
+      "explanation": "Zakres: broadcast ograniczony (limited broadcast)."
+    },
+    {
+      "question": "Jak sklasyfikować adres 223.255.255.1?",
+      "options": {
+        "A": "multicast SSM (232.0.0.0/8)",
+        "B": "unicast",
+        "C": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "D": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)"
+      },
+      "correct": "B",
+      "explanation": "Tuż poniżej 224.0.0.0 — zwykły adres unicast."
+    },
+    {
+      "question": "Jak sklasyfikować adres 240.0.0.1?",
+      "options": {
+        "A": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "B": "unicast",
+        "C": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)",
+        "D": "multicast SSM (232.0.0.0/8)"
+      },
+      "correct": "B",
+      "explanation": "240.0.0.0/4 to zakres zarezerwowany (dawna klasa E) — nie multicast; w praktyce nieużywany, ale formalnie nie jest grupą."
+    },
+    {
+      "question": "Jak sklasyfikować adres 10.0.0.255?",
+      "options": {
+        "A": "multicast lokalny łącza (224.0.0.0/24, nie routowany)",
+        "B": "multicast administracyjny (239.0.0.0/8, wewnątrz organizacji)",
+        "C": "unicast",
+        "D": "multicast SSM (232.0.0.0/8)"
+      },
+      "correct": "C",
+      "explanation": "To zwykły adres (unicast) albo broadcast podsieci, jeśli maska to /24 — bez maski nie wiadomo; multicastem nie jest."
+    },
+    {
+      "question": "Jaki jest adres broadcast podsieci dla 192.168.1.77/24?",
+      "options": {
+        "A": "192.168.1.255",
+        "B": "192.168.2.0",
+        "C": "255.255.255.255",
+        "D": "192.168.1.0"
+      },
+      "correct": "A",
+      "explanation": "Bity hosta na 1 → 192.168.1.255."
+    },
+    {
+      "question": "Jaki jest adres broadcast podsieci dla 10.20.30.40/22?",
+      "options": {
+        "A": "10.20.32.0",
+        "B": "10.20.28.0",
+        "C": "255.255.255.255",
+        "D": "10.20.31.255"
+      },
+      "correct": "D",
+      "explanation": "Bity hosta na 1 → 10.20.31.255."
+    },
+    {
+      "question": "Jaki jest adres broadcast podsieci dla 172.16.5.200/25?",
+      "options": {
+        "A": "172.16.5.255",
+        "B": "172.16.6.0",
+        "C": "172.16.5.128",
+        "D": "255.255.255.255"
+      },
+      "correct": "A",
+      "explanation": "Bity hosta na 1 → 172.16.5.255."
+    },
+    {
+      "question": "Jaki jest adres broadcast podsieci dla 10.0.0.9/30?",
+      "options": {
+        "A": "10.0.0.12",
+        "B": "255.255.255.255",
+        "C": "10.0.0.11",
+        "D": "10.0.0.8"
+      },
+      "correct": "C",
+      "explanation": "Bity hosta na 1 → 10.0.0.11."
+    },
+    {
+      "question": "Jaki jest adres broadcast podsieci dla 192.168.100.130/26?",
+      "options": {
+        "A": "192.168.100.192",
+        "B": "192.168.100.191",
+        "C": "255.255.255.255",
+        "D": "192.168.100.128"
+      },
+      "correct": "B",
+      "explanation": "Bity hosta na 1 → 192.168.100.191."
+    },
+    {
+      "question": "Jaki jest adres broadcast podsieci dla 10.1.1.1/16?",
+      "options": {
+        "A": "10.2.0.0",
+        "B": "10.1.0.0",
+        "C": "255.255.255.255",
+        "D": "10.1.255.255"
+      },
+      "correct": "D",
+      "explanation": "Bity hosta na 1 → 10.1.255.255."
+    },
+    {
+      "question": "Co oznacza adres multicast IPv6 ff02::1?",
+      "options": {
+        "A": "wszystkie routery w łączu",
+        "B": "mDNS",
+        "C": "wszystkie węzły w łączu",
+        "D": "LLMNR"
+      },
+      "correct": "C",
+      "explanation": "ff02::1 — wszystkie węzły w łączu."
+    },
+    {
+      "question": "Co oznacza adres multicast IPv6 ff02::2?",
+      "options": {
+        "A": "wszystkie węzły w łączu",
+        "B": "mDNS",
+        "C": "LLMNR",
+        "D": "wszystkie routery w łączu"
+      },
+      "correct": "D",
+      "explanation": "ff02::2 — wszystkie routery w łączu."
+    },
+    {
+      "question": "Co oznacza adres multicast IPv6 ff02::fb?",
+      "options": {
+        "A": "LLMNR",
+        "B": "mDNS",
+        "C": "wszystkie routery w łączu",
+        "D": "wszystkie węzły w łączu"
+      },
+      "correct": "B",
+      "explanation": "ff02::fb — mDNS."
+    },
+    {
+      "question": "Co oznacza adres multicast IPv6 ff02::1:3?",
+      "options": {
+        "A": "LLMNR",
+        "B": "wszystkie routery w łączu",
+        "C": "wszystkie węzły w łączu",
+        "D": "mDNS"
+      },
+      "correct": "A",
+      "explanation": "ff02::1:3 — LLMNR."
+    },
+    {
+      "question": "Co oznacza adres multicast IPv6 ff02::5?",
+      "options": {
+        "A": "wszystkie węzły w łączu",
+        "B": "routery OSPFv3",
+        "C": "mDNS",
+        "D": "wszystkie routery w łączu"
+      },
+      "correct": "B",
+      "explanation": "ff02::5 — routery OSPFv3."
+    },
+    {
+      "question": "Co oznacza adres multicast IPv6 ff02::1:2?",
+      "options": {
+        "A": "mDNS",
+        "B": "wszystkie węzły w łączu",
+        "C": "serwery i relay DHCPv6",
+        "D": "wszystkie routery w łączu"
+      },
+      "correct": "C",
+      "explanation": "ff02::1:2 — serwery i relay DHCPv6."
+    },
+    {
+      "question": "Jaki zasięg ma adres multicast ff02::1?",
+      "options": {
+        "A": "łącze (link-local)",
+        "B": "globalny",
+        "C": "interfejs (node-local)",
+        "D": "ośrodek (site-local)"
+      },
+      "correct": "A",
+      "explanation": "Czwarta cyfra adresu (2) oznacza zasięg: łącze (link-local)."
+    },
+    {
+      "question": "Jaki zasięg ma adres multicast ff05::1:3?",
+      "options": {
+        "A": "łącze (link-local)",
+        "B": "globalny",
+        "C": "interfejs (node-local)",
+        "D": "ośrodek (site-local)"
+      },
+      "correct": "D",
+      "explanation": "Czwarta cyfra adresu (5) oznacza zasięg: ośrodek (site-local)."
+    },
+    {
+      "question": "Jaki zasięg ma adres multicast ff0e::101?",
+      "options": {
+        "A": "ośrodek (site-local)",
+        "B": "globalny",
+        "C": "łącze (link-local)",
+        "D": "interfejs (node-local)"
+      },
+      "correct": "B",
+      "explanation": "Czwarta cyfra adresu (e) oznacza zasięg: globalny."
+    },
+    {
+      "question": "Jaki zasięg ma adres multicast ff01::1?",
+      "options": {
+        "A": "ośrodek (site-local)",
+        "B": "łącze (link-local)",
+        "C": "globalny",
+        "D": "interfejs (node-local)"
+      },
+      "correct": "D",
+      "explanation": "Czwarta cyfra adresu (1) oznacza zasięg: interfejs (node-local)."
+    },
+    {
+      "question": "Jaki protokół lub grupa używa adresu 224.0.0.251?",
+      "options": {
+        "A": "mDNS",
+        "B": "LLMNR",
+        "C": "OSPF (wszystkie routery OSPF)",
+        "D": "VRRP"
+      },
+      "correct": "A",
+      "explanation": "224.0.0.251 — mDNS."
+    },
+    {
+      "question": "Jaki protokół lub grupa używa adresu 224.0.0.252?",
+      "options": {
+        "A": "VRRP",
+        "B": "mDNS",
+        "C": "LLMNR",
+        "D": "OSPF (wszystkie routery OSPF)"
+      },
+      "correct": "C",
+      "explanation": "224.0.0.252 — LLMNR."
+    },
+    {
+      "question": "Jaki protokół lub grupa używa adresu 224.0.0.5?",
+      "options": {
+        "A": "OSPF (wszystkie routery OSPF)",
+        "B": "mDNS",
+        "C": "LLMNR",
+        "D": "VRRP"
+      },
+      "correct": "A",
+      "explanation": "224.0.0.5 — OSPF (wszystkie routery OSPF)."
+    },
+    {
+      "question": "Jaki protokół lub grupa używa adresu 224.0.0.18?",
+      "options": {
+        "A": "OSPF (wszystkie routery OSPF)",
+        "B": "VRRP",
+        "C": "LLMNR",
+        "D": "mDNS"
+      },
+      "correct": "B",
+      "explanation": "224.0.0.18 — VRRP."
+    },
+    {
+      "question": "Jaki protokół lub grupa używa adresu 239.255.255.250?",
+      "options": {
+        "A": "mDNS",
+        "B": "OSPF (wszystkie routery OSPF)",
+        "C": "SSDP / UPnP",
+        "D": "LLMNR"
+      },
+      "correct": "C",
+      "explanation": "239.255.255.250 — SSDP / UPnP."
+    },
+    {
+      "question": "Jaki protokół lub grupa używa adresu 224.0.0.1?",
+      "options": {
+        "A": "mDNS",
+        "B": "LLMNR",
+        "C": "OSPF (wszystkie routery OSPF)",
+        "D": "wszystkie hosty"
+      },
+      "correct": "D",
+      "explanation": "224.0.0.1 — wszystkie hosty."
+    },
+    {
+      "question": "Która usługa używa portu UDP 5353?",
+      "options": {
+        "A": "SSDP",
+        "B": "NBT-NS (NetBIOS Name Service)",
+        "C": "LLMNR",
+        "D": "mDNS"
+      },
+      "correct": "D",
+      "explanation": "UDP 5353 — mDNS."
+    },
+    {
+      "question": "Która usługa używa portu UDP 5355?",
+      "options": {
+        "A": "LLMNR",
+        "B": "NBT-NS (NetBIOS Name Service)",
+        "C": "mDNS",
+        "D": "SSDP"
+      },
+      "correct": "A",
+      "explanation": "UDP 5355 — LLMNR."
+    },
+    {
+      "question": "Która usługa używa portu UDP 1900?",
+      "options": {
+        "A": "LLMNR",
+        "B": "NBT-NS (NetBIOS Name Service)",
+        "C": "SSDP",
+        "D": "mDNS"
+      },
+      "correct": "C",
+      "explanation": "UDP 1900 — SSDP."
+    },
+    {
+      "question": "Która usługa używa portu UDP 137?",
+      "options": {
+        "A": "mDNS",
+        "B": "NBT-NS (NetBIOS Name Service)",
+        "C": "SSDP",
+        "D": "LLMNR"
+      },
+      "correct": "B",
+      "explanation": "UDP 137 — NBT-NS (NetBIOS Name Service)."
+    },
+    {
+      "question": "Która usługa używa portu UDP 67?",
+      "options": {
+        "A": "mDNS",
+        "B": "serwer DHCP",
+        "C": "LLMNR",
+        "D": "SSDP"
+      },
+      "correct": "B",
+      "explanation": "UDP 67 — serwer DHCP."
+    },
+    {
+      "question": "Czy broadcast IPv4 przechodzi przez router?",
+      "options": {
+        "A": "Tylko w IPv6",
+        "B": "Tak, zawsze",
+        "C": "Nie — broadcast ograniczony nigdy, a ukierunkowany jest domyślnie blokowany",
+        "D": "Tylko przy TTL 255"
+      },
+      "correct": "C",
+      "explanation": "DHCP między sieciami działa dzięki relay."
+    },
+    {
+      "question": "Czym IPv6 zastępuje broadcast?",
+      "options": {
+        "A": "IPv6 nie potrzebuje adresowania grupowego",
+        "B": "Anycastem",
+        "C": "Unicastem do bramy",
+        "D": "Multicastem (np. ff02::1 i adresami solicited-node)"
+      },
+      "correct": "D",
+      "explanation": "IPv6 nie ma broadcastu."
+    },
+    {
+      "question": "Do czego służy IGMP?",
+      "options": {
+        "A": "Do zgłaszania przez hosty członkostwa w grupach multicast IPv4",
+        "B": "Do routingu unicast",
+        "C": "Do szyfrowania multicastu",
+        "D": "Do rozwiązywania adresów MAC"
+      },
+      "correct": "A",
+      "explanation": "W IPv6 tę rolę pełni MLD."
+    },
+    {
+      "question": "Co robi przełącznik z IGMP snooping?",
+      "options": {
+        "A": "Wysyła ruch grupy tylko na porty, na których są jej członkowie",
+        "B": "Szyfruje ruch grupy",
+        "C": "Zamienia multicast na unicast do routera",
+        "D": "Blokuje cały multicast"
+      },
+      "correct": "A",
+      "explanation": "Bez snoopingu multicast jest zalewany jak broadcast."
+    },
+    {
+      "question": "Ile adresów IPv4 multicast mapuje się na jeden adres MAC?",
+      "options": {
+        "A": "1",
+        "B": "256",
+        "C": "8",
+        "D": "32"
+      },
+      "correct": "D",
+      "explanation": "5 bitów adresu IP nie mieści się w 23 bitach MAC."
+    },
+    {
+      "question": "Dlaczego wykrywanie członków klastra przez multicast zwykle nie działa w chmurze publicznej?",
+      "options": {
+        "A": "Bo Java nie wspiera multicastu w chmurze",
+        "B": "Bo chmura blokuje UDP",
+        "C": "Bo standardowe sieci VPC nie przekazują ruchu multicast między instancjami",
+        "D": "Bo multicast wymaga IPv6"
+      },
+      "correct": "C",
+      "explanation": "Używa się wykrywania przez API/DNS."
+    },
+    {
+      "question": "Czym jest anycast?",
+      "options": {
+        "A": "Odmianą broadcastu w IPv6",
+        "B": "Przypisaniem tego samego adresu wielu serwerom, przy czym routing kieruje klienta do najbliższego",
+        "C": "Wysłaniem do wszystkich",
+        "D": "Wysłaniem do zapisanych do grupy"
+      },
+      "correct": "B",
+      "explanation": "Typowe dla DNS i CDN."
+    },
+    {
+      "question": "Dlaczego anycast pomaga w obronie przed DDoS?",
+      "options": {
+        "A": "Rozprasza ruch ataku na wiele lokalizacji zamiast kumulować go w jednej",
+        "B": "Bo zmienia adres serwera co sekundę",
+        "C": "Bo blokuje UDP",
+        "D": "Bo szyfruje ruch"
+      },
+      "correct": "A",
+      "explanation": "Każda lokalizacja przyjmuje część ruchu."
+    },
+    {
+      "question": "Na czym polega nadużycie LLMNR/NBT-NS?",
+      "options": {
+        "A": "Na przepełnieniu tablicy MAC",
+        "B": "Na podmianie certyfikatu TLS",
+        "C": "Napastnik w segmencie odpowiada na rozgłoszeniowe zapytania o nazwy i przechwytuje poświadczenia NTLM",
+        "D": "Na zmianie trasy BGP"
+      },
+      "correct": "C",
+      "explanation": "Obrona: wyłączenie LLMNR i NBT-NS."
+    },
+    {
+      "question": "Jaka jest najprostsza skuteczna obrona przed przechwytywaniem przez LLMNR?",
+      "options": {
+        "A": "Zwiększenie TTL",
+        "B": "Włączenie broadcastu ukierunkowanego",
+        "C": "Wyłączenie DNS",
+        "D": "Wyłączenie LLMNR (GPO) i NBT-NS w sieci z działającym DNS"
+      },
+      "correct": "D",
+      "explanation": "Do tego SMB signing i ograniczenie NTLM."
+    },
+    {
+      "question": "Dlaczego SSDP wystawione do Internetu jest niebezpieczne?",
+      "options": {
+        "A": "Bo szyfruje ruch słabo",
+        "B": "Może służyć jako wzmacniacz DDoS i ujawnia informacje o urządzeniu",
+        "C": "Bo blokuje DNS",
+        "D": "Bo zmienia adres MAC routera"
+      },
+      "correct": "B",
+      "explanation": "UPnP/SSDP nie powinno odpowiadać od strony WAN."
+    },
+    {
+      "question": "Co ogranicza storm control na przełączniku?",
+      "options": {
+        "A": "Prędkość łącza",
+        "B": "Ilość ruchu broadcast/multicast/unicast nieznanego na porcie powyżej progu",
+        "C": "Liczbę adresów MAC",
+        "D": "Liczbę VLAN-ów"
+      },
+      "correct": "B",
+      "explanation": "Chroni przed burzami rozgłoszeniowymi."
+    },
+    {
+      "question": "Jaki domyślny TTL ma MulticastSocket w Javie?",
+      "options": {
+        "A": "64",
+        "B": "255",
+        "C": "1 — ruch zostaje w lokalnym segmencie",
+        "D": "0"
+      },
+      "correct": "C",
+      "explanation": "setTimeToLive pozwala go zmienić."
+    },
+    {
+      "question": "Co musi zrobić odbiorca multicastu w Javie, by dostawać pakiety grupy?",
+      "options": {
+        "A": "Ustawić setBroadcast(true)",
+        "B": "Połączyć się connect() z nadawcą",
+        "C": "Nic — multicast trafia do wszystkich",
+        "D": "Dołączyć do grupy (joinGroup) na właściwym interfejsie"
+      },
+      "correct": "D",
+      "explanation": "joinGroup wysyła IGMP/MLD join."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 224.0.0.6?",
+      "options": {
+        "A": "01:00:5e:00:00:06",
+        "B": "33:33:e0:00:00:06",
+        "C": "01:00:5e:40:00:06",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "A",
+      "explanation": "Drugi oktet 0 AND 0x7f = 0 → 01:00:5e:00:00:06."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 224.0.0.10?",
+      "options": {
+        "A": "01:00:5e:00:00:0a",
+        "B": "01:00:5e:40:00:0a",
+        "C": "33:33:e0:00:00:0a",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "A",
+      "explanation": "Drugi oktet 0 AND 0x7f = 0 → 01:00:5e:00:00:0a."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 224.0.0.13?",
+      "options": {
+        "A": "33:33:e0:00:00:0d",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:5e:00:00:0d",
+        "D": "01:00:5e:40:00:0d"
+      },
+      "correct": "C",
+      "explanation": "Drugi oktet 0 AND 0x7f = 0 → 01:00:5e:00:00:0d."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 224.0.0.22?",
+      "options": {
+        "A": "01:00:5e:40:00:16",
+        "B": "01:00:5e:00:00:16",
+        "C": "33:33:e0:00:00:16",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "B",
+      "explanation": "Drugi oktet 0 AND 0x7f = 0 → 01:00:5e:00:00:16."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 239.10.20.30?",
+      "options": {
+        "A": "33:33:ef:0a:14:1e",
+        "B": "01:00:5e:4a:14:1e",
+        "C": "01:00:5e:14:0a:1e",
+        "D": "01:00:5e:0a:14:1e"
+      },
+      "correct": "D",
+      "explanation": "Drugi oktet 10 AND 0x7f = 10 → 01:00:5e:0a:14:1e."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 230.200.1.1?",
+      "options": {
+        "A": "01:00:5e:01:48:01",
+        "B": "01:00:5e:48:01:01",
+        "C": "33:33:e6:c8:01:01",
+        "D": "01:00:5e:c8:01:01"
+      },
+      "correct": "B",
+      "explanation": "Drugi oktet 200 AND 0x7f = 72 → 01:00:5e:48:01:01."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 226.130.2.3?",
+      "options": {
+        "A": "01:00:5e:82:02:03",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:5e:02:02:03",
+        "D": "33:33:e2:82:02:03"
+      },
+      "correct": "C",
+      "explanation": "Drugi oktet 130 AND 0x7f = 2 → 01:00:5e:02:02:03."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 235.0.255.254?",
+      "options": {
+        "A": "01:00:5e:ff:00:fe",
+        "B": "33:33:eb:00:ff:fe",
+        "C": "01:00:5e:40:ff:fe",
+        "D": "01:00:5e:00:ff:fe"
+      },
+      "correct": "D",
+      "explanation": "Drugi oktet 0 AND 0x7f = 0 → 01:00:5e:00:ff:fe."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 239.200.100.50?",
+      "options": {
+        "A": "01:00:5e:48:64:32",
+        "B": "33:33:ef:c8:64:32",
+        "C": "01:00:5e:64:48:32",
+        "D": "01:00:5e:c8:64:32"
+      },
+      "correct": "A",
+      "explanation": "Drugi oktet 200 AND 0x7f = 72 → 01:00:5e:48:64:32."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 228.128.128.128?",
+      "options": {
+        "A": "01:00:5e:80:00:80",
+        "B": "01:00:5e:80:80:80",
+        "C": "01:00:5e:00:80:80",
+        "D": "33:33:e4:80:80:80"
+      },
+      "correct": "C",
+      "explanation": "Drugi oktet 128 AND 0x7f = 0 → 01:00:5e:00:80:80."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 231.64.32.16?",
+      "options": {
+        "A": "33:33:e7:40:20:10",
+        "B": "01:00:5e:40:20:10",
+        "C": "01:00:5e:20:40:10",
+        "D": "01:00:5e:00:20:10"
+      },
+      "correct": "B",
+      "explanation": "Drugi oktet 64 AND 0x7f = 64 → 01:00:5e:40:20:10."
+    },
+    {
+      "question": "Jaki adres MAC odpowiada grupie 234.255.0.0?",
+      "options": {
+        "A": "01:00:5e:7f:00:00",
+        "B": "33:33:ea:ff:00:00",
+        "C": "01:00:5e:ff:00:00",
+        "D": "01:00:5e:00:7f:00"
+      },
+      "correct": "A",
+      "explanation": "Drugi oktet 255 AND 0x7f = 127 → 01:00:5e:7f:00:00."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 192.168.50.10/23 to:",
+      "options": {
+        "A": "192.168.50.0",
+        "B": "192.168.51.254",
+        "C": "255.255.255.255",
+        "D": "192.168.51.255"
+      },
+      "correct": "D",
+      "explanation": "Ostatni adres bloku /23 zawierającego 192.168.50.10: 192.168.51.255."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 10.8.0.77/21 to:",
+      "options": {
+        "A": "255.255.255.255",
+        "B": "10.8.7.254",
+        "C": "10.8.7.255",
+        "D": "10.8.0.0"
+      },
+      "correct": "C",
+      "explanation": "Ostatni adres bloku /21 zawierającego 10.8.0.77: 10.8.7.255."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 172.31.255.1/20 to:",
+      "options": {
+        "A": "255.255.255.255",
+        "B": "172.31.240.0",
+        "C": "172.31.255.254",
+        "D": "172.31.255.255"
+      },
+      "correct": "D",
+      "explanation": "Ostatni adres bloku /20 zawierającego 172.31.255.1: 172.31.255.255."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 100.64.10.10/28 to:",
+      "options": {
+        "A": "255.255.255.255",
+        "B": "100.64.10.15",
+        "C": "100.64.10.14",
+        "D": "100.64.10.0"
+      },
+      "correct": "B",
+      "explanation": "Ostatni adres bloku /28 zawierającego 100.64.10.10: 100.64.10.15."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 192.168.0.200/27 to:",
+      "options": {
+        "A": "192.168.0.223",
+        "B": "192.168.0.222",
+        "C": "192.168.0.192",
+        "D": "255.255.255.255"
+      },
+      "correct": "A",
+      "explanation": "Ostatni adres bloku /27 zawierającego 192.168.0.200: 192.168.0.223."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 10.250.1.1/29 to:",
+      "options": {
+        "A": "10.250.1.0",
+        "B": "10.250.1.7",
+        "C": "255.255.255.255",
+        "D": "10.250.1.6"
+      },
+      "correct": "B",
+      "explanation": "Ostatni adres bloku /29 zawierającego 10.250.1.1: 10.250.1.7."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 172.20.40.1/24 to:",
+      "options": {
+        "A": "172.20.40.0",
+        "B": "172.20.40.254",
+        "C": "172.20.40.255",
+        "D": "255.255.255.255"
+      },
+      "correct": "C",
+      "explanation": "Ostatni adres bloku /24 zawierającego 172.20.40.1: 172.20.40.255."
+    },
+    {
+      "question": "Adres broadcast ukierunkowany sieci 10.0.128.5/17 to:",
+      "options": {
+        "A": "10.0.255.255",
+        "B": "10.0.128.0",
+        "C": "10.0.255.254",
+        "D": "255.255.255.255"
+      },
+      "correct": "A",
+      "explanation": "Ostatni adres bloku /17 zawierającego 10.0.128.5: 10.0.255.255."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff02::5?",
+      "options": {
+        "A": "33:33:ff:00:00:00",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:5e:00:00:00:05",
+        "D": "33:33:00:00:00:05"
+      },
+      "correct": "D",
+      "explanation": "33:33 + dolne 32 bity → 33:33:00:00:00:05."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff02::6?",
+      "options": {
+        "A": "33:33:00:00:00:06",
+        "B": "33:33:ff:00:00:00",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "01:00:5e:00:00:00:06"
+      },
+      "correct": "A",
+      "explanation": "33:33 + dolne 32 bity → 33:33:00:00:00:06."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff02::d?",
+      "options": {
+        "A": "01:00:5e:00:00:00:0d",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:ff:00:00:00",
+        "D": "33:33:00:00:00:0d"
+      },
+      "correct": "D",
+      "explanation": "33:33 + dolne 32 bity → 33:33:00:00:00:0d."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff02::16?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "33:33:00:00:00:16",
+        "C": "33:33:ff:00:00:00",
+        "D": "01:00:5e:00:00:00:16"
+      },
+      "correct": "B",
+      "explanation": "33:33 + dolne 32 bity → 33:33:00:00:00:16."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff02::1:ff00:abcd?",
+      "options": {
+        "A": "01:00:5e:ff:00:ab:cd",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:ff:00:ab:cd",
+        "D": "33:33:ff:ff:00:ab"
+      },
+      "correct": "C",
+      "explanation": "33:33 + dolne 32 bity → 33:33:ff:00:ab:cd."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff05::2?",
+      "options": {
+        "A": "01:00:5e:00:00:00:02",
+        "B": "33:33:00:00:00:02",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:ff:00:00:00"
+      },
+      "correct": "B",
+      "explanation": "33:33 + dolne 32 bity → 33:33:00:00:00:02."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff02::1:ffab:1234?",
+      "options": {
+        "A": "33:33:ff:ab:12:34",
+        "B": "01:00:5e:ff:ab:12:34",
+        "C": "33:33:ff:ff:ab:12",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "A",
+      "explanation": "33:33 + dolne 32 bity → 33:33:ff:ab:12:34."
+    },
+    {
+      "question": "Jaki adres MAC ma ramka do grupy IPv6 ff0e::101?",
+      "options": {
+        "A": "01:00:5e:00:00:01:01",
+        "B": "33:33:ff:00:00:01",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:00:00:01:01"
+      },
+      "correct": "D",
+      "explanation": "33:33 + dolne 32 bity → 33:33:00:00:01:01."
+    },
+    {
+      "question": "Który adres grupy (spośród podanych) mapuje się na MAC 01:00:5e:00:00:fb?",
+      "options": {
+        "A": "239.0.1.251",
+        "B": "224.0.1.251",
+        "C": "224.0.0.251",
+        "D": "224.0.0.252"
+      },
+      "correct": "C",
+      "explanation": "224.0.0.251 → 01:00:5e:00:00:fb. Pozostałe dają inne dolne 23 bity."
+    },
+    {
+      "question": "Który adres grupy (spośród podanych) mapuje się na MAC 01:00:5e:7f:ff:fa?",
+      "options": {
+        "A": "239.127.254.250",
+        "B": "239.255.255.250",
+        "C": "224.255.255.250",
+        "D": "239.255.255.251"
+      },
+      "correct": "B",
+      "explanation": "239.255.255.250 → 01:00:5e:7f:ff:fa. Pozostałe dają inne dolne 23 bity."
+    },
+    {
+      "question": "Który adres grupy (spośród podanych) mapuje się na MAC 01:00:5e:00:00:12?",
+      "options": {
+        "A": "224.0.0.12",
+        "B": "224.0.18.0",
+        "C": "225.0.0.21",
+        "D": "224.0.0.18"
+      },
+      "correct": "D",
+      "explanation": "224.0.0.18 → 01:00:5e:00:00:12. Pozostałe dają inne dolne 23 bity."
+    },
+    {
+      "question": "Który adres grupy (spośród podanych) mapuje się na MAC 01:00:5e:01:02:03?",
+      "options": {
+        "A": "239.1.2.3",
+        "B": "239.1.2.4",
+        "C": "239.0.2.3",
+        "D": "239.3.2.1"
+      },
+      "correct": "A",
+      "explanation": "239.1.2.3 → 01:00:5e:01:02:03. Pozostałe dają inne dolne 23 bity."
+    },
+    {
+      "question": "Który adres grupy (spośród podanych) mapuje się na MAC 01:00:5e:00:00:05?",
+      "options": {
+        "A": "224.0.0.6",
+        "B": "224.0.0.50",
+        "C": "224.0.0.5",
+        "D": "224.0.5.0"
+      },
+      "correct": "C",
+      "explanation": "224.0.0.5 → 01:00:5e:00:00:05. Pozostałe dają inne dolne 23 bity."
+    },
+    {
+      "question": "Który zakres IPv4 jest zarezerwowany dla multicastu?",
+      "options": {
+        "A": "192.168.0.0/16",
+        "B": "224.0.0.0/4",
+        "C": "240.0.0.0/4",
+        "D": "127.0.0.0/8"
+      },
+      "correct": "B",
+      "explanation": "Dawna klasa D: 224.0.0.0–239.255.255.255."
+    },
+    {
+      "question": "Jaki zakres IPv6 jest przeznaczony na multicast?",
+      "options": {
+        "A": "2000::/3",
+        "B": "fc00::/7",
+        "C": "ff00::/8",
+        "D": "fe80::/10"
+      },
+      "correct": "C",
+      "explanation": "Czwarta cyfra adresu wskazuje zasięg."
+    },
+    {
+      "question": "Które protokoły w sieciach Windows odpytują rozgłoszeniowo o nazwy, gdy DNS zawiedzie?",
+      "options": {
+        "A": "LLMNR i NBT-NS (oraz mDNS)",
+        "B": "OSPF i VRRP",
+        "C": "TLS i HTTP",
+        "D": "DHCP i NTP"
+      },
+      "correct": "A",
+      "explanation": "Ich nadużycie umożliwia przechwytywanie poświadczeń."
+    },
+    {
+      "question": "Jak kontenery Dockera w sieci bridge mogą odbierać multicast z sieci fizycznej hosta?",
+      "options": {
+        "A": "Przez publikację portu -p",
+        "B": "Przez DNS Dockera",
+        "C": "Zawsze automatycznie",
+        "D": "Zwykle nie mogą — potrzebna jest sieć host lub macvlan (albo przekaźnik)"
+      },
+      "correct": "D",
+      "explanation": "Bridge z NAT nie przekazuje multicastu z sieci fizycznej."
+    }
+  ]
 }
