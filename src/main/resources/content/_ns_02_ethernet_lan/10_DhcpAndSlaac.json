@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Skąd host wie, kim jest w sieci?",
+      "image": "netsec/ns02-10-dora.svg",
+      "imageAlt": "Wymiana DORA między klientem bez adresu a serwerem DHCP 10.20.0.2: DHCPDISCOVER jako broadcast z portu 68 na 67, DHCPOFFER z propozycją 10.20.0.57/24, bramą, DNS i dzierżawą 8 h, DHCPREQUEST jako broadcast potwierdzający wybór i DHCPACK zatwierdzający dzierżawę.",
+      "body": "Laptop podłączony do sieci, telefon w Wi-Fi, maszyna wirtualna w chmurze, pod w Kubernetesie — każde z nich w ciągu sekund dostaje **adres IP, maskę, bramę domyślną, serwery DNS** i często dużo więcej (domena wyszukiwania, NTP, serwer rozruchowy). Robi to za nich:\n- **DHCP (Dynamic Host Configuration Protocol)** w IPv4 — serwer przydziela adres na określony czas (**dzierżawa**, lease) w czterech krokach **DORA**,\n- w IPv6 — **SLAAC** (Stateless Address Autoconfiguration): host sam tworzy adres z prefiksu ogłoszonego przez router w **Router Advertisement**, oraz **DHCPv6** (stanowy lub bezstanowy).\n\nDla Java developera DHCP to nie tylko „sieć działa”. To:\n- **źródło typowych awarii** — wyczerpana pula (nowe pody/VM-ki nie startują), zła opcja DNS lub domeny wyszukiwania (aplikacja nie rozwiązuje nazw lub robi to wolno), za krótka dzierżawa i zmiana adresu w trakcie działania,\n- **powód, dla którego serwer ma adres statyczny (lub rezerwację), a kontener dostaje go z IPAM** — adres, od którego zależą inni, nie może się zmieniać przypadkiem,\n- **wektor ataku** — **rogue DHCP** (fałszywy serwer podaje swoją bramę/DNS i przechwytuje ruch), **wyczerpanie puli** (DHCP starvation), **fałszywe RA** w IPv6; obrona: **DHCP snooping**, **RA Guard**, **DHCPv6 Guard**.\n\nW tej lekcji: DORA, typy komunikatów i najważniejsze opcje, timery T1/T2, **DHCP relay** i opcja 82, pule i rezerwacje, SLAAC z EUI-64 i adresami prywatnymi, flagi RA (M/O/A), DHCPv6, oraz Packet Lab z `dnsmasq` w kontenerze. To cele Network+ (D1/D2: DHCP, SLAAC, relay, rezerwacje, opcje) i CCNA 200-301 (D4: konfiguracja i weryfikacja DHCP klienta i relay; D5: DHCP snooping).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik DHCP i autokonfiguracji IPv6",
+      "body": "- **DHCP (RFC 2131)** — protokół przydzielania konfiguracji: UDP, serwer port **67**, klient port **68**. Następca BOOTP.\n- **DORA** — Discover (klient szuka, broadcast), Offer (serwer proponuje), Request (klient wybiera, broadcast), Ack (serwer potwierdza).\n- **Typy komunikatów (opcja 53)**: 1 DHCPDISCOVER, 2 DHCPOFFER, 3 DHCPREQUEST, 4 DHCPDECLINE, 5 DHCPACK, 6 DHCPNAK, 7 DHCPRELEASE, 8 DHCPINFORM.\n- **Dzierżawa (lease)** — czas ważności adresu; **T1** (domyślnie 50% dzierżawy) — odnowienie unicastem u tego samego serwera; **T2** (87,5%) — rebinding broadcastem do dowolnego serwera.\n- **Pula (scope)** — zakres adresów do przydzielania; **wykluczenia** (np. brama, serwery); **rezerwacja** — stały adres dla danego MAC/Client ID.\n- **Opcje** — dodatkowe parametry: 1 maska, 3 brama, 6 DNS, 15 domena, 42 NTP, 51 czas dzierżawy, 54 identyfikator serwera, 66/67 TFTP i plik rozruchowy (PXE), 82 informacje relay, 119 domeny wyszukiwania, 121 trasy statyczne.\n- **DHCP relay (ip helper-address)** — router przekazuje broadcast klienta unicastem do serwera w innej podsieci; pole **giaddr** wskazuje podsieć klienta.\n- **DHCP snooping** — funkcja przełącznika: odpowiedzi DHCP tylko z portów zaufanych (trusted), tabela powiązań MAC–IP–port–VLAN (podstawa dla DAI i IP Source Guard).\n- **SLAAC (RFC 4862)** — host tworzy adres IPv6 z prefiksu /64 z **RA** i identyfikatora interfejsu (EUI-64 lub losowego).\n- **RA (Router Advertisement, ICMPv6 134)** — ogłoszenie routera: prefiksy, flagi **M** (Managed — adresy z DHCPv6), **O** (Other — inne informacje z DHCPv6), **A** w opcji prefiksu (Autonomous — SLAAC), **RDNSS** (DNS w RA), czas życia routera.\n- **EUI-64** — identyfikator interfejsu z MAC: wstawienie `ff:fe` w środek i odwrócenie bitu U/L.\n- **Adresy prywatne / stabilne** — RFC 8981 (tymczasowe, zmieniane okresowo), RFC 7217 (stabilne, ale nieujawniające MAC).\n- **DHCPv6 (RFC 8415)** — UDP 546 (klient) / 547 (serwer), multicast `ff02::1:2`; komunikaty Solicit, Advertise, Request, Reply (SARR); identyfikator **DUID** zamiast MAC.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Hotel: recepcja, karta pokoju i wymeldowanie",
+      "body": "DHCP działa jak **recepcja hotelu**:\n- Gość wchodzi do holu i woła do wszystkich: „Czy jest tu recepcja? Potrzebuję pokoju!” (**Discover** — broadcast, bo gość nie wie, gdzie jest recepcja).\n- Recepcjonista: „Mam pokój 57 na 8 godzin, śniadanie w restauracji na parterze (brama), informacja pod numerem 9 (DNS)” (**Offer**).\n- Gość głośno, by słyszały wszystkie recepcje w budynku: „Biorę pokój od recepcji nr 2!” (**Request** broadcastem — inne recepcje zwalniają swoje propozycje).\n- Recepcja wydaje kartę (**Ack**). Karta ma **datę ważności** (dzierżawa). W połowie pobytu gość podchodzi do swojej recepcji przedłużyć (T1, unicast). Jeśli recepcja jest zamknięta, pod koniec pyta dowolną (T2, broadcast). Jeśli nikt nie przedłuży — po terminie musi opuścić pokój (koniec dzierżawy).\n- **Rezerwacja** to stały gość, który zawsze dostaje pokój 10. **Wykluczenia** to pokoje dla personelu.\n- **Relay** to portier w drugim budynku, który nie ma recepcji, ale dzwoni do głównej w imieniu gościa i mówi: „gość jest w budynku B” (giaddr).\n- **Rogue DHCP** to oszust w holu, który szybciej niż recepcja krzyczy „mam dla pana pokój!” i podaje fałszywy adres restauracji (bramy) — gość idzie jeść tam, gdzie oszust podsłuchuje rozmowy. **DHCP snooping** to ochrona, która pozwala odpowiadać tylko z okienka recepcji.\n\n**SLAAC** w IPv6 to inny model: na ścianie wisi tablica „to piętro ma prefiks 2001:db8:10::/64” (RA), a gość sam dopisuje swój numer pokoju i sprawdza, czy nikt go nie zajął (DAD).",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Policz: timery dzierżawy, pule i EUI-64",
+      "image": "netsec/ns02-10-lease.svg",
+      "imageAlt": "Oś czasu dzierżawy 8-godzinnej: do T1 (4 h, 50%) adres używany spokojnie, od T1 do T2 (7 h, 87,5%) klient odnawia dzierżawę unicastem u swojego serwera, od T2 do końca próbuje dowolnego serwera broadcastem; po końcu bez odpowiedzi musi przestać używać adresu.",
+      "body": "Obliczenia, które pojawiają się w egzaminach i przy projektowaniu: kiedy klient odnowi adres, ile adresów jest w puli i jaki adres IPv6 wygeneruje SLAAC z EUI-64.",
+      "code": "dzierżawa 1 h        → T1 30 min         T2 52 min 30 s\ndzierżawa 8 h        → T1 4 h            T2 7 h\ndzierżawa 24 h       → T1 12 h           T2 21 h\ndzierżawa 192 h      → T1 96 h           T2 168 h\n\nPula dla /24 z wykluczeniem .1–.20 (brama, serwery, drukarki):\n  adresy hostów: 2^8 − 2 = 254; w puli: 254 − 20 = 234\nPula dla /22 (np. Wi-Fi gości): 2^10 − 2 = 1022 hostów\nPula dla /26: 62 hostów — za mało dla sali konferencyjnej na 80 osób z telefonami i laptopami!\n\nEUI-64:\n  00:1a:2b:3c:4d:5e → fe80::21a:2bff:fe3c:4d5e\n  52:54:00:12:34:56 → fe80::5054:ff:fe12:3456\n  a4:83:e7:01:02:03 → fe80::a683:e7ff:fe01:203\n  00:50:56:ab:cd:ef → fe80::250:56ff:feab:cdef\n  (pierwszy bajt: 00 → 02, 52 → 50, a4 → a6 — odwrócony bit U/L, czyli XOR 0x02)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Klient DHCP w Linuksie, Windows i Javie",
+      "body": "Jak zobaczyć, co dał DHCP, i jak odnowić dzierżawę. W Javie możesz odczytać adresy interfejsów, ale nie to, czy pochodzą z DHCP — tę informację ma system.",
+      "code": "# Linux (NetworkManager / systemd-networkd / dhclient)\nnmcli device show eth0 | grep -E 'IP4|DHCP4'     # adres, brama, DNS, opcje DHCP\nnmcli connection up eth0                           # odnowienie\nnetworkctl status eth0                             # systemd-networkd: adres, DHCP, DNS\ncat /var/lib/NetworkManager/*.lease 2>/dev/null; cat /run/systemd/netif/leases/*\nsudo dhclient -r eth0 && sudo dhclient -v eth0     # zwolnij i pobierz ponownie (dhclient)\nip -6 addr show dev eth0                           # adresy IPv6: global (dynamic, mngtmpaddr), link-local\nrdisc6 eth0                                        # wyślij RS i pokaż RA (flagi M/O, prefiksy, RDNSS)\n\n# Windows\nipconfig /all                                      # DHCP Enabled, Lease Obtained/Expires, DHCP Server, DNS\nipconfig /release && ipconfig /renew\nnetsh interface ipv6 show addresses               # typy adresów IPv6 (Public, Temporary, Link)\n\n// Java: adresy interfejsów (bez informacji o źródle)\nfor (NetworkInterface nif : NetworkInterface.networkInterfaces().toList()) {\n    if (!nif.isUp() || nif.isLoopback()) continue;\n    for (InterfaceAddress ia : nif.getInterfaceAddresses())\n        System.out.printf(\"%s %s/%d%n\", nif.getName(), ia.getAddress().getHostAddress(), ia.getNetworkPrefixLength());\n}\n// Nie zapisuj „swojego” adresu IP w konfiguracji ani w cache na stałe — przy DHCP może się zmienić."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Packet Lab: DHCP z dnsmasq w kontenerze — przechwyć i odczytaj opcje",
+      "image": "netsec/ns02-10-relay.svg",
+      "imageAlt": "Klient w VLAN 10 wysyła broadcast DHCP do routera z funkcją relay (ip helper-address 10.20.0.2), który przekazuje go unicastem do serwera DHCP w VLAN 20 i zwraca odpowiedź. Pole giaddr 10.10.0.1 wskazuje pulę, opcja 82 dodaje port i VLAN klienta.",
+      "body": "Laboratorium z planu lekcji — w izolowanej sieci Dockera (nie w sieci firmowej: drugi serwer DHCP w prawdziwej sieci to incydent):\n1. **Sieć bez wbudowanego IPAM-u dla klientów**: `docker network create --subnet 172.30.0.0/24 dhcplab` (Docker sam przydziela adresy kontenerom, więc klient DHCP skonfigurujemy na osobnym interfejsie przez namespace albo użyjemy sieci macvlan/bridge z `--ip-range` poza pulą dnsmasq).\n2. **Serwer**: kontener z `dnsmasq`: `dnsmasq -d --dhcp-range=172.30.0.100,172.30.0.150,12h --dhcp-option=3,172.30.0.1 --dhcp-option=6,172.30.0.53 --dhcp-option=15,lab.local --dhcp-option=119,lab.local,corp.lab --log-dhcp`.\n3. **Przechwytywanie**: na hoście `tcpdump -i br-<id> -nn -vv -w dhcp.pcap 'udp port 67 or udp port 68'`.\n4. **Klient**: kontener z `udhcpc` (BusyBox) lub `dhclient -v` na drugim interfejsie; obserwuj w logach dnsmasq DHCPDISCOVER → OFFER → REQUEST → ACK.\n5. **Analiza w Wiresharku** (filtr `dhcp`): adresy IP i porty każdego komunikatu (0.0.0.0:68 → 255.255.255.255:67), opcja 53 (typ), 50 (żądany adres), 54 (identyfikator serwera), 51 (dzierżawa), 1, 3, 6, 15, 119; flaga broadcast; pole `chaddr` (MAC klienta).\n6. **Odnowienie**: ustaw krótką dzierżawę (`2m`) i obserwuj REQUEST unicastem po T1 (60 s).\n7. **Release**: `dhclient -r` → DHCPRELEASE; sprawdź plik dzierżaw dnsmasq.\n8. **Wnioski**: zanotuj, które informacje widzi każdy w segmencie (nazwa hosta w opcji 12, vendor class w opcji 60 — np. „MSFT 5.0”, „android-dhcp”) — to także materiał do fingerprintingu urządzeń przez NAC i przez napastnika.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Najważniejsze opcje DHCP i porty",
+      "body": "Opcje, które warto znać na pamięć — pojawiają się w egzaminach, w konfiguracji serwerów i w analizie pcap:",
+      "code": "opcja   1  maska podsieci\nopcja   3  brama domyślna (router)\nopcja   6  serwery DNS\nopcja  15  nazwa domeny\nopcja  42  serwery NTP\nopcja  43  informacje producenta (np. kontroler Wi-Fi)\nopcja  51  czas dzierżawy\nopcja  53  typ komunikatu DHCP\nopcja  54  identyfikator serwera\nopcja  66  nazwa serwera TFTP\nopcja  67  nazwa pliku rozruchowego\nopcja  82  informacje agenta relay\nopcja 119  lista domen wyszukiwania\nopcja 121  bezklasowe trasy statyczne\nopcja  12  nazwa hosta klienta        opcja  60  vendor class (np. „MSFT 5.0”, „PXEClient”)\nopcja  61  client identifier          opcja 252  WPAD (proxy — historycznie nadużywane)\n\nPorty i adresy:\n  DHCPv4: serwer UDP 67, klient UDP 68; Discover 0.0.0.0 → 255.255.255.255\n  DHCPv6: klient UDP 546, serwer/relay UDP 547; multicast ff02::1:2 (All_DHCP_Relay_Agents_and_Servers)\n  RA/RS:  ICMPv6 134/133; RA na ff02::1, RS na ff02::2\nDHCPv6 komunikaty: Solicit → Advertise → Request → Reply (SARR); Renew, Rebind, Release, Information-request (bezstanowy)."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Serwer, relay i ochrona: Cisco IOS, ISC Kea, dnsmasq",
+      "body": "Konfiguracja serwera DHCP na routerze (małe sieci), relay na przełączniku L3 i ochrona przełączników dostępowych. W większych sieciach serwerem jest ISC **Kea**, Windows Server DHCP lub Infoblox, często z failoverem i integracją z DNS/IPAM.",
+      "code": "! Cisco IOS: serwer DHCP dla VLAN 10\nip dhcp excluded-address 10.10.0.1 10.10.0.20\nip dhcp pool USERS\n network 10.10.0.0 255.255.255.0\n default-router 10.10.0.1\n dns-server 10.20.0.53 10.20.0.54\n domain-name corp.example\n lease 0 8                                    ! 0 dni, 8 godzin\nip dhcp pool PRINTER-01                       ! rezerwacja\n host 10.10.0.30 255.255.255.0\n client-identifier 0100.1a2b.3c4d.5e\n!\n! Przełącznik L3: relay dla VLAN 30 do centralnego serwera\ninterface Vlan30\n ip address 10.30.0.1 255.255.255.0\n ip helper-address 10.20.0.2\n!\n! Przełącznik dostępowy: DHCP snooping\nip dhcp snooping\nip dhcp snooping vlan 10,30\nno ip dhcp snooping information option         ! jeśli serwer nie obsługuje opcji 82\ninterface Te1/1/1\n ip dhcp snooping trust                        ! uplink w stronę serwera/relay\ninterface range Gi1/0/1 - 46\n ip dhcp snooping limit rate 15                ! ochrona przed zalewaniem DISCOVER\nshow ip dhcp snooping binding                  ! MAC, IP, dzierżawa, VLAN, port\nshow ip dhcp binding / show ip dhcp pool        ! (na serwerze IOS) przydziały i wykorzystanie puli\n\n# IPv6 na routerze: SLAAC + DNS przez RA i bezstanowy DHCPv6\ninterface Vlan10\n ipv6 address 2001:db8:10::1/64\n ipv6 nd other-config-flag                     ! O=1: DNS/domena z DHCPv6\n ipv6 nd ra dns server 2001:db8:20::53         ! RDNSS (nowsze IOS XE)\n ipv6 dhcp server STATELESS-POOL\nipv6 nd raguard policy HOSTS\n device-role host                              ! RA z portów hostów odrzucane"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "image": "netsec/ns02-10-slaac.svg",
+      "imageAlt": "Router Advertisement z prefiksem 2001:db8:10::/64 i flagami A, M, O oraz RDNSS. Obliczenie EUI-64 z MAC 52:54:00:12:34:56 daje identyfikator 5054:ff:fe12:3456 i adres 2001:db8:10::5054:ff:fe12:3456. Uwagi o prywatności, DAD i RA Guard.",
+      "body": "**Developer / DevOps / SRE:**\n- **Serwer statyczny, klient dynamiczny** — bazy, brokery, serwery DNS, bramy mają adresy statyczne lub rezerwacje (od ich adresu zależą inni, rekordy DNS, reguły firewalla); stacje robocze, VM-ki testowe i urządzenia — DHCP. W chmurze adres instancji przydziela DHCP dostawcy (VPC), ale jest stały przez całe życie interfejsu (ENI) — nie myl tego z adresem publicznym.\n- **Kontenery i Kubernetes** — Docker i CNI przydzielają adresy z wbudowanego **IPAM** (host-local, Calico IPAM, Whereabouts), nie z DHCP sieci firmowej; pod dostaje adres przy starcie i traci go przy usunięciu — dlatego aplikacje adresuje się przez Service/DNS, nie przez IP poda.\n- **Wyczerpanie puli** — nowe VM-ki/węzły autoskalowania nie dostają adresu: „VM startuje, ale nie ma sieci”. Monitoruj wykorzystanie puli (Kea/Windows mają metryki), dobieraj wielkość podsieci z zapasem.\n- **DNS z DHCP** — błędna opcja 6/15/119 to aplikacja Javy rozwiązująca `db` jako `db.corp.example` lub czekająca na timeouty nieosiągalnego DNS; `/etc/resolv.conf` w kontenerze dziedziczy z hosta.\n- **PXE i provisioning** — opcje 66/67 (TFTP, plik rozruchowy) uruchamiają instalację serwerów bare metal i stacji (iPXE, Foreman, MAAS).\n- **IPv6** — w sieciach dual-stack host może mieć kilka adresów IPv6 (stabilny, tymczasowy, link-local); aplikacja serwerowa powinna nasłuchiwać na `::`/wszystkich adresach, a reguły firewalla uwzględniać, że adres klienta IPv6 może się zmieniać (adresy tymczasowe).\n\n**Blue team:**\n- **Rogue DHCP** (ATT&CK T1557.003 — DHCP Spoofing) — fałszywy serwer podaje swoją bramę lub DNS → man-in-the-middle; także przypadkowy domowy router podłączony odwrotnie. Obrona: **DHCP snooping** (porty untrusted nie mogą wysyłać OFFER/ACK), wykrywanie (alerty o OFFER z nieznanych serwerów, narzędzia typu `nmap --script broadcast-dhcp-discover` w audycie).\n- **DHCP starvation** — zalewanie DISCOVER z losowych MAC wyczerpuje pulę (często jako wstęp do rogue DHCP). Obrona: `ip dhcp snooping limit rate`, port security, 802.1X.\n- **Rogue RA / DHCPv6** — fałszywe Router Advertisement w sieci „tylko IPv4” (gdzie hosty i tak mają włączone IPv6) przekierowują ruch IPv6 przez napastnika. Obrona: **RA Guard**, **DHCPv6 Guard**, monitoring RA (`ndpmon`, `radvdump`), świadome zarządzanie IPv6 zamiast „wyłączyliśmy, więc nie istnieje”.\n- **Tabela snoopingu jako źródło prawdy** — powiązania MAC–IP–port–czas wykorzystuje DAI (lekcja 03), IP Source Guard i dochodzenia („kto miał adres 10.10.0.57 wczoraj o 14:05?”) — logi DHCP serwera i snoopingu trzymaj w SIEM.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy z DHCP i SLAAC",
+      "body": "- **Statyczny adres z zakresu puli** — serwer DHCP przydzieli go komuś innemu → konflikt adresów (objawy jak w lekcji 03: „działa raz na jakiś czas”). Adresy statyczne spoza puli lub wykluczone.\n- **Brak relay po dodaniu nowego VLAN-u** — klienci nie dostają adresów, bo broadcast nie przechodzi przez router; po każdym nowym VLAN-ie: `ip helper-address`.\n- **Firewall między relay a serwerem** blokuje UDP 67 — „DHCP działa w jednym VLAN-ie, a w innym nie”.\n- **DHCP snooping bez `trust` na uplinku** — po włączeniu snoopingu wszyscy tracą adresy, bo odpowiedzi serwera są odrzucane; albo problem z opcją 82 (serwer odrzuca żądania z giaddr 0.0.0.0 i opcją 82).\n- **Za krótka dzierżawa** — duży ruch DHCP i zależność od dostępności serwera; **za długa** w sieci gości — wyczerpana pula przez urządzenia, które dawno wyszły.\n- **„IPv6 wyłączyliśmy, więc nie ma zagrożenia”** — systemy mają IPv6 włączone domyślnie i zaakceptują fałszywe RA; wyłącz świadomie albo zabezpiecz (RA Guard).\n- **Mylenie flag RA** — M=1 bez serwera DHCPv6 = hosty bez adresów globalnych (lub tylko SLAAC, zależnie od A); Android **nie obsługuje** stanowego DHCPv6 — w sieciach z telefonami potrzebny SLAAC.\n- **Adres IP jako tożsamość** — reguły „po IP” dla stacji z DHCP przestają działać po zmianie adresu; używaj rezerwacji, 802.1X/grup, nazw.\n- **Zapisywanie adresu z DHCP w konfiguracji aplikacji** — np. klaster, który zapamiętał IP węzła; po restarcie i nowej dzierżawie węzeł „znika”.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: serwer DHCP „na szybko” i brak ochrony przełącznika",
+      "body": "Typowe ustawienia, po których przychodzą zgłoszenia o konfliktach adresów i dziwnych przekierowaniach.",
+      "code": "ip dhcp pool LAN\n network 10.10.0.0 255.255.255.0\n default-router 10.10.0.1\n dns-server 8.8.8.8                          ! wewnętrzne nazwy (AD, usługi) nie działają\n lease infinite                               ! pula wyczerpie się urządzeniami, których już nie ma\n! brak ip dhcp excluded-address — serwer przydziela .1 (brama), .10 (serwer plików) …\n!\n! Przełącznik dostępowy: brak DHCP snooping\n! - domowy router wpięty przez pracownika odpowiada szybciej i rozdaje 192.168.0.x,\n! - zalewanie DISCOVER wyczerpuje pulę w kilka sekund,\n! - brak tabeli powiązań → brak DAI i śladu „kto miał jaki adres”.\n!\n! Router IPv6: domyślnie wysyła RA z prefiksem, a przełączniki nie mają RA Guard —\n! każdy host może ogłosić się routerem IPv6."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: wykluczenia, rezerwacje, rozsądna dzierżawa, snooping i RA Guard",
+      "body": "Serwer z wykluczeniami i wewnętrznym DNS, centralny serwer przez relay, snooping z zaufanym uplinkiem i limitami, ochrona IPv6, logi do SIEM.",
+      "code": "ip dhcp excluded-address 10.10.0.1 10.10.0.20\nip dhcp pool USERS\n network 10.10.0.0 255.255.255.0\n default-router 10.10.0.1\n dns-server 10.20.0.53 10.20.0.54            ! wewnętrzne resolvery\n domain-name corp.example\n lease 0 8                                    ! 8 h w biurze; goście: 1–2 h\nip dhcp conflict logging\n!\nip dhcp snooping\nip dhcp snooping vlan 10,20,30\nip dhcp snooping database flash:snooping.db    ! przetrwa restart przełącznika\ninterface Te1/1/1\n ip dhcp snooping trust\ninterface range Gi1/0/1 - 46\n ip dhcp snooping limit rate 15\n ip arp inspection limit rate 30               ! DAI korzysta z tabeli snoopingu\nip arp inspection vlan 10,20,30\n!\nipv6 nd raguard policy HOSTS\n device-role host\ninterface range Gi1/0/1 - 46\n ipv6 nd raguard attach-policy HOSTS\n ipv6 dhcp guard attach-policy CLIENTS\n!\nlogging host 10.99.0.50                       ! DHCP-SNOOPING-5-..., DHCPD-4-PING_CONFLICT → SIEM"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Statycznie, rezerwacja, DHCP czy SLAAC?",
+      "body": "- **Statyczny adres** — infrastruktura, od której zależą inni i która musi działać nawet bez DHCP: routery, przełączniki (zarządzanie), serwery DNS i DHCP, kontrolery domeny, bramy. Zawsze spoza puli i udokumentowany w IPAM.\n- **Rezerwacja DHCP** — drukarki, kamery, serwery aplikacyjne w sieci on-prem, urządzenia IoT: stały adres, ale zarządzany centralnie (zmiana DNS/bramy bez logowania na urządzenie).\n- **DHCP dynamiczny** — stacje robocze, telefony, goście, środowiska testowe; dzierżawa dopasowana do rotacji (goście krótko, biuro dłużej).\n- **IPAM platformy** — kontenery, pody, VM-ki w chmurze: adresy z mechanizmów platformy (CNI IPAM, VPC DHCP), aplikacje odnajdują się przez DNS/Service discovery.\n- **IPv6**: **SLAAC** (z RDNSS) — najprościej, działa na wszystkich systemach łącznie z Androidem; **bezstanowy DHCPv6** (O=1) — gdy chcesz rozdać DNS/domenę starym klientom; **stanowy DHCPv6** (M=1) — gdy potrzebujesz kontroli i rozliczalności adresów (np. w sieciach serwerowych), pamiętając o braku wsparcia w Androidzie.\n- **Bezpieczeństwo** zawsze: DHCP snooping, RA Guard, DHCPv6 Guard na przełącznikach dostępowych; logi przydziałów w SIEM; monitoring wykorzystania pul.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- DHCP (UDP 67/68): DORA — Discover (broadcast), Offer, Request (broadcast), Ack; inne: Decline, NAK, Release, Inform.\n- Dzierżawa: T1 = 50% (odnowienie unicastem), T2 = 87,5% (rebinding broadcastem), koniec — host musi porzucić adres.\n- Opcje: 1 maska, 3 brama, 6 DNS, 15 domena, 51 dzierżawa, 53 typ, 54 serwer, 66/67 PXE, 82 relay, 119 domeny wyszukiwania, 121 trasy.\n- Relay (ip helper-address) przekazuje broadcast unicastem do serwera; giaddr wybiera pulę; opcja 82 niesie port i VLAN.\n- IPv6: RA (prefiks, flagi M/O/A, RDNSS) + SLAAC (EUI-64: ff:fe w środku i odwrócony bit U/L, albo adres losowy RFC 8981/7217) + DHCPv6 (546/547, SARR, DUID).\n- Serwery statycznie lub z rezerwacją, klienci dynamicznie, kontenery z IPAM platformy; monitoruj pule.\n- Zagrożenia: rogue DHCP, starvation, rogue RA → DHCP snooping (trust na uplinku, limit rate), RA Guard, DHCPv6 Guard, logi w SIEM.\n- Następna lekcja: **Wi-Fi z perspektywy aplikacji**.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Wyznacz identyfikator interfejsu EUI-64 i adres link-local IPv6 dla karty o adresie MAC 00:1a:2b:3c:4d:5e. Jaki będzie adres globalny w sieci 2001:db8:42::/64?",
+      "hint": "Podziel MAC na pół, wstaw ff:fe, odwróć bit 0x02 w pierwszym bajcie, zapisz w grupach po 16 bitów.",
+      "solution": "Identyfikator: 21a:2bff:fe3c:4d5e; link-local: fe80::21a:2bff:fe3c:4d5e; globalny: 2001:db8:42::21a:2bff:fe3c:4d5e. Pierwszy bajt 00 → 02."
+    },
+    {
+      "prompt": "Wyznacz identyfikator interfejsu EUI-64 i adres link-local IPv6 dla karty o adresie MAC a4:83:e7:01:02:03. Jaki będzie adres globalny w sieci 2001:db8:42::/64?",
+      "hint": "Podziel MAC na pół, wstaw ff:fe, odwróć bit 0x02 w pierwszym bajcie, zapisz w grupach po 16 bitów.",
+      "solution": "Identyfikator: a683:e7ff:fe01:203; link-local: fe80::a683:e7ff:fe01:203; globalny: 2001:db8:42::a683:e7ff:fe01:203. Pierwszy bajt a4 → a6."
+    },
+    {
+      "prompt": "Wyznacz identyfikator interfejsu EUI-64 i adres link-local IPv6 dla karty o adresie MAC 00:50:56:ab:cd:ef. Jaki będzie adres globalny w sieci 2001:db8:42::/64?",
+      "hint": "Podziel MAC na pół, wstaw ff:fe, odwróć bit 0x02 w pierwszym bajcie, zapisz w grupach po 16 bitów.",
+      "solution": "Identyfikator: 250:56ff:feab:cdef; link-local: fe80::250:56ff:feab:cdef; globalny: 2001:db8:42::250:56ff:feab:cdef. Pierwszy bajt 00 → 02."
+    },
+    {
+      "prompt": "Dzierżawa DHCP trwa 2 h. Kiedy klient spróbuje ją odnowić u swojego serwera (T1), kiedy zacznie szukać dowolnego serwera (T2) i co się stanie, jeśli żaden nie odpowie?",
+      "hint": "T1 = 0,5 × dzierżawa, T2 = 0,875 × dzierżawa.",
+      "solution": "T1 = 1 h (REQUEST unicastem), T2 = 1 h 45 min (REQUEST broadcastem), po 2 h bez ACK klient musi przestać używać adresu — połączenia aplikacji zostaną zerwane, klient wraca do DISCOVER."
+    },
+    {
+      "prompt": "Dzierżawa DHCP trwa 24 h. Kiedy klient spróbuje ją odnowić u swojego serwera (T1), kiedy zacznie szukać dowolnego serwera (T2) i co się stanie, jeśli żaden nie odpowie?",
+      "hint": "T1 = 0,5 × dzierżawa, T2 = 0,875 × dzierżawa.",
+      "solution": "T1 = 12 h (REQUEST unicastem), T2 = 21 h (REQUEST broadcastem), po 24 h bez ACK klient musi przestać używać adresu — połączenia aplikacji zostaną zerwane, klient wraca do DISCOVER."
+    },
+    {
+      "prompt": "Dzierżawa DHCP trwa 30 min. Kiedy klient spróbuje ją odnowić u swojego serwera (T1), kiedy zacznie szukać dowolnego serwera (T2) i co się stanie, jeśli żaden nie odpowie?",
+      "hint": "T1 = 0,5 × dzierżawa, T2 = 0,875 × dzierżawa.",
+      "solution": "T1 = 15 min (REQUEST unicastem), T2 = 26 min 15 s (REQUEST broadcastem), po 30 min bez ACK klient musi przestać używać adresu — połączenia aplikacji zostaną zerwane, klient wraca do DISCOVER."
+    },
+    {
+      "prompt": "Podsieć /24, wykluczone 30 adresów (brama, serwery, drukarki). Ile adresów zostaje w puli i czy wystarczy dla 180 urządzeń z zapasem 20%?",
+      "hint": "Hosty = 2^(32−prefiks) − 2; pula = hosty − wykluczenia.",
+      "solution": "Hosty: 254; pula: 224; potrzebne z zapasem: 216 → wystarczy."
+    },
+    {
+      "prompt": "Podsieć /23, wykluczone 50 adresów (brama, serwery, drukarki). Ile adresów zostaje w puli i czy wystarczy dla 400 urządzeń z zapasem 20%?",
+      "hint": "Hosty = 2^(32−prefiks) − 2; pula = hosty − wykluczenia.",
+      "solution": "Hosty: 510; pula: 460; potrzebne z zapasem: 480 → NIE wystarczy — większa podsieć lub krótsza dzierżawa."
+    },
+    {
+      "prompt": "Wykonaj Packet Lab z lekcji (dnsmasq w kontenerze) i przedstaw: listę komunikatów z adresami i portami, wartości opcji 53, 54, 51, 1, 3, 6, 15 oraz moment odnowienia przy dzierżawie 2 min.",
+      "hint": "Wireshark filtr dhcp; dhcp.option.dhcp == 3 (Request).",
+      "solution": "DISCOVER 0.0.0.0:68 → 255.255.255.255:67 (opcja 53 = 1), OFFER 172.30.0.2:67 → 172.30.0.1xx lub broadcast (53 = 2, 54 = 172.30.0.2, 51 = 120 s, 1 = 255.255.255.0, 3 = 172.30.0.1, 6 = 172.30.0.53, 15 = lab.local), REQUEST broadcast (53 = 3, 50 = żądany adres, 54 = serwer), ACK (53 = 5). Odnowienie po ok. 60 s: REQUEST unicastem klient → serwer (ciaddr wypełniony), ACK. Release: 53 = 7, unicast do serwera."
+    },
+    {
+      "prompt": "Skonfiguruj DHCP relay na przełączniku L3 dla nowego VLAN-u 40 (10.40.0.0/24) z centralnym serwerem 10.20.0.2 i wyjaśnij, jak serwer rozpozna, z której puli przydzielić adres.",
+      "hint": "ip helper-address na SVI; giaddr.",
+      "solution": "interface Vlan40; ip address 10.40.0.1 255.255.255.0; ip helper-address 10.20.0.2. Relay odbiera broadcast DISCOVER w VLAN 40, wpisuje giaddr = 10.40.0.1 (adres swojego interfejsu) i wysyła unicastem do 10.20.0.2 (UDP 67). Serwer wybiera pulę, do której należy giaddr (10.40.0.0/24), odpowiada do relay, a relay dostarcza odpowiedź klientowi. Na serwerze musi istnieć pula/scope 10.40.0.0/24; firewall musi przepuścić UDP 67 między 10.40.0.1 a 10.20.0.2."
+    },
+    {
+      "prompt": "Po włączeniu DHCP snooping na przełączniku dostępowym wszyscy klienci przestali dostawać adresy. Podaj dwie najczęstsze przyczyny i poprawki.",
+      "hint": "Trusted uplink; opcja 82.",
+      "solution": "1) Uplink w stronę serwera/relay nie jest oznaczony jako trusted — odpowiedzi OFFER/ACK są odrzucane; naprawa: ip dhcp snooping trust na uplinku. 2) Przełącznik dodaje opcję 82 z giaddr 0.0.0.0, a serwer (np. IOS, Windows) odrzuca takie żądania; naprawa: no ip dhcp snooping information option na przełączniku albo ip dhcp relay information trust-all na relay / konfiguracja serwera akceptująca opcję 82. Dodatkowo sprawdzić, czy snooping jest włączony dla właściwych VLAN-ów i czy rate limit nie jest zbyt niski."
+    },
+    {
+      "prompt": "Opisz koncepcyjnie atak rogue DHCP i jego skutki dla aplikacji Java na stacji developera. Jak go wykryć i jak mu zapobiec?",
+      "hint": "Fałszywa brama/DNS → MITM.",
+      "solution": "Napastnik (lub przypadkowy router) odpowiada na DISCOVER szybciej niż prawdziwy serwer i podaje swoją bramę i/lub DNS. Ruch stacji idzie przez niego: może podsłuchiwać nieszyfrowany ruch, podsuwać fałszywe odpowiedzi DNS (np. dla repozytorium Maven lub API), a aplikacja łączy się z podstawionym serwerem — TLS z weryfikacją certyfikatu chroni, ale HTTP, błędnie skonfigurowane trust-all i wycieki nazw już nie. Wykrycie: OFFER/ACK z nieznanego adresu serwera (IDS, snooping log), brama/DNS niezgodne z oczekiwanymi. Zapobieganie: DHCP snooping (porty hostów untrusted), 802.1X, monitoring, w aplikacjach zawsze TLS z weryfikacją."
+    },
+    {
+      "prompt": "Wyjaśnij, czym różnią się flagi RA: M, O i A, oraz podaj konfigurację RA dla trzech scenariuszy: tylko SLAAC z DNS w RA, SLAAC + bezstanowy DHCPv6, stanowy DHCPv6 bez SLAAC.",
+      "hint": "M — managed, O — other, A — autonomous w opcji prefiksu.",
+      "solution": "Tylko SLAAC: A=1, M=0, O=0, DNS przez RDNSS (RFC 8106). SLAAC + bezstanowy DHCPv6: A=1, M=0, O=1 — adres z SLAAC, DNS/domena z DHCPv6 (Information-request). Stanowy DHCPv6: A=0 (ipv6 nd prefix … no-autoconfig), M=1, O=1 — adresy z DHCPv6, brama zawsze z RA (DHCPv6 nie przekazuje bramy!). Uwaga: Android nie obsługuje stanowego DHCPv6 — w sieciach z telefonami zostaw SLAAC."
+    },
+    {
+      "prompt": "Dlaczego DHCPv6 nie podaje bramy domyślnej i skąd host IPv6 ją bierze?",
+      "hint": "Rola RA.",
+      "solution": "W IPv6 bramę domyślną zawsze wyznaczają Router Advertisement — host przyjmuje adres link-local routera (źródło RA) jako bramę z czasem życia z pola Router Lifetime. DHCPv6 rozdaje adresy i parametry (DNS, domena), ale nie trasę domyślną. Skutek: nawet przy stanowym DHCPv6 potrzebne są RA — i dlatego fałszywe RA są tak groźne (RA Guard)."
+    },
+    {
+      "prompt": "Na serwerze aplikacji widzisz w ip -6 addr trzy adresy globalne IPv6 z tego samego prefiksu. Skąd się wzięły i którego użyje aplikacja do połączeń wychodzących?",
+      "hint": "Stabilny, tymczasowy (RFC 8981), ewentualnie EUI-64 lub z DHCPv6.",
+      "solution": "Typowo: adres stabilny (RFC 7217 lub EUI-64, flaga mngtmpaddr), jeden lub więcej adresów tymczasowych (temporary dynamic, RFC 8981, zmieniane co kilka godzin/dni) i ewentualnie adres z DHCPv6. Dla połączeń wychodzących system wybiera adres źródłowy wg RFC 6724 i preferencji jądra (use_tempaddr=2 → preferuje tymczasowy). Na serwerze zwykle wyłącza się adresy tymczasowe (use_tempaddr=0) lub używa statycznego, żeby reguły firewalli i logi po stronie partnerów były stabilne; aplikacja może też wiązać gniazdo do konkretnego adresu."
+    },
+    {
+      "prompt": "Zaprojektuj monitoring DHCP dla firmy: jakie metryki, logi i alerty?",
+      "hint": "Pule, konflikty, rogue serwery, snooping.",
+      "solution": "Metryki: wykorzystanie każdej puli (% i liczba wolnych; alert > 80–90%), liczba DISCOVER/ACK/NAK na minutę (nagły wzrost = starvation lub awaria), czas odpowiedzi serwera, stan failoveru. Logi: przydziały (MAC, IP, nazwa, czas) do SIEM na potrzeby dochodzeń; konflikty (DHCPD-4-PING_CONFLICT, Decline); naruszenia snoopingu (DHCP_SNOOPING_UNTRUSTED_PORT — OFFER na porcie untrusted = rogue serwer); RA z nieautoryzowanych źródeł. Alerty: nowy serwer DHCP w sieci, pula wyczerpana, nietypowa liczba nowych MAC."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest DHCP starvation, jak go wykryć w logach przełącznika i jakie mechanizmy go ograniczają.",
+      "hint": "Wiele losowych MAC.",
+      "solution": "Atak polega na wysyłaniu dużej liczby DISCOVER z losowych adresów MAC (pole chaddr), aż serwer przydzieli całą pulę — prawdziwi klienci nie dostają adresów (DoS), a napastnik może następnie uruchomić rogue DHCP. Wykrycie: gwałtowny wzrost liczby dzierżaw, wiele różnych MAC na jednym porcie, logi rate limit snoopingu (err-disable), alerty port security. Ograniczenie: ip dhcp snooping limit rate na portach dostępowych, port security (limit MAC na port), ip dhcp snooping verify mac-address (zgodność MAC ramki i chaddr), 802.1X."
+    },
+    {
+      "prompt": "Opisz, jak działa provisioning PXE z opcjami 66 i 67 i jakie ryzyka bezpieczeństwa się z tym wiążą.",
+      "hint": "TFTP, plik rozruchowy, brak uwierzytelniania.",
+      "solution": "Karta z PXE wysyła DISCOVER z vendor class „PXEClient”; serwer DHCP odpowiada adresem oraz opcjami 66 (serwer TFTP) i 67 (nazwa pliku, np. pxelinux.0 lub ipxe.efi). Karta pobiera plik TFTP-em i uruchamia instalator/obraz. Ryzyka: TFTP nie ma uwierzytelniania ani szyfrowania, a rogue DHCP może wskazać złośliwy obraz rozruchowy — przejęcie serwera przy instalacji. Obrona: osobny VLAN provisioningu, DHCP snooping, iPXE z HTTPS i podpisami, Secure Boot, ograniczenie dostępu do serwera TFTP."
+    },
+    {
+      "prompt": "Kontener w Dockerze ma adres 172.17.0.5. Czy dostał go z DHCP? Skąd bierze DNS i dlaczego nie warto zapisywać tego adresu w konfiguracji innych usług?",
+      "hint": "IPAM Dockera, resolv.conf, efemeryczność.",
+      "solution": "Nie — Docker przydziela adresy z własnego IPAM (wbudowany dla sieci bridge), bez DHCP. DNS: w domyślnej sieci bridge kontener dziedziczy /etc/resolv.conf hosta; w sieciach użytkownika używa wbudowanego DNS Dockera (127.0.0.11), który rozwiązuje nazwy kontenerów. Adres zmienia się przy ponownym utworzeniu kontenera, więc inne usługi powinny używać nazwy usługi/kontenera (DNS), nie IP."
+    },
+    {
+      "prompt": "Wyjaśnij, co się dzieje, gdy dwa serwery DHCP w jednym VLAN-ie obsługują nakładające się pule, i jak poprawnie zapewnić wysoką dostępność DHCP.",
+      "hint": "Konflikty; failover/split scope.",
+      "solution": "Dwa niezależne serwery z nakładającymi się pulami mogą przydzielić ten sam adres dwóm klientom (każdy nie wie o przydziałach drugiego) → konflikty adresów. Poprawnie: DHCP failover (Kea HA, Windows DHCP Failover w trybie load balance lub hot standby, ISC failover) z synchronizacją dzierżaw, albo split scope (np. 80/20) — rozłączne zakresy na dwóch serwerach. Klienci dostaną odpowiedzi od obu, ale przydziały się nie nakładają."
+    },
+    {
+      "prompt": "Policz identyfikator EUI-64 dla MAC 00:00:5e:00:53:01 i wyjaśnij, dlaczego współczesne systemy domyślnie nie używają EUI-64 w adresach globalnych.",
+      "hint": "Prywatność i śledzenie.",
+      "solution": "EUI-64: 200:5eff:fe00:5301 → np. 2001:db8::200:5eff:fe00:5301. EUI-64 zawiera MAC karty — ten sam identyfikator interfejsu pojawia się w każdej sieci, do której urządzenie się podłączy, co umożliwia śledzenie urządzenia między sieciami i ujawnia producenta (OUI). Dlatego systemy stosują adresy stabilne nieoparte o MAC (RFC 7217, różne w różnych sieciach) i tymczasowe (RFC 8981) dla połączeń wychodzących."
+    },
+    {
+      "prompt": "Napisz w Javie metodę wyznaczającą adres link-local EUI-64 z adresu MAC.",
+      "hint": "Operacje na bajtach; Inet6Address.",
+      "solution": "static Inet6Address linkLocal(byte[] mac) throws UnknownHostException {\n  byte[] a = new byte[16];\n  a[0] = (byte) 0xfe; a[1] = (byte) 0x80;              // fe80::/64\n  a[8] = (byte) (mac[0] ^ 0x02); a[9] = mac[1]; a[10] = mac[2];\n  a[11] = (byte) 0xff; a[12] = (byte) 0xfe;\n  a[13] = mac[3]; a[14] = mac[4]; a[15] = mac[5];\n  return (Inet6Address) InetAddress.getByAddress(a);\n}\n// Inet6Address.getHostAddress() zwróci postać nieskompresowaną (fe80:0:0:0:…); do wyświetlania można ją skompresować."
+    },
+    {
+      "prompt": "Analizujesz incydent: „kto miał adres 10.10.0.57 wczoraj o 14:05?”. Jakie źródła danych sprawdzisz i w jakiej kolejności?",
+      "hint": "Logi DHCP, snooping binding, ARP, NAC, przełącznik.",
+      "solution": "1) Logi serwera DHCP (Kea/Windows: przydziały i odnowienia z MAC, nazwą hosta, czasem) — kto miał dzierżawę obejmującą 14:05. 2) Logi DHCP snooping/tabela powiązań w SIEM — port i VLAN przełącznika. 3) Logi 802.1X/NAC — użytkownik/urządzenie uwierzytelnione na tym porcie. 4) Historyczne tablice ARP/MAC (jeśli zbierane przez NMS, np. Netdisco). 5) Logi EDR/AD (logowania na hoście). Uwaga na adresy statyczne/konflikty — DHCP nie wie o nich; stąd wartość snoopingu i NAC."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest DHCPINFORM i bezstanowy DHCPv6 (Information-request) i kiedy się ich używa.",
+      "hint": "Adres już jest, potrzebne tylko parametry.",
+      "solution": "DHCPINFORM (IPv4) wysyła host, który ma już adres (np. statyczny), a chce pobrać inne parametry (DNS, domena, WPAD) — serwer odpowiada ACK bez przydzielania adresu. W IPv6 odpowiednikiem jest Information-request bezstanowego DHCPv6 (flaga O=1 w RA): adres pochodzi z SLAAC, a DNS i domena z DHCPv6. Serwer nie musi śledzić stanu dzierżaw — prostsza konfiguracja i skalowanie."
+    },
+    {
+      "prompt": "Laptop przeniesiony z sieci domowej (192.168.1.0/24) do biura (10.10.0.0/24) przez chwilę nie ma sieci, a w Wiresharku widać DHCPREQUEST o adres 192.168.1.34 i odpowiedź DHCPNAK. Wyjaśnij przebieg.",
+      "hint": "Stan INIT-REBOOT.",
+      "solution": "Po podłączeniu klient próbuje potwierdzić poprzednią dzierżawę (INIT-REBOOT): wysyła REQUEST o 192.168.1.34. Serwer biura widzi, że ten adres nie należy do podsieci klienta (giaddr/interfejs 10.10.0.0/24), więc odpowiada NAK. Klient porzuca stary adres i zaczyna DORA od DISCOVER — dostaje adres z 10.10.0.0/24. Krótka przerwa jest normalna."
+    },
+    {
+      "prompt": "Zaplanuj konfigurację dzierżaw dla trzech stref: biuro (stałe stanowiska), Wi-Fi gości na lotnisku firmowym, laboratorium testowe z VM-kami tworzonymi co kilka minut.",
+      "hint": "Rotacja klientów vs obciążenie serwera.",
+      "solution": "Biuro: 8–24 h (stali klienci, mało ruchu DHCP, odporność na krótkie awarie serwera). Goście: 30 min–2 h (duża rotacja, unikanie wyczerpania puli przez urządzenia, które odeszły) i odpowiednio duża podsieć (/22 lub większa). Lab z efemerycznymi VM-kami: krótkie dzierżawy (10–30 min) lub — lepiej — IPAM platformy/rezerwacje sterowane automatyzacją i zwalnianie adresów przy usuwaniu VM (DHCPRELEASE)."
+    },
+    {
+      "prompt": "Przeanalizuj, co zobaczy napastnik w segmencie w komunikatach DHCP innych hostów (opcje 12, 60, 55) i jak tę samą informację wykorzystuje NAC.",
+      "hint": "Fingerprinting DHCP.",
+      "solution": "Opcja 12 — nazwa hosta (np. „LAPTOP-JKOWALSKI”), opcja 60 — vendor class („MSFT 5.0”, „android-dhcp-14”), opcja 55 — lista żądanych parametrów (kolejność charakterystyczna dla systemu). Napastnik dowiaduje się, jakie systemy i kto pracuje w sieci (rozpoznanie). NAC (np. Cisco ISE, ClearPass, PacketFence) używa tego samego fingerprintingu, by profilować urządzenia (drukarka, telefon, Windows) i przypisywać polityki/VLAN-y — ale profil można podrobić, więc nie zastępuje 802.1X."
+    },
+    {
+      "prompt": "Opisz, jak zbudować w labie Linuksowy router z dnsmasq rozdającym IPv4 przez DHCP i IPv6 przez SLAAC z RDNSS. Jakie parametry dnsmasq użyjesz?",
+      "hint": "dhcp-range dla IPv4 i ra-only/slaac dla IPv6, enable-ra.",
+      "solution": "dnsmasq.conf: interface=br-lab; dhcp-range=10.50.0.100,10.50.0.200,12h; dhcp-option=option:router,10.50.0.1; dhcp-option=option:dns-server,10.50.0.1; enable-ra; dhcp-range=::,constructor:br-lab,ra-only,64,12h (RA z prefiksem interfejsu, SLAAC); dnsmasq dodaje RDNSS (adres routera jako DNS). Router: ip_forward i adres IPv6 z prefiksu /64 na br-lab. Klient: SLAAC + DNS z RA (sprawdź rdisc6 i resolvectl)."
+    },
+    {
+      "prompt": "Wyjaśnij, czym różni się opcja 121 (classless static routes) od opcji 3 i jakie ryzyko bezpieczeństwa wiąże się z nią w kontekście VPN.",
+      "hint": "Trasy wysyłane klientowi; obejście tunelu VPN.",
+      "solution": "Opcja 3 podaje tylko bramę domyślną; opcja 121 przekazuje klientowi listę tras (prefiks + brama), które mają pierwszeństwo przed trasą domyślną (dłuższy prefiks). Ryzyko: rogue DHCP może wysłać trasy obejmujące ruch, który powinien iść tunelem VPN (np. 0.0.0.0/1 i 128.0.0.0/1 przez napastnika) — ruch omija VPN (technika znana jako TunnelVision, CVE-2024-3661). Obrona: klienci VPN ignorujący opcję 121 lub blokujący ruch poza tunelem (kill switch, namespace), DHCP snooping w sieciach firmowych, ostrożność w sieciach publicznych."
+    },
+    {
+      "prompt": "Przygotuj listę kontrolną audytu DHCP i autokonfiguracji IPv6 (minimum 7 punktów).",
+      "hint": "Serwery, pule, relay, snooping, IPv6, logi.",
+      "solution": "1) Autoryzowane serwery DHCP znane i udokumentowane, HA przez failover (bez nakładających się pul). 2) Wykluczenia dla adresów statycznych, rezerwacje dla urządzeń infrastruktury. 3) Opcje DNS/domeny wskazują wewnętrzne resolvery. 4) Dzierżawy dopasowane do stref (goście krótko). 5) Relay skonfigurowany dla wszystkich VLAN-ów, firewall przepuszcza UDP 67 tylko między relay a serwerami. 6) DHCP snooping na wszystkich VLAN-ach dostępowych, trust tylko na uplinkach, limit rate, baza powiązań zapisywana. 7) RA Guard i DHCPv6 Guard na portach hostów (także w sieciach „bez IPv6”). 8) Logi przydziałów i naruszeń w SIEM, alerty o wyczerpaniu pul i obcych serwerach."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC 00:1a:2b:3c:4d:5e?",
+      "options": {
+        "A": "4d5e:fe3c:2bff:21a",
+        "B": "1a:2bff:fe3c:4d5e",
+        "C": "21a:2b3c:4d5e:0",
+        "D": "21a:2bff:fe3c:4d5e"
+      },
+      "correct": "D",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): 21a:2bff:fe3c:4d5e."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC 52:54:00:12:34:56?",
+      "options": {
+        "A": "5054:12:3456:0",
+        "B": "5054:ff:fe12:3456",
+        "C": "3456:fe12:ff:5054",
+        "D": "5254:ff:fe12:3456"
+      },
+      "correct": "B",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): 5054:ff:fe12:3456."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC a4:83:e7:01:02:03?",
+      "options": {
+        "A": "a483:e7ff:fe01:203",
+        "B": "203:fe01:e7ff:a683",
+        "C": "a683:e7ff:fe01:203",
+        "D": "a683:e701:203:0"
+      },
+      "correct": "C",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): a683:e7ff:fe01:203."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC 00:50:56:ab:cd:ef?",
+      "options": {
+        "A": "250:56ff:feab:cdef",
+        "B": "cdef:feab:56ff:250",
+        "C": "50:56ff:feab:cdef",
+        "D": "250:56ab:cdef:0"
+      },
+      "correct": "A",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): 250:56ff:feab:cdef."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC 3c:22:fb:9a:10:20?",
+      "options": {
+        "A": "3e22:fb9a:1020:0",
+        "B": "3e22:fbff:fe9a:1020",
+        "C": "3c22:fbff:fe9a:1020",
+        "D": "1020:fe9a:fbff:3e22"
+      },
+      "correct": "B",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): 3e22:fbff:fe9a:1020."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC f0:18:98:00:aa:bb?",
+      "options": {
+        "A": "aabb:fe00:98ff:f218",
+        "B": "f018:98ff:fe00:aabb",
+        "C": "f218:98ff:fe00:aabb",
+        "D": "f218:9800:aabb:0"
+      },
+      "correct": "C",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): f218:98ff:fe00:aabb."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC 08:00:27:4e:66:a1?",
+      "options": {
+        "A": "66a1:fe4e:27ff:a00",
+        "B": "a00:274e:66a1:0",
+        "C": "800:27ff:fe4e:66a1",
+        "D": "a00:27ff:fe4e:66a1"
+      },
+      "correct": "D",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): a00:27ff:fe4e:66a1."
+    },
+    {
+      "question": "Jaki identyfikator interfejsu EUI-64 powstanie z MAC dc:a6:32:11:22:33?",
+      "options": {
+        "A": "dea6:32ff:fe11:2233",
+        "B": "dca6:32ff:fe11:2233",
+        "C": "dea6:3211:2233:0",
+        "D": "2233:fe11:32ff:dea6"
+      },
+      "correct": "A",
+      "explanation": "Wstaw ff:fe w środek i odwróć bit U/L (XOR 0x02 w pierwszym bajcie): dea6:32ff:fe11:2233."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 1 h. Kiedy upływa T1?",
+      "options": {
+        "A": "30 min",
+        "B": "15 min",
+        "C": "52 min 30 s",
+        "D": "1 h"
+      },
+      "correct": "A",
+      "explanation": "T1 = 50% dzierżawy = 30 min."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 1 h. Kiedy upływa T2?",
+      "options": {
+        "A": "45 min",
+        "B": "52 min 30 s",
+        "C": "1 h",
+        "D": "30 min"
+      },
+      "correct": "B",
+      "explanation": "T2 = 87,5% dzierżawy = 52 min 30 s."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 8 h. Kiedy upływa T1?",
+      "options": {
+        "A": "2 h",
+        "B": "7 h",
+        "C": "4 h",
+        "D": "8 h"
+      },
+      "correct": "C",
+      "explanation": "T1 = 50% dzierżawy = 4 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 8 h. Kiedy upływa T2?",
+      "options": {
+        "A": "6 h",
+        "B": "8 h",
+        "C": "4 h",
+        "D": "7 h"
+      },
+      "correct": "D",
+      "explanation": "T2 = 87,5% dzierżawy = 7 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 24 h. Kiedy upływa T1?",
+      "options": {
+        "A": "12 h",
+        "B": "6 h",
+        "C": "21 h",
+        "D": "24 h"
+      },
+      "correct": "A",
+      "explanation": "T1 = 50% dzierżawy = 12 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 24 h. Kiedy upływa T2?",
+      "options": {
+        "A": "12 h",
+        "B": "21 h",
+        "C": "24 h",
+        "D": "18 h"
+      },
+      "correct": "B",
+      "explanation": "T2 = 87,5% dzierżawy = 21 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 2 h. Kiedy upływa T1?",
+      "options": {
+        "A": "1 h 45 min",
+        "B": "30 min",
+        "C": "1 h",
+        "D": "2 h"
+      },
+      "correct": "C",
+      "explanation": "T1 = 50% dzierżawy = 1 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 2 h. Kiedy upływa T2?",
+      "options": {
+        "A": "1 h",
+        "B": "1 h 30 min",
+        "C": "2 h",
+        "D": "1 h 45 min"
+      },
+      "correct": "D",
+      "explanation": "T2 = 87,5% dzierżawy = 1 h 45 min."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 12 h. Kiedy upływa T1?",
+      "options": {
+        "A": "6 h",
+        "B": "10 h 30 min",
+        "C": "12 h",
+        "D": "3 h"
+      },
+      "correct": "A",
+      "explanation": "T1 = 50% dzierżawy = 6 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 12 h. Kiedy upływa T2?",
+      "options": {
+        "A": "12 h",
+        "B": "9 h",
+        "C": "10 h 30 min",
+        "D": "6 h"
+      },
+      "correct": "C",
+      "explanation": "T2 = 87,5% dzierżawy = 10 h 30 min."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 168 h. Kiedy upływa T1?",
+      "options": {
+        "A": "147 h",
+        "B": "84 h",
+        "C": "42 h",
+        "D": "168 h"
+      },
+      "correct": "B",
+      "explanation": "T1 = 50% dzierżawy = 84 h."
+    },
+    {
+      "question": "Dzierżawa DHCP wynosi 168 h. Kiedy upływa T2?",
+      "options": {
+        "A": "84 h",
+        "B": "168 h",
+        "C": "126 h",
+        "D": "147 h"
+      },
+      "correct": "D",
+      "explanation": "T2 = 87,5% dzierżawy = 147 h."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 1?",
+      "options": {
+        "A": "DHCPDECLINE",
+        "B": "DHCPREQUEST",
+        "C": "DHCPDISCOVER",
+        "D": "DHCPOFFER"
+      },
+      "correct": "C",
+      "explanation": "1 = DHCPDISCOVER."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 2?",
+      "options": {
+        "A": "DHCPREQUEST",
+        "B": "DHCPDECLINE",
+        "C": "DHCPDISCOVER",
+        "D": "DHCPOFFER"
+      },
+      "correct": "D",
+      "explanation": "2 = DHCPOFFER."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 3?",
+      "options": {
+        "A": "DHCPREQUEST",
+        "B": "DHCPOFFER",
+        "C": "DHCPDECLINE",
+        "D": "DHCPDISCOVER"
+      },
+      "correct": "A",
+      "explanation": "3 = DHCPREQUEST."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 4?",
+      "options": {
+        "A": "DHCPREQUEST",
+        "B": "DHCPDECLINE",
+        "C": "DHCPOFFER",
+        "D": "DHCPDISCOVER"
+      },
+      "correct": "B",
+      "explanation": "4 = DHCPDECLINE."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 5?",
+      "options": {
+        "A": "DHCPOFFER",
+        "B": "DHCPACK",
+        "C": "DHCPREQUEST",
+        "D": "DHCPDISCOVER"
+      },
+      "correct": "B",
+      "explanation": "5 = DHCPACK."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 6?",
+      "options": {
+        "A": "DHCPOFFER",
+        "B": "DHCPREQUEST",
+        "C": "DHCPDISCOVER",
+        "D": "DHCPNAK"
+      },
+      "correct": "D",
+      "explanation": "6 = DHCPNAK."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 7?",
+      "options": {
+        "A": "DHCPRELEASE",
+        "B": "DHCPREQUEST",
+        "C": "DHCPOFFER",
+        "D": "DHCPDISCOVER"
+      },
+      "correct": "A",
+      "explanation": "7 = DHCPRELEASE."
+    },
+    {
+      "question": "Jaki komunikat DHCP ma w opcji 53 wartość 8?",
+      "options": {
+        "A": "DHCPDISCOVER",
+        "B": "DHCPOFFER",
+        "C": "DHCPINFORM",
+        "D": "DHCPREQUEST"
+      },
+      "correct": "C",
+      "explanation": "8 = DHCPINFORM."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 1?",
+      "options": {
+        "A": "brama domyślna (router)",
+        "B": "serwery DNS",
+        "C": "maska podsieci",
+        "D": "nazwa domeny"
+      },
+      "correct": "C",
+      "explanation": "Opcja 1: maska podsieci."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 3?",
+      "options": {
+        "A": "brama domyślna (router)",
+        "B": "maska podsieci",
+        "C": "serwery DNS",
+        "D": "nazwa domeny"
+      },
+      "correct": "A",
+      "explanation": "Opcja 3: brama domyślna (router)."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 6?",
+      "options": {
+        "A": "nazwa domeny",
+        "B": "serwery DNS",
+        "C": "brama domyślna (router)",
+        "D": "maska podsieci"
+      },
+      "correct": "B",
+      "explanation": "Opcja 6: serwery DNS."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 15?",
+      "options": {
+        "A": "serwery DNS",
+        "B": "maska podsieci",
+        "C": "brama domyślna (router)",
+        "D": "nazwa domeny"
+      },
+      "correct": "D",
+      "explanation": "Opcja 15: nazwa domeny."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 42?",
+      "options": {
+        "A": "serwery NTP",
+        "B": "brama domyślna (router)",
+        "C": "serwery DNS",
+        "D": "maska podsieci"
+      },
+      "correct": "A",
+      "explanation": "Opcja 42: serwery NTP."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 43?",
+      "options": {
+        "A": "maska podsieci",
+        "B": "serwery DNS",
+        "C": "informacje producenta (np. kontroler Wi-Fi)",
+        "D": "brama domyślna (router)"
+      },
+      "correct": "C",
+      "explanation": "Opcja 43: informacje producenta (np. kontroler Wi-Fi)."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 51?",
+      "options": {
+        "A": "serwery DNS",
+        "B": "czas dzierżawy",
+        "C": "brama domyślna (router)",
+        "D": "maska podsieci"
+      },
+      "correct": "B",
+      "explanation": "Opcja 51: czas dzierżawy."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 53?",
+      "options": {
+        "A": "brama domyślna (router)",
+        "B": "maska podsieci",
+        "C": "serwery DNS",
+        "D": "typ komunikatu DHCP"
+      },
+      "correct": "D",
+      "explanation": "Opcja 53: typ komunikatu DHCP."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 54?",
+      "options": {
+        "A": "brama domyślna (router)",
+        "B": "serwery DNS",
+        "C": "identyfikator serwera",
+        "D": "maska podsieci"
+      },
+      "correct": "C",
+      "explanation": "Opcja 54: identyfikator serwera."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 66?",
+      "options": {
+        "A": "maska podsieci",
+        "B": "nazwa serwera TFTP",
+        "C": "serwery DNS",
+        "D": "brama domyślna (router)"
+      },
+      "correct": "B",
+      "explanation": "Opcja 66: nazwa serwera TFTP."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 67?",
+      "options": {
+        "A": "nazwa pliku rozruchowego",
+        "B": "maska podsieci",
+        "C": "brama domyślna (router)",
+        "D": "serwery DNS"
+      },
+      "correct": "A",
+      "explanation": "Opcja 67: nazwa pliku rozruchowego."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 82?",
+      "options": {
+        "A": "maska podsieci",
+        "B": "serwery DNS",
+        "C": "brama domyślna (router)",
+        "D": "informacje agenta relay"
+      },
+      "correct": "D",
+      "explanation": "Opcja 82: informacje agenta relay."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 119?",
+      "options": {
+        "A": "brama domyślna (router)",
+        "B": "maska podsieci",
+        "C": "lista domen wyszukiwania",
+        "D": "serwery DNS"
+      },
+      "correct": "C",
+      "explanation": "Opcja 119: lista domen wyszukiwania."
+    },
+    {
+      "question": "Co przenosi opcja DHCP 121?",
+      "options": {
+        "A": "brama domyślna (router)",
+        "B": "bezklasowe trasy statyczne",
+        "C": "maska podsieci",
+        "D": "serwery DNS"
+      },
+      "correct": "B",
+      "explanation": "Opcja 121: bezklasowe trasy statyczne."
+    },
+    {
+      "question": "Podsieć /24 z 10 wykluczonymi adresami — ile adresów pozostaje w puli DHCP?",
+      "options": {
+        "A": "244",
+        "B": "246",
+        "C": "242",
+        "D": "254"
+      },
+      "correct": "A",
+      "explanation": "254 hostów − 10 = 244."
+    },
+    {
+      "question": "Podsieć /25 z 5 wykluczonymi adresami — ile adresów pozostaje w puli DHCP?",
+      "options": {
+        "A": "119",
+        "B": "123",
+        "C": "126",
+        "D": "121"
+      },
+      "correct": "D",
+      "explanation": "126 hostów − 5 = 121."
+    },
+    {
+      "question": "Podsieć /23 z 20 wykluczonymi adresami — ile adresów pozostaje w puli DHCP?",
+      "options": {
+        "A": "510",
+        "B": "490",
+        "C": "488",
+        "D": "492"
+      },
+      "correct": "B",
+      "explanation": "510 hostów − 20 = 490."
+    },
+    {
+      "question": "Podsieć /26 z 4 wykluczonymi adresami — ile adresów pozostaje w puli DHCP?",
+      "options": {
+        "A": "60",
+        "B": "62",
+        "C": "56",
+        "D": "58"
+      },
+      "correct": "D",
+      "explanation": "62 hostów − 4 = 58."
+    },
+    {
+      "question": "Podsieć /22 z 100 wykluczonymi adresami — ile adresów pozostaje w puli DHCP?",
+      "options": {
+        "A": "922",
+        "B": "920",
+        "C": "1022",
+        "D": "924"
+      },
+      "correct": "A",
+      "explanation": "1022 hostów − 100 = 922."
+    },
+    {
+      "question": "Podsieć /27 z 3 wykluczonymi adresami — ile adresów pozostaje w puli DHCP?",
+      "options": {
+        "A": "29",
+        "B": "25",
+        "C": "27",
+        "D": "30"
+      },
+      "correct": "C",
+      "explanation": "30 hostów − 3 = 27."
+    },
+    {
+      "question": "Jakich portów UDP używa DHCPv4?",
+      "options": {
+        "A": "Serwer 546, klient 547",
+        "B": "Serwer 67, klient 68",
+        "C": "Serwer 53, klient 53",
+        "D": "Serwer 68, klient 67"
+      },
+      "correct": "B",
+      "explanation": "546/547 to DHCPv6."
+    },
+    {
+      "question": "Jakich portów UDP używa DHCPv6?",
+      "options": {
+        "A": "Klient 546, serwer 547",
+        "B": "Klient 5353, serwer 53",
+        "C": "Klient 68, serwer 67",
+        "D": "Klient 547, serwer 546"
+      },
+      "correct": "A",
+      "explanation": "Multicast ff02::1:2."
+    },
+    {
+      "question": "Na jaki adres wysyłany jest DHCPDISCOVER?",
+      "options": {
+        "A": "Adres bramy",
+        "B": "224.0.0.1",
+        "C": "Adres serwera DNS",
+        "D": "255.255.255.255"
+      },
+      "correct": "D",
+      "explanation": "Klient nie zna serwera ani swojego adresu (źródło 0.0.0.0)."
+    },
+    {
+      "question": "Dlaczego DHCPREQUEST w DORA jest wysyłany broadcastem?",
+      "options": {
+        "A": "Aby ominąć firewall",
+        "B": "Bo klient nie zna MAC serwera",
+        "C": "Aby wszystkie serwery wiedziały, którą ofertę klient przyjął",
+        "D": "Bo unicast jest zabroniony w DHCP"
+      },
+      "correct": "C",
+      "explanation": "Inne serwery zwalniają zaproponowane adresy."
+    },
+    {
+      "question": "Jak klient odnawia dzierżawę po T1?",
+      "options": {
+        "A": "Wysyła RELEASE",
+        "B": "Wysyła DHCPREQUEST unicastem do serwera, który przydzielił adres",
+        "C": "Czeka na koniec dzierżawy",
+        "D": "Wysyła DISCOVER broadcastem"
+      },
+      "correct": "B",
+      "explanation": "Po T2 — broadcastem do dowolnego serwera."
+    },
+    {
+      "question": "Co musi zrobić klient po wygaśnięciu dzierżawy bez odnowienia?",
+      "options": {
+        "A": "Zrestartować system",
+        "B": "Używać adresu dalej",
+        "C": "Przestać używać adresu i rozpocząć DORA od nowa",
+        "D": "Przejść na adres 169.254.0.1 na stałe"
+      },
+      "correct": "C",
+      "explanation": "Połączenia zostaną zerwane."
+    },
+    {
+      "question": "Co oznacza adres 169.254.x.x na kliencie?",
+      "options": {
+        "A": "Brak odpowiedzi DHCP — adres APIPA/link-local",
+        "B": "Adres multicast",
+        "C": "Adres bramy",
+        "D": "Poprawny adres z DHCP"
+      },
+      "correct": "A",
+      "explanation": "Sprawdź łączność z serwerem DHCP lub relay."
+    },
+    {
+      "question": "Do czego służy DHCPDECLINE?",
+      "options": {
+        "A": "Serwer odmawia przydziału",
+        "B": "Klient zwalnia adres",
+        "C": "Klient prosi o dłuższą dzierżawę",
+        "D": "Klient informuje, że zaproponowany adres jest już używany (konflikt)"
+      },
+      "correct": "D",
+      "explanation": "Wykrycie przez ARP probe."
+    },
+    {
+      "question": "Kiedy serwer wysyła DHCPNAK?",
+      "options": {
+        "A": "Co T1",
+        "B": "Gdy przydziela adres",
+        "C": "Gdy klient zwalnia adres",
+        "D": "Gdy żądany adres jest niepoprawny dla tej sieci lub niedostępny"
+      },
+      "correct": "D",
+      "explanation": "Np. po przeniesieniu laptopa do innej podsieci."
+    },
+    {
+      "question": "Co robi DHCP relay (ip helper-address)?",
+      "options": {
+        "A": "Przekazuje broadcast DHCP klienta unicastem do serwera w innej podsieci",
+        "B": "Tłumaczy adresy NAT",
+        "C": "Blokuje rogue DHCP",
+        "D": "Przydziela adresy zamiast serwera"
+      },
+      "correct": "A",
+      "explanation": "Ustawia giaddr."
+    },
+    {
+      "question": "Do czego serwer DHCP używa pola giaddr?",
+      "options": {
+        "A": "Jako bramy domyślnej klienta",
+        "B": "Do wyboru puli właściwej dla podsieci klienta",
+        "C": "Jako adresu klienta",
+        "D": "Do szyfrowania odpowiedzi"
+      },
+      "correct": "B",
+      "explanation": "giaddr = adres interfejsu relay."
+    },
+    {
+      "question": "Co zawiera opcja 82?",
+      "options": {
+        "A": "Nazwę hosta klienta",
+        "B": "Adres DNS",
+        "C": "Informacje agenta relay, np. port i VLAN klienta",
+        "D": "Czas dzierżawy"
+      },
+      "correct": "C",
+      "explanation": "Relay Agent Information."
+    },
+    {
+      "question": "Co robi DHCP snooping na portach untrusted?",
+      "options": {
+        "A": "Szyfruje DHCP",
+        "B": "Odrzuca odpowiedzi serwera DHCP (OFFER/ACK) z tych portów",
+        "C": "Blokuje cały ruch DHCP",
+        "D": "Przydziela adresy"
+      },
+      "correct": "B",
+      "explanation": "Trust tylko na uplinkach."
+    },
+    {
+      "question": "Który mechanizm korzysta z tabeli powiązań DHCP snooping, by blokować ARP spoofing?",
+      "options": {
+        "A": "BPDU Guard",
+        "B": "Storm control",
+        "C": "Dynamic ARP Inspection (DAI)",
+        "D": "RA Guard"
+      },
+      "correct": "C",
+      "explanation": "Także IP Source Guard."
+    },
+    {
+      "question": "Na czym polega DHCP starvation?",
+      "options": {
+        "A": "Na wyczerpaniu puli przez masowe DISCOVER z losowych MAC",
+        "B": "Na podmianie bramy w OFFER",
+        "C": "Na zalewaniu BPDU",
+        "D": "Na przejęciu DNS"
+      },
+      "correct": "A",
+      "explanation": "Obrona: limit rate, port security."
+    },
+    {
+      "question": "Jaki skutek ma rogue DHCP podający fałszywą bramę?",
+      "options": {
+        "A": "Wyłącza się STP",
+        "B": "Klienci tracą tylko DNS",
+        "C": "Nic — klient weryfikuje serwer",
+        "D": "Ruch klientów przechodzi przez urządzenie napastnika (MITM)"
+      },
+      "correct": "D",
+      "explanation": "DHCP nie ma uwierzytelniania serwera."
+    },
+    {
+      "question": "Czym jest rezerwacja DHCP?",
+      "options": {
+        "A": "Wykluczeniem adresu z puli",
+        "B": "Stałym adresem przydzielanym zawsze temu samemu klientowi (MAC/Client ID)",
+        "C": "Dzierżawą bez końca dla wszystkich",
+        "D": "Adresem statycznym wpisanym ręcznie na hoście"
+      },
+      "correct": "B",
+      "explanation": "Centralne zarządzanie, stały adres."
+    },
+    {
+      "question": "Dlaczego adres statyczny nie powinien należeć do puli DHCP?",
+      "options": {
+        "A": "Bo statyczne adresy muszą być parzyste",
+        "B": "Bo DHCP go zablokuje",
+        "C": "Bo inaczej nie zadziała DNS",
+        "D": "Serwer może przydzielić go komuś innemu, powodując konflikt"
+      },
+      "correct": "D",
+      "explanation": "Wyklucz go lub użyj rezerwacji."
+    },
+    {
+      "question": "Co to jest SLAAC?",
+      "options": {
+        "A": "Samodzielne tworzenie adresu IPv6 przez hosta z prefiksu ogłoszonego w RA",
+        "B": "Odmiana ARP",
+        "C": "Protokół routingu",
+        "D": "Stanowy DHCPv6"
+      },
+      "correct": "A",
+      "explanation": "RFC 4862."
+    },
+    {
+      "question": "Jakiego typu wiadomość ICMPv6 to Router Advertisement?",
+      "options": {
+        "A": "135",
+        "B": "136",
+        "C": "134",
+        "D": "133"
+      },
+      "correct": "C",
+      "explanation": "133 RS, 135 NS, 136 NA."
+    },
+    {
+      "question": "Co oznacza flaga M=1 w RA?",
+      "options": {
+        "A": "Adresy należy pobrać ze stanowego DHCPv6",
+        "B": "Host ma użyć SLAAC",
+        "C": "Router jest bramą domyślną",
+        "D": "DNS jest w RA"
+      },
+      "correct": "A",
+      "explanation": "Managed address configuration."
+    },
+    {
+      "question": "Co oznacza flaga O=1 w RA?",
+      "options": {
+        "A": "Adres z DHCPv6",
+        "B": "Router jest wyłączony",
+        "C": "Inne parametry (np. DNS) należy pobrać z DHCPv6",
+        "D": "Prefiks jest tymczasowy"
+      },
+      "correct": "C",
+      "explanation": "Other configuration — bezstanowy DHCPv6."
+    },
+    {
+      "question": "Skąd host IPv6 bierze bramę domyślną?",
+      "options": {
+        "A": "Z DHCPv6 opcji router",
+        "B": "Z Router Advertisement (adres link-local routera)",
+        "C": "Z ARP",
+        "D": "Z DNS"
+      },
+      "correct": "B",
+      "explanation": "DHCPv6 nie przekazuje bramy."
+    },
+    {
+      "question": "Czym jest RDNSS?",
+      "options": {
+        "A": "Odmianą DHCPv6",
+        "B": "Protokołem relay",
+        "C": "Rekordem DNS dla routera",
+        "D": "Opcją RA przekazującą adresy serwerów DNS"
+      },
+      "correct": "D",
+      "explanation": "RFC 8106."
+    },
+    {
+      "question": "Jaką długość prefiksu wymaga SLAAC?",
+      "options": {
+        "A": "/48",
+        "B": "/56",
+        "C": "/128",
+        "D": "/64"
+      },
+      "correct": "D",
+      "explanation": "Identyfikator interfejsu ma 64 bity."
+    },
+    {
+      "question": "Dlaczego współczesne systemy unikają EUI-64 w adresach globalnych?",
+      "options": {
+        "A": "Bo nie działa z /64",
+        "B": "Bo wymaga DHCPv6",
+        "C": "Bo zdradza MAC i umożliwia śledzenie urządzenia",
+        "D": "Bo jest za długi"
+      },
+      "correct": "C",
+      "explanation": "Adresy RFC 7217/8981."
+    },
+    {
+      "question": "Co sprawdza host przed użyciem nowego adresu IPv6?",
+      "options": {
+        "A": "Czy router ma NAT",
+        "B": "Czy adres nie jest zajęty (DAD przez Neighbor Solicitation)",
+        "C": "Czy MTU wynosi 1500",
+        "D": "Czy DNS odpowiada"
+      },
+      "correct": "B",
+      "explanation": "Duplicate Address Detection."
+    },
+    {
+      "question": "Co chroni przed fałszywymi Router Advertisement?",
+      "options": {
+        "A": "RA Guard na przełącznikach",
+        "B": "DHCP snooping dla IPv4",
+        "C": "Port security",
+        "D": "BPDU Guard"
+      },
+      "correct": "A",
+      "explanation": "Plus DHCPv6 Guard."
+    },
+    {
+      "question": "Dlaczego sieć „tylko IPv4” wymaga RA Guard?",
+      "options": {
+        "A": "Nie wymaga",
+        "B": "Bo hosty mają IPv6 włączone domyślnie i przyjmą fałszywe RA",
+        "C": "Bo IPv4 używa RA",
+        "D": "Bo RA zastępuje DHCP w IPv4"
+      },
+      "correct": "B",
+      "explanation": "Napastnik może przejąć ruch IPv6."
+    },
+    {
+      "question": "Który system mobilny nie obsługuje stanowego DHCPv6?",
+      "options": {
+        "A": "macOS",
+        "B": "iOS",
+        "C": "Android",
+        "D": "Windows 11"
+      },
+      "correct": "C",
+      "explanation": "W sieciach z telefonami potrzebny SLAAC."
+    },
+    {
+      "question": "Jak nazywa się identyfikator klienta w DHCPv6?",
+      "options": {
+        "A": "DUID",
+        "B": "OUI",
+        "C": "giaddr",
+        "D": "chaddr"
+      },
+      "correct": "A",
+      "explanation": "DHCP Unique Identifier."
+    },
+    {
+      "question": "Jaka sekwencja komunikatów odpowiada DORA w DHCPv6?",
+      "options": {
+        "A": "Hello, Update, Ack",
+        "B": "Discover, Offer, Request, Ack",
+        "C": "Query, Response",
+        "D": "Solicit, Advertise, Request, Reply"
+      },
+      "correct": "D",
+      "explanation": "SARR."
+    },
+    {
+      "question": "Skąd kontener Dockera w sieci bridge bierze adres IP?",
+      "options": {
+        "A": "Z DNS",
+        "B": "Z wbudowanego IPAM Dockera, bez DHCP",
+        "C": "Z serwera DHCP sieci firmowej",
+        "D": "Z SLAAC"
+      },
+      "correct": "B",
+      "explanation": "Pody w K8s — z IPAM CNI."
+    },
+    {
+      "question": "Dlaczego serwery infrastruktury (DNS, DHCP, bramy) mają adresy statyczne?",
+      "options": {
+        "A": "Bo DHCP ich nie obsługuje",
+        "B": "Bo statyczne adresy są szybsze",
+        "C": "Bo tak wymaga TCP",
+        "D": "Bo inni od nich zależą, a muszą działać nawet bez DHCP"
+      },
+      "correct": "D",
+      "explanation": "Udokumentowane w IPAM."
+    },
+    {
+      "question": "Co sygnalizuje w logach naruszenie DHCP snooping na porcie untrusted?",
+      "options": {
+        "A": "Odpowiedź serwera DHCP z portu, gdzie nie powinno być serwera — możliwy rogue DHCP",
+        "B": "Zmianę root bridge",
+        "C": "Normalny przydział adresu",
+        "D": "Odnowienie dzierżawy"
+      },
+      "correct": "A",
+      "explanation": "Alert w SIEM."
+    },
+    {
+      "question": "Jakie opcje DHCP wskazują serwer i plik rozruchowy PXE?",
+      "options": {
+        "A": "82 i 119",
+        "B": "3 i 6",
+        "C": "66 i 67",
+        "D": "51 i 53"
+      },
+      "correct": "C",
+      "explanation": "TFTP server name, bootfile name."
+    },
+    {
+      "question": "Co może się stać, gdy dwa niezależne serwery DHCP obsługują nakładające się pule w jednym VLAN-ie?",
+      "options": {
+        "A": "Szybsze przydzielanie",
+        "B": "Automatyczny failover",
+        "C": "Konflikty adresów — ten sam adres dla dwóch klientów",
+        "D": "Nic"
+      },
+      "correct": "C",
+      "explanation": "Używaj failoveru lub rozłącznych zakresów."
+    },
+    {
+      "question": "Co robi ip dhcp snooping limit rate 15?",
+      "options": {
+        "A": "Ustawia 15 serwerów zaufanych",
+        "B": "Skraca dzierżawę do 15 minut",
+        "C": "Ogranicza liczbę klientów do 15",
+        "D": "Ogranicza liczbę pakietów DHCP na porcie do 15 na sekundę"
+      },
+      "correct": "D",
+      "explanation": "Przekroczenie → err-disable."
+    },
+    {
+      "question": "Dlaczego nie warto zapisywać w konfiguracji aplikacji adresu IP hosta otrzymanego z DHCP?",
+      "options": {
+        "A": "Bo Java nie obsługuje IP",
+        "B": "Bo po nowej dzierżawie adres może się zmienić",
+        "C": "Bo DNS tego zabrania",
+        "D": "Bo adres jest tajny"
+      },
+      "correct": "B",
+      "explanation": "Używaj nazw."
+    },
+    {
+      "question": "Jakie źródło danych najlepiej odpowie na pytanie „kto miał dany adres IP o danej godzinie”?",
+      "options": {
+        "A": "Logi serwera DHCP i powiązania DHCP snooping (z NAC)",
+        "B": "Logi STP",
+        "C": "Tablica routingu",
+        "D": "Konfiguracja VLAN"
+      },
+      "correct": "A",
+      "explanation": "Trzymaj je w SIEM."
+    },
+    {
+      "question": "Który komunikat wysyła host ze statycznym adresem, by pobrać tylko inne parametry (DNS, domena)?",
+      "options": {
+        "A": "DHCPDECLINE",
+        "B": "DHCPDISCOVER",
+        "C": "DHCPRELEASE",
+        "D": "DHCPINFORM"
+      },
+      "correct": "D",
+      "explanation": "W IPv6 — Information-request."
+    },
+    {
+      "question": "Co powinien zawierać firewall między relay a serwerem DHCP?",
+      "options": {
+        "A": "Zezwolenie na UDP 67 (i odpowiedzi) między adresami relay a serwerami",
+        "B": "Zezwolenie na TCP 53",
+        "C": "Zezwolenie na ICMP tylko",
+        "D": "Blokadę UDP 67"
+      },
+      "correct": "A",
+      "explanation": "Inaczej „DHCP działa tylko w jednym VLAN-ie”."
+    },
+    {
+      "question": "Jaki adres SLAAC (EUI-64) utworzy karta o MAC 00:1a:2b:3c:4d:5e w sieci 2001:db8:10::/64?",
+      "options": {
+        "A": "2001:db8:10::001a:2b3c:4d5e",
+        "B": "2001:db8:10::21a:2bfe:ff3c:4d5e",
+        "C": "2001:db8:10::21a:2bff:fe3c:4d5e",
+        "D": "fe80::21a:2bff:fe3c:4d5e"
+      },
+      "correct": "C",
+      "explanation": "Prefiks 2001:db8:10::/64 + identyfikator EUI-64 21a:2bff:fe3c:4d5e."
+    },
+    {
+      "question": "Jaki adres SLAAC (EUI-64) utworzy karta o MAC 52:54:00:12:34:56 w sieci 2001:db8:20::/64?",
+      "options": {
+        "A": "2001:db8:20::5254:0012:3456",
+        "B": "2001:db8:20::5054:ff:fe12:3456",
+        "C": "fe80::5054:ff:fe12:3456",
+        "D": "2001:db8:20::5054:fe:ff12:3456"
+      },
+      "correct": "B",
+      "explanation": "Prefiks 2001:db8:20::/64 + identyfikator EUI-64 5054:ff:fe12:3456."
+    },
+    {
+      "question": "Jaki adres SLAAC (EUI-64) utworzy karta o MAC a4:83:e7:01:02:03 w sieci 2001:db8:aa::/64?",
+      "options": {
+        "A": "2001:db8:aa::a683:e7fe:ff01:203",
+        "B": "2001:db8:aa::a483:e701:0203",
+        "C": "2001:db8:aa::a683:e7ff:fe01:203",
+        "D": "fe80::a683:e7ff:fe01:203"
+      },
+      "correct": "C",
+      "explanation": "Prefiks 2001:db8:aa::/64 + identyfikator EUI-64 a683:e7ff:fe01:203."
+    },
+    {
+      "question": "Jaki adres SLAAC (EUI-64) utworzy karta o MAC 08:00:27:4e:66:a1 w sieci fd00:1::/64?",
+      "options": {
+        "A": "fd00:1::0800:274e:66a1",
+        "B": "fd00:1::a00:27ff:fe4e:66a1",
+        "C": "fd00:1::a00:27fe:ff4e:66a1",
+        "D": "fe80::a00:27ff:fe4e:66a1"
+      },
+      "correct": "B",
+      "explanation": "Prefiks fd00:1::/64 + identyfikator EUI-64 a00:27ff:fe4e:66a1."
+    },
+    {
+      "question": "Jaki stan ma klient DHCP, który po ponownym podłączeniu prosi o swój poprzedni adres?",
+      "options": {
+        "A": "INIT-REBOOT",
+        "B": "REBINDING",
+        "C": "BOUND",
+        "D": "SELECTING"
+      },
+      "correct": "A",
+      "explanation": "Wysyła REQUEST o poprzedni adres; może dostać NAK."
+    },
+    {
+      "question": "Jaki stan ma klient między T1 a T2?",
+      "options": {
+        "A": "INIT",
+        "B": "REBINDING",
+        "C": "SELECTING",
+        "D": "RENEWING"
+      },
+      "correct": "D",
+      "explanation": "Unicast do własnego serwera."
+    },
+    {
+      "question": "Jaki stan ma klient między T2 a końcem dzierżawy?",
+      "options": {
+        "A": "BOUND",
+        "B": "REBINDING",
+        "C": "RENEWING",
+        "D": "INIT-REBOOT"
+      },
+      "correct": "B",
+      "explanation": "Broadcast do dowolnego serwera."
+    },
+    {
+      "question": "Co sprawdza klient po otrzymaniu DHCPACK, zanim użyje adresu?",
+      "options": {
+        "A": "Czy adres nie jest zajęty (ARP probe)",
+        "B": "Czy serwer ma certyfikat",
+        "C": "Czy DNS działa",
+        "D": "Czy brama ma NAT"
+      },
+      "correct": "A",
+      "explanation": "Przy konflikcie wysyła DECLINE."
+    },
+    {
+      "question": "Jaką podatność opisuje „TunnelVision” (CVE-2024-3661)?",
+      "options": {
+        "A": "Złamanie WPA3",
+        "B": "Atak na STP",
+        "C": "Przepełnienie bufora w DNS",
+        "D": "Rogue DHCP z opcją 121 kieruje ruch poza tunel VPN"
+      },
+      "correct": "D",
+      "explanation": "Obrona: klient VPN odporny na trasy z DHCP."
+    },
+    {
+      "question": "Co oznacza w ipconfig /all pole „Lease Expires”?",
+      "options": {
+        "A": "Datę instalacji karty",
+        "B": "Czas życia rekordu DNS",
+        "C": "Moment wygaśnięcia dzierżawy, jeśli nie zostanie odnowiona",
+        "D": "Termin ważności certyfikatu"
+      },
+      "correct": "C",
+      "explanation": "Odnowienie zwykle następuje w T1."
+    }
+  ]
 }
