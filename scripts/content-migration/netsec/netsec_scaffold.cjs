@@ -1,4 +1,4 @@
-// Synchronizuje tor Sieci (CourseTrack.NETWORKING) z planem plan_part*.cjs:
+// Synchronizuje tor Sieci i Cyberbezpieczenstwo (CourseTrack.NETWORKING) z planem plan_part*.cjs:
 // - blok rozdzialow NETWORKING w ChapterSeedData.java (miedzy znacznikami),
 // - puste pliki lekcji w src/main/resources/content/_ns_*/ (istniejacej tresci nie nadpisuje,
 //   usuwa tylko PUSTE pliki lekcji, ktorych nie ma juz w planie),
@@ -48,10 +48,11 @@ const END = '            // ===== KONIEC BLOKU SIECI =====';
 let seed = fs.readFileSync(seedFile, 'utf8');
 const nl = seed.includes('\r\n') ? '\r\n' : '\n';
 const header = [
-  '            // ===== PIATY BLOK PLATFORMY: SIECI (2026-11-10) =====',
-  '            // Sieci komputerowe dla Java Backend Developera: modele OSI i TCP/IP, Ethernet, IP i routing,',
-  '            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie;',
-  '            // czesc II: infrastruktura i operacje (CompTIA Network+) oraz security defensywne (Security+, CySA+).',
+  '            // ===== PIATY BLOK PLATFORMY: SIECI I CYBERBEZPIECZENSTWO (2026-11-13) =====',
+  '            // Czesc I: sieci dla Java Backend Developera (OSI/TCP-IP, Ethernet i switching, IP i routing, TCP/UDP/QUIC,',
+  '            // DNS, HTTP, TLS i PKI, Linux, Docker/Kubernetes/AWS, proxy, sieci w Javie). Czesc II: infrastruktura,',
+  '            // operacje i automatyzacja (Network+, CCNA v2.0). Czesc III: cyberbezpieczenstwo blue team (Security+ V8,',
+  '            // CySA+ V4, SecAI+, BTL1, SC-200): Windows/AD, Linux, SIEM, detection engineering, DFIR, AppSec, DevSecOps.',
   '            // Rozdzialy koncza sie lekcja Boss (laboratorium integrujace). Struktura generowana z',
   '            // scripts/content-migration/netsec/plan_part*.cjs (netsec_scaffold.cjs) - nie edytuj recznie.',
 ];
@@ -102,7 +103,7 @@ if (fs.existsSync(planFile)) {
   const md = fs.readFileSync(planFile, 'utf8');
   const s = md.indexOf('<!-- LEKCJE:START -->'), e = md.indexOf('<!-- LEKCJE:END -->');
   if (s >= 0 && e > s) {
-    const strip = (t) => t.replace(/^(Sieci|Security) - /, '');
+    const strip = (t) => t.replace(/^(Sieci|Cyber) - /, '');
     const body = plan.map(([slug, title, goal, lessons], ci) => [
       `### Rozdział ${String(ci).padStart(2, '0')} — ${strip(title)} (\`${slug}\`)`, '', `**Cel:** ${goal}`, '',
       '| # | Slug | Temat | Poziom | Priorytet | Zakres | Praktyka |', '|---|---|---|---|---|---|---|',

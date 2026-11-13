@@ -1116,15 +1116,16 @@ public final class ChapterSeedData {
                     "01_FinalTraining"
             ), CourseTrack.OCP),
 
-            // ===== PIATY BLOK PLATFORMY: SIECI (2026-11-10) =====
-            // Sieci komputerowe dla Java Backend Developera: modele OSI i TCP/IP, Ethernet, IP i routing,
-            // TCP/UDP/QUIC, DNS, HTTP, TLS i PKI, Linux networking, Docker/Kubernetes/AWS, proxy i sieci w Javie;
-            // czesc II: infrastruktura i operacje (CompTIA Network+) oraz security defensywne (Security+, CySA+).
+            // ===== PIATY BLOK PLATFORMY: SIECI I CYBERBEZPIECZENSTWO (2026-11-13) =====
+            // Czesc I: sieci dla Java Backend Developera (OSI/TCP-IP, Ethernet i switching, IP i routing, TCP/UDP/QUIC,
+            // DNS, HTTP, TLS i PKI, Linux, Docker/Kubernetes/AWS, proxy, sieci w Javie). Czesc II: infrastruktura,
+            // operacje i automatyzacja (Network+, CCNA v2.0). Czesc III: cyberbezpieczenstwo blue team (Security+ V8,
+            // CySA+ V4, SecAI+, BTL1, SC-200): Windows/AD, Linux, SIEM, detection engineering, DFIR, AppSec, DevSecOps.
             // Rozdzialy koncza sie lekcja Boss (laboratorium integrujace). Struktura generowana z
             // scripts/content-migration/netsec/plan_part*.cjs (netsec_scaffold.cjs) - nie edytuj recznie.
-            new ChapterSeed("_ns_00_wprowadzenie", "Sieci i Security - jak działa ten tor", List.of(
+            new ChapterSeed("_ns_00_wprowadzenie", "Sieci i Cyberbezpieczeństwo - jak działa ten tor", List.of(
                     "01_TrackMapAndLearningCycle", "02_LabEnvironmentSetup", "03_EthicsScopeAndLaw",
-                    "04_JourneyOfOneRequest"
+                    "04_JourneyOfOneRequest", "05_CertificationRoadmap"
             ), CourseTrack.NETWORKING),
 
             new ChapterSeed("_ns_01_fundamenty_sieci", "Sieci - fundamenty i modele warstwowe", List.of(
@@ -1133,18 +1134,22 @@ public final class ChapterSeedData {
                     "06_PerformanceMetrics", "07_FirstPacketCapture", "08_BossPacketJourney"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_02_ethernet_lan", "Sieci - Ethernet i sieć lokalna", List.of(
+            new ChapterSeed("_ns_02_ethernet_lan", "Sieci - Ethernet, switching i sieć lokalna", List.of(
                     "01_EthernetFramesAndMtu", "02_MacAddressesAndSwitching", "03_ArpAndNeighborDiscovery",
-                    "04_UnicastBroadcastMulticast", "05_VlanTrunkingAndStp", "06_DhcpAndSlaac",
-                    "07_WifiForDevelopers", "08_DebugLanProblems"
+                    "04_UnicastBroadcastMulticast", "05_VlanTrunkingAndStp", "06_CiscoIosCliEssentials",
+                    "07_StpRstpDeepDive", "08_EtherChannelLacp", "09_LldpCdpAndL2Discovery",
+                    "10_DhcpAndSlaac", "11_WifiForDevelopers", "12_WirelessArchitecturesAndControllers",
+                    "13_DebugLanProblems"
             ), CourseTrack.NETWORKING),
 
             new ChapterSeed("_ns_03_ip_i_routing", "Sieci - adresacja IP i routing", List.of(
                     "01_Ipv4HeaderAndAddressing", "02_BinaryForNetworkers", "03_SubnetMaskFromZero",
                     "04_CidrAndSubnetting", "05_SubnettingDrill", "06_SpecialAndPrivateAddresses",
-                    "07_RoutingTablesAndDefaultGateway", "08_NatPatAndPortForwarding",
-                    "09_IcmpPingTraceroute", "10_FragmentationAndPmtud", "11_Ipv6InDepth",
-                    "12_DualStackAndTransition", "13_DynamicRoutingAndBgp", "14_BossWhereDidMyPacketGo"
+                    "07_RoutingTablesAndDefaultGateway", "08_StaticRoutingAndFloatingRoutes",
+                    "09_NatPatAndPortForwarding", "10_IcmpPingTraceroute", "11_FragmentationAndPmtud",
+                    "12_Ipv6InDepth", "13_DualStackAndTransition", "14_OspfSingleArea",
+                    "15_FirstHopRedundancyHsrpVrrp", "16_DynamicRoutingAndBgp",
+                    "17_RoutingSecurityRpkiAndBgpIncidents", "18_BossWhereDidMyPacketGo"
             ), CourseTrack.NETWORKING),
 
             new ChapterSeed("_ns_04_tcp_udp_quic", "Sieci - TCP, UDP i QUIC", List.of(
@@ -1217,89 +1222,224 @@ public final class ChapterSeedData {
                     "13_BossDistributedFailureLab"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_13_infrastruktura_i_wan", "Sieci - infrastruktura fizyczna, Wi-Fi i WAN", List.of(
-                    "01_CablingAndConnectors", "02_WirelessStandardsAndDesign",
-                    "03_WirelessSecurityAndEnterpriseAuth", "04_WanTechnologiesAndSdWan",
-                    "05_VpnTypesIpsecWireguard", "06_DataCenterSdnAndOverlays", "07_BossDesignABranchNetwork"
+            new ChapterSeed("_ns_13_infrastruktura_i_wan", "Sieci - infrastruktura przedsiębiorstwa: okablowanie, Wi-Fi, WAN i data center", List.of(
+                    "01_CablingAndConnectors", "02_PowerCoolingAndRackDesign",
+                    "03_WirelessStandardsAndDesign", "04_WirelessSecurityAndEnterpriseAuth",
+                    "05_NetworkAccessControlAndPosture", "06_WanTechnologiesAndSdWan",
+                    "07_VpnTypesIpsecWireguard", "08_DataCenterSdnAndOverlays", "09_QosForVoiceVideoAndApps",
+                    "10_BossDesignABranchNetwork"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_14_operacje_sieci", "Sieci - operacje, monitoring i troubleshooting", List.of(
+            new ChapterSeed("_ns_14_operacje_sieci", "Sieci - operacje, automatyzacja, AI i troubleshooting", List.of(
                     "01_SnmpSyslogAndNetflow", "02_MonitoringAndAlerting",
                     "03_DocumentationAndChangeManagement", "04_HighAvailabilityAndDisasterRecovery",
-                    "05_CompTiaTroubleshootingMethodology", "06_BossNetworkOperationsShift"
+                    "05_NetworkAutomationWithPython", "06_NetconfRestconfYangAndTelemetry",
+                    "07_AnsibleAndNetworkAsCode", "08_AiAssistedNetworkOperations",
+                    "09_CompTiaTroubleshootingMethodology", "10_TroubleshootingCablingAndInterfaces",
+                    "11_TroubleshootingNetworkServices", "12_TroubleshootingWirelessAndPerformance",
+                    "13_BossNetworkOperationsShift"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_15_fundamenty_security", "Security - fundamenty bezpieczeństwa", List.of(
+            new ChapterSeed("_ns_15_fundamenty_security", "Cyber - fundamenty bezpieczeństwa", List.of(
                     "01_CiaAaaAndSecurityPrinciples", "02_SecurityControlsTaxonomy",
-                    "03_ThreatActorsAndAttackSurface", "04_ThreatModelingStrideAttack",
-                    "05_ZeroTrustArchitecture", "06_FrameworksAndLawPl"
+                    "03_ThreatActorsAndAttackSurface", "04_AttackVectorsAndSocialEngineering",
+                    "05_VulnerabilityClassesOverview", "06_ThreatModelingStrideAttack",
+                    "07_ZeroTrustArchitecture", "08_ChangeManagementAsSecurityControl",
+                    "09_PhysicalSecurityControls", "10_FrameworksAndLawPl", "11_BossThreatModelOfJavaService"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_16_tozsamosc_i_dostep", "Security - tożsamość i zarządzanie dostępem", List.of(
+            new ChapterSeed("_ns_16_tozsamosc_i_dostep", "Cyber - tożsamość i zarządzanie dostępem", List.of(
                     "01_AuthenticationFactorsAndMfa", "02_PasskeysAndFido2", "03_SsoSamlOidcOauth2",
-                    "04_AccessControlModels", "05_DirectoryServicesAndKerberos",
-                    "06_PrivilegedAccessAndSecrets"
+                    "04_SpringSecurityAuthenticationDeepDive", "05_AccessControlModels",
+                    "06_DirectoryServicesAndKerberos", "07_EntraIdAndConditionalAccess",
+                    "08_IdentityAttacksDetection", "09_NonHumanIdentitiesAndWorkloadIdentity",
+                    "10_PrivilegedAccessAndSecrets", "11_IdentityLifecycleAndAccessReviews",
+                    "12_BossIdentityCompromise"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_17_kryptografia_stosowana", "Security - kryptografia stosowana", List.of(
-                    "01_HashingSaltingAndPasswordStorage", "02_EncryptionAtRestAndInTransit",
-                    "03_KeyManagementHsmKms", "04_SignaturesIntegrityAndCodeSigning",
-                    "05_PostQuantumReadiness"
+            new ChapterSeed("_ns_17_kryptografia_stosowana", "Cyber - kryptografia stosowana", List.of(
+                    "01_SymmetricCryptoAndAeadModes", "02_AsymmetricCryptoAndKeyExchange",
+                    "03_RandomnessMacsAndKdfs", "04_HashingSaltingAndPasswordStorage",
+                    "05_EncryptionAtRestAndInTransit", "06_DataObfuscationTokenizationMasking",
+                    "07_KeyManagementHsmKms", "08_CertificateLifecycleAutomation",
+                    "09_SignaturesIntegrityAndCodeSigning", "10_CryptoFailuresInJavaCodeReview",
+                    "11_PostQuantumReadiness", "12_BossCryptoReview"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_18_zagrozenia_sieciowe_i_obrona", "Security - zagrożenia sieciowe: wykrywanie i obrona", List.of(
-                    "01_ThreatLandscapeOverview", "02_Layer2Protections", "03_DnsThreatsAndProtections",
-                    "04_DdosResilience", "05_ReconnaissanceDetection", "06_MitmAndTlsInterceptionDefense",
-                    "07_WirelessThreatsDefense", "08_BossDefendTheLab"
+            new ChapterSeed("_ns_18_windows_i_active_directory", "Cyber - Windows i Active Directory od strony obrońcy", List.of(
+                    "01_WindowsSecurityArchitecture", "02_WindowsEventLogsForDefenders",
+                    "03_SysmonDeployAndTune", "04_PowerShellSecurityAndLogging",
+                    "05_ActiveDirectoryArchitectureForDefenders", "06_KerberosAndNtlmAttacksDetection",
+                    "07_AdHardeningTieringAndLaps", "08_AdCertificateServicesSecurity",
+                    "09_WindowsPersistenceAndLateralMovementDetection",
+                    "10_MicrosoftDefenderAndSentinelBasics", "11_BossDomainCompromise"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_19_architektura_bezpiecznej_sieci", "Security - architektura bezpiecznej sieci", List.of(
-                    "01_SegmentationAndDmz", "02_FirewallTypesAndRuleDesign", "03_IdsIpsSuricataAndZeek",
-                    "04_WafAndApiProtection", "05_SecureProtocolsChoice", "06_SecureRemoteAccessZtnaSase",
-                    "07_CloudSecurityArchitecture", "08_BossSecureArchitectureReview"
+            new ChapterSeed("_ns_19_linux_security_i_detekcja", "Cyber - Linux: bezpieczeństwo, telemetria i detekcja", List.of(
+                    "01_LinuxSecurityModelRefresher", "02_LinuxLoggingJournaldAndRsyslog",
+                    "03_AuditdRulesAndAnalysis", "04_EbpfRuntimeSecurityFalcoTetragon",
+                    "05_LinuxPersistenceDetection", "06_FileIntegrityMonitoring",
+                    "07_MandatoryAccessControlSelinuxApparmor", "08_BossCompromisedLinuxServer"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_20_hardening_i_podatnosci", "Security - hardening i zarządzanie podatnościami", List.of(
-                    "01_LinuxAndSshHardening", "02_ContainerAndKubernetesHardening",
-                    "03_VulnerabilityScanning", "04_CvssEpssKevPrioritization",
-                    "05_PatchAndRemediationProcess", "06_SupplyChainAndSbom",
-                    "07_BossVulnerabilityManagementCycle"
+            new ChapterSeed("_ns_20_zagrozenia_sieciowe_i_obrona", "Cyber - zagrożenia sieciowe: wykrywanie i obrona", List.of(
+                    "01_ThreatLandscapeOverview", "02_Layer2Protections", "03_VlanHoppingAndSwitchSecurity",
+                    "04_DnsThreatsAndProtections", "05_DdosResilience", "06_ReconnaissanceDetection",
+                    "07_MitmAndTlsInterceptionDefense", "08_WirelessThreatsDefense",
+                    "09_LateralMovementOnTheWire", "10_BossDefendTheLab"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_21_bezpieczenstwo_aplikacji_i_api", "Security - bezpieczeństwo aplikacji webowych i API", List.of(
-                    "01_OwaspTop10Overview", "02_InjectionPrevention", "03_XssCspAndOutputEncoding",
-                    "04_BrokenAccessControlBolaIdor", "05_AuthSessionAndJwtPitfalls",
-                    "06_SsrfAndEgressControl", "07_DeserializationAndFileUpload",
-                    "08_CorsRateLimitAndApiHardening", "09_SecurityTestingInCi", "10_BossSecureTheApi"
+            new ChapterSeed("_ns_21_architektura_bezpiecznej_sieci", "Cyber - architektura bezpieczeństwa: sieć, OT, IoT i urządzenia mobilne", List.of(
+                    "01_SegmentationAndDmz", "02_FirewallTypesAndRuleDesign", "03_AclDesignOnRoutersAndCloud",
+                    "04_IdsIpsSuricataAndZeek", "05_WafAndApiProtection", "06_SecureProtocolsChoice",
+                    "07_SecureRemoteAccessZtnaSase", "08_CloudSecurityArchitecture",
+                    "09_OtIcsAndScadaSecurity", "10_IotEmbeddedAndRtosSecurity",
+                    "11_MobileDeviceSecurityAndMdm", "12_VirtualizationAndInfrastructureSecurity",
+                    "13_BossSecureArchitectureReview"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_22_monitoring_i_soc", "Security - monitorowanie bezpieczeństwa i SOC", List.of(
-                    "01_LoggingStrategy", "02_SiemWazuhAndElastic", "03_DetectionEngineeringSigma",
-                    "04_NetworkSecurityMonitoring", "05_EndpointDetectionAndResponse",
-                    "06_AlertTriageAndSocWorkflow", "07_DeceptionAndCanaries", "08_BossSocShift"
+            new ChapterSeed("_ns_22_hardening_i_podatnosci", "Cyber - hardening i zarządzanie podatnościami", List.of(
+                    "01_SecureBaselinesCisAndScap", "02_LinuxAndSshHardening", "03_WindowsHardeningBaselines",
+                    "04_ContainerAndKubernetesHardening", "05_JvmAndSpringBootHardening",
+                    "06_VulnerabilityScanning", "07_AnalyzingScannerOutput", "08_CvssEpssKevPrioritization",
+                    "09_AttackSurfaceManagementAndExposure", "10_PatchAndRemediationProcess",
+                    "11_RemediationExceptionsAndReporting", "12_PenetrationTestReportsAndBugBounty",
+                    "13_BossVulnerabilityManagementCycle"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_23_analiza_zagrozen_i_threat_hunting", "Security - analiza zagrożeń i threat hunting", List.of(
-                    "01_ThreatIntelligence", "02_ThreatHuntingMethodology",
-                    "03_C2BeaconingAndExfiltrationDetection", "04_PhishingAndEmailSecurity",
-                    "05_LogAnalysisOfWebAttacks", "06_MalwareAnalysisBasics", "07_BossThreatHunt"
+            new ChapterSeed("_ns_23_bezpieczenstwo_aplikacji_i_api", "Cyber - bezpieczeństwo aplikacji webowych i API (OWASP 2025)", List.of(
+                    "01_OwaspTop10Overview", "02_SecureDesignAndAbuseCases", "03_InjectionPrevention",
+                    "04_XssCspAndOutputEncoding", "05_BrokenAccessControlBolaIdor",
+                    "06_AuthSessionAndJwtPitfalls", "07_SsrfAndEgressControl",
+                    "08_DeserializationAndFileUpload", "09_XxeAndParserSecurity",
+                    "10_SecurityMisconfigurationInSpring", "11_ExceptionalConditionsAndFailSecure",
+                    "12_SecurityLoggingAndAlertingInApps", "13_CorsRateLimitAndApiHardening",
+                    "14_GraphqlGrpcAndWebsocketSecurity", "15_SecurityTestingInCi", "16_BossSecureTheApi"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_24_reagowanie_na_incydenty", "Security - reagowanie na incydenty i informatyka śledcza", List.of(
-                    "01_IncidentResponseLifecycle", "02_PlaybooksAndRunbooks", "03_ContainmentAndEradication",
-                    "04_DigitalForensicsBasics", "05_RansomwareAndBackupStrategy",
-                    "06_ReportingAndCommunication", "07_BossFullIncident"
+            new ChapterSeed("_ns_24_devsecops_i_lancuch_dostaw", "Cyber - DevSecOps i bezpieczeństwo łańcucha dostaw", List.of(
+                    "01_SecureSdlcAndSsdf", "02_SupplyChainAndSbom", "03_MavenGradleDependencySecurity",
+                    "04_SbomCycloneDxAndVex", "05_SastDastIastRasp", "06_SecretsScanningAndManagement",
+                    "07_CiCdPipelineSecurity", "08_ContainerImageSecurityAndSigning",
+                    "09_IacScanningAndPolicyAsCode", "10_SlsaAndBuildIntegrity",
+                    "11_CraObligationsForSoftwareProducers", "12_BossSecurePipeline"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_25_grc_ryzyko_i_zgodnosc", "Security - ład, ryzyko i zgodność (GRC)", List.of(
+            new ChapterSeed("_ns_25_chmura_i_kubernetes_security", "Cyber - bezpieczeństwo chmury i Kubernetes w praktyce operacyjnej", List.of(
+                    "01_SharedResponsibilityAndCloudThreats", "02_AwsIamDeepDive",
+                    "03_CloudTrailAndCloudLogging", "04_GuardDutySecurityHubAndConfig",
+                    "05_DataSecurityInCloudStorage", "06_KubernetesRbacAndPodSecurity",
+                    "07_KubernetesAuditLogsAndRuntimeDetection", "08_ContainerAndCloudIncidentResponse",
+                    "09_MultiAccountGuardrailsAndLandingZone", "10_BossCloudBreach"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_26_logowanie_siem_i_soc", "Cyber - logowanie, SIEM i praca w SOC", List.of(
+                    "01_LoggingStrategy", "02_LogPipelinesAndNormalization", "03_SiemWazuhAndElastic",
+                    "04_SiemQueryLanguages", "05_SecurityOnionAndOpenSourceSoc",
+                    "06_NetworkSecurityMonitoring", "07_EndpointDetectionAndResponse",
+                    "08_UebaAndAnomalyDetection", "09_AlertTriageAndSocWorkflow", "10_SocMetricsAndReporting",
+                    "11_DeceptionAndCanaries", "12_BossSocShift"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_27_detection_engineering", "Cyber - detection engineering", List.of(
+                    "01_DetectionEngineeringLifecycle", "02_AttackFrameworkForDetection",
+                    "03_DetectionEngineeringSigma", "04_YaraRulesForDefenders",
+                    "05_SuricataAndSnortRuleWriting", "06_DetectionAsCode",
+                    "07_TestingDetectionsWithAtomicRedTeam", "08_TuningAndFalsePositiveManagement",
+                    "09_ApplicationLayerDetectionsForJava", "10_BossDetectionCoverageSprint"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_28_analiza_ruchu_i_nsm", "Cyber - analiza ruchu sieciowego i network forensics", List.of(
+                    "01_WiresharkForSecurityAnalysts", "02_ZeekLogsDeepDive",
+                    "03_SuricataEveAndAlertAnalysis", "04_TlsFingerprintingJa4AndEncryptedTraffic",
+                    "05_DnsAnalyticsTunnelingAndDga", "06_C2BeaconingAndExfiltrationDetection",
+                    "07_NetflowBasedDetection", "08_PcapCarvingAndFileExtraction",
+                    "09_BossNetworkForensicsCase"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_29_threat_intelligence", "Cyber - threat intelligence", List.of(
+                    "01_ThreatIntelligence", "02_AnalyticalModelsKillChainDiamond", "03_IocsTtpsAndStixTaxii",
+                    "04_MispAndOpenCtiPlatforms", "05_OsintForDefenders",
+                    "06_ThreatActorProfilingAndAttribution", "07_IntelReportingAndDissemination",
+                    "08_BossIntelDrivenDefense"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_30_threat_hunting", "Cyber - threat hunting", List.of(
+                    "01_ThreatHuntingMethodology", "02_StackingAndLongTailAnalysis",
+                    "03_HuntingOnWindowsEndpoints", "04_HuntingOnLinuxAndContainers",
+                    "05_HuntingInCloudAndIdentity", "06_LogAnalysisOfWebAttacks", "07_BossThreatHuntCampaign"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_31_phishing_i_poczta", "Cyber - phishing, poczta i socjotechnika", List.of(
+                    "01_EmailFlowAndHeaderAnalysis", "02_SpfDkimDmarcDeepDive", "03_PhishingAndEmailSecurity",
+                    "04_BecAndPaymentFraud", "05_PhishingResponsePlaybook", "06_SecurityAwarenessProgram",
+                    "07_BossPhishingCampaign"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_32_analiza_malware", "Cyber - analiza złośliwego oprogramowania", List.of(
+                    "01_MalwareTypesAndSafeLab", "02_StaticAnalysisPeAndStrings",
+                    "03_DynamicAnalysisAndSandboxes", "04_MaliciousDocumentsAndScripts",
+                    "05_JavaMalwareAndMaliciousJars", "06_MemoryForensicsVolatility",
+                    "07_ReverseEngineeringIntroGhidra", "08_RansomwareInternalsForDefenders",
+                    "09_BossMalwareReport"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_33_reagowanie_na_incydenty", "Cyber - reagowanie na incydenty", List.of(
+                    "01_IncidentResponseLifecycle", "02_PreparationAndIrReadiness",
+                    "03_TriageAndSeverityAssessment", "04_PlaybooksAndRunbooks",
+                    "05_ContainmentAndEradication", "06_RecoveryAndBusinessRestoration",
+                    "07_RansomwareAndBackupStrategy", "08_InsiderThreatAndDataLeakResponse",
+                    "09_LegalReportingKscNis2RodoDora", "10_ReportingAndCommunication",
+                    "11_PostIncidentReviewAndMetrics", "12_BossFullIncident"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_34_informatyka_sledcza_dfir", "Cyber - informatyka śledcza (DFIR)", List.of(
+                    "01_DigitalForensicsBasics", "02_DiskImagingAndEvidenceHandling",
+                    "03_WindowsArtifactsExecution", "04_WindowsRegistryAndFileSystemForensics",
+                    "05_TimelineAnalysis", "06_TriageCollectionVelociraptorKape", "07_LinuxForensics",
+                    "08_BrowserAndCloudAppForensics", "09_ForensicReportingAndExpertTestimony",
+                    "10_BossForensicInvestigation"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_35_automatyzacja_soc_i_soar", "Cyber - automatyzacja SOC: SOAR, Python i AI w operacjach", List.of(
+                    "01_SoarConceptsAndPlaybookDesign", "02_PythonForSocAnalysts",
+                    "03_JavaToolingForSecurityAutomation", "04_CaseManagementTheHiveCortex",
+                    "05_AiInSecurityOperations", "06_BossAutomateTheSoc"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_36_bezpieczenstwo_ai_i_llm", "Cyber - bezpieczeństwo systemów AI i aplikacji LLM", List.of(
+                    "01_AiConceptsForSecurity", "02_OwaspLlmTop10AndAtlas",
+                    "03_PromptInjectionDefensesInJava", "04_DataSecurityForAiSystems",
+                    "05_MonitoringAndAuditingAiSystems", "06_AiGovernanceRiskAndCompliance",
+                    "07_AiEnabledAttacksAndDefense", "08_BossSecureLlmApplication"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_37_purple_team_i_walidacja", "Cyber - purple team i walidacja zabezpieczeń", List.of(
+                    "01_PurpleTeamingPrinciples", "02_AdversaryEmulationWithCaldera",
+                    "03_SecurityControlValidationAndBas", "04_BossPurpleTeamExercise"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_38_grc_ryzyko_i_zgodnosc", "Cyber - ład, ryzyko i zgodność (GRC)", List.of(
                     "01_RiskManagement", "02_BiaAndBusinessContinuity", "03_PoliciesStandardsProcedures",
-                    "04_ThirdPartyAndVendorRisk", "05_PrivacyAndDataProtection",
-                    "06_AuditsAndSecurityAwareness"
+                    "04_ThirdPartyAndVendorRisk", "05_PrivacyAndDataProtection", "06_KscNis2InPractice",
+                    "07_DoraForFinancialSoftware", "08_ComplianceFrameworksIsoSocPci",
+                    "09_SecurityAssessmentsAndAudits", "10_SecurityProgramMetricsAndBoardReporting",
+                    "11_BossGrcProgram"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_26_egzaminy_comptia", "Security - przygotowanie do egzaminów CompTIA", List.of(
+            new ChapterSeed("_ns_39_studia_przypadkow", "Cyber - studia przypadków: głośne incydenty oczami obrońcy", List.of(
+                    "01_CaseLog4Shell", "02_CaseSolarWindsSunburst", "03_CaseNotPetyaAndWannaCry",
+                    "04_CaseXzUtilsBackdoor", "05_CaseMoveItAndMassExploitation",
+                    "06_CaseColonialPipelineAndRansomware", "07_CaseIdentityProviderBreaches",
+                    "08_CaseCrowdStrikeOutageResilience", "09_CaseTelecomEspionageSaltTyphoon",
+                    "10_BossWriteYourOwnCaseStudy"
+            ), CourseTrack.NETWORKING),
+
+            new ChapterSeed("_ns_40_egzaminy_i_kariera", "Cyber - egzaminy, portfolio i kariera blue team", List.of(
                     "01_CertificationPathAndObjectives", "02_PbqStrategy", "03_NetworkPlusPracticeExam",
-                    "04_SecurityPlusPracticeExam", "05_CysaPlusPracticeExam", "06_BossBlueTeamCapstone"
+                    "04_CcnaPracticeExam", "05_SecurityPlusPracticeExam", "06_CysaPlusPracticeExam",
+                    "07_SecAiPlusPracticeExam", "08_PracticalBlueTeamExamPrep", "09_HomeLabAndPortfolio",
+                    "10_CareerPathsForJavaDevelopersInSecurity", "11_BossBlueTeamCapstone"
             ), CourseTrack.NETWORKING)
             // ===== KONIEC BLOKU SIECI =====
     );

@@ -1,4 +1,6 @@
-// Plan toru „Sieci i Security” — CZĘŚĆ I: SIECI KOMPUTEROWE DLA JAVA BACKEND DEVELOPERA.
+// Plan toru „Sieci i Cyberbezpieczeństwo” — CZĘŚĆ I: SIECI KOMPUTEROWE DLA JAVA BACKEND DEVELOPERA.
+// Mapowanie certyfikatów (stan 2026-11): CompTIA Network+ N10-009 (N10-010 w drodze), Cisco CCNA 200-301 v2.0
+// (od 2027-02-03; domeny: infrastruktura i łączność, switching i dostęp, routing IP, usługi i bezpieczeństwo, AI i operacje).
 // Format rozdziału: [slug, tytuł, cel rozdziału, lekcje]
 // Format lekcji:    [slug, tytuł, poziom, priorytet, zakres teorii, praktyka / laboratorium]
 //   poziom:    L1 Foundation, L2 Professional, L3 Advanced, L4 Attack & Defense, L5 Expert (bez prowadzenia)
@@ -6,9 +8,9 @@
 // Cykl każdej dużej kompetencji: UNDERSTAND → BUILD → OBSERVE → BREAK → ATTACK → FIX → PROVE.
 // Generator: node scripts/content-migration/netsec/netsec_scaffold.cjs
 module.exports = [
-  ['_ns_00_wprowadzenie', 'Sieci i Security - jak działa ten tor', 'mapa toru, środowisko labów, zasady etyczne i pierwszy przegląd drogi żądania od przeglądarki do bazy', [
-    ['01_TrackMapAndLearningCycle', 'Mapa toru: backend, security engineering i pentest', 'L1', 'K',
-      'profil absolwenta 1/3 backend & network engineer, 1/3 security engineer, 1/3 Web/API pentester; cykl UNDERSTAND→BUILD→OBSERVE→BREAK→ATTACK→FIX→PROVE; poziomy L1–L5 i kryteria zaliczenia; typy labów (Guided, Packet, Debug, Failure, Attack, Defense, Incident, Black-box, Architecture, Boss); powiązania z rozdziałami Java (06 networking, 19 security, 24 Spring Security) i Linux (30–35, 39)',
+  ['_ns_00_wprowadzenie', 'Sieci i Cyberbezpieczeństwo - jak działa ten tor', 'mapa toru, ścieżki certyfikacji, środowisko labów, zasady etyczne i pierwszy przegląd drogi żądania od przeglądarki do bazy', [
+    ['01_TrackMapAndLearningCycle', 'Mapa toru: sieci, backend i blue team', 'L1', 'K',
+      'profil absolwenta: Java backend developer, który rozumie sieć jak network engineer i broni systemów jak analityk blue team (SOC, detection engineering, DFIR, AppSec/DevSecOps); ataki poznajemy wyłącznie po to, by je wykrywać i blokować; cykl UNDERSTAND→BUILD→OBSERVE→BREAK→ATTACK→FIX→PROVE; poziomy L1–L5 i kryteria zaliczenia; typy labów (Guided, Packet, Debug, Failure, Attack, Defense, Incident, Black-box, Architecture, Boss); powiązania z rozdziałami Java (06 networking, 19 security, 24 Spring Security) i Linux (30–35, 39)',
       'samoocena startowa: 20 pytań diagnostycznych „co się stanie, gdy…” — wynik ustawia proponowaną ścieżkę'],
     ['02_LabEnvironmentSetup', 'Środowisko laboratoryjne: Docker, WSL2 i narzędzia', 'L1', 'K',
       'Windows 11 + WSL2 vs natywny Linux; Docker Desktop i sieci labów; Wireshark, tcpdump, curl, dig, openssl, iproute2, mtr, nmap, Burp Suite Community, OWASP ZAP, Postman; anatomia pakietu labu (docker-compose.yml, reset.sh, scenario.json, tests/, expected/); izolacja sieci labowych (internal: true)',
@@ -19,6 +21,9 @@ module.exports = [
     ['04_JourneyOfOneRequest', 'Podróż jednego żądania: od URL do wiersza w bazie', 'L1', 'K',
       'GET https://api.javaquest.local/users/42 krok po kroku: parsowanie URL, cache przeglądarki, DNS, ARP i gateway, TCP handshake, TLS 1.3, HTTP/2, reverse proxy, Tomcat i DispatcherServlet, HikariCP i protokół PostgreSQL, droga powrotna; mapa, która lekcja toru rozwija który krok',
       'Packet Lab: jeden capture całej drogi w labie zero — oznacz w Wiresharku każdy etap i zmierz jego czas'],
+    ['05_CertificationRoadmap', 'Mapa certyfikatów: od Network+ i CCNA do CySA+ i BTL1', 'L1', 'K',
+      'stan na listopad 2026: CompTIA Network+ N10-009 (N10-010 w przygotowaniu), Cisco CCNA 200-301 v2.0 (od 3.02.2027, nowa domena AI i operacje), CompTIA Security+ SY0-801 (V8, od 17.11.2026; SY0-701 do 11.06.2027), CySA+ CS0-004 (od 23.06.2026: operacje 34%, podatności 26%, IR 24%, raportowanie 16%), SecAI+ CY0-001; praktyczne: BTL1/BTL2, CyberDefenders CCD, Microsoft SC-200, GIAC GCIH/GCFA; dla developera: OWASP Top 10:2025, ASVS 5.0, CSSLP, AWS Security Specialty, CKS; jak czytać „exam objectives” i dlaczego zawsze sprawdzać wersję u wydawcy; która część toru pokrywa które domeny',
+      'zadanie: ułóż własną ścieżkę na 12–18 miesięcy (np. Network+ → Security+ → CySA+ → BTL1) z kamieniami milowymi i labami z toru'],
   ]],
 
   ['_ns_01_fundamenty_sieci', 'Sieci - fundamenty i modele warstwowe', 'mentalny model sieci: elementy, warstwy, enkapsulacja i metryki wydajności, obserwowane w realnym ruchu', [
@@ -48,7 +53,7 @@ module.exports = [
       'Boss Lab: laptop → router/NAT (kontener) → proxy → Spring Boot; przechwyć ARP, ICMP i TCP na trzech punktach, wyjaśnij każdą zmianę adresów i portów; artefakt: opisany diagram + 3 pliki pcap'],
   ]],
 
-  ['_ns_02_ethernet_lan', 'Sieci - Ethernet i sieć lokalna', 'warstwa łącza danych i usługi sieci lokalnej, które decydują, czy pakiet w ogóle opuści host', [
+  ['_ns_02_ethernet_lan', 'Sieci - Ethernet, switching i sieć lokalna', 'warstwa łącza danych, switching w przedsiębiorstwie i usługi sieci lokalnej, które decydują, czy pakiet w ogóle opuści host [N+ D1, D2; CCNA v2 D1, D2]', [
     ['01_EthernetFramesAndMtu', 'Ramka Ethernet i MTU', 'L2', 'W',
       'budowa ramki (MAC docelowy/źródłowy, EtherType, payload, FCS); MTU 1500, jumbo frames; overhead VLAN i tuneli (VXLAN, WireGuard) obniżający MTU; skutki złego MTU dla aplikacji',
       'Packet Lab: odczytaj pola ramki w Wiresharku; ping -M do -s, aby znaleźć MTU ścieżki'],
@@ -61,21 +66,36 @@ module.exports = [
     ['04_UnicastBroadcastMulticast', 'Unicast, broadcast, multicast i anycast', 'L1', 'W',
       'typy adresacji na L2 i L3; broadcast i jego granice; multicast (IGMP/MLD, 224.0.0.0/4, ff00::/8) i gdzie występuje (mDNS, klastry, Hazelcast); anycast w DNS i CDN',
       'zadanie: przechwyć ruch mDNS/SSDP w sieci domowej i zidentyfikuj urządzenia'],
-    ['05_VlanTrunkingAndStp', 'VLAN, trunking i podstawy STP', 'L2', 'U',
+    ['05_VlanTrunkingAndStp', 'VLAN, trunking i podstawy STP', 'L2', 'W',
       'segmentacja L2 przez 802.1Q; access vs trunk; native VLAN; pętle L2 i burze rozgłoszeniowe; STP w zarysie; VLAN a podsieci i bezpieczeństwo (VLAN hopping — zapowiedź)',
       'Guided Lab: dwie sieci VLAN na bridge’u Linux z vlan_filtering — sprawdź izolację'],
-    ['06_DhcpAndSlaac', 'DHCP i autokonfiguracja adresów (SLAAC)', 'L2', 'W',
+    ['06_CiscoIosCliEssentials', 'CLI urządzeń sieciowych: Cisco IOS w praktyce', 'L1', 'K',
+      'tryby user/privileged/config; running-config vs startup-config; show interfaces, show ip interface brief, show vlan, show mac address-table; hostname, hasła (enable secret), SSH zamiast Telnetu, bannery; zapisywanie i kopie konfiguracji; odpowiedniki w Arista EOS i Juniper Junos; emulatory: Packet Tracer, Cisco Modeling Labs, GNS3, Containerlab',
+      'Guided Lab: Containerlab z dwoma przełącznikami — skonfiguruj dostęp SSH, VLAN i zapisz konfigurację'],
+    ['07_StpRstpDeepDive', 'STP i RSTP od środka: root bridge, role portów i ochrona', 'L2', 'W',
+      'BPDU, wybór root bridge (priorytet + MAC), koszty ścieżek, role i stany portów (root, designated, alternate, backup); 802.1D vs RSTP 802.1w vs MST; PortFast, BPDU Guard, Root Guard, Loop Guard; objawy pętli i burzy rozgłoszeniowej; dlaczego wolny failover STP zrywa połączenia aplikacji',
+      'Packet Lab: przechwyć BPDU, wymuś zmianę root bridge i zmierz czas zbieżności STP vs RSTP'],
+    ['08_EtherChannelLacp', 'EtherChannel i LACP — agregacja łączy', 'L2', 'W',
+      'po co agregacja (przepustowość, redundancja); LACP (802.1AX) vs PAgP vs static; tryby active/passive; hashowanie ruchu (MAC, IP, port) i dlaczego jeden przepływ TCP nie przyspieszy; bonding w Linuksie (mode 4) i NIC teaming w Windows; MLAG/vPC w zarysie',
+      'Guided Lab: bond LACP między dwoma namespace’ami — odłącz jedno łącze i obserwuj ciągłość ruchu'],
+    ['09_LldpCdpAndL2Discovery', 'LLDP i CDP — kto jest po drugiej stronie kabla', 'L1', 'W',
+      'protokoły odkrywania sąsiadów; informacje w LLDP (system name, port, VLAN, PoE, capabilities); LLDP-MED dla telefonów VoIP; lldpd w Linuksie; ryzyko ujawniania informacji i wyłączanie na portach brzegowych',
+      'zadanie: zbierz sąsiedztwo LLDP w labie i narysuj z niego diagram fizyczny'],
+    ['10_DhcpAndSlaac', 'DHCP i autokonfiguracja adresów (SLAAC)', 'L2', 'W',
       'DORA, lease i odnowienie; opcje (gateway, DNS, domena wyszukiwania); relay; SLAAC i DHCPv6; rogue DHCP; dlaczego serwer ma statyczny adres, a kontener dostaje go z IPAM',
       'Packet Lab: przechwyć wymianę DHCP (dnsmasq w kontenerze) i odczytaj opcje'],
-    ['07_WifiForDevelopers', 'Wi-Fi z perspektywy aplikacji', 'L1', 'U',
+    ['11_WifiForDevelopers', 'Wi-Fi z perspektywy aplikacji', 'L1', 'U',
       '802.11 w skrócie; retransmisje warstwy 2 i zmienne opóźnienie; roaming i zmiana adresu; captive portale; WPA2/WPA3 i sieci publiczne; dlaczego testy wydajności na Wi-Fi są niewiarygodne',
       'zadanie: porównaj jitter i p99 RTT na Wi-Fi i kablu (mtr, ping -i 0.2)'],
-    ['08_DebugLanProblems', 'Debug Lab: sieć lokalna nie działa', 'L4', 'W',
+    ['12_WirelessArchitecturesAndControllers', 'Architektury Wi-Fi: autonomiczne AP, kontroler WLC i chmura', 'L2', 'W',
+      'autonomiczne vs lightweight AP; CAPWAP i kontroler (WLC); local vs FlexConnect; zarządzanie z chmury; mapowanie SSID na VLAN; roaming 802.11r/k/v; gościnne Wi-Fi z izolacją klientów [CCNA v2 D2]',
+      'zadanie: zaprojektuj mapowanie 3 SSID (pracownicy, goście, IoT) na VLAN-y i polityki'],
+    ['13_DebugLanProblems', 'Debug Lab: sieć lokalna nie działa', 'L4', 'W',
       'metodyka diagnozy L2/L3: link → adres → ARP → gateway; duplikat IP, zła maska, brak bramy, zły VLAN',
       'Debug Lab: 4 zepsute namespace’y (duplikat IP, zła maska, brak trasy, MTU) — znajdź i napraw każdy, test check.sh potwierdza'],
   ]],
 
-  ['_ns_03_ip_i_routing', 'Sieci - adresacja IP i routing', 'IPv4 i IPv6, podsieci, routing, NAT i ICMP — od obliczeń po realne trasy w Internecie', [
+  ['_ns_03_ip_i_routing', 'Sieci - adresacja IP i routing', 'IPv4 i IPv6, podsieci, routing statyczny i dynamiczny (OSPF, BGP), redundancja bramy, NAT i ICMP — od obliczeń po realne trasy w Internecie [N+ D1, D2; CCNA v2 D3]', [
     ['01_Ipv4HeaderAndAddressing', 'Nagłówek IPv4 i adresacja', 'L1', 'K',
       'pola nagłówka (version, IHL, DSCP/ECN, total length, ID, flags, TTL, protocol, checksum); adres sieci i hosta; historia klas i dlaczego umarły',
       'Packet Lab: zdekoduj ręcznie nagłówek IPv4 z hexdumpu, sprawdź w Wiresharku'],
@@ -97,25 +117,37 @@ module.exports = [
     ['07_RoutingTablesAndDefaultGateway', 'Tablica routingu i default gateway', 'L2', 'K',
       'longest prefix match; trasa domyślna; metryki; ip route get; route print i Get-NetRoute na Windows; policy routing w zarysie; VPN split tunnel i konflikty tras',
       'Debug Lab: VPN „zjada” trasę do sieci Dockera — znajdź konflikt i napraw'],
-    ['08_NatPatAndPortForwarding', 'NAT, PAT i port forwarding', 'L2', 'K',
+    ['08_StaticRoutingAndFloatingRoutes', 'Routing statyczny, trasy pływające i dystans administracyjny', 'L2', 'K',
+      'next hop vs interfejs wyjściowy; trasy /32 i domyślne; dystans administracyjny (connected 0, static 1, eBGP 20, OSPF 110, iBGP 200) i trasa pływająca jako zapas; trasy statyczne IPv6; routing między VLAN-ami (router-on-a-stick, SVI na przełączniku L3) [CCNA v2 D3]',
+      'Guided Lab: FRR w trzech namespace’ach — trasa główna i pływająca; zerwij łącze i obserwuj przełączenie'],
+    ['09_NatPatAndPortForwarding', 'NAT, PAT i port forwarding', 'L2', 'K',
       'SNAT, DNAT, masquerade; tablica conntrack; PAT i wyczerpanie portów; hairpin NAT; CGNAT; dlaczego aplikacja widzi IP proxy, a nie klienta; port forwarding w routerze, Dockerze i kubectl',
       'Packet Lab: przechwyć ten sam przepływ przed i za NAT (dwa interfejsy), odczytaj wpis w conntrack -L'],
-    ['09_IcmpPingTraceroute', 'ICMP, ping, traceroute i mtr', 'L2', 'K',
+    ['10_IcmpPingTraceroute', 'ICMP, ping, traceroute i mtr', 'L2', 'K',
       'typy ICMP (echo, unreachable, time exceeded, fragmentation needed); TTL i Hop Limit; traceroute UDP/ICMP/TCP (tcptraceroute); interpretacja gwiazdek i asymetrii; mtr i odróżnianie strat realnych od rate-limitu ICMP; dlaczego blokowanie całego ICMP psuje sieć',
       'zadanie: analiza 5 wyników mtr — gdzie jest problem, a gdzie tylko router ignoruje ICMP'],
-    ['10_FragmentationAndPmtud', 'Fragmentacja i Path MTU Discovery', 'L3', 'W',
+    ['11_FragmentationAndPmtud', 'Fragmentacja i Path MTU Discovery', 'L3', 'W',
       'fragmentacja IPv4, flaga DF; PMTUD i ICMP „fragmentation needed”; PMTUD black hole; MSS clamping; IPv6 bez fragmentacji w routerach; objaw: handshake TLS wisi, a ping działa',
       'Failure Lab: zablokuj ICMP i obniż MTU na tunelu — odtwórz zawieszony TLS, napraw MSS clampingiem'],
-    ['11_Ipv6InDepth', 'IPv6 od środka', 'L2', 'W',
+    ['12_Ipv6InDepth', 'IPv6 od środka', 'L2', 'W',
       'notacja i skracanie; typy adresów (GUA, ULA, link-local, multicast); nagłówek i extension headers; privacy addresses; /64 i SLAAC; IPv6 w Javie (Inet6Address, scope id); IPv6 w Dockerze',
       'Guided Lab: uruchom Spring Boot na IPv6 w Dockerze, połącz się curl -6 i przechwyć ruch'],
-    ['12_DualStackAndTransition', 'Dual-stack, Happy Eyeballs, NAT64', 'L3', 'Z',
+    ['13_DualStackAndTransition', 'Dual-stack, Happy Eyeballs, NAT64', 'L3', 'Z',
       'dual-stack i kolejność adresów (RFC 6724); Happy Eyeballs v2; java.net.preferIPv6Addresses i preferIPv4Stack; IPv6-only, NAT64/DNS64, 464XLAT; objaw: wolne połączenie, bo AAAA istnieje, a IPv6 nie działa',
       'Failure Lab: zepsuty IPv6 przy działającym AAAA — zmierz opóźnienie klienta Java i napraw'],
-    ['13_DynamicRoutingAndBgp', 'Routing dynamiczny i BGP — jak działa Internet', 'L2', 'U',
+    ['14_OspfSingleArea', 'OSPF w jednym obszarze: sąsiedztwa, LSA i koszt', 'L3', 'W',
+      'link-state vs distance-vector; pakiety Hello, DBD, LSR, LSU; stany sąsiedztwa (Down → Full); DR/BDR na segmentach broadcast; router ID; koszt i referencyjna przepustowość; OSPFv2 vs OSPFv3; typowe problemy (timery, MTU, maski, obszary); uwierzytelnianie OSPF [CCNA v2 D3]',
+      'Guided Lab: OSPF na FRR w 4 routerach — odczytaj LSDB, zmień koszt i obserwuj nową ścieżkę; zepsuj MTU i zdiagnozuj stan EXSTART'],
+    ['15_FirstHopRedundancyHsrpVrrp', 'Redundancja bramy: HSRP, VRRP i GLBP', 'L2', 'W',
+      'problem pojedynczej bramy domyślnej; wirtualny adres IP i MAC; aktywny/zapasowy, priorytety i preempt; VRRP vs HSRP vs GLBP; keepalived (VRRP) przed parą reverse proxy; gratuitous ARP przy przełączeniu [CCNA v2 D3]',
+      'Failure Lab: para Nginx z keepalived — zatrzymaj węzeł główny i zmierz przerwę widzianą przez klienta Java'],
+    ['16_DynamicRoutingAndBgp', 'Routing dynamiczny i BGP — jak działa Internet', 'L2', 'U',
       'routing statyczny vs dynamiczny; IGP (OSPF) w zarysie; systemy autonomiczne i BGP; prefiksy, ścieżki AS, polityki; route leaks i hijacking; RPKI; anycast',
       'zadanie: na podstawie looking glass prześledź, jak ogłaszany jest prefiks dużego dostawcy chmury'],
-    ['14_BossWhereDidMyPacketGo', 'Boss: gdzie zniknął mój pakiet?', 'L5', 'K',
+    ['17_RoutingSecurityRpkiAndBgpIncidents', 'Bezpieczeństwo routingu: RPKI, ROA i incydenty BGP', 'L3', 'Z',
+      'głośne incydenty (wycieki tras, przechwycenie prefiksu, globalna awaria platformy społecznościowej w 2021 r.); RPKI, ROA i walidacja ROV; MANRS; filtrowanie prefiksów i max-prefix; ochrona sesji BGP (TCP-AO); monitoring ogłoszeń (RIPE RIS, BGPStream) jako kontrola wykrywająca',
+      'zadanie: sprawdź status RPKI prefiksów wybranego dostawcy w RIPE Stat i opisz skutki nieważnego ROA'],
+    ['18_BossWhereDidMyPacketGo', 'Boss: gdzie zniknął mój pakiet?', 'L5', 'K',
       'integracja: adresacja, routing, NAT, ICMP i MTU w jednej topologii bez wskazówek',
       'Boss Lab: topologia 3 routerów (namespace’y + FRR) z czterema ukrytymi usterkami; artefakty: opis przyczyn, poprawki, pcap dowodowy, test check.sh przechodzi'],
   ]],
