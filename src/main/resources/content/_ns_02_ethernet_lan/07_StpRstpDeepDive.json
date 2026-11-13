@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Protokół, który pilnuje, żeby sieć nie popełniła samobójstwa",
+      "image": "netsec/ns02-07-roles.svg",
+      "imageAlt": "Topologia czterech przełączników: CORE1 z priorytetem 24576 jest rootem, CORE2 ma priorytet 28672, ACC1 i ACC2 po 32768. Łącze CORE1–CORE2 10G, pozostałe 1G. Wyliczone role: wszystkie porty CORE1 designated, CORE2 port 1 root, porty CORE2 w stronę dostępu designated, ACC1 i ACC2 mają root port w stronę CORE1, a porty w stronę CORE2 są alternate (zablokowane).",
+      "body": "W lekcji 05 zobaczyłeś, że redundantne połączenia przełączników tworzą **pętle L2**, a pętla bez ochrony oznacza burzę rozgłoszeniową w kilka sekund. **Spanning Tree Protocol** rozwiązuje to, wyłączając logicznie nadmiarowe łącza i trzymając je w odwodzie. Brzmi prosto, ale STP to protokół, który:\n- **decyduje, którędy płynie cały ruch L2** w kampusie — źle ustawiony root bridge oznacza ruch przez stary przełącznik w piwnicy,\n- **decyduje o czasie przestoju przy awarii** — klasyczny 802.1D potrzebuje 30–50 s, RSTP około sekundy; dla aplikacji to różnica między „nikt nie zauważył” a „zerwane sesje, timeouty, failover klastra i alert o 3:00”,\n- **jest celem ataków** — urządzenie, które wyśle lepsze BPDU, może zostać rootem i przekierować przez siebie ruch albo wywołać ciągłe przebudowy topologii.\n\nW tej lekcji wejdziemy w szczegóły na poziomie CCNA 200-301 (domena 2: STP/RSTP, role i stany portów, PortFast, BPDU Guard, Root Guard): budowa **BPDU** i **Bridge ID**, **algorytm** wyboru root bridge, root portów i designated portów (policzysz go ręcznie dla kilku topologii), **koszty ścieżek**, różnice **802.1D vs RSTP (802.1w) vs MST (802.1s)** i warianty Cisco (PVST+, Rapid PVST+), **mechanizmy ochronne** oraz objawy problemów z perspektywy aplikacji.\n\nTopologia na ilustracji jest wyliczona tym samym algorytmem, którego się nauczysz — możesz sprawdzić każdą rolę portu krok po kroku.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik STP i RSTP",
+      "body": "- **BPDU (Bridge Protocol Data Unit)** — komunikat STP wysyłany co **hello time** (2 s) na multicast `01:80:c2:00:00:00` (Cisco PVST+: `01:00:0c:cc:cc:cd`); niesie Root ID, Root Path Cost, Bridge ID i Port ID nadawcy.\n- **Bridge ID (BID)** — 8 bajtów: priorytet (4 bity, wielokrotność 4096) + **system ID extension** (12 bitów = numer VLAN) + MAC. Mniejszy = lepszy.\n- **Root bridge** — przełącznik o najniższym BID; wszystkie jego porty są designated.\n- **Root Path Cost** — suma kosztów portów na drodze do roota (liczona przy odbiorze BPDU).\n- **Koszt portu** — zależny od prędkości; *short* (Cisco domyślnie): 10M = 100, 100M = 19, 1G = 4, 10G = 2; *long* (802.1D-2004, `spanning-tree pathcost method long`): 10M = 2 000 000, 100M = 200 000, 1G = 20 000, 10G = 2 000, 100G = 200.\n- **Port ID** — priorytet portu (domyślnie 128) + numer portu; ostatnie kryterium rozstrzygające.\n- **Role portów**: **root port (RP)** — najlepsza droga do roota (jeden na przełącznik niebędący rootem); **designated port (DP)** — jeden na segment, przekazuje w stronę od roota; **alternate** (RSTP) — zapasowa droga do roota, blokowana; **backup** (RSTP) — zapasowy port do tego samego segmentu (rzadkie, przy hubach); **disabled**.\n- **Stany 802.1D**: blocking → listening (15 s) → learning (15 s) → forwarding; plus disabled. **Stany RSTP**: discarding, learning, forwarding.\n- **Timery**: hello 2 s, **max age** 20 s (ile pamiętać BPDU), **forward delay** 15 s (czas listening i learning).\n- **TCN (Topology Change Notification)** — informacja o zmianie topologii; skraca czas życia wpisów w tablicach MAC do 15 s (802.1D) lub je czyści (RSTP).\n- **PVST+ / Rapid PVST+** — osobne drzewo STP/RSTP dla każdego VLAN-u (Cisco). **MST (802.1s)** — grupuje VLAN-y w kilka instancji (mniej BPDU i obciążenia CPU), wymaga spójnej konfiguracji regionu.\n- **Port edge / PortFast** — port brzegowy (host), od razu forwarding; **BPDU Guard**, **BPDU Filter**, **Root Guard**, **Loop Guard**, **UDLD** — mechanizmy ochronne.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Wybory kapitana i najkrótsza droga do kapitanatu",
+      "body": "Wyobraź sobie grupę wysp połączonych mostami, które co chwilę wymieniają się listami („BPDU”) z informacją: „Moim zdaniem kapitanem jest X, a ja mam do niego odległość Y”.\n1. **Wybór kapitana (root bridge)**: każda wyspa na początku uważa się za kapitana. Gdy dostanie list z „lepszym” kandydatem (niższy priorytet, a przy remisie niższy numer seryjny — MAC), przyjmuje go i przekazuje dalej. Po chwili wszyscy zgadzają się co do jednego kapitana. Uwaga: przy równych priorytetach wygrywa **najniższy numer seryjny** — czyli zwykle **najstarsza** wyspa. Nie najlepiej położona ani najmocniejsza.\n2. **Root port**: każda wyspa wybiera **jeden** most, którym najtaniej dotrze do kapitana (suma „opłat” za mosty — koszt zależny od szerokości mostu, czyli prędkości łącza).\n3. **Designated port**: na każdym moście ustala się, która strona „odpowiada” za ruch od kapitana — ta, która jest bliżej kapitana.\n4. **Pozostałe mosty** zamyka się szlabanem (blocking/alternate). Nie są zniszczone — strażnik nasłuchuje listów i otworzy szlaban, gdy główny most się zawali.\n\n**802.1D** to strażnik ostrożny: po awarii odczekuje (max age 20 s), potem 15 s „słucha”, 15 s „uczy się”, i dopiero wtedy otwiera szlaban. **RSTP** to strażnik, który z góry wie, który most jest zapasowy (alternate), i po awarii otwiera go natychmiast, dogadując się z sąsiadem (proposal/agreement).",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Algorytm krok po kroku na topologii z ilustracji",
+      "image": "netsec/ns02-07-bpdu.svg",
+      "imageAlt": "Struktura Bridge ID: 4 bity priorytetu, 12 bitów system ID extension (numer VLAN), 48 bitów adresu MAC; przykład 32768 + VLAN 10 = 32778. Pola BPDU: Root Identifier, Root Path Cost, Bridge Identifier, Port Identifier, flagi RSTP i timery. Kolejność porównań: Root ID, koszt, Bridge ID nadawcy, Port ID.",
+      "body": "Przejdźmy algorytm dla topologii rdzeń–dostęp z ilustracji wprowadzającej. Ta sama procedura działa dla każdej sieci — to dokładnie to, czego wymaga CCNA i co robisz przy diagnozie „dlaczego ruch idzie tędy”.",
+      "code": "Przełączniki: CORE1 (priorytet 24576, MAC 00:aa:00:00:00:01), CORE2 (priorytet 28672, MAC 00:aa:00:00:00:02), ACC1 (priorytet 32768, MAC 00:0b:00:00:00:01), ACC2 (priorytet 32768, MAC 00:0b:00:00:00:02). Łącza: CORE1 Gi0/1 — CORE2 Gi0/1 (10G), CORE1 Gi0/2 — ACC1 Gi0/1 (1G), CORE1 Gi0/3 — ACC2 Gi0/1 (1G), CORE2 Gi0/2 — ACC1 Gi0/2 (1G), CORE2 Gi0/3 — ACC2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2).\n\nKrok 1 — root bridge: najniższy priorytet → CORE1 (24576).\nKrok 2 — root porty (najniższy koszt do roota, przy remisie: BID sąsiada, Port ID sąsiada):\n  CORE2  → Gi0/1, koszt do roota 2\n  ACC1   → Gi0/1, koszt do roota 4\n  ACC2   → Gi0/1, koszt do roota 4\n  ACC1: przez CORE1 koszt 4, przez CORE2 koszt 2 + 4 = 6 → wybiera Gi0/1 (do CORE1).\nKrok 3 — designated porty: na każdym łączu port przełącznika bliższego rootowi\n  (przy równym koszcie — niższy BID). Wszystkie porty roota są designated.\nKrok 4 — reszta blokowana:\n  CORE1 Gi0/1  designated\n  CORE2 Gi0/1  root\n  CORE1 Gi0/2  designated\n  ACC1 Gi0/1   root\n  CORE1 Gi0/3  designated\n  ACC2 Gi0/1   root\n  CORE2 Gi0/2  designated\n  ACC1 Gi0/2   alternate\n  CORE2 Gi0/3  designated\n  ACC2 Gi0/2   alternate\n\nKryteria porównania BPDU (zawsze w tej kolejności):\n  1. najniższy Root Bridge ID  2. najniższy Root Path Cost\n  3. najniższy Bridge ID nadawcy  4. najniższy Port ID nadawcy (5. własny Port ID)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Weryfikacja w Cisco IOS: show spanning-tree",
+      "body": "Tak wygląda wynik na przełączniku ACC1 z naszej topologii (Rapid PVST+, VLAN 10). Naucz się czytać trzy bloki: Root ID (kto jest rootem i jak daleko), Bridge ID (kim ja jestem) i tabelę ról portów.",
+      "code": "ACC1# show spanning-tree vlan 10\n\nVLAN0010\n  Spanning tree enabled protocol rstp\n  Root ID    Priority    24586                       ← 24576 + VLAN 10\n             Address     00aa.0000.0001              ← CORE1\n             Cost        4                           ← koszt ACC1 → root\n             Port        1 (GigabitEthernet0/1)      ← root port\n             Hello Time   2 sec  Max Age 20 sec  Forward Delay 15 sec\n\n  Bridge ID  Priority    32778  (priority 32768 sys-id-ext 10)\n             Address     000b.0000.0001\n\nInterface           Role Sts Cost      Prio.Nbr Type\n------------------- ---- --- --------- -------- ------------------\nGi0/1               Root FWD 4         128.1    P2p\nGi0/2               Altn BLK 4         128.2    P2p\nGi0/10              Desg FWD 4         128.10   P2p Edge          ← PortFast (host)\n\nInne przydatne:\nshow spanning-tree root                    ! root dla każdego VLAN-u, koszt, root port\nshow spanning-tree summary                 ! tryb, PortFast/BPDU Guard domyślnie, liczba portów w stanach\nshow spanning-tree detail | include ieee|occurr|from|is exec   ! ile zmian topologii i skąd ostatnia\nshow spanning-tree inconsistentports       ! porty zablokowane przez Root Guard / Loop Guard\nshow errdisable recovery                   ! porty wyłączone np. przez BPDU Guard"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Packet Lab: przechwyć BPDU, zmień root bridge, zmierz zbieżność",
+      "image": "netsec/ns02-07-timers.svg",
+      "imageAlt": "Oś czasu: w 802.1D port przechodzi przez blocking do 20 s (max age), listening 15 s, learning 15 s — forwarding po 30–50 s; w RSTP proposal/agreement daje forwarding w około sekundę, port brzegowy natychmiast. Skutki dla aplikacji: timeouty DHCP, zerwane połączenia TCP, błędy health-checków.",
+      "body": "Laboratorium z planu lekcji — w izolowanym labie (Containerlab z cEOS/IOL lub GNS3/CML; w wersji minimum trzy bridge’e Linuksa w namespace’ach połączone w trójkąt):\n1. **Zbuduj trójkąt** trzech przełączników, wszystkie z domyślnym priorytetem; podłącz po jednym hoście do dwóch z nich.\n2. **Przechwyć BPDU** na dowolnym łączu: Wireshark z filtrem `stp` (lub `tcpdump -i eth1 -e stp`). Odczytaj: Root Identifier, Root Path Cost, Bridge Identifier, Port Identifier, wersję protokołu (0 = STP, 2 = RSTP) i flagi.\n3. **Wyznacz ręcznie** root bridge, root porty i port zablokowany (algorytm z lekcji), potem porównaj z `show spanning-tree` (lub `bridge -d link show` / `mstpctl`).\n4. **Wymuś zmianę roota**: na wybranym przełączniku `spanning-tree vlan 1 priority 4096` (lub `root primary`). Obserwuj w Wiresharku zmianę Root Identifier i flagi TC.\n5. **Zmierz zbieżność 802.1D**: przełącz tryb na `spanning-tree mode pvst`, uruchom `ping -i 0.2` między hostami tak, by ruch szedł przez port root, i wyłącz to łącze. Policz utracone pakiety × 0,2 s — spodziewaj się 30–50 s.\n6. **Powtórz dla RSTP** (`spanning-tree mode rapid-pvst`): przerwa zwykle poniżej 1–2 s.\n7. **PortFast**: porównaj czas od podłączenia hosta do pierwszego udanego DHCP z PortFast i bez (w 802.1D — ok. 30 s różnicy).\n8. **Zapisz wnioski** w tabeli: tryb, zdarzenie, czas przerwy, liczba utraconych pakietów. To argument, którego użyjesz, gdy ktoś zapyta, czemu aplikacja zrywa połączenia po „drobnej zmianie w sieci”.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "802.1D vs RSTP vs MST i warianty Cisco",
+      "body": "Porównanie protokołów, które spotkasz w sieciach i na egzaminach:",
+      "code": "cecha                 802.1D (STP)          802.1w (RSTP)                802.1s (MST)\ndrzewa                jedno dla wszystkich  jedno dla wszystkich         kilka instancji (grupy VLAN)\nCisco odpowiednik     PVST+ (per VLAN)      Rapid PVST+ (per VLAN)       MST\nstany portu           blk/lst/lrn/fwd/dis   discarding/learning/fwd      jak RSTP\nrole                  root, designated,     + alternate, backup          jak RSTP + boundary\n                      (blocking)\nzbieżność             30–50 s               ~1 s (proposal/agreement)    ~1 s\nporty brzegowe        PortFast (Cisco)      edge port (standard)         edge port\nreakcja na TC         skrócenie aging 15 s  natychmiastowe czyszczenie   jak RSTP\nBPDU                  tylko od roota        każdy przełącznik co hello   jak RSTP\n                      (przekazywane)        (keepalive sąsiada)\nobciążenie CPU        PVST+: BPDU × VLAN    Rapid PVST+: BPDU × VLAN     mało — BPDU × instancja\n\nRekomendacja: Rapid PVST+ w sieciach Cisco do kilkuset VLAN-ów, MST w dużych i wielodostawczych;\nklasyczny 802.1D tylko przy starych urządzeniach (RSTP jest z nim wstecznie zgodny, ale traci szybkość).\nKoszty (short): 10M=100, 100M=19, 1G=4, 10G=2, 100G=1\nKoszty (long):  10M=2000000, 100M=200000, 1G=20000, 10G=2000, 100G=200"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Konfiguracja: root, tryb, PortFast i ochrony",
+      "image": "netsec/ns02-07-guards.svg",
+      "imageAlt": "Sieć hierarchiczna: CORE1 jako root, CORE2 zapasowy, trzy przełączniki dostępowe połączone z oboma rdzeniami, hosty na portach brzegowych. Root Guard na portach rdzenia w stronę dostępu, Loop Guard i UDLD na uplinkach, PortFast z BPDU Guard i storm control na portach użytkowników.",
+      "body": "Konfiguracja zgodna z dobrymi praktykami — rdzeń ma role roota i zapasu ustawione jawnie, dostęp jest chroniony. Odpowiednik w Linuksie dla bridge’a z RSTP: `mstpd` (`mstpctl`), a w Arista EOS składnia jest niemal identyczna jak w IOS.",
+      "code": "! === CORE1 ===\nspanning-tree mode rapid-pvst\nspanning-tree pathcost method long          ! koszty dla łączy ≥ 10G\nspanning-tree vlan 1-4094 root primary      ! priorytet 24576 (lub niżej, jeśli ktoś ma mniejszy)\ninterface range Te1/1/1 - 3                 ! w stronę przełączników dostępowych\n spanning-tree guard root                   ! nikt „poniżej” nie zostanie rootem\n!\n! === CORE2 ===\nspanning-tree vlan 1-4094 root secondary    ! priorytet 28672\n!\n! === ACC1..ACC3 ===\nspanning-tree mode rapid-pvst\nspanning-tree portfast default              ! wszystkie porty access jako edge\nspanning-tree portfast bpduguard default    ! BPDU na porcie edge → err-disabled\nspanning-tree loopguard default             ! jednokierunkowe łącze nie odblokuje portu\nudld enable                                 ! wykrywanie łączy jednokierunkowych (światłowody)\nerrdisable recovery cause bpduguard\nerrdisable recovery interval 300            ! automatyczne włączenie po 5 min (opcjonalnie)\ninterface range Gi1/0/1 - 46\n switchport mode access\n storm-control broadcast level 1.00\n!\n! Linux (mstpd): mstpctl setforcevers br0 rstp ; mstpctl settreeprio br0 0 4 ; mstpctl setportadminedge br0 veth1 yes"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz: od zrywanych połączeń po atak na roota",
+      "body": "**Developer / SRE — objawy STP w aplikacji:**\n- **Przerwy 30–50 s** po awarii lub zmianie łącza (klasyczny STP): zerwane połączenia z pulą bazodanową (HikariCP zgłasza `Connection is not available`), timeouty klientów HTTP, failover klastra Kafka/Elasticsearch/Hazelcast („split brain” lub wyrzucenie węzła), alarmy health-checków load balancera.\n- **Brak sieci przez ~30 s po starcie** maszyny lub kontenera z fizyczną kartą (PXE boot, DHCP timeout) — port bez PortFast.\n- **Okresowe „czkawki” i chwilowe zalewanie ruchem** — częste TCN (np. port do laptopa bez PortFast albo niestabilne łącze), które czyszczą tablice MAC.\n- **Nieoptymalna ścieżka** — ruch między serwerami w tej samej szafie idzie przez inny budynek, bo root bridge jest w złym miejscu.\n- **Wirtualizacja** — hiperwizor (vSwitch) zwykle nie uczestniczy w STP; port do hosta ESXi/Proxmox powinien być edge (trunk z PortFast) i chroniony BPDU Guard, a pętle między vSwitchami wykluczone konfiguracją.\n\n**Blue team:**\n- **Przejęcie roota** — urządzenie wysyłające BPDU z priorytetem 0 zostaje rootem: ruch zaczyna płynąć przez nie (podsłuch/man-in-the-middle) lub sieć się destabilizuje. Obrona: **Root Guard** w stronę dostępu, **BPDU Guard** na portach użytkowników.\n- **Zalewanie BPDU/TCN** — ciągłe zmiany topologii wymuszają flooding i obciążają CPU przełączników. Obrona: BPDU Guard, monitoring liczby zmian topologii.\n- **Detekcja** — syslog: `%SPANTREE-2-BLOCK_BPDUGUARD`, `%SPANTREE-2-ROOTGUARD_BLOCK`, `%SPANTREE-2-LOOPGUARD_BLOCK`, `%SW_MATM-4-MACFLAP_NOTIF`, zmiana roota (`show spanning-tree detail`, SNMP `newRoot`/`topologyChange` trapy). Każda zmiana roota w VLAN-ie produkcyjnym powinna generować alert w SIEM.\n- **Wyłączanie STP** jako „optymalizacja” to ryzyko dostępności — w audycie flaguj `no spanning-tree vlan …` i BPDU Filter na portach dostępowych.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy z STP",
+      "body": "- **Root wybrany przez przypadek** — domyślne priorytety + najniższy MAC = najstarszy przełącznik. Zawsze `root primary/secondary` na rdzeniu.\n- **PortFast na porcie do przełącznika** — port od razu przekazuje, zanim STP zdąży zablokować pętlę; PortFast tylko na portach do hostów (i zawsze z BPDU Guard).\n- **BPDU Filter zamiast BPDU Guard** — filter na porcie po prostu ignoruje i nie wysyła BPDU, więc pętla przez ten port nie zostanie wykryta. Używany globalnie (`portfast bpdufilter default`) jest bezpieczniejszy, bo port po odebraniu BPDU traci status edge — ale na interfejsie to proszenie się o pętlę.\n- **Mieszanie trybów** — część przełączników w PVST+, część w MST, część z RSTP innego dostawcy: granice regionów i współpraca działają, ale zbieżność i wybór roota bywają zaskakujące. Ujednolicaj.\n- **MST: niespójna konfiguracja regionu** (nazwa, rewizja, mapowanie VLAN → instancja) — przełączniki tworzą różne regiony i zachowują się nieoptymalnie.\n- **Za dużo VLAN-ów w PVST+** — każdy VLAN to osobna instancja STP i BPDU co 2 s; przy setkach VLAN-ów CPU przełącznika cierpi (limit instancji). Rozwiązanie: MST.\n- **Łącze jednokierunkowe** (uszkodzony światłowód) — port przestaje odbierać BPDU, uznaje, że jest designated, i przechodzi do forwarding → pętla. Obrona: Loop Guard, UDLD.\n- **Mieszanie kosztów short i long** — przełączniki różnych producentów lub z różną konfiguracją liczą koszty inaczej; ścieżki stają się nieprzewidywalne. Ustal jedną metodę (dla łączy ≥ 10G — long).\n- **„STP wyłączyliśmy, bo spowalniał start serwerów”** — właściwa naprawa to PortFast/edge, nie wyłączenie ochrony przed pętlami.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: PortFast wszędzie, BPDU Filter i domyślny root",
+      "body": "Konfiguracja „żeby serwery szybko wstawały”: PortFast i BPDU Filter na wszystkich portach, także uplinkach; klasyczny PVST+; priorytety domyślne.",
+      "code": "spanning-tree mode pvst                   ! 802.1D: 30–50 s zbieżności\n! brak root primary — rootem zostaje przełącznik z najniższym MAC\ninterface range Gi1/0/1 - 48              ! wszystkie porty, łącznie z uplinkami 47–48\n spanning-tree portfast\n spanning-tree bpdufilter enable          ! ignoruj BPDU\n!\n! Skutki:\n! - kabel wpięty między dwa gniazdka lub mały switch biurkowy z pętlą = burza rozgłoszeniowa\n!   (porty nie wysyłają i nie przetwarzają BPDU, więc STP nie zablokuje pętli),\n! - uplinki z PortFast przechodzą do forwarding natychmiast po zmianie — chwilowe pętle,\n! - przy awarii rdzenia przebudowa trwa do 50 s, root może trafić do szafy dostępowej,\n! - każde urządzenie może ogłosić się rootem — brak Root Guard."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: RSTP, jawny root, edge tylko dla hostów, komplet ochron",
+      "body": "Rapid PVST+, root i zapas na rdzeniu, PortFast + BPDU Guard tylko na portach dostępowych, Root Guard na rdzeniu w stronę dostępu, Loop Guard i UDLD na uplinkach, monitoring zmian topologii.",
+      "code": "spanning-tree mode rapid-pvst\nspanning-tree extend system-id\nspanning-tree pathcost method long\n! rdzeń: spanning-tree vlan 1-4094 root primary / root secondary\n!\ninterface range Gi1/0/1 - 46               ! porty do hostów\n switchport mode access\n spanning-tree portfast                    ! edge\n spanning-tree bpduguard enable\n!\ninterface range Te1/1/1 - 2                ! uplinki do rdzenia\n switchport mode trunk\n spanning-tree guard loop\n udld port aggressive\n!\nlogging host 10.99.0.50\nsnmp-server enable traps bridge newroot topologychange\n! SIEM: alert na zmianę roota, BPDU Guard err-disable, Root/Loop Guard inconsistent,\n! nagły wzrost liczby TCN i MAC flapping."
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Jak projektować z STP — i kiedy go unikać",
+      "body": "- **Zawsze włączony** w każdej sieci L2 z możliwością pętli (czyli w praktyce każdej) — jako pas bezpieczeństwa, nawet gdy projekt nie ma redundancji L2.\n- **RSTP/Rapid PVST+** jako domyślny wybór; **MST**, gdy masz setki VLAN-ów lub wielu dostawców.\n- **Root i zapasowy root** zawsze na rdzeniu/dystrybucji, zgodnie z przepływem ruchu i lokalizacją bram (FHRP — rozdział 04: aktywna brama VRRP/HSRP najlepiej na tym samym przełączniku co root danego VLAN-u).\n- **PortFast + BPDU Guard** na wszystkich portach do hostów, serwerów i hiperwizorów (dla trunków do hiperwizorów: `spanning-tree portfast trunk`).\n- **Mniej L2, więcej L3** — współczesne projekty ograniczają domeny L2: routing do przełącznika dostępowego, **EtherChannel/MLAG** (lekcja 08) zamiast blokowanych łączy, w centrach danych **spine-leaf z routingiem L3 i VXLAN/EVPN** — tam STP praktycznie nie bierze udziału w przekazywaniu ruchu, a wszystkie łącza są aktywne (ECMP).\n- **Monitoring**: zmiany roota, liczba TCN, porty err-disabled i inconsistent jako metryki/alerty — tak samo, jak monitorujesz błędy 5xx w aplikacji.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- STP buduje drzewo bez pętli: (1) root bridge = najniższy Bridge ID (priorytet + VLAN + MAC), (2) root port na każdym przełączniku = najniższy koszt do roota, (3) designated port na każdym segmencie, (4) reszta blokowana (alternate).\n- Kryteria porównań: Root ID → koszt → Bridge ID nadawcy → Port ID nadawcy. Koszty short: 10G = 2, 1G = 4, 100M = 19, 10M = 100.\n- BPDU co 2 s na 01:80:c2:00:00:00; timery: hello 2 s, max age 20 s, forward delay 15 s.\n- 802.1D: blocking → listening → learning → forwarding, 30–50 s; RSTP: discarding/learning/forwarding, role alternate i backup, zbieżność ~1 s; MST: instancje grupujące VLAN-y.\n- Ochrony: PortFast + BPDU Guard (hosty), Root Guard (rdzeń w stronę dostępu), Loop Guard i UDLD (uplinki), storm control.\n- Objawy w aplikacji: przerwy 30–50 s, DHCP timeout po starcie, chwilowy flooding po TCN, nieoptymalne ścieżki.\n- Bezpieczeństwo: przejęcie roota i zalewanie BPDU — obrona Root/BPDU Guard, alerty o zmianie roota w SIEM.\n- Następna lekcja: **EtherChannel i LACP — agregacja łączy**.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Topologia T1 (trójkąt, równe priorytety). Przełączniki: SW1 (priorytet 32768, MAC 00:1a:00:00:00:03), SW2 (priorytet 32768, MAC 00:1a:00:00:00:01), SW3 (priorytet 32768, MAC 00:1a:00:00:00:02). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Wyznacz root bridge, root port i koszt do roota każdego przełącznika, role wszystkich portów i porty zablokowane.",
+      "hint": "Krok 1: najniższy BID. Krok 2: najtańsza droga do roota (remis: BID sąsiada, Port ID sąsiada). Krok 3: designated na każdym łączu. Krok 4: reszta alternate.",
+      "solution": "Root bridge: SW2 (najniższy priorytet, a przy remisie najniższy MAC). SW1: root port Gi0/1, koszt 4; SW3: root port Gi0/2, koszt 4. Role: SW2 Gi0/1 = designated, SW1 Gi0/1 = root, SW3 Gi0/1 = designated, SW1 Gi0/2 = alternate, SW2 Gi0/2 = designated, SW3 Gi0/2 = root. Zablokowane: SW1 Gi0/2."
+    },
+    {
+      "prompt": "Topologia T2 (trójkąt, SW3 z priorytetem 4096). Przełączniki: SW1 (priorytet 32768, MAC 00:00:00:00:00:01), SW2 (priorytet 32768, MAC 00:00:00:00:00:02), SW3 (priorytet 4096, MAC 00:ff:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Wyznacz root bridge, root port i koszt do roota każdego przełącznika, role wszystkich portów i porty zablokowane.",
+      "hint": "Krok 1: najniższy BID. Krok 2: najtańsza droga do roota (remis: BID sąsiada, Port ID sąsiada). Krok 3: designated na każdym łączu. Krok 4: reszta alternate.",
+      "solution": "Root bridge: SW3 (najniższy priorytet, a przy remisie najniższy MAC). SW1: root port Gi0/2, koszt 4; SW2: root port Gi0/2, koszt 4. Role: SW1 Gi0/1 = designated, SW2 Gi0/1 = alternate, SW3 Gi0/1 = designated, SW1 Gi0/2 = root, SW3 Gi0/2 = designated, SW2 Gi0/2 = root. Zablokowane: SW2 Gi0/1."
+    },
+    {
+      "prompt": "Topologia T3 (pierścień czterech przełączników). Przełączniki: SW1 (priorytet 24576, MAC 00:aa:00:00:00:01), SW2 (priorytet 32768, MAC 00:aa:00:00:00:02), SW3 (priorytet 32768, MAC 00:aa:00:00:00:03), SW4 (priorytet 32768, MAC 00:aa:00:00:00:04). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW4 Gi0/1 (1G), SW4 Gi0/2 — SW1 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Wyznacz root bridge, root port i koszt do roota każdego przełącznika, role wszystkich portów i porty zablokowane.",
+      "hint": "Krok 1: najniższy BID. Krok 2: najtańsza droga do roota (remis: BID sąsiada, Port ID sąsiada). Krok 3: designated na każdym łączu. Krok 4: reszta alternate.",
+      "solution": "Root bridge: SW1 (najniższy priorytet, a przy remisie najniższy MAC). SW2: root port Gi0/1, koszt 4; SW3: root port Gi0/1, koszt 8; SW4: root port Gi0/2, koszt 4. Role: SW1 Gi0/1 = designated, SW2 Gi0/1 = root, SW2 Gi0/2 = designated, SW3 Gi0/1 = root, SW4 Gi0/1 = designated, SW3 Gi0/2 = alternate, SW1 Gi0/2 = designated, SW4 Gi0/2 = root. Zablokowane: SW3 Gi0/2."
+    },
+    {
+      "prompt": "Topologia T4 (rdzeń i dostęp). Przełączniki: CORE1 (priorytet 24576, MAC 00:aa:00:00:00:01), CORE2 (priorytet 28672, MAC 00:aa:00:00:00:02), ACC1 (priorytet 32768, MAC 00:0b:00:00:00:01), ACC2 (priorytet 32768, MAC 00:0b:00:00:00:02). Łącza: CORE1 Gi0/1 — CORE2 Gi0/1 (10G), CORE1 Gi0/2 — ACC1 Gi0/1 (1G), CORE1 Gi0/3 — ACC2 Gi0/1 (1G), CORE2 Gi0/2 — ACC1 Gi0/2 (1G), CORE2 Gi0/3 — ACC2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Wyznacz root bridge, root port i koszt do roota każdego przełącznika, role wszystkich portów i porty zablokowane.",
+      "hint": "Krok 1: najniższy BID. Krok 2: najtańsza droga do roota (remis: BID sąsiada, Port ID sąsiada). Krok 3: designated na każdym łączu. Krok 4: reszta alternate.",
+      "solution": "Root bridge: CORE1 (najniższy priorytet, a przy remisie najniższy MAC). CORE2: root port Gi0/1, koszt 2; ACC1: root port Gi0/1, koszt 4; ACC2: root port Gi0/1, koszt 4. Role: CORE1 Gi0/1 = designated, CORE2 Gi0/1 = root, CORE1 Gi0/2 = designated, ACC1 Gi0/1 = root, CORE1 Gi0/3 = designated, ACC2 Gi0/1 = root, CORE2 Gi0/2 = designated, ACC1 Gi0/2 = alternate, CORE2 Gi0/3 = designated, ACC2 Gi0/2 = alternate. Zablokowane: ACC1 Gi0/2, ACC2 Gi0/2."
+    },
+    {
+      "prompt": "Topologia T5 (trójkąt, wolne łącze 100M). Przełączniki: SW1 (priorytet 28672, MAC 00:10:00:00:00:01), SW2 (priorytet 32768, MAC 00:10:00:00:00:02), SW3 (priorytet 32768, MAC 00:10:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (100M), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Wyznacz root bridge, root port i koszt do roota każdego przełącznika, role wszystkich portów i porty zablokowane.",
+      "hint": "Krok 1: najniższy BID. Krok 2: najtańsza droga do roota (remis: BID sąsiada, Port ID sąsiada). Krok 3: designated na każdym łączu. Krok 4: reszta alternate.",
+      "solution": "Root bridge: SW1 (najniższy priorytet, a przy remisie najniższy MAC). SW2: root port Gi0/2, koszt 8; SW3: root port Gi0/1, koszt 4. Role: SW1 Gi0/1 = designated, SW2 Gi0/1 = alternate, SW1 Gi0/2 = designated, SW3 Gi0/1 = root, SW3 Gi0/2 = designated, SW2 Gi0/2 = root. Zablokowane: SW2 Gi0/1."
+    },
+    {
+      "prompt": "Topologia T6 (dwa równoległe łącza). Przełączniki: SW1 (priorytet 32768, MAC 00:01:00:00:00:01), SW2 (priorytet 32768, MAC 00:01:00:00:00:02). Łącza: SW1 Gi0/3 — SW2 Gi0/5 (1G), SW1 Gi0/4 — SW2 Gi0/6 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Wyznacz root bridge, root port i koszt do roota każdego przełącznika, role wszystkich portów i porty zablokowane.",
+      "hint": "Krok 1: najniższy BID. Krok 2: najtańsza droga do roota (remis: BID sąsiada, Port ID sąsiada). Krok 3: designated na każdym łączu. Krok 4: reszta alternate.",
+      "solution": "Root bridge: SW1 (najniższy priorytet, a przy remisie najniższy MAC). SW2: root port Gi0/5, koszt 4. Role: SW1 Gi0/3 = designated, SW2 Gi0/5 = root, SW1 Gi0/4 = designated, SW2 Gi0/6 = alternate. Zablokowane: SW2 Gi0/6."
+    },
+    {
+      "prompt": "Przełącznik ma skonfigurowany priorytet 32768 i działa w Rapid PVST+. Jaki Bridge Priority pokaże dla VLAN 10? Jaką najniższą wartość priorytetu możesz ustawić, aby z pewnością wygrać z przełącznikiem o priorytecie 32768, gdy nie znasz jego MAC?",
+      "hint": "Priorytet + numer VLAN; krok konfiguracji 4096.",
+      "solution": "Bridge Priority = 32768 + 10 = 32778. Aby wygrać niezależnie od MAC, ustaw priorytet o co najmniej 4096 niższy: 28672."
+    },
+    {
+      "prompt": "Przełącznik ma skonfigurowany priorytet 24576 i działa w Rapid PVST+. Jaki Bridge Priority pokaże dla VLAN 100? Jaką najniższą wartość priorytetu możesz ustawić, aby z pewnością wygrać z przełącznikiem o priorytecie 24576, gdy nie znasz jego MAC?",
+      "hint": "Priorytet + numer VLAN; krok konfiguracji 4096.",
+      "solution": "Bridge Priority = 24576 + 100 = 24676. Aby wygrać niezależnie od MAC, ustaw priorytet o co najmniej 4096 niższy: 20480."
+    },
+    {
+      "prompt": "Przełącznik ma skonfigurowany priorytet 4096 i działa w Rapid PVST+. Jaki Bridge Priority pokaże dla VLAN 1? Jaką najniższą wartość priorytetu możesz ustawić, aby z pewnością wygrać z przełącznikiem o priorytecie 4096, gdy nie znasz jego MAC?",
+      "hint": "Priorytet + numer VLAN; krok konfiguracji 4096.",
+      "solution": "Bridge Priority = 4096 + 1 = 4097. Aby wygrać niezależnie od MAC, ustaw priorytet o co najmniej 4096 niższy: 0."
+    },
+    {
+      "prompt": "Policz koszt ścieżki do roota przechodzącej przez łącza: 10G, 1G, 1G, 100M — w metodzie short i long. Którą ścieżkę wybierze STP, jeśli alternatywą są trzy łącza 1G?",
+      "hint": "Sumuj koszty portów odbiorczych na ścieżce.",
+      "solution": "Short: 2 + 4 + 4 + 19 = 29; alternatywa 3 × 4 = 12 → wygrywa alternatywa. Long: 2000 + 2 × 20000 + 200000 = 242000; alternatywa 3 × 20 000 = 60 000 → również alternatywa. Wolne łącze 100M mocno podnosi koszt."
+    },
+    {
+      "prompt": "Wykonaj Packet Lab z lekcji i przedstaw tabelę: tryb (PVST+ / Rapid PVST+), zdarzenie (awaria root portu, podłączenie hosta), czas przerwy i liczba utraconych pakietów przy ping -i 0.2.",
+      "hint": "Przerwa = liczba utraconych odpowiedzi × 0,2 s.",
+      "solution": "Typowe wyniki: PVST+ awaria pośrednia: 150–250 utraconych (30–50 s); PVST+ awaria bezpośrednia root portu z alternatywną ścieżką: ok. 150 (30 s: listening + learning); Rapid PVST+: 0–10 utraconych (do ~2 s); podłączenie hosta bez PortFast w PVST+: ok. 30 s do pierwszego DHCP, z PortFast: natychmiast. Wniosek: RSTP + PortFast jako standard."
+    },
+    {
+      "prompt": "Odczytaj z przechwyconego BPDU (Wireshark): Root Identifier 24576 / 10 / 00:aa:00:00:00:01, Root Path Cost 4, Bridge Identifier 32768 / 10 / 00:0b:00:00:00:01, Port Identifier 0x8002. Co wiesz o nadawcy i jego położeniu?",
+      "hint": "Port ID = priorytet 0x80 (128) + numer portu.",
+      "solution": "Rootem jest 00:aa:00:00:00:01 z priorytetem 24576 w VLAN 10 (BID 24586). Nadawca 00:0b:00:00:00:01 (priorytet 32768, VLAN 10) jest jeden skok 1G (koszt 4) od roota. BPDU wyszło z portu 2 (priorytet 128). Skoro nadawca wysyła BPDU na ten segment, jego port 2 jest designated dla tego segmentu."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego port, który przestał otrzymywać BPDU z powodu łącza jednokierunkowego, może spowodować pętlę, i jak chroni przed tym Loop Guard i UDLD.",
+      "hint": "Port alternate czeka na BPDU; brak BPDU = założenie, że sąsiad zniknął.",
+      "solution": "Port alternate pozostaje zablokowany, dopóki otrzymuje lepsze BPDU od sąsiada. Gdy światłowód działa tylko w jedną stronę, BPDU przestają docierać; po max age port uznaje, że jest jedynym na segmencie, staje się designated i przechodzi do forwarding — powstaje pętla. Loop Guard: port, który przestał dostawać BPDU, przechodzi w stan loop-inconsistent (blokowany) zamiast forwarding. UDLD: wykrywa łącze jednokierunkowe (echo z identyfikatorem sąsiada) i wyłącza port (tryb aggressive)."
+    },
+    {
+      "prompt": "Opisz, jak Root Guard reaguje na pojawienie się lepszego BPDU na porcie i czym się różni od BPDU Guard.",
+      "hint": "Root Guard blokuje, BPDU Guard wyłącza.",
+      "solution": "Root Guard: gdy na porcie pojawi się BPDU z lepszym Root ID (ktoś próbuje zostać rootem), port przechodzi w stan root-inconsistent (blokowany, bez err-disable); po ustaniu takich BPDU wraca automatycznie. Normalne BPDU są akceptowane — używany na portach rdzenia/dystrybucji w stronę przełączników dostępowych. BPDU Guard: każde BPDU na porcie edge powoduje err-disable (port wyłączony) — używany na portach do hostów, gdzie BPDU w ogóle nie powinno być."
+    },
+    {
+      "prompt": "Na przełączniku pojawia się co kilka minut komunikat o zmianie topologii, a użytkownicy zgłaszają krótkie spowolnienia. Jak znajdziesz źródło TCN?",
+      "hint": "show spanning-tree detail — „from” i „occurred”.",
+      "solution": "show spanning-tree vlan X detail | include ieee|occurr|from|is exec — pokazuje liczbę zmian, czas od ostatniej i interfejs, z którego przyszła. Przechodzisz na przełącznik za tym interfejsem i powtarzasz, aż znajdziesz port lokalny, na którym zmienia się stan (laptop bez PortFast, flapping łącza). Naprawa: PortFast na portach brzegowych (nie generują TCN), wymiana kabla, logowanie zmian stanu interfejsów."
+    },
+    {
+      "prompt": "Zaprojektuj rozmieszczenie root bridge i bram (VRRP/HSRP) dla VLAN 10 i 20 w sieci z dwoma przełącznikami dystrybucyjnymi, tak aby oba łącza uplink były wykorzystywane.",
+      "hint": "PVST+ pozwala mieć różne rooty w różnych VLAN-ach.",
+      "solution": "DIST1: root primary dla VLAN 10, root secondary dla VLAN 20, aktywna brama HSRP/VRRP dla VLAN 10. DIST2: odwrotnie dla VLAN 20. Przełącznik dostępowy ma root port VLAN 10 do DIST1 (uplink do DIST2 alternate dla VLAN 10) i root port VLAN 20 do DIST2 — oba uplinki przenoszą ruch. Brama w tym samym miejscu co root unika dodatkowego skoku przez łącze między dystrybucjami."
+    },
+    {
+      "prompt": "Wyjaśnij, jak RSTP osiąga szybką zbieżność na łączach punkt-punkt (proposal/agreement) i dlaczego nie działa to tak samo na łączach half-duplex.",
+      "hint": "Synchronizacja (sync) i link type.",
+      "solution": "Na łączu P2P (full duplex) przełącznik wysyła BPDU z flagą proposal; sąsiad blokuje swoje porty niebędące edge (sync), odpowiada agreement, a nadawca od razu przechodzi do forwarding — proces schodzi kaskadowo w dół drzewa w ułamkach sekundy. Na łączu współdzielonym (half duplex, hub) nie wiadomo, ilu jest sąsiadów, więc RSTP wraca do timerów (forward delay). Dlatego typ łącza (link-type point-to-point) ma znaczenie."
+    },
+    {
+      "prompt": "Opisz konfigurację MST z dwoma instancjami (VLAN 10–19 i 20–29) i wyjaśnij, co musi być identyczne na wszystkich przełącznikach regionu.",
+      "hint": "spanning-tree mst configuration: name, revision, instance.",
+      "solution": "spanning-tree mode mst; spanning-tree mst configuration; name CAMPUS; revision 1; instance 1 vlan 10-19; instance 2 vlan 20-29; exit; spanning-tree mst 1 root primary (na DIST1), spanning-tree mst 2 root primary (na DIST2). Identyczne muszą być: nazwa regionu, numer rewizji i pełne mapowanie VLAN → instancja; różnica choćby w jednym VLAN-ie tworzy inny region (granica regionu, inne zachowanie)."
+    },
+    {
+      "prompt": "Dlaczego w centrach danych z architekturą spine-leaf STP prawie nie ma znaczenia dla przekazywania ruchu? Co go zastępuje?",
+      "hint": "Routing L3, ECMP, VXLAN/EVPN, MLAG.",
+      "solution": "Połączenia spine–leaf są trasami L3 (BGP/OSPF), więc nie ma pętli L2 — ruch rozkłada ECMP na wszystkie łącza (żadne nie jest blokowane). L2 dla aplikacji rozciąga się overlayem VXLAN z płaszczyzną kontrolną EVPN; serwery podłącza się do pary leafów przez MLAG/EVPN multihoming z LACP. STP zostaje włączone na portach do serwerów tylko jako zabezpieczenie (BPDU Guard)."
+    },
+    {
+      "prompt": "Atak koncepcyjny: urządzenie w VLAN-ie użytkowników wysyła BPDU z priorytetem 0. Opisz skutki w sieci bez ochron i trzy mechanizmy, które temu zapobiegają, oraz sposób wykrycia.",
+      "hint": "Lepsze BPDU = nowy root; przebudowa drzewa.",
+      "solution": "Skutki: urządzenie zostaje rootem, drzewo przebudowuje się (przerwa w ruchu), ruch między przełącznikami może zacząć płynąć przez to urządzenie (podsłuch, MITM) albo sieć niestabilnie „pływa” przy ciągłych zmianach. Ochrony: BPDU Guard na portach dostępowych (port wyłączony przy pierwszym BPDU), Root Guard na portach w stronę dostępu, PortFast default z bpduguard default. Detekcja: log BPDUGUARD/ROOTGUARD, trap newRoot, alert w SIEM na zmianę roota."
+    },
+    {
+      "prompt": "Policz przybliżoną liczbę BPDU na sekundę wysyłanych przez przełącznik dystrybucyjny w Rapid PVST+ z 200 VLAN-ami i 24 trunkami, a następnie w MST z 3 instancjami. Jaki wniosek dla dużych sieci?",
+      "hint": "BPDU co 2 s na port na instancję (RSTP: każdy przełącznik wysyła na portach designated).",
+      "solution": "Rapid PVST+: 200 VLAN-ów × 24 porty / 2 s = 2400 BPDU/s generowanych przez CPU. MST: BPDU MST niesie wszystkie instancje w jednej ramce: 24 porty / 2 s = 12 BPDU/s. Wniosek: przy setkach VLAN-ów PVST+ obciąża CPU i może przekroczyć limity instancji STP przełącznika; MST skaluje się znacznie lepiej."
+    },
+    {
+      "prompt": "Wyjaśnij, czym różni się alternate port od backup port w RSTP i podaj sytuację, w której zobaczysz backup.",
+      "hint": "Alternate — droga do roota przez innego sąsiada; backup — drugi port do segmentu, na którym ten sam przełącznik ma już designated.",
+      "solution": "Alternate: zablokowany port, który otrzymuje lepsze BPDU od innego przełącznika — zapasowa droga do roota (przejmie rolę root portu). Backup: zablokowany port, który otrzymuje lepsze BPDU od samego siebie (ten sam przełącznik ma już designated port na tym segmencie) — zapas dla designated. Występuje rzadko: dwa porty jednego przełącznika podłączone do tego samego huba lub segmentu współdzielonego."
+    },
+    {
+      "prompt": "Hiperwizor (ESXi, Proxmox) jest podłączony do przełącznika trunkiem. Jak skonfigurować port przełącznika pod kątem STP i dlaczego?",
+      "hint": "vSwitch nie uczestniczy w STP; port powinien szybko przejść do forwarding.",
+      "solution": "Port trunk do hosta: spanning-tree portfast trunk (edge na trunku — VM-ki mają sieć od razu po starcie i vMotion nie powoduje przerw ani TCN) + spanning-tree bpduguard enable (gdyby maszyna wirtualna zmostkowała dwa interfejsy i wysyłała BPDU, port zostanie wyłączony zamiast tworzyć pętlę). W Proxmox z linux bridge STP na bridge’u zwykle wyłączone, a pętle wyklucza się projektem (bonding zamiast dwóch niezależnych uplinków w jednym bridge’u)."
+    },
+    {
+      "prompt": "W logach widzisz „%SW_MATM-4-MACFLAP_NOTIF: Host 0050.56ab.1234 in vlan 10 is flapping between port Gi1/0/5 and port Gi1/0/48”. Jakie są możliwe przyczyny?",
+      "hint": "Ten sam MAC widziany na dwóch portach naprzemiennie.",
+      "solution": "1) Pętla L2 (np. STP wyłączony/BPDU Filter, mały przełącznik z pętlą za portem Gi1/0/5) — wtedy flapping dotyczy wielu MAC-ów i rośnie broadcast; 2) host z dwiema kartami w trybie bondingu niepoprawnie skonfigurowanym (balance-rr bez LACP) — MAC pojawia się na dwóch portach; 3) maszyna wirtualna migrująca (vMotion) — jednorazowo, normalne; 4) atak/podszywanie się pod MAC. Diagnoza: sprawdzić liczbę flappujących adresów, liczniki broadcastu, stan STP i konfigurację hosta."
+    },
+    {
+      "prompt": "Napisz w Javie metodę porównującą dwa BPDU według kryteriów STP (Root ID, koszt, Bridge ID nadawcy, Port ID) — zwróć, które jest lepsze.",
+      "hint": "Comparator z kolejnymi kluczami; Bridge ID jako para (priorytet, MAC).",
+      "solution": "record BridgeId(int priority, long mac) implements Comparable<BridgeId> {\n  public int compareTo(BridgeId o) { int c = Integer.compare(priority, o.priority); return c != 0 ? c : Long.compareUnsigned(mac, o.mac); }\n}\nrecord Bpdu(BridgeId root, int cost, BridgeId sender, int portId) {}\nstatic final Comparator<Bpdu> BETTER = Comparator.comparing(Bpdu::root)\n    .thenComparingInt(Bpdu::cost)\n    .thenComparing(Bpdu::sender)\n    .thenComparingInt(Bpdu::portId);\n// BETTER.compare(a, b) < 0 → a jest lepsze (niższe wartości wygrywają)."
+    },
+    {
+      "prompt": "Przygotuj listę kontrolną audytu STP w sieci kampusowej (minimum 7 punktów).",
+      "hint": "Tryb, root, edge, ochrony, monitoring.",
+      "solution": "1) Jednolity tryb (Rapid PVST+ lub MST) na wszystkich przełącznikach. 2) Root primary/secondary na rdzeniu/dystrybucji dla każdego VLAN-u/instancji. 3) PortFast tylko na portach do hostów, z BPDU Guard (lub globalnie default). 4) Brak BPDU Filter na interfejsach dostępowych. 5) Root Guard na portach dystrybucji w stronę dostępu. 6) Loop Guard/UDLD na uplinkach światłowodowych. 7) Jednolita metoda kosztów (long przy ≥ 10G). 8) Storm control na portach dostępowych. 9) Alerty SNMP/syslog: newRoot, topologyChange, err-disable, inconsistent ports. 10) Brak VLAN-ów z wyłączonym STP."
+    },
+    {
+      "prompt": "T1 (trójkąt, równe priorytety): Przełączniki: SW1 (priorytet 32768, MAC 00:1a:00:00:00:03), SW2 (priorytet 32768, MAC 00:1a:00:00:00:01), SW3 (priorytet 32768, MAC 00:1a:00:00:00:02). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Łącze SW1 Gi0/2 — SW3 Gi0/1 (1G) ulega awarii. Wyznacz nowe root porty, koszty i porty zablokowane. Ile mniej więcej potrwa przerwa w 802.1D i w RSTP?",
+      "hint": "Usuń łącze z grafu i powtórz algorytm.",
+      "solution": "Root bridge: SW2 (najniższy priorytet, a przy remisie najniższy MAC). SW1: root port Gi0/1, koszt 4; SW3: root port Gi0/2, koszt 4. Role: SW2 Gi0/1 = designated, SW1 Gi0/1 = root, SW2 Gi0/2 = designated, SW3 Gi0/2 = root. Zablokowane: brak. Przerwa: 802.1D przy awarii bezpośredniej root portu ok. 30 s (listening + learning), przy pośredniej do 50 s (max age + 30 s); RSTP — port alternate przejmuje rolę root portu w ok. 1 s."
+    },
+    {
+      "prompt": "T3 (pierścień czterech przełączników): Przełączniki: SW1 (priorytet 24576, MAC 00:aa:00:00:00:01), SW2 (priorytet 32768, MAC 00:aa:00:00:00:02), SW3 (priorytet 32768, MAC 00:aa:00:00:00:03), SW4 (priorytet 32768, MAC 00:aa:00:00:00:04). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW4 Gi0/1 (1G), SW4 Gi0/2 — SW1 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Łącze SW1 Gi0/1 — SW2 Gi0/1 (1G) ulega awarii. Wyznacz nowe root porty, koszty i porty zablokowane. Ile mniej więcej potrwa przerwa w 802.1D i w RSTP?",
+      "hint": "Usuń łącze z grafu i powtórz algorytm.",
+      "solution": "Root bridge: SW1 (najniższy priorytet, a przy remisie najniższy MAC). SW2: root port Gi0/2, koszt 12; SW3: root port Gi0/2, koszt 8; SW4: root port Gi0/2, koszt 4. Role: SW3 Gi0/1 = designated, SW2 Gi0/2 = root, SW4 Gi0/1 = designated, SW3 Gi0/2 = root, SW1 Gi0/2 = designated, SW4 Gi0/2 = root. Zablokowane: brak. Przerwa: 802.1D przy awarii bezpośredniej root portu ok. 30 s (listening + learning), przy pośredniej do 50 s (max age + 30 s); RSTP — port alternate przejmuje rolę root portu w ok. 1 s."
+    },
+    {
+      "prompt": "T4 (rdzeń i dostęp): Przełączniki: CORE1 (priorytet 24576, MAC 00:aa:00:00:00:01), CORE2 (priorytet 28672, MAC 00:aa:00:00:00:02), ACC1 (priorytet 32768, MAC 00:0b:00:00:00:01), ACC2 (priorytet 32768, MAC 00:0b:00:00:00:02). Łącza: CORE1 Gi0/1 — CORE2 Gi0/1 (10G), CORE1 Gi0/2 — ACC1 Gi0/1 (1G), CORE1 Gi0/3 — ACC2 Gi0/1 (1G), CORE2 Gi0/2 — ACC1 Gi0/2 (1G), CORE2 Gi0/3 — ACC2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Łącze CORE1 Gi0/2 — ACC1 Gi0/1 (1G) ulega awarii. Wyznacz nowe root porty, koszty i porty zablokowane. Ile mniej więcej potrwa przerwa w 802.1D i w RSTP?",
+      "hint": "Usuń łącze z grafu i powtórz algorytm.",
+      "solution": "Root bridge: CORE1 (najniższy priorytet, a przy remisie najniższy MAC). CORE2: root port Gi0/1, koszt 2; ACC1: root port Gi0/2, koszt 6; ACC2: root port Gi0/1, koszt 4. Role: CORE1 Gi0/1 = designated, CORE2 Gi0/1 = root, CORE1 Gi0/3 = designated, ACC2 Gi0/1 = root, CORE2 Gi0/2 = designated, ACC1 Gi0/2 = root, CORE2 Gi0/3 = designated, ACC2 Gi0/2 = alternate. Zablokowane: ACC2 Gi0/2. Przerwa: 802.1D przy awarii bezpośredniej root portu ok. 30 s (listening + learning), przy pośredniej do 50 s (max age + 30 s); RSTP — port alternate przejmuje rolę root portu w ok. 1 s."
+    },
+    {
+      "prompt": "T5 (trójkąt, wolne łącze 100M): Przełączniki: SW1 (priorytet 28672, MAC 00:10:00:00:00:01), SW2 (priorytet 32768, MAC 00:10:00:00:00:02), SW3 (priorytet 32768, MAC 00:10:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (100M), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Łącze SW1 Gi0/2 — SW3 Gi0/1 (1G) ulega awarii. Wyznacz nowe root porty, koszty i porty zablokowane. Ile mniej więcej potrwa przerwa w 802.1D i w RSTP?",
+      "hint": "Usuń łącze z grafu i powtórz algorytm.",
+      "solution": "Root bridge: SW1 (najniższy priorytet, a przy remisie najniższy MAC). SW2: root port Gi0/1, koszt 19; SW3: root port Gi0/2, koszt 23. Role: SW1 Gi0/1 = designated, SW2 Gi0/1 = root, SW2 Gi0/2 = designated, SW3 Gi0/2 = root. Zablokowane: brak. Przerwa: 802.1D przy awarii bezpośredniej root portu ok. 30 s (listening + learning), przy pośredniej do 50 s (max age + 30 s); RSTP — port alternate przejmuje rolę root portu w ok. 1 s."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "T1 (trójkąt, równe priorytety): Przełączniki: SW1 (priorytet 32768, MAC 00:1a:00:00:00:03), SW2 (priorytet 32768, MAC 00:1a:00:00:00:01), SW3 (priorytet 32768, MAC 00:1a:00:00:00:02). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który przełącznik zostanie root bridge?",
+      "options": {
+        "A": "SW2",
+        "B": "SW3",
+        "C": "SW1",
+        "D": "żaden — wymagany remis"
+      },
+      "correct": "A",
+      "explanation": "Najniższy priorytet, przy remisie najniższy MAC."
+    },
+    {
+      "question": "T1 (trójkąt, równe priorytety) (SW1 Gi0/1–SW2 Gi0/1 1G, SW1 Gi0/2–SW3 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/2 1G; root = SW2): który port jest root portem przełącznika SW1?",
+      "options": {
+        "A": "Gi0/2",
+        "B": "brak — to root bridge",
+        "C": "Gi0/1",
+        "D": "Gi0/11"
+      },
+      "correct": "C",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T1 (trójkąt, równe priorytety) (SW1 Gi0/1–SW2 Gi0/1 1G, SW1 Gi0/2–SW3 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/2 1G; root = SW2): który port jest root portem przełącznika SW3?",
+      "options": {
+        "A": "Gi0/12",
+        "B": "brak — to root bridge",
+        "C": "Gi0/1",
+        "D": "Gi0/2"
+      },
+      "correct": "D",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T1 (trójkąt, równe priorytety): Przełączniki: SW1 (priorytet 32768, MAC 00:1a:00:00:00:03), SW2 (priorytet 32768, MAC 00:1a:00:00:00:01), SW3 (priorytet 32768, MAC 00:1a:00:00:00:02). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który port zostanie zablokowany (alternate)?",
+      "options": {
+        "A": "SW3 Gi0/2",
+        "B": "SW1 Gi0/2",
+        "C": "SW2 Gi0/2",
+        "D": "SW3 Gi0/1"
+      },
+      "correct": "B",
+      "explanation": "Na łączu bez root portu przegrywa port przełącznika dalszego od roota (wyższy koszt, potem wyższy BID)."
+    },
+    {
+      "question": "T2 (trójkąt, SW3 z priorytetem 4096): Przełączniki: SW1 (priorytet 32768, MAC 00:00:00:00:00:01), SW2 (priorytet 32768, MAC 00:00:00:00:00:02), SW3 (priorytet 4096, MAC 00:ff:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który przełącznik zostanie root bridge?",
+      "options": {
+        "A": "SW1",
+        "B": "SW3",
+        "C": "żaden — wymagany remis",
+        "D": "SW2"
+      },
+      "correct": "B",
+      "explanation": "Najniższy priorytet, przy remisie najniższy MAC."
+    },
+    {
+      "question": "T2 (trójkąt, SW3 z priorytetem 4096) (SW1 Gi0/1–SW2 Gi0/1 1G, SW1 Gi0/2–SW3 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/2 1G; root = SW3): który port jest root portem przełącznika SW1?",
+      "options": {
+        "A": "Gi0/1",
+        "B": "Gi0/12",
+        "C": "Gi0/2",
+        "D": "brak — to root bridge"
+      },
+      "correct": "C",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T2 (trójkąt, SW3 z priorytetem 4096) (SW1 Gi0/1–SW2 Gi0/1 1G, SW1 Gi0/2–SW3 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/2 1G; root = SW3): który port jest root portem przełącznika SW2?",
+      "options": {
+        "A": "Gi0/12",
+        "B": "Gi0/1",
+        "C": "brak — to root bridge",
+        "D": "Gi0/2"
+      },
+      "correct": "D",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T2 (trójkąt, SW3 z priorytetem 4096): Przełączniki: SW1 (priorytet 32768, MAC 00:00:00:00:00:01), SW2 (priorytet 32768, MAC 00:00:00:00:00:02), SW3 (priorytet 4096, MAC 00:ff:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który port zostanie zablokowany (alternate)?",
+      "options": {
+        "A": "SW2 Gi0/1",
+        "B": "SW3 Gi0/1",
+        "C": "SW2 Gi0/2",
+        "D": "SW3 Gi0/2"
+      },
+      "correct": "A",
+      "explanation": "Na łączu bez root portu przegrywa port przełącznika dalszego od roota (wyższy koszt, potem wyższy BID)."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników): Przełączniki: SW1 (priorytet 24576, MAC 00:aa:00:00:00:01), SW2 (priorytet 32768, MAC 00:aa:00:00:00:02), SW3 (priorytet 32768, MAC 00:aa:00:00:00:03), SW4 (priorytet 32768, MAC 00:aa:00:00:00:04). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW4 Gi0/1 (1G), SW4 Gi0/2 — SW1 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który przełącznik zostanie root bridge?",
+      "options": {
+        "A": "SW2",
+        "B": "SW3",
+        "C": "SW4",
+        "D": "SW1"
+      },
+      "correct": "D",
+      "explanation": "Najniższy priorytet, przy remisie najniższy MAC."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników) (SW1 Gi0/1–SW2 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW4 Gi0/1 1G, SW4 Gi0/2–SW1 Gi0/2 1G; root = SW1): który port jest root portem przełącznika SW2?",
+      "options": {
+        "A": "Gi0/1",
+        "B": "brak — to root bridge",
+        "C": "Gi0/11",
+        "D": "Gi0/2"
+      },
+      "correct": "A",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników) (SW1 Gi0/1–SW2 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW4 Gi0/1 1G, SW4 Gi0/2–SW1 Gi0/2 1G; root = SW1): który port jest root portem przełącznika SW3?",
+      "options": {
+        "A": "Gi0/2",
+        "B": "Gi0/11",
+        "C": "Gi0/1",
+        "D": "brak — to root bridge"
+      },
+      "correct": "C",
+      "explanation": "Najniższy koszt do roota (8), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników) (SW1 Gi0/1–SW2 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW4 Gi0/1 1G, SW4 Gi0/2–SW1 Gi0/2 1G; root = SW1): który port jest root portem przełącznika SW4?",
+      "options": {
+        "A": "Gi0/12",
+        "B": "Gi0/2",
+        "C": "brak — to root bridge",
+        "D": "Gi0/1"
+      },
+      "correct": "B",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników): Przełączniki: SW1 (priorytet 24576, MAC 00:aa:00:00:00:01), SW2 (priorytet 32768, MAC 00:aa:00:00:00:02), SW3 (priorytet 32768, MAC 00:aa:00:00:00:03), SW4 (priorytet 32768, MAC 00:aa:00:00:00:04). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (1G), SW2 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW4 Gi0/1 (1G), SW4 Gi0/2 — SW1 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który port zostanie zablokowany (alternate)?",
+      "options": {
+        "A": "SW1 Gi0/2",
+        "B": "SW4 Gi0/1",
+        "C": "SW3 Gi0/2",
+        "D": "SW4 Gi0/2"
+      },
+      "correct": "C",
+      "explanation": "Na łączu bez root portu przegrywa port przełącznika dalszego od roota (wyższy koszt, potem wyższy BID)."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp): Przełączniki: CORE1 (priorytet 24576, MAC 00:aa:00:00:00:01), CORE2 (priorytet 28672, MAC 00:aa:00:00:00:02), ACC1 (priorytet 32768, MAC 00:0b:00:00:00:01), ACC2 (priorytet 32768, MAC 00:0b:00:00:00:02). Łącza: CORE1 Gi0/1 — CORE2 Gi0/1 (10G), CORE1 Gi0/2 — ACC1 Gi0/1 (1G), CORE1 Gi0/3 — ACC2 Gi0/1 (1G), CORE2 Gi0/2 — ACC1 Gi0/2 (1G), CORE2 Gi0/3 — ACC2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który przełącznik zostanie root bridge?",
+      "options": {
+        "A": "ACC1",
+        "B": "CORE1",
+        "C": "ACC2",
+        "D": "CORE2"
+      },
+      "correct": "B",
+      "explanation": "Najniższy priorytet, przy remisie najniższy MAC."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp) (CORE1 Gi0/1–CORE2 Gi0/1 10G, CORE1 Gi0/2–ACC1 Gi0/1 1G, CORE1 Gi0/3–ACC2 Gi0/1 1G, CORE2 Gi0/2–ACC1 Gi0/2 1G, CORE2 Gi0/3–ACC2 Gi0/2 1G; root = CORE1): który port jest root portem przełącznika CORE2?",
+      "options": {
+        "A": "brak — to root bridge",
+        "B": "Gi0/3",
+        "C": "Gi0/2",
+        "D": "Gi0/1"
+      },
+      "correct": "D",
+      "explanation": "Najniższy koszt do roota (2), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp) (CORE1 Gi0/1–CORE2 Gi0/1 10G, CORE1 Gi0/2–ACC1 Gi0/1 1G, CORE1 Gi0/3–ACC2 Gi0/1 1G, CORE2 Gi0/2–ACC1 Gi0/2 1G, CORE2 Gi0/3–ACC2 Gi0/2 1G; root = CORE1): który port jest root portem przełącznika ACC1?",
+      "options": {
+        "A": "Gi0/1",
+        "B": "Gi0/2",
+        "C": "Gi0/11",
+        "D": "brak — to root bridge"
+      },
+      "correct": "A",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp) (CORE1 Gi0/1–CORE2 Gi0/1 10G, CORE1 Gi0/2–ACC1 Gi0/1 1G, CORE1 Gi0/3–ACC2 Gi0/1 1G, CORE2 Gi0/2–ACC1 Gi0/2 1G, CORE2 Gi0/3–ACC2 Gi0/2 1G; root = CORE1): który port jest root portem przełącznika ACC2?",
+      "options": {
+        "A": "Gi0/1",
+        "B": "brak — to root bridge",
+        "C": "Gi0/2",
+        "D": "Gi0/11"
+      },
+      "correct": "A",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M): Przełączniki: SW1 (priorytet 28672, MAC 00:10:00:00:00:01), SW2 (priorytet 32768, MAC 00:10:00:00:00:02), SW3 (priorytet 32768, MAC 00:10:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (100M), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który przełącznik zostanie root bridge?",
+      "options": {
+        "A": "żaden — wymagany remis",
+        "B": "SW1",
+        "C": "SW3",
+        "D": "SW2"
+      },
+      "correct": "B",
+      "explanation": "Najniższy priorytet, przy remisie najniższy MAC."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M) (SW1 Gi0/1–SW2 Gi0/1 100M, SW1 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW2 Gi0/2 1G; root = SW1): który port jest root portem przełącznika SW2?",
+      "options": {
+        "A": "Gi0/12",
+        "B": "brak — to root bridge",
+        "C": "Gi0/1",
+        "D": "Gi0/2"
+      },
+      "correct": "D",
+      "explanation": "Najniższy koszt do roota (8), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M) (SW1 Gi0/1–SW2 Gi0/1 100M, SW1 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW2 Gi0/2 1G; root = SW1): który port jest root portem przełącznika SW3?",
+      "options": {
+        "A": "Gi0/2",
+        "B": "brak — to root bridge",
+        "C": "Gi0/1",
+        "D": "Gi0/11"
+      },
+      "correct": "C",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M): Przełączniki: SW1 (priorytet 28672, MAC 00:10:00:00:00:01), SW2 (priorytet 32768, MAC 00:10:00:00:00:02), SW3 (priorytet 32768, MAC 00:10:00:00:00:03). Łącza: SW1 Gi0/1 — SW2 Gi0/1 (100M), SW1 Gi0/2 — SW3 Gi0/1 (1G), SW3 Gi0/2 — SW2 Gi0/2 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który port zostanie zablokowany (alternate)?",
+      "options": {
+        "A": "SW3 Gi0/2",
+        "B": "SW2 Gi0/1",
+        "C": "SW3 Gi0/1",
+        "D": "SW2 Gi0/2"
+      },
+      "correct": "B",
+      "explanation": "Na łączu bez root portu przegrywa port przełącznika dalszego od roota (wyższy koszt, potem wyższy BID)."
+    },
+    {
+      "question": "T6 (dwa równoległe łącza): Przełączniki: SW1 (priorytet 32768, MAC 00:01:00:00:00:01), SW2 (priorytet 32768, MAC 00:01:00:00:00:02). Łącza: SW1 Gi0/3 — SW2 Gi0/5 (1G), SW1 Gi0/4 — SW2 Gi0/6 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który przełącznik zostanie root bridge?",
+      "options": {
+        "A": "SW2",
+        "B": "żaden — wymagany remis",
+        "C": "SW1",
+        "D": "ten z najwyższym MAC"
+      },
+      "correct": "C",
+      "explanation": "Najniższy priorytet, przy remisie najniższy MAC."
+    },
+    {
+      "question": "T6 (dwa równoległe łącza) (SW1 Gi0/3–SW2 Gi0/5 1G, SW1 Gi0/4–SW2 Gi0/6 1G; root = SW1): który port jest root portem przełącznika SW2?",
+      "options": {
+        "A": "Gi0/6",
+        "B": "brak — to root bridge",
+        "C": "Gi0/15",
+        "D": "Gi0/5"
+      },
+      "correct": "D",
+      "explanation": "Najniższy koszt do roota (4), przy remisie niższy BID i Port ID sąsiada."
+    },
+    {
+      "question": "T6 (dwa równoległe łącza): Przełączniki: SW1 (priorytet 32768, MAC 00:01:00:00:00:01), SW2 (priorytet 32768, MAC 00:01:00:00:00:02). Łącza: SW1 Gi0/3 — SW2 Gi0/5 (1G), SW1 Gi0/4 — SW2 Gi0/6 (1G). Koszty short (1G = 4, 100M = 19, 10G = 2). Który port zostanie zablokowany (alternate)?",
+      "options": {
+        "A": "SW2 Gi0/6",
+        "B": "SW1 Gi0/3",
+        "C": "SW1 Gi0/4",
+        "D": "SW2 Gi0/5"
+      },
+      "correct": "A",
+      "explanation": "Na łączu bez root portu przegrywa port przełącznika dalszego od roota (wyższy koszt, potem wyższy BID)."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników) (koszty short, root = SW1): jaki jest koszt ścieżki przełącznika SW2 do roota?",
+      "options": {
+        "A": "8",
+        "B": "23",
+        "C": "4",
+        "D": "2"
+      },
+      "correct": "C",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 4."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników) (koszty short, root = SW1): jaki jest koszt ścieżki przełącznika SW3 do roota?",
+      "options": {
+        "A": "8",
+        "B": "27",
+        "C": "16",
+        "D": "12"
+      },
+      "correct": "A",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 8."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników) (koszty short, root = SW1): jaki jest koszt ścieżki przełącznika SW4 do roota?",
+      "options": {
+        "A": "8",
+        "B": "2",
+        "C": "23",
+        "D": "4"
+      },
+      "correct": "D",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 4."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp) (koszty short, root = CORE1): jaki jest koszt ścieżki przełącznika CORE2 do roota?",
+      "options": {
+        "A": "6",
+        "B": "2",
+        "C": "21",
+        "D": "4"
+      },
+      "correct": "B",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 2."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp) (koszty short, root = CORE1): jaki jest koszt ścieżki przełącznika ACC1 do roota?",
+      "options": {
+        "A": "2",
+        "B": "23",
+        "C": "8",
+        "D": "4"
+      },
+      "correct": "D",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 4."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp) (koszty short, root = CORE1): jaki jest koszt ścieżki przełącznika ACC2 do roota?",
+      "options": {
+        "A": "23",
+        "B": "8",
+        "C": "4",
+        "D": "2"
+      },
+      "correct": "C",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 4."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M) (koszty short, root = SW1): jaki jest koszt ścieżki przełącznika SW2 do roota?",
+      "options": {
+        "A": "27",
+        "B": "8",
+        "C": "12",
+        "D": "16"
+      },
+      "correct": "B",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 8."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M) (koszty short, root = SW1): jaki jest koszt ścieżki przełącznika SW3 do roota?",
+      "options": {
+        "A": "4",
+        "B": "2",
+        "C": "23",
+        "D": "8"
+      },
+      "correct": "A",
+      "explanation": "Suma kosztów portów na najtańszej ścieżce: 4."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 32768 w VLAN 1 (Rapid PVST+)?",
+      "options": {
+        "A": "32769",
+        "B": "32768",
+        "C": "36865",
+        "D": "65536"
+      },
+      "correct": "A",
+      "explanation": "Priorytet + system ID extension (VLAN): 32768 + 1 = 32769."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 32768 w VLAN 20 (Rapid PVST+)?",
+      "options": {
+        "A": "65536",
+        "B": "32788",
+        "C": "36884",
+        "D": "32768"
+      },
+      "correct": "B",
+      "explanation": "Priorytet + system ID extension (VLAN): 32768 + 20 = 32788."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 24576 w VLAN 10 (Rapid PVST+)?",
+      "options": {
+        "A": "49152",
+        "B": "28682",
+        "C": "24576",
+        "D": "24586"
+      },
+      "correct": "D",
+      "explanation": "Priorytet + system ID extension (VLAN): 24576 + 10 = 24586."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 28672 w VLAN 99 (Rapid PVST+)?",
+      "options": {
+        "A": "57344",
+        "B": "32867",
+        "C": "28771",
+        "D": "28672"
+      },
+      "correct": "C",
+      "explanation": "Priorytet + system ID extension (VLAN): 28672 + 99 = 28771."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 4096 w VLAN 200 (Rapid PVST+)?",
+      "options": {
+        "A": "4096",
+        "B": "4296",
+        "C": "8192",
+        "D": "8392"
+      },
+      "correct": "B",
+      "explanation": "Priorytet + system ID extension (VLAN): 4096 + 200 = 4296."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 0 w VLAN 5 (Rapid PVST+)?",
+      "options": {
+        "A": "4096",
+        "B": "0",
+        "C": "4101",
+        "D": "5"
+      },
+      "correct": "D",
+      "explanation": "Priorytet + system ID extension (VLAN): 0 + 5 = 5."
+    },
+    {
+      "question": "Jaki Bridge Priority ma przełącznik o priorytecie 61440 w VLAN 1000 (Rapid PVST+)?",
+      "options": {
+        "A": "66536",
+        "B": "122880",
+        "C": "62440",
+        "D": "61440"
+      },
+      "correct": "C",
+      "explanation": "Priorytet + system ID extension (VLAN): 61440 + 1000 = 62440."
+    },
+    {
+      "question": "Która wartość NIE jest poprawnym priorytetem mostu STP?",
+      "options": {
+        "A": "30000",
+        "B": "4096",
+        "C": "61440",
+        "D": "0"
+      },
+      "correct": "A",
+      "explanation": "Priorytet musi być wielokrotnością 4096 (0–61440)."
+    },
+    {
+      "question": "Jaki jest domyślny koszt STP (metoda short) łącza 10M?",
+      "options": {
+        "A": "4",
+        "B": "19",
+        "C": "100",
+        "D": "2"
+      },
+      "correct": "C",
+      "explanation": "Short: 10M = 100."
+    },
+    {
+      "question": "Jaki jest domyślny koszt STP (metoda short) łącza 100M?",
+      "options": {
+        "A": "2",
+        "B": "19",
+        "C": "4",
+        "D": "100"
+      },
+      "correct": "B",
+      "explanation": "Short: 100M = 19."
+    },
+    {
+      "question": "Jaki jest domyślny koszt STP (metoda short) łącza 1G?",
+      "options": {
+        "A": "4",
+        "B": "100",
+        "C": "19",
+        "D": "2"
+      },
+      "correct": "A",
+      "explanation": "Short: 1G = 4."
+    },
+    {
+      "question": "Jaki jest domyślny koszt STP (metoda short) łącza 10G?",
+      "options": {
+        "A": "19",
+        "B": "4",
+        "C": "100",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "Short: 10G = 2."
+    },
+    {
+      "question": "Jaki jest koszt STP łącza 1G w metodzie long (802.1D-2004)?",
+      "options": {
+        "A": "20000",
+        "B": "4",
+        "C": "200000",
+        "D": "2000"
+      },
+      "correct": "A",
+      "explanation": "Long: 1G = 20000."
+    },
+    {
+      "question": "Jaki jest koszt STP łącza 10G w metodzie long (802.1D-2004)?",
+      "options": {
+        "A": "200",
+        "B": "4",
+        "C": "20000",
+        "D": "2000"
+      },
+      "correct": "D",
+      "explanation": "Long: 10G = 2000."
+    },
+    {
+      "question": "Jaki jest koszt STP łącza 100M w metodzie long (802.1D-2004)?",
+      "options": {
+        "A": "4",
+        "B": "200000",
+        "C": "2000000",
+        "D": "20000"
+      },
+      "correct": "B",
+      "explanation": "Long: 100M = 200000."
+    },
+    {
+      "question": "Na jaki adres MAC są wysyłane BPDU standardowego STP/RSTP?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "01:00:0c:cc:cc:cc",
+        "C": "01:80:c2:00:00:00",
+        "D": "01:00:5e:00:00:01"
+      },
+      "correct": "C",
+      "explanation": "PVST+ Cisco używa 01:00:0c:cc:cc:cd."
+    },
+    {
+      "question": "Jak często domyślnie wysyłane są BPDU?",
+      "options": {
+        "A": "Co 15 sekund",
+        "B": "Co 20 sekund",
+        "C": "Tylko przy zmianie topologii",
+        "D": "Co 2 sekundy (hello time)"
+      },
+      "correct": "D",
+      "explanation": "Max age 20 s, forward delay 15 s."
+    },
+    {
+      "question": "Jaki jest domyślny forward delay?",
+      "options": {
+        "A": "2 s",
+        "B": "15 s",
+        "C": "20 s",
+        "D": "30 s"
+      },
+      "correct": "B",
+      "explanation": "Czas listening i czas learning."
+    },
+    {
+      "question": "Jaki jest domyślny max age?",
+      "options": {
+        "A": "50 s",
+        "B": "15 s",
+        "C": "20 s",
+        "D": "2 s"
+      },
+      "correct": "C",
+      "explanation": "Jak długo port pamięta ostatnie BPDU."
+    },
+    {
+      "question": "Jaka jest kolejność stanów portu w 802.1D przy przejściu do przekazywania?",
+      "options": {
+        "A": "blocking → listening → learning → forwarding",
+        "B": "learning → listening → forwarding",
+        "C": "listening → blocking → forwarding → learning",
+        "D": "discarding → forwarding"
+      },
+      "correct": "A",
+      "explanation": "W listening nie uczy się MAC, w learning uczy, ale nie przekazuje."
+    },
+    {
+      "question": "Jakie stany portu ma RSTP?",
+      "options": {
+        "A": "active, standby",
+        "B": "up, down",
+        "C": "blocking, listening, learning, forwarding",
+        "D": "discarding, learning, forwarding"
+      },
+      "correct": "D",
+      "explanation": "Blocking, listening i disabled połączono w discarding."
+    },
+    {
+      "question": "W którym stanie 802.1D port uczy się adresów MAC, ale jeszcze nie przekazuje ramek?",
+      "options": {
+        "A": "learning",
+        "B": "forwarding",
+        "C": "blocking",
+        "D": "listening"
+      },
+      "correct": "A",
+      "explanation": "Przygotowuje tablicę MAC, by ograniczyć flooding."
+    },
+    {
+      "question": "Ile root portów ma root bridge?",
+      "options": {
+        "A": "Tyle, ile ma VLAN-ów",
+        "B": "Zero — wszystkie jego porty są designated",
+        "C": "Dwa",
+        "D": "Jeden"
+      },
+      "correct": "B",
+      "explanation": "Root port wskazuje drogę do roota."
+    },
+    {
+      "question": "Ile designated portów jest na jednym segmencie (łączu)?",
+      "options": {
+        "A": "Zależy od prędkości",
+        "B": "Dwa",
+        "C": "Jeden",
+        "D": "Zero"
+      },
+      "correct": "C",
+      "explanation": "Przekazuje ruch na segment w kierunku od roota."
+    },
+    {
+      "question": "Czym jest port alternate w RSTP?",
+      "options": {
+        "A": "Drugim root portem",
+        "B": "Portem wyłączonym administracyjnie",
+        "C": "Zablokowaną zapasową drogą do roota przez innego sąsiada",
+        "D": "Portem do hosta"
+      },
+      "correct": "C",
+      "explanation": "Przejmuje rolę root portu w ~1 s."
+    },
+    {
+      "question": "Jakie jest pierwsze kryterium przy porównaniu BPDU?",
+      "options": {
+        "A": "Najwyższa prędkość",
+        "B": "Najniższy Port ID",
+        "C": "Najniższy koszt",
+        "D": "Najniższy Root Bridge ID"
+      },
+      "correct": "D",
+      "explanation": "Potem koszt, Bridge ID nadawcy, Port ID."
+    },
+    {
+      "question": "Co rozstrzyga wybór root portu, gdy koszty są równe?",
+      "options": {
+        "A": "Niższy Bridge ID sąsiada, a potem niższy Port ID sąsiada",
+        "B": "Kolejność podłączenia kabli",
+        "C": "Losowanie",
+        "D": "Wyższa prędkość portu"
+      },
+      "correct": "A",
+      "explanation": "Na końcu własny Port ID."
+    },
+    {
+      "question": "Ile trwa typowo zbieżność klasycznego STP 802.1D?",
+      "options": {
+        "A": "2–5 min",
+        "B": "30–50 s",
+        "C": "5 s",
+        "D": "Poniżej 1 s"
+      },
+      "correct": "B",
+      "explanation": "Max age + 2 × forward delay."
+    },
+    {
+      "question": "Ile trwa typowo zbieżność RSTP?",
+      "options": {
+        "A": "15 s",
+        "B": "Około 1 s lub mniej",
+        "C": "30–50 s",
+        "D": "2 min"
+      },
+      "correct": "B",
+      "explanation": "Proposal/agreement i alternate porty."
+    },
+    {
+      "question": "Czym jest PVST+?",
+      "options": {
+        "A": "Szybszą wersją RSTP",
+        "B": "Protokołem wykrywania sąsiadów",
+        "C": "Protokołem agregacji łączy",
+        "D": "Wariantem Cisco z osobną instancją STP dla każdego VLAN-u"
+      },
+      "correct": "D",
+      "explanation": "Rapid PVST+ — to samo z RSTP."
+    },
+    {
+      "question": "Jaką zaletę ma MST (802.1s)?",
+      "options": {
+        "A": "Działa tylko z jednym VLAN-em",
+        "B": "Nie wymaga konfiguracji",
+        "C": "Grupuje wiele VLAN-ów w kilka instancji, zmniejszając liczbę BPDU i obciążenie CPU",
+        "D": "Wyłącza blokowanie portów"
+      },
+      "correct": "C",
+      "explanation": "Wymaga spójnego regionu."
+    },
+    {
+      "question": "Co musi być identyczne na przełącznikach jednego regionu MST?",
+      "options": {
+        "A": "Nazwa regionu, numer rewizji i mapowanie VLAN → instancja",
+        "B": "Priorytet mostu",
+        "C": "Adres MAC",
+        "D": "Liczba portów"
+      },
+      "correct": "A",
+      "explanation": "Inaczej powstają osobne regiony."
+    },
+    {
+      "question": "Do czego służy PortFast?",
+      "options": {
+        "A": "Pozwala portowi do hosta od razu przejść do forwarding",
+        "B": "Wyłącza STP na przełączniku",
+        "C": "Zwiększa prędkość portu",
+        "D": "Szyfruje BPDU"
+      },
+      "correct": "A",
+      "explanation": "Tylko na portach brzegowych."
+    },
+    {
+      "question": "Co robi BPDU Guard po odebraniu BPDU?",
+      "options": {
+        "A": "Ignoruje BPDU",
+        "B": "Wyłącza port (err-disabled)",
+        "C": "Obniża priorytet przełącznika",
+        "D": "Zmienia rolę portu na root"
+      },
+      "correct": "B",
+      "explanation": "Chroni porty brzegowe."
+    },
+    {
+      "question": "Czym grozi BPDU Filter włączony na interfejsie dostępowym?",
+      "options": {
+        "A": "Przełącznik zostanie rootem",
+        "B": "Nic — to zalecane",
+        "C": "Port ignoruje BPDU, więc pętla przez ten port nie zostanie wykryta",
+        "D": "Port zostanie wyłączony"
+      },
+      "correct": "C",
+      "explanation": "Lepszy BPDU Guard."
+    },
+    {
+      "question": "Co robi Root Guard?",
+      "options": {
+        "A": "Wyłącza port na zawsze",
+        "B": "Wybiera root bridge",
+        "C": "Przyspiesza zbieżność",
+        "D": "Blokuje port (root-inconsistent), jeśli pojawi się na nim lepsze BPDU od roota"
+      },
+      "correct": "D",
+      "explanation": "Port wraca automatycznie po ustaniu lepszych BPDU."
+    },
+    {
+      "question": "Przed czym chroni Loop Guard?",
+      "options": {
+        "A": "Przed burzą multicastową",
+        "B": "Przed błędami CRC",
+        "C": "Przed przejęciem roota",
+        "D": "Przed odblokowaniem portu, który przestał otrzymywać BPDU (np. łącze jednokierunkowe)"
+      },
+      "correct": "D",
+      "explanation": "Port przechodzi w loop-inconsistent."
+    },
+    {
+      "question": "Co wykrywa UDLD?",
+      "options": {
+        "A": "Pętle routingu",
+        "B": "Łącza jednokierunkowe (np. uszkodzony światłowód)",
+        "C": "Ataki DHCP",
+        "D": "Niezgodność VLAN-ów"
+      },
+      "correct": "B",
+      "explanation": "Tryb aggressive wyłącza port."
+    },
+    {
+      "question": "Gdzie włącza się Root Guard?",
+      "options": {
+        "A": "Na wszystkich portach roota w stronę zapasowego roota",
+        "B": "Tylko na portach konsoli",
+        "C": "Na portach rdzenia/dystrybucji w stronę przełączników dostępowych",
+        "D": "Na portach do hostów"
+      },
+      "correct": "C",
+      "explanation": "Nikt poniżej nie zostanie rootem."
+    },
+    {
+      "question": "Co powoduje TCN w 802.1D?",
+      "options": {
+        "A": "Skrócenie czasu życia wpisów MAC do forward delay (15 s), co może wywołać flooding",
+        "B": "Restart przełącznika",
+        "C": "Zmianę VLAN-u portu",
+        "D": "Wyłączenie STP"
+      },
+      "correct": "A",
+      "explanation": "RSTP czyści wpisy na portach niebędących edge."
+    },
+    {
+      "question": "Dlaczego porty z PortFast nie generują TCN?",
+      "options": {
+        "A": "Bo są wyłączone",
+        "B": "Bo nie mają adresu MAC",
+        "C": "Bo nie należą do VLAN-u",
+        "D": "Bo są portami brzegowymi — zmiana ich stanu nie zmienia topologii między przełącznikami"
+      },
+      "correct": "D",
+      "explanation": "Dlatego PortFast ogranicza niepotrzebny flooding."
+    },
+    {
+      "question": "Jaki objaw w aplikacji jest typowy dla klasycznego STP przy awarii łącza?",
+      "options": {
+        "A": "Błędy kompilacji",
+        "B": "Błędy certyfikatów TLS",
+        "C": "Przerwa 30–50 s: timeouty, zerwane połączenia, failover klastra",
+        "D": "Wolne zapytania SQL o tej samej porze dnia"
+      },
+      "correct": "C",
+      "explanation": "Rozwiązanie: RSTP."
+    },
+    {
+      "question": "Dlaczego serwer z PXE może nie dostać adresu DHCP zaraz po starcie?",
+      "options": {
+        "A": "Bo serwer nie ma MAC",
+        "B": "Port bez PortFast przez ~30 s nie przekazuje ramek w 802.1D",
+        "C": "Bo PXE wymaga IPv6",
+        "D": "Bo DHCP nie działa w VLAN-ach"
+      },
+      "correct": "B",
+      "explanation": "PortFast/edge rozwiązuje problem."
+    },
+    {
+      "question": "Które polecenie Cisco ustawia przełącznik jako główny root dla VLAN-ów?",
+      "options": {
+        "A": "spanning-tree vlan 1-4094 root primary",
+        "B": "set spanning-tree root",
+        "C": "stp primary",
+        "D": "spanning-tree root on"
+      },
+      "correct": "A",
+      "explanation": "Ustawia priorytet 24576 lub niżej."
+    },
+    {
+      "question": "Jaki priorytet ustawia spanning-tree root secondary?",
+      "options": {
+        "A": "4096",
+        "B": "24576",
+        "C": "32768",
+        "D": "28672"
+      },
+      "correct": "D",
+      "explanation": "Primary zwykle 24576."
+    },
+    {
+      "question": "Które polecenie pokaże porty zablokowane przez Root Guard lub Loop Guard?",
+      "options": {
+        "A": "show spanning-tree inconsistentports",
+        "B": "show interfaces trunk",
+        "C": "show errdisable recovery",
+        "D": "show vlan brief"
+      },
+      "correct": "A",
+      "explanation": "Stany root-inconsistent, loop-inconsistent."
+    },
+    {
+      "question": "Czym jest port edge w RSTP?",
+      "options": {
+        "A": "Portem do roota",
+        "B": "Portem zablokowanym",
+        "C": "Portem brzegowym do hosta, który od razu przechodzi do forwarding",
+        "D": "Portem trunk do rdzenia"
+      },
+      "correct": "C",
+      "explanation": "Odpowiednik PortFast."
+    },
+    {
+      "question": "Jakie zagrożenie stwarza urządzenie wysyłające BPDU z priorytetem 0 w VLAN-ie użytkowników bez ochron?",
+      "options": {
+        "A": "Nie stwarza zagrożenia",
+        "B": "Może zostać rootem i przekierować ruch lub destabilizować sieć",
+        "C": "Może zmienić adresy IP hostów",
+        "D": "Może złamać hasła Wi-Fi"
+      },
+      "correct": "B",
+      "explanation": "Obrona: BPDU Guard, Root Guard."
+    },
+    {
+      "question": "Co zastępuje STP jako mechanizm wykorzystania redundancji w centrach danych spine-leaf?",
+      "options": {
+        "A": "Routing L3 z ECMP oraz VXLAN/EVPN i MLAG",
+        "B": "Statyczne tablice MAC",
+        "C": "Wyłączenie redundancji",
+        "D": "Huby"
+      },
+      "correct": "A",
+      "explanation": "Wszystkie łącza aktywne."
+    },
+    {
+      "question": "Jaką wersję protokołu (pole Protocol Version) mają BPDU RSTP?",
+      "options": {
+        "A": "3",
+        "B": "2",
+        "C": "0",
+        "D": "1"
+      },
+      "correct": "B",
+      "explanation": "0 = STP, 2 = RSTP, 3 = MST."
+    },
+    {
+      "question": "Dlaczego warto przełączyć metodę kosztów na long w sieci z łączami 10G i szybszymi?",
+      "options": {
+        "A": "Bo short nie działa z VLAN-ami",
+        "B": "Bo long jest szybsza",
+        "C": "Metoda short nie odróżnia dobrze szybkich łączy (10G = 2, 100G = 1)",
+        "D": "Bo long wyłącza blokowanie"
+      },
+      "correct": "C",
+      "explanation": "Long ma większy zakres wartości."
+    },
+    {
+      "question": "T1 (trójkąt, równe priorytety): SW1 Gi0/1–SW2 Gi0/1 1G, SW1 Gi0/2–SW3 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/2 1G; root = SW2. Łącze SW1 Gi0/2–SW3 Gi0/1 ulega awarii. Jaki root port i koszt do roota będzie miał SW1?",
+      "options": {
+        "A": "Gi0/1, koszt 8",
+        "B": "Gi0/1, koszt 2",
+        "C": "brak — przełącznik zostaje odcięty",
+        "D": "Gi0/1, koszt 4"
+      },
+      "correct": "D",
+      "explanation": "Po usunięciu łącza najtańsza droga SW1 do roota: Gi0/1, koszt 4."
+    },
+    {
+      "question": "T3 (pierścień czterech przełączników): SW1 Gi0/1–SW2 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW4 Gi0/1 1G, SW4 Gi0/2–SW1 Gi0/2 1G; root = SW1. Łącze SW1 Gi0/1–SW2 Gi0/1 ulega awarii. Jaki root port i koszt do roota będzie miał SW2?",
+      "options": {
+        "A": "Gi0/2, koszt 12",
+        "B": "Gi0/2, koszt 16",
+        "C": "Gi0/1, koszt 4",
+        "D": "Gi0/2, koszt 10"
+      },
+      "correct": "A",
+      "explanation": "Po usunięciu łącza najtańsza droga SW2 do roota: Gi0/2, koszt 12."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp): CORE1 Gi0/1–CORE2 Gi0/1 10G, CORE1 Gi0/2–ACC1 Gi0/1 1G, CORE1 Gi0/3–ACC2 Gi0/1 1G, CORE2 Gi0/2–ACC1 Gi0/2 1G, CORE2 Gi0/3–ACC2 Gi0/2 1G; root = CORE1. Łącze CORE1 Gi0/2–ACC1 Gi0/1 ulega awarii. Jaki root port i koszt do roota będzie miał ACC1?",
+      "options": {
+        "A": "Gi0/1, koszt 4",
+        "B": "Gi0/2, koszt 6",
+        "C": "Gi0/2, koszt 10",
+        "D": "Gi0/2, koszt 4"
+      },
+      "correct": "B",
+      "explanation": "Po usunięciu łącza najtańsza droga ACC1 do roota: Gi0/2, koszt 6."
+    },
+    {
+      "question": "T4 (rdzeń i dostęp): CORE1 Gi0/1–CORE2 Gi0/1 10G, CORE1 Gi0/2–ACC1 Gi0/1 1G, CORE1 Gi0/3–ACC2 Gi0/1 1G, CORE2 Gi0/2–ACC1 Gi0/2 1G, CORE2 Gi0/3–ACC2 Gi0/2 1G; root = CORE1. Łącze CORE1 Gi0/3–ACC2 Gi0/1 ulega awarii. Jaki root port i koszt do roota będzie miał ACC2?",
+      "options": {
+        "A": "Gi0/2, koszt 4",
+        "B": "Gi0/1, koszt 4",
+        "C": "Gi0/2, koszt 10",
+        "D": "Gi0/2, koszt 6"
+      },
+      "correct": "D",
+      "explanation": "Po usunięciu łącza najtańsza droga ACC2 do roota: Gi0/2, koszt 6."
+    },
+    {
+      "question": "T5 (trójkąt, wolne łącze 100M): SW1 Gi0/1–SW2 Gi0/1 100M, SW1 Gi0/2–SW3 Gi0/1 1G, SW3 Gi0/2–SW2 Gi0/2 1G; root = SW1. Łącze SW1 Gi0/2–SW3 Gi0/1 ulega awarii. Jaki root port i koszt do roota będzie miał SW2?",
+      "options": {
+        "A": "Gi0/2, koszt 8",
+        "B": "Gi0/1, koszt 17",
+        "C": "Gi0/1, koszt 19",
+        "D": "Gi0/1, koszt 23"
+      },
+      "correct": "C",
+      "explanation": "Po usunięciu łącza najtańsza droga SW2 do roota: Gi0/1, koszt 19."
+    },
+    {
+      "question": "T2 (trójkąt, SW3 z priorytetem 4096): SW1 Gi0/1–SW2 Gi0/1 1G, SW1 Gi0/2–SW3 Gi0/1 1G, SW2 Gi0/2–SW3 Gi0/2 1G; root = SW3. Łącze SW2 Gi0/2–SW3 Gi0/2 ulega awarii. Jaki root port i koszt do roota będzie miał SW2?",
+      "options": {
+        "A": "Gi0/2, koszt 4",
+        "B": "Gi0/1, koszt 12",
+        "C": "Gi0/1, koszt 6",
+        "D": "Gi0/1, koszt 8"
+      },
+      "correct": "D",
+      "explanation": "Po usunięciu łącza najtańsza droga SW2 do roota: Gi0/1, koszt 8."
+    },
+    {
+      "question": "Czym różni się awaria bezpośrednia od pośredniej w 802.1D?",
+      "options": {
+        "A": "Przy bezpośredniej przełącznik od razu wykrywa utratę łącza; przy pośredniej czeka na wygaśnięcie BPDU (max age 20 s)",
+        "B": "Niczym",
+        "C": "Pośrednia nie powoduje przerwy",
+        "D": "Bezpośrednia dotyczy tylko światłowodów"
+      },
+      "correct": "A",
+      "explanation": "Stąd 30 s vs do 50 s."
+    },
+    {
+      "question": "Który przełącznik jako jedyny generuje BPDU w klasycznym 802.1D?",
+      "options": {
+        "A": "Przełącznik z najwyższym MAC",
+        "B": "Każdy przełącznik niezależnie",
+        "C": "Root bridge — pozostałe je przekazują (aktualizując koszt)",
+        "D": "Żaden — BPDU wysyłają hosty"
+      },
+      "correct": "C",
+      "explanation": "W RSTP każdy przełącznik wysyła własne BPDU co hello."
+    },
+    {
+      "question": "Co oznacza w show spanning-tree rola „Altn” i stan „BLK”?",
+      "options": {
+        "A": "Port zarezerwowany dla administratora",
+        "B": "Port alternate w stanie blokowania",
+        "C": "Port w trybie access",
+        "D": "Port wyłączony przez BPDU Guard"
+      },
+      "correct": "B",
+      "explanation": "Zapasowa droga do roota."
+    },
+    {
+      "question": "Co oznacza oznaczenie „P2p Edge” przy porcie w show spanning-tree?",
+      "options": {
+        "A": "Port w EtherChannelu",
+        "B": "Port zablokowany",
+        "C": "Port do roota",
+        "D": "Łącze punkt-punkt skonfigurowane jako port brzegowy (PortFast)"
+      },
+      "correct": "D",
+      "explanation": "Typowe dla portów do hostów."
+    },
+    {
+      "question": "Jak przełącznik odnotowuje port wyłączony przez BPDU Guard?",
+      "options": {
+        "A": "Jako err-disabled",
+        "B": "Jako root-inconsistent",
+        "C": "Jako administratively down",
+        "D": "Jako forwarding"
+      },
+      "correct": "A",
+      "explanation": "Przywrócenie: shutdown/no shutdown lub errdisable recovery."
+    },
+    {
+      "question": "Co jest najlepszą praktyką dla łącza przełącznika do hiperwizora z wieloma VLAN-ami?",
+      "options": {
+        "A": "BPDU Filter na porcie",
+        "B": "Wyłączenie STP na całym przełączniku",
+        "C": "spanning-tree portfast trunk z BPDU Guard",
+        "D": "Brak PortFast i domyślne ustawienia"
+      },
+      "correct": "C",
+      "explanation": "VM-ki od razu mają sieć, pętla wyłączy port."
+    },
+    {
+      "question": "Dlaczego warto umieścić root bridge VLAN-u na tym samym przełączniku co aktywną bramę VRRP/HSRP?",
+      "options": {
+        "A": "Bo brama musi mieć najniższy MAC",
+        "B": "Aby ruch do bramy nie przechodził przez dodatkowe łącze między dystrybucjami",
+        "C": "Bo root szyfruje ruch do bramy",
+        "D": "Bo inaczej VRRP nie działa"
+      },
+      "correct": "B",
+      "explanation": "Zgodność ścieżek L2 i L3."
+    },
+    {
+      "question": "Która technologia pozwala używać obu uplinków jednocześnie bez blokowania przez STP?",
+      "options": {
+        "A": "PortFast",
+        "B": "EtherChannel/LACP lub MLAG",
+        "C": "BPDU Filter",
+        "D": "VTP"
+      },
+      "correct": "B",
+      "explanation": "Agregat jest dla STP jednym łączem — lekcja 08."
+    },
+    {
+      "question": "Jaki komunikat w logach Cisco wskazuje na MAC flapping, typowy objaw pętli?",
+      "options": {
+        "A": "%SEC_LOGIN-5-LOGIN_SUCCESS",
+        "B": "%LINK-3-UPDOWN",
+        "C": "%SW_MATM-4-MACFLAP_NOTIF",
+        "D": "%SYS-5-CONFIG_I"
+      },
+      "correct": "C",
+      "explanation": "Ten sam MAC naprzemiennie na dwóch portach."
+    },
+    {
+      "question": "Jakie zdarzenie STP powinno generować alert w SIEM w sieci produkcyjnej?",
+      "options": {
+        "A": "Zmiana root bridge w VLAN-ie",
+        "B": "Podłączenie hosta do portu edge",
+        "C": "Każde BPDU hello",
+        "D": "Każde zapytanie ARP"
+      },
+      "correct": "A",
+      "explanation": "Trap newRoot lub log zmiany roota."
+    },
+    {
+      "question": "Dlaczego RSTP potrzebuje informacji o typie łącza (point-to-point)?",
+      "options": {
+        "A": "Bo BPDU nie działa na miedzi",
+        "B": "Bo typ łącza wyznacza root bridge",
+        "C": "Bo inaczej nie zna prędkości",
+        "D": "Bo szybkie proposal/agreement działa tylko na łączach punkt-punkt (full duplex)"
+      },
+      "correct": "D",
+      "explanation": "Na łączach współdzielonych wraca do timerów."
+    }
+  ]
 }
