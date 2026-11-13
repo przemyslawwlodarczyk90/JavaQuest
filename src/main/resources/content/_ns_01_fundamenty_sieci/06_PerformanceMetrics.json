@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "„Jest wolno” — ale co dokładnie?",
+      "image": "netsec/ns01-06-curl-timeline.svg",
+      "imageAlt": "Dwa paski czasu żądania HTTPS z curl: przy RTT 2 ms fazy DNS 4, TCP 2, TLS 5, czekanie na serwer 32 i transfer 3 ms, razem 46 ms; po dodaniu 100 ms opóźnienia TCP 102, TLS 106, TTFB 132, transfer 103 ms, razem 447 ms.",
+      "body": "„Aplikacja jest wolna” to najczęstsze zgłoszenie, jakie dostaje backend developer. Bez metryk zaczyna się zgadywanie: dokupić większe łącze? Dodać rdzeni? Zwiększyć pulę połączeń? Tymczasem każda z tych decyzji pomaga tylko na *jeden* rodzaj problemu.\n\nSieć opisują cztery podstawowe wielkości:\n- **przepustowość** (ile danych na sekundę),\n- **opóźnienie** (ile trwa dostarczenie i odpowiedź — RTT),\n- **jitter** (jak bardzo opóźnienie się zmienia),\n- **utrata pakietów** (jaki odsetek ginie po drodze).\n\nA użytkownik odczuwa jeszcze piątą: **rozkład czasów odpowiedzi** — nie średnią, tylko to, jak często trafia na wolne żądanie (p95, p99).\n\nNa ilustracji to samo żądanie HTTPS przy RTT 2 ms i po sztucznym dodaniu 100 ms opóźnienia: czas całkowity rośnie z 46 do 447 ms, bo każda faza wymagająca wymiany pakietów płaci RTT. W tej lekcji nauczysz się rozkładać czas żądania na fazy, liczyć opóźnienia i ograniczenia TCP (BDP, wzór Mathisa), czytać percentyle i mierzyć to wszystko narzędziami: `curl -w`, `ping`, `mtr`, `iperf3`, `tc netem` oraz Micrometer w Spring Boot.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik metryk sieci i usług",
+      "body": "- **Przepustowość nominalna (bandwidth)** — pojemność łącza, np. 1 Gb/s. To górna granica, nie obietnica.\n- **Przepływność rzeczywista (throughput)** — ile bitów faktycznie przechodzi w jednostce czasu (z nagłówkami i retransmisjami).\n- **Goodput** — ile *użytecznych danych aplikacji* przechodzi w jednostce czasu; zawsze mniej niż throughput.\n- **Opóźnienie (latency)** — czas dostarczenia pakietu w jedną stronę; składa się z przetwarzania, kolejkowania, transmisji i propagacji.\n- **RTT (round-trip time)** — czas tam i z powrotem; to mierzy `ping` i od tego zależy TCP.\n- **Jitter** — zmienność opóźnienia między kolejnymi pakietami; zabójczy dla głosu i wideo (RTP), mniej dla HTTP.\n- **Utrata pakietów (packet loss)** — odsetek pakietów, które nie dotarły; TCP ją naprawia retransmisjami, ale kosztem przepustowości i opóźnienia.\n- **BDP (bandwidth-delay product)** — przepustowość × RTT: ile danych musi być „w locie”, by w pełni wykorzystać łącze.\n- **Percentyl pN** — wartość, poniżej której mieści się N% pomiarów; p50 = mediana, p99 = co setne żądanie jest wolniejsze.\n- **SLI / SLO / SLA** — wskaźnik (np. odsetek żądań < 300 ms), cel (99,9% żądań < 300 ms w miesiącu) i umowa z klientem z konsekwencjami.\n- **Bufferbloat** — nadmiernie duże bufory w urządzeniach, które przy obciążeniu zamieniają przeciążenie w setki milisekund opóźnienia zamiast w utratę pakietów.\n\nJednostki: **b = bit, B = bajt**. 100 Mb/s to 12,5 MB/s. Prefiksy przepustowości są dziesiętne (1 Mb/s = 10⁶ b/s), a rozmiary w pamięci często binarne (1 MiB = 2²⁰ B).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Autostrada z bramkami",
+      "body": "- **Przepustowość** to liczba pasów — więcej pasów to więcej samochodów na godzinę, ale żaden samochód nie jedzie przez to szybciej.\n- **Propagacja** to długość trasy podzielona przez prędkość: z Warszawy do Lizbony nie dojedziesz szybciej, dokładając pasy. Światło w światłowodzie też ma limit prędkości (~200 000 km/s).\n- **Transmisja** to czas, w którym długa ciężarówka wjeżdża w całości na drogę — im więcej pasów (szybsze łącze), tym szybciej.\n- **Kolejkowanie** to korek przed bramkami — rośnie gwałtownie, gdy ruch zbliża się do pojemności.\n- **Jitter** to sytuacja, gdy raz jedziesz 3 godziny, raz 5 — ważne dla autobusu z rozkładem jazdy (wideokonferencja), mniej dla kuriera z paczką (pobieranie pliku).\n- **Utrata pakietów** to samochód, który nie dojechał: trzeba wysłać kolejny, a kierowcy (TCP) na wszelki wypadek zwalniają.\n\nWniosek, który oszczędza pieniądze: **szersza autostrada nie skraca podróży z Warszawy do Lizbony.** Gdy problemem jest RTT, większe łącze nie pomoże — pomoże bliższy serwer, mniej rund komunikacji albo pamięć podręczna.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Składowe opóźnienia w liczbach",
+      "image": "netsec/ns01-06-delay-components.svg",
+      "imageAlt": "Cztery paski: przetwarzanie (mikrosekundy), kolejkowanie (od zera do setek milisekund), transmisja (1500 bajtów przy 10 Mb/s to 1,2 ms) i propagacja (1000 km światłowodu to około 5 ms).",
+      "body": "Każdy odcinek drogi dokłada cztery składowe. Kilka liczb, które warto znać na pamięć:",
+      "code": "PROPAGACJA (światłowód ≈ 200 000 km/s → 5 µs na km, w jedną stronę)\n  serwerownia, 100 m                  0,0005 ms\n  Warszawa – Frankfurt (~1 000 km*)   5 ms     → RTT ≥ 10 ms\n  Warszawa – Wirginia (~7 500 km*)    37,5 ms    → RTT ≥ 75 ms\n  Warszawa – Sydney (~16 000 km*)     80 ms    → RTT ≥ 160 ms\n  * długość kabla, nie odległość w linii prostej; realne RTT jest większe (routing, sprzęt)\n\nTRANSMISJA pakietu 1500 B (rozmiar × 8 / przepustowość)\n  1 Mb/s     12 ms\n  10 Mb/s    1,2 ms\n  100 Mb/s   0,12 ms\n  1 Gb/s     0,012 ms\n  10 Gb/s    0,0012 ms\n\nKOLEJKOWANIE — zależy od obciążenia: przy wykorzystaniu łącza 50% zwykle pomijalne,\nprzy 95–100% rośnie gwałtownie (setki ms przy dużych buforach = bufferbloat)\nPRZETWARZANIE — mikrosekundy w sprzęcie; więcej w urządzeniach z inspekcją (NGFW, WAF, proxy TLS)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Kalkulator opóźnień i ograniczeń TCP w Javie",
+      "body": "Wzory z tej lekcji w jednym miejscu. Wzór Mathisa szacuje maksymalną przepustowość jednego połączenia TCP przy danej utracie pakietów — pokazuje, jak bardzo nawet 1% strat dławi transfer na dalekich trasach.",
+      "code": "public class NetMath {\n    static double propagationMs(double km)              { return km * 0.005; }            // 5 µs/km\n    static double transmissionMs(long bytes, double mbps) { return bytes * 8 / (mbps * 1e6) * 1000; }\n    static double bdpBytes(double mbps, double rttMs)    { return mbps * 1e6 * rttMs / 1000 / 8; }\n    static double windowLimitedMbps(long window, double rttMs) { return window * 8 / (rttMs / 1000) / 1e6; }\n    static double mathisMbps(int mss, double rttMs, double loss) {   // Mathis i in., 1997\n        return (mss * 8 / (rttMs / 1000)) * (1.22 / Math.sqrt(loss)) / 1e6;\n    }\n    static double tailProbability(int fanOut, double p) { return 1 - Math.pow(p, fanOut); }\n\n    public static void main(String[] args) {\n        System.out.printf(\"BDP 1 Gb/s × 40 ms = %.0f B%n\", bdpBytes(1000, 40));          // 5 000 000\n        System.out.printf(\"okno 64 KiB, RTT 100 ms → %.2f Mb/s%n\", windowLimitedMbps(65535, 100)); // 5,24\n        System.out.printf(\"Mathis MSS 1460, RTT 50 ms, 1%% strat → %.2f Mb/s%n\", mathisMbps(1460, 50, 0.01)); // 2,85\n        System.out.printf(\"Mathis MSS 1460, RTT 5 ms, 1%% strat → %.2f Mb/s%n\", mathisMbps(1460, 5, 0.01));   // 28,5\n        System.out.printf(\"fan-out 100 usług, każda p99 → %.1f%% żądań trafi w ogon%n\", 100 * tailProbability(100, 0.99)); // 63,4\n    }\n}"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Dlaczego transfer jest wolny, choć łącze jest szybkie",
+      "image": "netsec/ns01-06-bdp-pipe.svg",
+      "imageAlt": "Rura 100 Mb/s o długości RTT 50 ms mieści 625 000 bajtów. Przy oknie 64 KiB w rurze są tylko dwa pakiety i przepustowość spada do około 10,5 Mb/s; przy oknie 1 MB rura jest pełna i łącze daje 100 Mb/s.",
+      "body": "Klasyczny przypadek: kopia zapasowa bazy do innego regionu idzie z prędkością 10 Mb/s po łączu 1 Gb/s. Postępuj tak:\n1. **Zmierz RTT** (`ping`, `mtr`) i przepustowość łącza (`iperf3 -c host -t 30`, także `-P 4` z kilkoma strumieniami).\n2. **Policz BDP** = przepustowość × RTT. Dla 1 Gb/s i 40 ms to 5 000 000 B — tyle danych musi być „w locie”.\n3. **Sprawdź okno TCP.** Pojedyncze połączenie nie przekroczy *okno / RTT*. Bez skalowania okna (64 KiB) przy 40 ms to tylko 13,11 Mb/s. W Linuksie: `sysctl net.ipv4.tcp_rmem tcp_wmem`, `ss -ti` (pola wscale, rcv_space, cwnd).\n4. **Sprawdź utratę pakietów** (`mtr -rwc 200`, liczniki retransmisji `nstat -az | grep -i retrans`, Wireshark: Analyze → Expert Info). Według wzoru Mathisa przy RTT 40 ms i 0,1% strat pojedyncze połączenie osiągnie około 11,27 Mb/s.\n5. **Sprawdź aplikację** — czy nie zapisuje małymi porcjami, czy bufor gniazda w Javie (`setReceiveBufferSize`) nie jest ustawiony na sztywno za mały, czy nie czeka na potwierdzenia na poziomie protokołu (synchroniczne „wyślij–czekaj”).\n6. **Popraw właściwą przyczynę**: większe bufory/okna, równoległe strumienie, algorytm kontroli przeciążenia BBR na dalekich trasach, usunięcie źródła strat, kompresja, bliższy region.\n\nZasada: **przepustowość pojedynczego połączenia TCP ograniczają okno, RTT i straty — nie tylko łącze.**",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Percentyle, długi ogon i prawo Little’a",
+      "image": "netsec/ns01-06-percentiles.svg",
+      "imageAlt": "Histogram czasów odpowiedzi z długim ogonem w prawo: mediana 210 ms, średnia 290 ms, p95 640 ms, p99 1180 ms. Podpis: przy 50 wywołaniach co najmniej jedno trafi w p99 z prawdopodobieństwem około 39,5 procent.",
+      "body": "Czasy odpowiedzi prawie nigdy nie mają rozkładu normalnego — mają **długi ogon** (GC, kolejki, retransmisje TCP, zimne cache, blokady w bazie). Dlatego:",
+      "code": "ŚREDNIA ukrywa ogon: 99 żądań po 100 ms + 1 po 10 s → średnia 199 ms, p99 = 10 s.\nPERCENTYLE: p50 (typowy użytkownik), p95/p99 (prawie najgorszy), max (najgorszy pojedynczy przypadek).\nPercentyli NIE da się uśredniać między instancjami — trzeba łączyć histogramy.\n\nOGON PRZY FAN-OUT — żądanie wołające N usług czeka na najwolniejszą:\n  P(co najmniej jedna odpowiedź z p99) = 1 − 0,99^N\n  N = 1    → 1%\n  N = 10   → 9,6%\n  N = 50   → 39,5%\n  N = 100  → 63,4%\n\nPRAWO LITTLE’A: L = λ × W  (współbieżność = tempo napływu × czas obsługi)\n  200 żądań/s × 0,25 s = 50 żądań obsługiwanych jednocześnie\n  → pula wątków, połączeń JDBC lub HTTP mniejsza niż 50 zbuduje kolejkę;\n  → jeśli backend zwolni do 2 s: 200 × 2 = 400 jednocześnie — pule się wyczerpują, rośnie opóźnienie w górę łańcucha."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Pomiar w praktyce: curl -w, tc netem, iperf3 i mtr",
+      "body": "Ćwiczenie z planu lekcji: mierzymy fazy żądania przed i po sztucznym pogorszeniu sieci w kontenerze (wymaga uprawnienia NET_ADMIN, tylko w labie).",
+      "code": "# format czasów curl (zapisz jako curl-format.txt)\ndns=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}\\n\n\ncurl -s -o /dev/null -w @curl-format.txt https://app.lab.local/api/health\n# dns=0.004 connect=0.006 tls=0.011 ttfb=0.043 total=0.046      (wartości narastające, w sekundach)\n\n# pogorszenie łącza w kontenerze klienta: +100 ms opóźnienia, ±10 ms jitter, 1% strat\ndocker run --rm -it --cap-add NET_ADMIN --network lab nicolaka/netshoot bash\ntc qdisc add dev eth0 root netem delay 100ms 10ms loss 1%\ncurl -s -o /dev/null -w @curl-format.txt https://app.lab.local/api/health\n# dns=0.004 connect=0.106 tls=0.212 ttfb=0.344 total=0.447\ntc qdisc del dev eth0 root                                   # przywrócenie\n\n# przepustowość i straty\niperf3 -s                                  # na serwerze\niperf3 -c serwer -t 20 [-P 4] [-R] [-u -b 50M]  # TCP, wiele strumieni, odwrotnie, UDP z zadanym tempem\nmtr -rwc 100 serwer                        # straty i opóźnienie na każdym skoku (raport)\nping -i 0.2 -c 100 serwer | tail -2        # rtt min/avg/max/mdev — mdev to przybliżenie jittera"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie te metryki decydują w pracy developera i obrońcy",
+      "body": "- **Timeouty** — ustawiaj na podstawie p99 zależności (z zapasem), a nie średniej; zbyt długie timeouty przy awarii zamieniają się w wyczerpane pule (prawo Little’a).\n- **Rozmiary pul** (HikariCP, wątki Tomcata, klienty HTTP) — licz z λ × W i obserwuj czas oczekiwania na połączenie.\n- **Wybór regionu i CDN** — RTT do użytkowników jest twardym limitem; każda runda (handshake TCP, TLS, przekierowanie, zapytanie N+1 przez sieć) kosztuje RTT.\n- **Projekt API** — mniej rund komunikacji (agregacja, batch, HTTP/2 multiplexing) zamiast „gadatliwych” wywołań.\n- **Monitoring i SLO** — Micrometer z histogramami (`http.server.requests`), Prometheus `histogram_quantile`, alerty na p99 i odsetek błędów, a nie na średnią.\n- **Testy obciążeniowe** — uważaj na *coordinated omission*: generator, który czeka na odpowiedź przed wysłaniem kolejnego żądania, zaniża percentyle (Gatling i wrk2 ustalają stałe tempo).\n- **Bezpieczeństwo (blue team)**:\n  - **DDoS i wyczerpanie zasobów** widać najpierw jako skok opóźnień, retransmisji i połączeń półotwartych — baseline metryk to podstawa wykrywania (Security+ i CySA+ wymagają znajomości baseline).\n  - **Eksfiltracja** zdradza się nietypową przepływnością wychodzącą (np. nocny transfer GB do nowego celu) — wykrywana z NetFlow i metryk interfejsów.\n  - **Beaconing C2** to regularne połączenia z małym jitterem — analiza odstępów czasowych i ich rozrzutu to klasyczna technika huntingu.\n  - **Dostępność** to trzecia litera triady CIA: SLO i metryki wydajności są częścią bezpieczeństwa.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Najczęstsze błędy w mierzeniu wydajności",
+      "body": "- **Mylenie Mb/s i MB/s.** Łącze 100 Mb/s pobiera 1 GB w ~80 s, nie w 10 s.\n- **Średnia zamiast percentyli** — i uśrednianie p99 z kilku instancji (matematycznie bez sensu).\n- **„Większe łącze rozwiąże problem”** — nie, gdy dominuje RTT, liczba rund lub straty.\n- **Ping jako miara aplikacji** — ICMP bywa traktowany z niższym priorytetem i nie przechodzi przez kolejki aplikacji, TLS ani bazę.\n- **Pomiar z laptopa przez Wi-Fi** — jitter i straty radiowe fałszują wyniki; mierz z serwera w tej samej sieci co produkcja.\n- **System.currentTimeMillis() do pomiaru czasu** — zegar ścienny może skakać (NTP); do odcinków czasu używa się `System.nanoTime()`.\n- **Coordinated omission** w testach obciążeniowych — zaniżone ogony.\n- **Ignorowanie kolejkowania** — wykorzystanie 95% łącza czy puli to nie „5% zapasu”, tylko gwałtownie rosnące opóźnienie.\n- **Bufferbloat** — „Internet działa, ale wideokonferencja się tnie, gdy ktoś wysyła duży plik”; pomaga AQM (fq_codel, CAKE) i QoS.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: średnia z currentTimeMillis i średnia ze średnich",
+      "body": "Ręczny pomiar w kontrolerze: zegar ścienny, sama średnia, a na dashboardzie uśrednione wartości z pięciu instancji. Ogon jest niewidoczny, a alarm nigdy się nie włączy.",
+      "code": "private final AtomicLong total = new AtomicLong(), count = new AtomicLong();\n\n@GetMapping(\"/orders/{id}\")\nOrder get(@PathVariable long id) {\n    long start = System.currentTimeMillis();          // zegar ścienny — może cofnąć się przy korekcie NTP\n    try {\n        return service.find(id);\n    } finally {\n        total.addAndGet(System.currentTimeMillis() - start);\n        count.incrementAndGet();                      // tylko średnia: 99 × 100 ms + 1 × 10 s = 199 ms\n    }\n}\n// Grafana: avg(avg_latency) po instancjach → „wszystko poniżej 200 ms”, choć co setny klient czeka 10 s"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: histogramy i percentyle z Micrometera",
+      "body": "Spring Boot Actuator mierzy `http.server.requests` automatycznie; wystarczy włączyć histogramy i progi SLO. Własne operacje mierzymy `Timer`em. W Prometheusie percentyle liczymy z kubełków histogramu (sumowanych po instancjach), a nie uśredniamy.",
+      "code": "# application.yml\nmanagement:\n  metrics:\n    distribution:\n      percentiles-histogram:\n        http.server.requests: true\n      slo:\n        http.server.requests: 100ms,300ms,1s     # kubełki pod cele SLO\n\n// własny pomiar operacji\nprivate final Timer dbTimer;\nOrderService(MeterRegistry registry) {\n    this.dbTimer = Timer.builder(\"orders.db.find\")\n        .publishPercentileHistogram()             // kubełki do agregacji między instancjami\n        .register(registry);\n}\nOrder find(long id) {\n    return dbTimer.record(() -> repository.findById(id).orElseThrow());   // używa nanoTime\n}\n\n# PromQL: p99 dla całej usługi, ze zsumowanych histogramów wszystkich instancji\nhistogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{uri=\"/orders/{id}\"}[5m])))"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Która metryka odpowiada na które pytanie",
+      "body": "- **„Czy łącze jest za wąskie?”** — przepływność względem przepustowości (wykorzystanie interfejsów, iperf3); kolejki i odrzucenia na interfejsach.\n- **„Dlaczego pojedynczy transfer jest wolny?”** — RTT, okno TCP, BDP, retransmisje (wzór Mathisa).\n- **„Dlaczego wideokonferencja się tnie?”** — jitter i straty (RTP wymaga zwykle jittera < 30 ms i strat < 1%), bufferbloat.\n- **„Czy użytkownicy są zadowoleni?”** — percentyle czasu odpowiedzi (p95/p99) i odsetek błędów względem SLO.\n- **„Ile wątków/połączeń potrzebuję?”** — prawo Little’a z realnym tempem i czasem obsługi.\n- **„Czy dzieje się coś podejrzanego?”** — odchylenia od baseline: nagłe skoki ruchu, połączeń, retransmisji, transferów wychodzących.\n- **„Gdzie umieścić usługę?”** — RTT do użytkowników i zależności; liczba rund w typowym scenariuszu.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Przepustowość ≠ przepływność ≠ goodput; **b ≠ B** (100 Mb/s = 12,5 MB/s).\n- Opóźnienie = przetwarzanie + kolejkowanie + transmisja + propagacja; światłowód: ~5 µs/km w jedną stronę.\n- RTT płacisz w każdej rundzie: handshake TCP, TLS, żądanie — dlatego +100 ms RTT dodaje kilkaset ms do żądania.\n- **BDP = przepustowość × RTT**; pojedyncze połączenie TCP ≤ okno / RTT; przy stratach — wzór Mathisa (MSS/RTT × 1,22/√p).\n- Jitter i straty niszczą media czasu rzeczywistego; bufferbloat zamienia obciążenie w opóźnienie.\n- **Średnia kłamie** — używaj p50/p95/p99 i histogramów; ogon rośnie przy fan-out: 1 − 0,99^N.\n- **Prawo Little’a**: współbieżność = tempo × czas obsługi — podstawa doboru pul i timeoutów.\n- Dla obrońcy baseline metryk to fundament wykrywania DDoS, eksfiltracji i beaconingu.\n- Następna lekcja: **pierwszy capture w Wiresharku i tcpdump** — zobaczysz te zjawiska w pakietach.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Oszacuj minimalne RTT wynikające z propagacji dla trasy Warszawa – Berlin (kabel ok. 600 km). Dlaczego realny ping będzie większy?",
+      "hint": "Światłowód: ok. 5 µs na km w jedną stronę; RTT to dwie strony.",
+      "solution": "Propagacja w jedną stronę: 600 km × 0,005 ms = 3 ms; minimalne RTT ≈ 6 ms. Realne RTT jest większe przez routing nie po linii prostej, czas przetwarzania i kolejkowania w routerach oraz transmisję na wolniejszych odcinkach."
+    },
+    {
+      "prompt": "Oszacuj minimalne RTT wynikające z propagacji dla trasy Warszawa – Londyn (kabel ok. 1 800 km). Dlaczego realny ping będzie większy?",
+      "hint": "Światłowód: ok. 5 µs na km w jedną stronę; RTT to dwie strony.",
+      "solution": "Propagacja w jedną stronę: 1800 km × 0,005 ms = 9 ms; minimalne RTT ≈ 18 ms. Realne RTT jest większe przez routing nie po linii prostej, czas przetwarzania i kolejkowania w routerach oraz transmisję na wolniejszych odcinkach."
+    },
+    {
+      "prompt": "Oszacuj minimalne RTT wynikające z propagacji dla trasy Warszawa – Singapur (kabel ok. 12 000 km). Dlaczego realny ping będzie większy?",
+      "hint": "Światłowód: ok. 5 µs na km w jedną stronę; RTT to dwie strony.",
+      "solution": "Propagacja w jedną stronę: 12000 km × 0,005 ms = 60 ms; minimalne RTT ≈ 120 ms. Realne RTT jest większe przez routing nie po linii prostej, czas przetwarzania i kolejkowania w routerach oraz transmisję na wolniejszych odcinkach."
+    },
+    {
+      "prompt": "Ile trwa transmisja (serializacja) 1500 B na łączu 2 Mb/s?",
+      "hint": "Czas = rozmiar × 8 / przepustowość.",
+      "solution": "1500 × 8 / 2·10⁶ s = 6 ms."
+    },
+    {
+      "prompt": "Ile trwa transmisja (serializacja) 9000 B na łączu 10 000 Mb/s?",
+      "hint": "Czas = rozmiar × 8 / przepustowość.",
+      "solution": "9000 × 8 / 10 000·10⁶ s = 0,0072 ms."
+    },
+    {
+      "prompt": "Ile trwa transmisja (serializacja) 65 536 B na łączu 100 Mb/s?",
+      "hint": "Czas = rozmiar × 8 / przepustowość.",
+      "solution": "65 536 × 8 / 100·10⁶ s = 5,2429 ms."
+    },
+    {
+      "prompt": "Policz BDP dla łącza 100 Mb/s i RTT 30 ms. Jakie minimalne okno TCP jest potrzebne do pełnego wykorzystania łącza jednym połączeniem?",
+      "hint": "BDP = przepustowość × RTT (pamiętaj o zamianie bitów na bajty).",
+      "solution": "BDP = 100·10⁶ b/s × 0.03 s / 8 = 375 000 B. Okno odbiorcy (i okno przeciążenia) musi mieć co najmniej tyle — wymaga to skalowania okna TCP (powyżej 64 KiB)."
+    },
+    {
+      "prompt": "Policz BDP dla łącza 1000 Mb/s i RTT 80 ms. Jakie minimalne okno TCP jest potrzebne do pełnego wykorzystania łącza jednym połączeniem?",
+      "hint": "BDP = przepustowość × RTT (pamiętaj o zamianie bitów na bajty).",
+      "solution": "BDP = 1000·10⁶ b/s × 0.08 s / 8 = 10 000 000 B. Okno odbiorcy (i okno przeciążenia) musi mieć co najmniej tyle — wymaga to skalowania okna TCP (powyżej 64 KiB)."
+    },
+    {
+      "prompt": "Policz BDP dla łącza 10 000 Mb/s i RTT 2 ms. Jakie minimalne okno TCP jest potrzebne do pełnego wykorzystania łącza jednym połączeniem?",
+      "hint": "BDP = przepustowość × RTT (pamiętaj o zamianie bitów na bajty).",
+      "solution": "BDP = 10 000·10⁶ b/s × 0.002 s / 8 = 2 500 000 B. Okno odbiorcy (i okno przeciążenia) musi mieć co najmniej tyle — wymaga to skalowania okna TCP (powyżej 64 KiB)."
+    },
+    {
+      "prompt": "Połączenie ma okno 65 535 B, RTT 20 ms. Jaka jest maksymalna przepływność tego połączenia niezależnie od szybkości łącza?",
+      "hint": "Nadawca może wysłać najwyżej jedno okno na RTT.",
+      "solution": "65 535 × 8 / 0.02 s = 26,21 Mb/s."
+    },
+    {
+      "prompt": "Połączenie ma okno 262 144 B, RTT 150 ms. Jaka jest maksymalna przepływność tego połączenia niezależnie od szybkości łącza?",
+      "hint": "Nadawca może wysłać najwyżej jedno okno na RTT.",
+      "solution": "262 144 × 8 / 0.15 s = 13,98 Mb/s."
+    },
+    {
+      "prompt": "Oszacuj wzorem Mathisa maksymalną przepływność jednego połączenia TCP: MSS 1460 B, RTT 20 ms, utrata 0,1%.",
+      "hint": "Przepływność ≈ (MSS × 8 / RTT) × 1,22 / √p.",
+      "solution": "(1460 × 8 / 0.02) × 1,22 / √0.001 ≈ 22,53 Mb/s. Wniosek: na dalekich trasach nawet niewielkie straty dramatycznie ograniczają pojedyncze połączenie."
+    },
+    {
+      "prompt": "Oszacuj wzorem Mathisa maksymalną przepływność jednego połączenia TCP: MSS 1460 B, RTT 100 ms, utrata 1%.",
+      "hint": "Przepływność ≈ (MSS × 8 / RTT) × 1,22 / √p.",
+      "solution": "(1460 × 8 / 0.1) × 1,22 / √0.01 ≈ 1,42 Mb/s. Wniosek: na dalekich trasach nawet niewielkie straty dramatycznie ograniczają pojedyncze połączenie."
+    },
+    {
+      "prompt": "Oszacuj wzorem Mathisa maksymalną przepływność jednego połączenia TCP: MSS 1460 B, RTT 100 ms, utrata 0,01%.",
+      "hint": "Przepływność ≈ (MSS × 8 / RTT) × 1,22 / √p.",
+      "solution": "(1460 × 8 / 0.1) × 1,22 / √0.0001 ≈ 14,25 Mb/s. Wniosek: na dalekich trasach nawet niewielkie straty dramatycznie ograniczają pojedyncze połączenie."
+    },
+    {
+      "prompt": "Zestaw pomiarów czasu odpowiedzi (ms): 120, 95, 110, 105, 2300, 98, 101, 130, 99, 115. Policz średnią i medianę oraz p90 metodą najbliższej rangi. Która wartość lepiej opisuje typowego użytkownika?",
+      "hint": "Posortuj wartości; p90 = wartość na pozycji ⌈0,9 × 10⌉ = 9.",
+      "solution": "Posortowane: 95, 98, 99, 101, 105, 110, 115, 120, 130, 2300. Średnia = 3273 / 10 = 327,3 ms. Mediana = (105 + 110) / 2 = 107,5 ms. p90 (9. wartość) = 130 ms, p100 = 2300 ms. Typowego użytkownika opisuje mediana; średnia jest zawyżona przez jedno żądanie 2,3 s, które warto zbadać osobno (ogon)."
+    },
+    {
+      "prompt": "Usługa przyjmuje 300 żądań/s, a średni czas obsługi rośnie z 80 ms do 1,5 s z powodu wolnej bazy. Policz współbieżność przed i po zmianie oraz oceń, co stanie się z pulą 100 wątków Tomcata.",
+      "hint": "Prawo Little’a: L = λ × W.",
+      "solution": "Przed: 300 × 0,08 = 24 jednocześnie — pula 100 wystarcza. Po: 300 × 1,5 = 450 jednocześnie — pula 100 jest wyczerpana, żądania czekają w kolejce akceptora, czas odpowiedzi rośnie lawinowo, a klienci zaczynają ponawiać (dodatkowe obciążenie). Rozwiązania: krótszy timeout zapytań do bazy, circuit breaker, ograniczenie współbieżności (bulkhead), naprawa przyczyny w bazie."
+    },
+    {
+      "prompt": "Strona produktu wywołuje równolegle 30 mikroserwisów, każdy ma p99 = 400 ms i p50 = 40 ms. Jaki odsetek wyświetleń strony trafi na co najmniej jedno wywołanie z ogona? Jak to ograniczyć?",
+      "hint": "P = 1 − 0,99^30.",
+      "solution": "P = 1 − 0,99^30 ≈ 26% wyświetleń. Ograniczanie: mniej wywołań (agregacja, cache), timeouty z degradacją (pokaż stronę bez rekomendacji), hedged requests (drugie żądanie po p95), poprawa ogona usług (GC, pule, indeksy)."
+    },
+    {
+      "prompt": "Zinterpretuj wynik curl -w: dns=0.250 connect=0.262 tls=0.290 ttfb=1.910 total=1.950 (sekundy, wartości narastające). Która faza dominuje i gdzie szukać przyczyny?",
+      "hint": "Odejmuj kolejne wartości, by dostać czas każdej fazy.",
+      "solution": "DNS 250 ms (dużo — sprawdź resolver, cache, search domains w kontenerze), TCP 12 ms, TLS 28 ms, czekanie na serwer 1620 ms (dominuje — problem w aplikacji lub jej zależnościach: baza, wywołania zewnętrzne, kolejki), transfer 40 ms. Kolejność działań: profil aplikacji i tracing (OpenTelemetry), potem DNS."
+    },
+    {
+      "prompt": "W labie dodaj tc netem z opóźnieniem 50 ms i jitterem 30 ms do kontenera klienta, a następnie uruchom ping -c 100 i curl -w 20 razy. Opisz, jak jitter wpływa na rozkład czasów HTTP w porównaniu z samym opóźnieniem.",
+      "hint": "tc qdisc add dev eth0 root netem delay 50ms 30ms; porównaj min/avg/max/mdev i percentyle curl.",
+      "solution": "Bez jittera czasy są stabilne (RTT ≈ 50 ms + baza). Z jitterem 30 ms ping pokazuje mdev ~ 20–30 ms i szeroki zakres min/max; czasy HTTP rosną w ogonie, bo każda runda (TCP, TLS, żądanie) losuje opóźnienie, a netem może też zmieniać kolejność pakietów (reordering), co wywołuje duplikaty ACK. p50 rośnie umiarkowanie, p95/p99 wyraźnie."
+    },
+    {
+      "prompt": "Zaprojektuj alert dla usługi płatności oparty na SLO: 99,5% żądań w 30 dniach ma kończyć się sukcesem w czasie < 500 ms. Jakie SLI mierzysz i jaki budżet błędów masz w miesiącu przy 10 mln żądań?",
+      "hint": "Budżet błędów = (1 − SLO) × liczba żądań.",
+      "solution": "SLI: odsetek żądań ze statusem sukcesu i czasem < 500 ms (z histogramu http.server.requests i kubełka 0,5 s). Budżet błędów: 0,5% × 10 000 000 = 50 000 „złych” żądań w miesiącu. Alert: tempo spalania budżetu (burn rate), np. ostrzeżenie, gdy w ciągu 1 h zużyto 2% budżetu, krytyczny przy 5% w 5 min — zamiast alertu na pojedynczy skok."
+    },
+    {
+      "prompt": "Analityk SOC widzi na wykresie NetFlow, że serwer aplikacji co noc o 2:00 wysyła 4 GB do adresu w nieznanym ASN, choć zwykle wysyła 50 MB na dobę. Jakie metryki i kroki zastosujesz, by ocenić, czy to eksfiltracja?",
+      "hint": "Zacznij od baseline i kontekstu: kto, dokąd, jakim protokołem, od kiedy.",
+      "solution": "Porównanie z baseline (80× więcej niż zwykle), identyfikacja procesu (EDR, ss/lsof, logi), protokół i port (np. HTTPS do nowej domeny), reputacja i rejestracja domeny/ASN, czy istnieje zadanie (np. kopia zapasowa do nowego dostawcy) — rozmowa z właścicielem. Jeśli brak uzasadnienia: izolacja hosta, zachowanie dowodów, blokada celu, analiza zakresu danych. Metryki: bajty wychodzące na cel, czas trwania sesji, liczba połączeń, nowe cele."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego dla wideokonferencji ważniejszy jest jitter niż przepustowość, a dla kopii zapasowej odwrotnie. Jaki mechanizm w aplikacjach głosowych kompensuje jitter i jakim kosztem?",
+      "hint": "Media czasu rzeczywistego odtwarzają pakiety w stałym rytmie.",
+      "solution": "Wideo/głos potrzebują stosunkowo małej przepustowości, ale pakiety muszą przychodzić regularnie — spóźniony pakiet jest bezużyteczny. Kompensuje to bufor jittera (jitter buffer), który opóźnia odtwarzanie o kilkadziesiąt ms, by wyrównać zmienność — kosztem dodatkowego opóźnienia rozmowy. Kopia zapasowa toleruje zmienność, liczy się suma przesłanych danych w czasie (przepływność) i brak strat."
+    },
+    {
+      "prompt": "Napisz test w Javie mierzący 1000 wywołań HttpClient do lokalnej usługi i wypisujący p50, p95, p99 i max (bez zewnętrznych bibliotek). Uzasadnij wybór zegara i metody liczenia percentyli.",
+      "hint": "Zbierz czasy w tablicy long, posortuj, użyj metody najbliższej rangi.",
+      "solution": "long[] t = new long[1000]; for (int i = 0; i < t.length; i++) { long s = System.nanoTime(); client.send(req, BodyHandlers.discarding()); t[i] = System.nanoTime() - s; }\nArrays.sort(t);\nlong p(double q) { return t[(int) Math.ceil(q * t.length) - 1]; }\nWypisz p(0.5), p(0.95), p(0.99), t[t.length - 1] w ms. nanoTime jest monotoniczny (nie skacze przy korektach zegara). Do produkcji lepszy HdrHistogram lub Micrometer (stała pamięć, łączenie histogramów)."
+    },
+    {
+      "prompt": "Kolega proponuje zwiększyć łącze biura z 300 Mb/s do 1 Gb/s, bo „aplikacja w chmurze w USA działa wolno”. Pomiary: RTT 110 ms, wykorzystanie łącza 15%, strona robi 40 sekwencyjnych wywołań API. Oceń propozycję.",
+      "hint": "Policz czas samych rund sieciowych.",
+      "solution": "Łącze jest wykorzystane w 15% — przepustowość nie jest wąskim gardłem. 40 sekwencyjnych wywołań × 110 ms RTT ≈ 4,4 s samego czekania na sieć, niezależnie od szybkości łącza. Pomoże: mniej rund (agregacja wywołań, równoległość, HTTP/2), cache, przeniesienie usługi lub jej repliki do regionu w Europie, CDN dla zasobów statycznych. Zwiększenie łącza nic nie da."
+    },
+    {
+      "prompt": "Porównaj w tabeli: przepustowość, przepływność i goodput dla transferu pliku 1 GB przez HTTPS po łączu 100 Mb/s, przy którym iperf3 pokazał 94 Mb/s, a pobranie pliku trwało 95 s.",
+      "hint": "Goodput = dane użyteczne / czas.",
+      "solution": "Przepustowość nominalna: 100 Mb/s. Przepływność (z nagłówkami TCP/IP, zmierzona iperf3): ~94 Mb/s. Goodput pliku: 1 GB = 8 000 Mb / 95 s ≈ 84,2 Mb/s. Różnice wynikają z nagłówków, TLS, potwierdzeń, startu połączenia (slow start) i ewentualnych retransmisji."
+    },
+    {
+      "prompt": "Sprawdź na Linuksie, czy połączenie TCP używa skalowania okna i jakie ma okno przeciążenia: uruchom duży transfer (curl lub iperf3) i obejrzyj ss -ti dst <serwer>. Wyjaśnij pola wscale, rtt, cwnd i retrans.",
+      "hint": "Pola pojawiają się w drugiej linii wyniku ss -ti.",
+      "solution": "Przykład: „wscale:7,7 rtt:41.2/3.1 cwnd:120 retrans:0/3 send 34Mbps”. wscale — współczynnik skalowania okna (2^7 = ×128) wynegocjowany w SYN; rtt — wygładzone RTT/odchylenie w ms; cwnd — okno przeciążenia w segmentach (120 × MSS ≈ 175 kB w locie); retrans — retransmisje bieżące/łączne. Brak wscale oznacza limit 64 KiB okna."
+    },
+    {
+      "prompt": "Zbadaj bufferbloat w swojej sieci: uruchom ping do bramy, a równolegle duże wysyłanie (np. iperf3 -c serwer -R lub upload pliku). Opisz zmianę RTT i zaproponuj rozwiązanie.",
+      "hint": "Porównaj RTT w spoczynku i pod obciążeniem.",
+      "solution": "Typowo RTT do bramy rośnie z 1–5 ms do 100–500 ms w trakcie uploadu, bo pakiety czekają w przepełnionych buforach modemu/routera. Rozwiązanie: włączyć SQM/AQM (fq_codel lub CAKE) z limitem nieco poniżej realnej przepustowości łącza, QoS dla ruchu interaktywnego; w serwerach — fq + BBR."
+    },
+    {
+      "prompt": "Usługa ma SLO 99,9% żądań poniżej 250 ms w 28 dni, a ruch to 2 mln żądań dziennie. Policz budżet błędów i oceń, ile minut całkowitej niedostępności (wszystkie żądania złe) zużyje cały budżet.",
+      "hint": "Budżet = 0,1% żądań; przy pełnej awarii zużycie jest proporcjonalne do czasu.",
+      "solution": "Żądania w 28 dniach: 56 mln; budżet = 56 000 złych żądań. Pełna awaria zużywa ruch ~1389 żądań/min (2 mln / 1440), więc budżet wystarczy na ok. 40 minut całkowitej niedostępności w okresie (0,1% × 28 dni × 1440 min ≈ 40,3 min)."
+    },
+    {
+      "prompt": "Zmierz w Javie fazy połączenia HTTPS bez curl: czas rozwiązania nazwy (InetAddress.getByName), czas nawiązania TCP (Socket.connect) i czas handshake’u TLS (SSLSocket.startHandshake). Porównaj z curl -w.",
+      "hint": "Każdą fazę mierz osobno System.nanoTime().",
+      "solution": "long t0 = System.nanoTime(); InetAddress a = InetAddress.getByName(host); long t1 = System.nanoTime();\nSocket s = new Socket(); s.connect(new InetSocketAddress(a, 443), 3000); long t2 = System.nanoTime();\nSSLSocket ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault()).createSocket(s, host, 443, true); ssl.startHandshake(); long t3 = System.nanoTime();\nDNS = t1 − t0, TCP = t2 − t1, TLS = t3 − t2. Uwaga: JVM cache’uje DNS (networkaddress.cache.ttl), więc drugi pomiar DNS będzie bliski zera."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego zwiększenie timeoutu połączenia z 2 s do 60 s w kliencie, który woła niedostępną usługę 100 razy na sekundę, może położyć cały system. Użyj prawa Little’a.",
+      "hint": "Ile wątków będzie jednocześnie czekać?",
+      "solution": "Przy niedostępnej usłudze każde wywołanie czeka do końca timeoutu. Współbieżność = 100/s × 60 s = 6000 oczekujących wywołań (zamiast 200 przy 2 s). Wątki lub połączenia z puli wyczerpują się, rosną kolejki i pamięć, a awaria rozlewa się na wywołujących (kaskada). Rozwiązanie: krótkie timeouty, circuit breaker, limit współbieżności (bulkhead), szybka porażka z degradacją."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Czym różni się przepustowość (bandwidth) od przepływności (throughput)?",
+      "options": {
+        "A": "Przepustowość to pojemność łącza, przepływność to faktycznie przesyłana ilość danych w czasie",
+        "B": "Przepływność jest zawsze większa",
+        "C": "Przepustowość mierzy się w milisekundach",
+        "D": "To synonimy"
+      },
+      "correct": "A",
+      "explanation": "Przepływność ograniczają m.in. okno TCP, RTT, straty i inne strumienie."
+    },
+    {
+      "question": "Co to jest goodput?",
+      "options": {
+        "A": "Maksymalna przepustowość łącza",
+        "B": "Ilość użytecznych danych aplikacji dostarczonych w jednostce czasu",
+        "C": "Liczba dobrych pakietów na sekundę",
+        "D": "Przepływność z nagłówkami"
+      },
+      "correct": "B",
+      "explanation": "Goodput nie liczy nagłówków, retransmisji ani narzutu protokołów."
+    },
+    {
+      "question": "Które składowe opóźnienia skraca szybsze łącze?",
+      "options": {
+        "A": "Tylko przetwarzanie",
+        "B": "Propagację",
+        "C": "Tylko opóźnienie transmisji (serializacji)",
+        "D": "Wszystkie składowe"
+      },
+      "correct": "C",
+      "explanation": "Propagacja zależy od odległości i prędkości sygnału."
+    },
+    {
+      "question": "Jaka jest przybliżona prędkość sygnału w światłowodzie?",
+      "options": {
+        "A": "20 000 km/s",
+        "B": "1 000 km/s",
+        "C": "300 000 km/s",
+        "D": "Około 200 000 km/s (ok. 5 µs na km)"
+      },
+      "correct": "D",
+      "explanation": "Współczynnik załamania szkła ~1,5 → około 2/3 prędkości światła w próżni."
+    },
+    {
+      "question": "Co mierzy polecenie ping?",
+      "options": {
+        "A": "Liczbę skoków",
+        "B": "Czas w obie strony (RTT) dla pakietów ICMP echo",
+        "C": "Przepustowość łącza",
+        "D": "Czas odpowiedzi aplikacji HTTP"
+      },
+      "correct": "B",
+      "explanation": "RTT dla ICMP może różnić się od czasu odpowiedzi aplikacji."
+    },
+    {
+      "question": "Czym jest jitter?",
+      "options": {
+        "A": "Opóźnieniem propagacji",
+        "B": "Utratą pakietów",
+        "C": "Maksymalną przepustowością",
+        "D": "Zmiennością opóźnienia między kolejnymi pakietami"
+      },
+      "correct": "D",
+      "explanation": "Najważniejszy dla VoIP i wideo."
+    },
+    {
+      "question": "Czym jest bufferbloat?",
+      "options": {
+        "A": "Nadmiernym opóźnieniem wynikającym ze zbyt dużych buforów w urządzeniach przy obciążeniu",
+        "B": "Utratą pakietów przez kabel",
+        "C": "Zbyt małym oknem TCP",
+        "D": "Przepełnieniem pamięci JVM"
+      },
+      "correct": "A",
+      "explanation": "Pomaga AQM (fq_codel, CAKE) i QoS."
+    },
+    {
+      "question": "Co oznacza BDP (bandwidth-delay product)?",
+      "options": {
+        "A": "Liczbę pakietów traconych na sekundę",
+        "B": "Czas propagacji",
+        "C": "Ilość danych, która musi być „w locie”, by w pełni wykorzystać łącze",
+        "D": "Maksymalny rozmiar pakietu"
+      },
+      "correct": "C",
+      "explanation": "BDP = przepustowość × RTT."
+    },
+    {
+      "question": "Co ogranicza przepływność pojedynczego połączenia TCP niezależnie od łącza?",
+      "options": {
+        "A": "Wersja HTTP",
+        "B": "Długość adresu IP",
+        "C": "Rozmiar okna podzielony przez RTT",
+        "D": "Liczba rdzeni procesora"
+      },
+      "correct": "C",
+      "explanation": "Nadawca może mieć w locie najwyżej jedno okno niepotwierdzonych danych."
+    },
+    {
+      "question": "Jak utrata pakietów wpływa na TCP?",
+      "options": {
+        "A": "Zwiększa przepływność",
+        "B": "Wymusza retransmisje i zmniejszenie okna przeciążenia, co obniża przepływność",
+        "C": "Powoduje przejście na UDP",
+        "D": "Nie ma wpływu, bo TCP jest niezawodny"
+      },
+      "correct": "B",
+      "explanation": "Wzór Mathisa: przepływność ~ 1/√p."
+    },
+    {
+      "question": "Dlaczego średni czas odpowiedzi jest złą miarą doświadczenia użytkowników?",
+      "options": {
+        "A": "Ukrywa długi ogon wolnych żądań i nie opisuje typowego ani najgorszego przypadku",
+        "B": "Bo mierzy tylko DNS",
+        "C": "Bo jest zawsze równy medianie",
+        "D": "Bo nie da się go policzyć"
+      },
+      "correct": "A",
+      "explanation": "Używa się percentyli i histogramów."
+    },
+    {
+      "question": "Co oznacza p99 = 800 ms?",
+      "options": {
+        "A": "Maksimum to 800 ms",
+        "B": "Średnia wynosi 800 ms",
+        "C": "99 żądań trwało 800 ms",
+        "D": "99% żądań trwało nie dłużej niż 800 ms, 1% dłużej"
+      },
+      "correct": "D",
+      "explanation": "p99 opisuje „prawie najgorszy” przypadek."
+    },
+    {
+      "question": "Czy można policzyć p99 całej usługi, uśredniając p99 z pięciu instancji?",
+      "options": {
+        "A": "Tak, to standardowa metoda",
+        "B": "Nie — trzeba połączyć histogramy (kubełki) i dopiero z nich liczyć percentyl",
+        "C": "Tak, jeśli instancje mają tyle samo ruchu",
+        "D": "Tak, w Prometheusie avg() robi to poprawnie"
+      },
+      "correct": "B",
+      "explanation": "Percentyle nie są addytywne."
+    },
+    {
+      "question": "Co mówi prawo Little’a?",
+      "options": {
+        "A": "Straty rosną z kwadratem RTT",
+        "B": "Opóźnienie = odległość / prędkość",
+        "C": "Średnia liczba obsługiwanych jednocześnie żądań = tempo napływu × średni czas obsługi",
+        "D": "Przepływność = okno / RTT"
+      },
+      "correct": "C",
+      "explanation": "L = λ × W; podstawa doboru pul i wątków."
+    },
+    {
+      "question": "Który zegar w Javie należy stosować do pomiaru czasu trwania operacji?",
+      "options": {
+        "A": "System.currentTimeMillis()",
+        "B": "LocalDateTime.now()",
+        "C": "new Date()",
+        "D": "System.nanoTime()"
+      },
+      "correct": "D",
+      "explanation": "nanoTime jest monotoniczny; zegar ścienny może skakać przy korektach NTP."
+    },
+    {
+      "question": "Co oznacza „coordinated omission” w testach obciążeniowych?",
+      "options": {
+        "A": "Generator czeka na odpowiedź przed wysłaniem kolejnego żądania, przez co zaniża opóźnienia w ogonie",
+        "B": "Pominięcie testów w CI",
+        "C": "Utratę pakietów UDP",
+        "D": "Brak koordynacji między zespołami"
+      },
+      "correct": "A",
+      "explanation": "Narzędzia ze stałym tempem (wrk2, Gatling) ograniczają ten efekt."
+    },
+    {
+      "question": "Co zwraca curl -w %{time_appconnect}?",
+      "options": {
+        "A": "Czas samego TLS",
+        "B": "Czas od startu do zakończenia handshake’u TLS (narastająco)",
+        "C": "Czas transferu treści",
+        "D": "Czas DNS"
+      },
+      "correct": "B",
+      "explanation": "Wartości curl -w są narastające — fazy liczy się przez odejmowanie."
+    },
+    {
+      "question": "Która faza curl -w obejmuje czekanie na przetworzenie żądania przez serwer?",
+      "options": {
+        "A": "time_starttransfer minus time_appconnect (TTFB po TLS)",
+        "B": "time_namelookup",
+        "C": "time_connect minus time_namelookup",
+        "D": "time_total minus time_starttransfer"
+      },
+      "correct": "A",
+      "explanation": "Między wysłaniem żądania a pierwszym bajtem odpowiedzi serwer przetwarza żądanie (plus 1 RTT)."
+    },
+    {
+      "question": "Do czego służy polecenie tc qdisc add dev eth0 root netem delay 100ms loss 1%?",
+      "options": {
+        "A": "Do blokowania portu 100",
+        "B": "Do przyspieszenia interfejsu",
+        "C": "Do celowego dodania opóźnienia i strat na interfejsie w celach testowych",
+        "D": "Do szyfrowania ruchu"
+      },
+      "correct": "C",
+      "explanation": "Narzędzie do testów odporności (failure lab)."
+    },
+    {
+      "question": "Które narzędzie mierzy przepływność TCP/UDP między dwoma hostami?",
+      "options": {
+        "A": "dig",
+        "B": "nslookup",
+        "C": "arp",
+        "D": "iperf3"
+      },
+      "correct": "D",
+      "explanation": "iperf3 -s na serwerze, iperf3 -c na kliencie."
+    },
+    {
+      "question": "Co pokazuje mtr?",
+      "options": {
+        "A": "Tablicę ARP",
+        "B": "Certyfikat TLS",
+        "C": "Opóźnienie i straty na każdym skoku trasy, mierzone wielokrotnie",
+        "D": "Wolne porty"
+      },
+      "correct": "C",
+      "explanation": "Łączy traceroute z ciągłym pingowaniem."
+    },
+    {
+      "question": "Łącze 100 Mb/s pobiera plik 1 GB w przybliżeniu w czasie:",
+      "options": {
+        "A": "1 sekundy",
+        "B": "800 sekund",
+        "C": "10 sekund",
+        "D": "80 sekund"
+      },
+      "correct": "D",
+      "explanation": "8 000 Mb / 100 Mb/s = 80 s (bez narzutu)."
+    },
+    {
+      "question": "Ile MB/s odpowiada przepustowości 100 Mb/s?",
+      "options": {
+        "A": "12,5 MB/s",
+        "B": "100 MB/s",
+        "C": "800 MB/s",
+        "D": "1,25 MB/s"
+      },
+      "correct": "A",
+      "explanation": "Bajt = 8 bitów."
+    },
+    {
+      "question": "Dlaczego większe łącze nie przyspieszy aplikacji wykonującej 40 sekwencyjnych wywołań do odległego regionu?",
+      "options": {
+        "A": "Bo łącze nie obsługuje HTTPS",
+        "B": "Czas dominuje RTT każdej rundy, którego nie skraca szersze łącze",
+        "C": "Bo TCP nie działa na dużych łączach",
+        "D": "Bo DNS jest zbyt wolny"
+      },
+      "correct": "B",
+      "explanation": "Pomaga mniej rund, równoległość, cache lub bliższy region."
+    },
+    {
+      "question": "Jak wykrywa się podejrzany beaconing C2 w metrykach połączeń?",
+      "options": {
+        "A": "Po bardzo dużej przepustowości",
+        "B": "Po błędach CRC",
+        "C": "Po regularnych połączeniach do tego samego celu z małym rozrzutem odstępów czasowych",
+        "D": "Po braku DNS"
+      },
+      "correct": "C",
+      "explanation": "Niska zmienność odstępów (mały jitter) wskazuje na automat, nie człowieka."
+    },
+    {
+      "question": "Który objaw w metrykach sieci może być pierwszym sygnałem ataku DDoS?",
+      "options": {
+        "A": "Zmiana adresu MAC bramy",
+        "B": "Spadek liczby zapytań DNS",
+        "C": "Wydłużenie certyfikatu",
+        "D": "Gwałtowny wzrost liczby połączeń, opóźnień i retransmisji względem baseline"
+      },
+      "correct": "D",
+      "explanation": "Baseline jest konieczny, by odróżnić atak od normalnego szczytu."
+    },
+    {
+      "question": "Co wskazuje mdev w wyniku ping?",
+      "options": {
+        "A": "Liczbę skoków",
+        "B": "Odchylenie RTT — przybliżoną miarę jittera",
+        "C": "Utratę pakietów",
+        "D": "Maksymalne RTT"
+      },
+      "correct": "B",
+      "explanation": "rtt min/avg/max/mdev."
+    },
+    {
+      "question": "Jaki algorytm kontroli przeciążenia TCP często poprawia przepływność na dalekich trasach ze stratami?",
+      "options": {
+        "A": "BBR",
+        "B": "ARP",
+        "C": "STP",
+        "D": "Nagle"
+      },
+      "correct": "A",
+      "explanation": "BBR modeluje przepustowość i RTT zamiast reagować wyłącznie na straty (jak CUBIC)."
+    },
+    {
+      "question": "Dlaczego pomiary wydajności z laptopa przez Wi-Fi bywają mylące?",
+      "options": {
+        "A": "Laptop nie ma zegara",
+        "B": "Wi-Fi szyfruje dane, więc ich nie widać",
+        "C": "Wi-Fi nie obsługuje TCP",
+        "D": "Wi-Fi dokłada własny jitter, straty i retransmisje radiowe"
+      },
+      "correct": "D",
+      "explanation": "Mierz z hosta w tej samej sieci co produkcja."
+    },
+    {
+      "question": "Co oznacza SLO 99,9% żądań poniżej 300 ms w miesiącu?",
+      "options": {
+        "A": "Cel wewnętrzny: co najwyżej 0,1% żądań może trwać dłużej lub zakończyć się błędem",
+        "B": "Umowę z karami dla klienta",
+        "C": "Średni czas 300 ms",
+        "D": "Maksymalny czas 300 ms dla wszystkich żądań"
+      },
+      "correct": "A",
+      "explanation": "SLA to umowa z konsekwencjami; SLO to cel, SLI — mierzony wskaźnik."
+    },
+    {
+      "question": "Ile wynosi minimalne RTT wynikające wyłącznie z propagacji dla 200 km światłowodu (w jedną stronę)?",
+      "options": {
+        "A": "20 ms",
+        "B": "2 ms",
+        "C": "4 ms",
+        "D": "1 ms"
+      },
+      "correct": "B",
+      "explanation": "Jedna strona: 200 × 5 µs = 1 ms; RTT = 2 × 1 = 2 ms."
+    },
+    {
+      "question": "Ile wynosi minimalne RTT wynikające wyłącznie z propagacji dla 800 km światłowodu (w jedną stronę)?",
+      "options": {
+        "A": "16 ms",
+        "B": "80 ms",
+        "C": "8 ms",
+        "D": "4 ms"
+      },
+      "correct": "C",
+      "explanation": "Jedna strona: 800 × 5 µs = 4 ms; RTT = 2 × 4 = 8 ms."
+    },
+    {
+      "question": "Ile wynosi minimalne RTT wynikające wyłącznie z propagacji dla 2000 km światłowodu (w jedną stronę)?",
+      "options": {
+        "A": "10 ms",
+        "B": "20 ms",
+        "C": "40 ms",
+        "D": "200 ms"
+      },
+      "correct": "B",
+      "explanation": "Jedna strona: 2000 × 5 µs = 10 ms; RTT = 2 × 10 = 20 ms."
+    },
+    {
+      "question": "Ile wynosi minimalne RTT wynikające wyłącznie z propagacji dla 6000 km światłowodu (w jedną stronę)?",
+      "options": {
+        "A": "600 ms",
+        "B": "30 ms",
+        "C": "120 ms",
+        "D": "60 ms"
+      },
+      "correct": "D",
+      "explanation": "Jedna strona: 6000 × 5 µs = 30 ms; RTT = 2 × 30 = 60 ms."
+    },
+    {
+      "question": "Ile wynosi minimalne RTT wynikające wyłącznie z propagacji dla 15 000 km światłowodu (w jedną stronę)?",
+      "options": {
+        "A": "300 ms",
+        "B": "1500 ms",
+        "C": "150 ms",
+        "D": "75 ms"
+      },
+      "correct": "C",
+      "explanation": "Jedna strona: 15 000 × 5 µs = 75 ms; RTT = 2 × 75 = 150 ms."
+    },
+    {
+      "question": "Ile trwa transmisja ramki 1500 B na łączu 1 Mb/s?",
+      "options": {
+        "A": "12 ms",
+        "B": "120 ms",
+        "C": "96 ms",
+        "D": "1,2 ms"
+      },
+      "correct": "A",
+      "explanation": "1500 × 8 / (1 · 10⁶) s = 12 ms."
+    },
+    {
+      "question": "Ile trwa transmisja ramki 1500 B na łączu 100 Mb/s?",
+      "options": {
+        "A": "0,96 ms",
+        "B": "1,2 ms",
+        "C": "0,012 ms",
+        "D": "0,12 ms"
+      },
+      "correct": "D",
+      "explanation": "1500 × 8 / (100 · 10⁶) s = 0,12 ms."
+    },
+    {
+      "question": "Ile trwa transmisja ramki 1500 B na łączu 1000 Mb/s?",
+      "options": {
+        "A": "0,12 ms",
+        "B": "0,012 ms",
+        "C": "0,096 ms",
+        "D": "0,0012 ms"
+      },
+      "correct": "B",
+      "explanation": "1500 × 8 / (1000 · 10⁶) s = 0,012 ms."
+    },
+    {
+      "question": "Ile trwa transmisja ramki 9000 B na łączu 1000 Mb/s?",
+      "options": {
+        "A": "0,072 ms",
+        "B": "0,72 ms",
+        "C": "0,576 ms",
+        "D": "0,0072 ms"
+      },
+      "correct": "A",
+      "explanation": "9000 × 8 / (1000 · 10⁶) s = 0,072 ms."
+    },
+    {
+      "question": "Ile trwa transmisja ramki 64 B na łączu 10 Mb/s?",
+      "options": {
+        "A": "0,512 ms",
+        "B": "0,4096 ms",
+        "C": "0,0512 ms",
+        "D": "0,0051 ms"
+      },
+      "correct": "C",
+      "explanation": "64 × 8 / (10 · 10⁶) s = 0,0512 ms."
+    },
+    {
+      "question": "Ile trwa transmisja ramki 1500 B na łączu 10 000 Mb/s?",
+      "options": {
+        "A": "0,0096 ms",
+        "B": "0,0001 ms",
+        "C": "0,012 ms",
+        "D": "0,0012 ms"
+      },
+      "correct": "D",
+      "explanation": "1500 × 8 / (10 000 · 10⁶) s = 0,0012 ms."
+    },
+    {
+      "question": "Ile wynosi BDP dla 100 Mb/s i RTT 50 ms?",
+      "options": {
+        "A": "1 250 000 B",
+        "B": "5 000 000 B",
+        "C": "625 000 B",
+        "D": "62 500 B"
+      },
+      "correct": "C",
+      "explanation": "100·10⁶ × 0.05 / 8 = 625 000 B."
+    },
+    {
+      "question": "Ile wynosi BDP dla 1000 Mb/s i RTT 10 ms?",
+      "options": {
+        "A": "1 250 000 B",
+        "B": "2 500 000 B",
+        "C": "10 000 000 B",
+        "D": "125 000 B"
+      },
+      "correct": "A",
+      "explanation": "1000·10⁶ × 0.01 / 8 = 1 250 000 B."
+    },
+    {
+      "question": "Ile wynosi BDP dla 1000 Mb/s i RTT 100 ms?",
+      "options": {
+        "A": "1 250 000 B",
+        "B": "12 500 000 B",
+        "C": "100 000 000 B",
+        "D": "25 000 000 B"
+      },
+      "correct": "B",
+      "explanation": "1000·10⁶ × 0.1 / 8 = 12 500 000 B."
+    },
+    {
+      "question": "Ile wynosi BDP dla 10 000 Mb/s i RTT 1 ms?",
+      "options": {
+        "A": "125 000 B",
+        "B": "2 500 000 B",
+        "C": "10 000 000 B",
+        "D": "1 250 000 B"
+      },
+      "correct": "D",
+      "explanation": "10 000·10⁶ × 0.001 / 8 = 1 250 000 B."
+    },
+    {
+      "question": "Ile wynosi BDP dla 50 Mb/s i RTT 200 ms?",
+      "options": {
+        "A": "10 000 000 B",
+        "B": "1 250 000 B",
+        "C": "125 000 B",
+        "D": "2 500 000 B"
+      },
+      "correct": "B",
+      "explanation": "50·10⁶ × 0.2 / 8 = 1 250 000 B."
+    },
+    {
+      "question": "Jaka jest maksymalna przepływność połączenia TCP z oknem 65 535 B przy RTT 10 ms?",
+      "options": {
+        "A": "6,55 Mb/s",
+        "B": "419,42 Mb/s",
+        "C": "52,43 Mb/s",
+        "D": "104,86 Mb/s"
+      },
+      "correct": "C",
+      "explanation": "65 535 × 8 / 0.01 s = 52,43 Mb/s."
+    },
+    {
+      "question": "Jaka jest maksymalna przepływność połączenia TCP z oknem 65 535 B przy RTT 50 ms?",
+      "options": {
+        "A": "10,49 Mb/s",
+        "B": "83,88 Mb/s",
+        "C": "20,97 Mb/s",
+        "D": "1,31 Mb/s"
+      },
+      "correct": "A",
+      "explanation": "65 535 × 8 / 0.05 s = 10,49 Mb/s."
+    },
+    {
+      "question": "Jaka jest maksymalna przepływność połączenia TCP z oknem 65 535 B przy RTT 200 ms?",
+      "options": {
+        "A": "0,33 Mb/s",
+        "B": "2,62 Mb/s",
+        "C": "5,24 Mb/s",
+        "D": "20,97 Mb/s"
+      },
+      "correct": "B",
+      "explanation": "65 535 × 8 / 0.2 s = 2,62 Mb/s."
+    },
+    {
+      "question": "Jaka jest maksymalna przepływność połączenia TCP z oknem 1 048 576 B przy RTT 100 ms?",
+      "options": {
+        "A": "83,89 Mb/s",
+        "B": "167,77 Mb/s",
+        "C": "671,09 Mb/s",
+        "D": "10,49 Mb/s"
+      },
+      "correct": "A",
+      "explanation": "1 048 576 × 8 / 0.1 s = 83,89 Mb/s."
+    },
+    {
+      "question": "Wzór Mathisa: MSS 1460 B, RTT 10 ms, straty 1%. Ile w przybliżeniu wynosi maksymalna przepływność jednego połączenia?",
+      "options": {
+        "A": "45,06 Mb/s",
+        "B": "142,5 Mb/s",
+        "C": "1,42 Mb/s",
+        "D": "14,25 Mb/s"
+      },
+      "correct": "D",
+      "explanation": "(1460 × 8 / 0.01) × 1,22 / √0.01 ≈ 14,25 Mb/s."
+    },
+    {
+      "question": "Wzór Mathisa: MSS 1460 B, RTT 50 ms, straty 0,1%. Ile w przybliżeniu wynosi maksymalna przepływność jednego połączenia?",
+      "options": {
+        "A": "90,12 Mb/s",
+        "B": "0,9 Mb/s",
+        "C": "9,01 Mb/s",
+        "D": "28,5 Mb/s"
+      },
+      "correct": "C",
+      "explanation": "(1460 × 8 / 0.05) × 1,22 / √0.001 ≈ 9,01 Mb/s."
+    },
+    {
+      "question": "Wzór Mathisa: MSS 1460 B, RTT 100 ms, straty 0,1%. Ile w przybliżeniu wynosi maksymalna przepływność jednego połączenia?",
+      "options": {
+        "A": "45,06 Mb/s",
+        "B": "14,25 Mb/s",
+        "C": "4,51 Mb/s",
+        "D": "0,45 Mb/s"
+      },
+      "correct": "C",
+      "explanation": "(1460 × 8 / 0.1) × 1,22 / √0.001 ≈ 4,51 Mb/s."
+    },
+    {
+      "question": "Wzór Mathisa: MSS 1460 B, RTT 200 ms, straty 1%. Ile w przybliżeniu wynosi maksymalna przepływność jednego połączenia?",
+      "options": {
+        "A": "0,71 Mb/s",
+        "B": "2,25 Mb/s",
+        "C": "7,12 Mb/s",
+        "D": "0,07 Mb/s"
+      },
+      "correct": "A",
+      "explanation": "(1460 × 8 / 0.2) × 1,22 / √0.01 ≈ 0,71 Mb/s."
+    },
+    {
+      "question": "Żądanie czeka na 5 równoległych wywołań, z których każde z prawdopodobieństwem 1% trafia w ogon (p99). Jaki odsetek żądań trafi co najmniej raz w ogon?",
+      "options": {
+        "A": "1%",
+        "B": "2,5%",
+        "C": "5%",
+        "D": "4,9%"
+      },
+      "correct": "D",
+      "explanation": "1 − 0,99^5 ≈ 4,9%."
+    },
+    {
+      "question": "Żądanie czeka na 20 równoległych wywołań, z których każde z prawdopodobieństwem 1% trafia w ogon (p99). Jaki odsetek żądań trafi co najmniej raz w ogon?",
+      "options": {
+        "A": "9,1%",
+        "B": "18,2%",
+        "C": "1%",
+        "D": "20%"
+      },
+      "correct": "B",
+      "explanation": "1 − 0,99^20 ≈ 18,2%."
+    },
+    {
+      "question": "Żądanie czeka na 50 równoległych wywołań, z których każde z prawdopodobieństwem 1% trafia w ogon (p99). Jaki odsetek żądań trafi co najmniej raz w ogon?",
+      "options": {
+        "A": "19,7%",
+        "B": "1%",
+        "C": "50%",
+        "D": "39,5%"
+      },
+      "correct": "D",
+      "explanation": "1 − 0,99^50 ≈ 39,5%."
+    },
+    {
+      "question": "Żądanie czeka na 200 równoległych wywołań, z których każde z prawdopodobieństwem 1% trafia w ogon (p99). Jaki odsetek żądań trafi co najmniej raz w ogon?",
+      "options": {
+        "A": "86,6%",
+        "B": "1%",
+        "C": "43,3%",
+        "D": "200%"
+      },
+      "correct": "A",
+      "explanation": "1 − 0,99^200 ≈ 86,6%."
+    },
+    {
+      "question": "Usługa obsługuje 100 żądań/s przy średnim czasie 200 ms. Ile żądań jest średnio obsługiwanych jednocześnie?",
+      "options": {
+        "A": "500",
+        "B": "200",
+        "C": "20",
+        "D": "100"
+      },
+      "correct": "C",
+      "explanation": "Prawo Little’a: 100 × 0.2 s = 20."
+    },
+    {
+      "question": "Usługa obsługuje 500 żądań/s przy średnim czasie 40 ms. Ile żądań jest średnio obsługiwanych jednocześnie?",
+      "options": {
+        "A": "12 500",
+        "B": "20",
+        "C": "200",
+        "D": "500"
+      },
+      "correct": "B",
+      "explanation": "Prawo Little’a: 500 × 0.04 s = 20."
+    },
+    {
+      "question": "Usługa obsługuje 1000 żądań/s przy średnim czasie 2000 ms. Ile żądań jest średnio obsługiwanych jednocześnie?",
+      "options": {
+        "A": "1000",
+        "B": "500",
+        "C": "2000",
+        "D": "20 000"
+      },
+      "correct": "C",
+      "explanation": "Prawo Little’a: 1000 × 2 s = 2000."
+    },
+    {
+      "question": "Usługa obsługuje 50 żądań/s przy średnim czasie 3000 ms. Ile żądań jest średnio obsługiwanych jednocześnie?",
+      "options": {
+        "A": "150",
+        "B": "50",
+        "C": "17",
+        "D": "1500"
+      },
+      "correct": "A",
+      "explanation": "Prawo Little’a: 50 × 3 s = 150."
+    },
+    {
+      "question": "Ile co najmniej trwa przesłanie 1 GB przez łącze 100 Mb/s (bez narzutu)?",
+      "options": {
+        "A": "640 s",
+        "B": "80 s",
+        "C": "160 s",
+        "D": "10 s"
+      },
+      "correct": "B",
+      "explanation": "1 GB = 8000 Mb; 8000 / 100 = 80 s."
+    },
+    {
+      "question": "Ile co najmniej trwa przesłanie 10 GB przez łącze 1000 Mb/s (bez narzutu)?",
+      "options": {
+        "A": "160 s",
+        "B": "10 s",
+        "C": "640 s",
+        "D": "80 s"
+      },
+      "correct": "D",
+      "explanation": "10 GB = 80 000 Mb; 80 000 / 1000 = 80 s."
+    },
+    {
+      "question": "Ile co najmniej trwa przesłanie 4 GB przez łącze 50 Mb/s (bez narzutu)?",
+      "options": {
+        "A": "80 s",
+        "B": "1280 s",
+        "C": "640 s",
+        "D": "5120 s"
+      },
+      "correct": "C",
+      "explanation": "4 GB = 32 000 Mb; 32 000 / 50 = 640 s."
+    },
+    {
+      "question": "Wynik curl -w (sekundy, narastająco): dns=0.120 connect=0.135 tls=0.170 ttfb=0.200 total=0.210. Co dominuje w czasie żądania?",
+      "options": {
+        "A": "DNS (120 ms)",
+        "B": "transfer",
+        "C": "czekanie na serwer",
+        "D": "TLS"
+      },
+      "correct": "A",
+      "explanation": "Odejmuj kolejne wartości: connect − dns = TCP, tls − connect = TLS, ttfb − tls = serwer + 1 RTT, total − ttfb = transfer."
+    },
+    {
+      "question": "Wynik curl -w (sekundy, narastająco): dns=0.002 connect=0.004 tls=0.010 ttfb=1.400 total=1.420. Co dominuje w czasie żądania?",
+      "options": {
+        "A": "TCP connect",
+        "B": "TLS",
+        "C": "DNS",
+        "D": "czekanie na serwer (1390 ms)"
+      },
+      "correct": "D",
+      "explanation": "Odejmuj kolejne wartości: connect − dns = TCP, tls − connect = TLS, ttfb − tls = serwer + 1 RTT, total − ttfb = transfer."
+    },
+    {
+      "question": "Wynik curl -w (sekundy, narastająco): dns=0.003 connect=0.090 tls=0.180 ttfb=0.270 total=0.300. Co dominuje w czasie żądania?",
+      "options": {
+        "A": "DNS",
+        "B": "równomiernie TCP, TLS i TTFB po ok. 90 ms — duże RTT",
+        "C": "awaria serwera",
+        "D": "sam transfer"
+      },
+      "correct": "B",
+      "explanation": "Odejmuj kolejne wartości: connect − dns = TCP, tls − connect = TLS, ttfb − tls = serwer + 1 RTT, total − ttfb = transfer."
+    },
+    {
+      "question": "Ile MB/s odpowiada przepustowości 10 Mb/s?",
+      "options": {
+        "A": "10 MB/s",
+        "B": "1 MB/s",
+        "C": "1,25 MB/s",
+        "D": "80 MB/s"
+      },
+      "correct": "C",
+      "explanation": "10 / 8 = 1,25 MB/s."
+    },
+    {
+      "question": "Ile MB/s odpowiada przepustowości 50 Mb/s?",
+      "options": {
+        "A": "50 MB/s",
+        "B": "5 MB/s",
+        "C": "400 MB/s",
+        "D": "6,25 MB/s"
+      },
+      "correct": "D",
+      "explanation": "50 / 8 = 6,25 MB/s."
+    },
+    {
+      "question": "Ile MB/s odpowiada przepustowości 400 Mb/s?",
+      "options": {
+        "A": "3200 MB/s",
+        "B": "50 MB/s",
+        "C": "400 MB/s",
+        "D": "40 MB/s"
+      },
+      "correct": "B",
+      "explanation": "400 / 8 = 50 MB/s."
+    },
+    {
+      "question": "Ile MB/s odpowiada przepustowości 1000 Mb/s?",
+      "options": {
+        "A": "125 MB/s",
+        "B": "1000 MB/s",
+        "C": "100 MB/s",
+        "D": "8000 MB/s"
+      },
+      "correct": "A",
+      "explanation": "1000 / 8 = 125 MB/s."
+    },
+    {
+      "question": "Ile MB/s odpowiada przepustowości 2500 Mb/s?",
+      "options": {
+        "A": "2500 MB/s",
+        "B": "250 MB/s",
+        "C": "312,5 MB/s",
+        "D": "20 000 MB/s"
+      },
+      "correct": "C",
+      "explanation": "2500 / 8 = 312,5 MB/s."
+    },
+    {
+      "question": "Dla czasów 10, 12, 11, 13, 200 ms ile wynosi mediana?",
+      "options": {
+        "A": "12 ms",
+        "B": "200 ms",
+        "C": "49,2 ms",
+        "D": "10 ms"
+      },
+      "correct": "A",
+      "explanation": "Posortuj wartości: 10, 11, 12, 13, 200. mediana = 12 ms; średnia = 49,2 ms jest zawyżona przez wartość odstającą."
+    },
+    {
+      "question": "Dla czasów 5, 7, 6, 8, 9, 100, 7, 6, 5, 8 ms ile wynosi p90 (najbliższa ranga)?",
+      "options": {
+        "A": "16,1 ms",
+        "B": "9 ms",
+        "C": "5 ms",
+        "D": "100 ms"
+      },
+      "correct": "B",
+      "explanation": "Posortuj wartości: 5, 5, 6, 6, 7, 7, 8, 8, 9, 100. p90 (najbliższa ranga) = 9 ms; średnia = 16,1 ms jest zawyżona przez wartość odstającą."
+    },
+    {
+      "question": "Dla czasów 30, 31, 29, 35, 900, 32, 33, 30, 31, 34 ms ile wynosi mediana?",
+      "options": {
+        "A": "900 ms",
+        "B": "118,5 ms",
+        "C": "29 ms",
+        "D": "31,5 ms"
+      },
+      "correct": "D",
+      "explanation": "Posortuj wartości: 29, 30, 30, 31, 31, 32, 33, 34, 35, 900. mediana = 31,5 ms; średnia = 118,5 ms jest zawyżona przez wartość odstającą."
+    },
+    {
+      "question": "Dla czasów 100, 102, 98, 99, 101, 103, 97, 500, 100, 104 ms ile wynosi p90 (najbliższa ranga)?",
+      "options": {
+        "A": "500 ms",
+        "B": "97 ms",
+        "C": "104 ms",
+        "D": "140,4 ms"
+      },
+      "correct": "C",
+      "explanation": "Posortuj wartości: 97, 98, 99, 100, 100, 101, 102, 103, 104, 500. p90 (najbliższa ranga) = 104 ms; średnia = 140,4 ms jest zawyżona przez wartość odstającą."
+    },
+    {
+      "question": "Kolejne RTT wynoszą 20, 22, 20, 24, 20 ms. Ile wynosi jitter liczony jako średnia bezwzględnych różnic sąsiednich pomiarów?",
+      "options": {
+        "A": "21,2 ms",
+        "B": "4 ms",
+        "C": "6 ms",
+        "D": "3 ms"
+      },
+      "correct": "D",
+      "explanation": "Różnice: 2, 2, 4, 4; średnia = 3 ms. (RTP używa wygładzonej odmiany tego estymatora, RFC 3550.)"
+    },
+    {
+      "question": "Kolejne RTT wynoszą 50, 50, 50, 50, 50 ms. Ile wynosi jitter liczony jako średnia bezwzględnych różnic sąsiednich pomiarów?",
+      "options": {
+        "A": "50 ms",
+        "B": "0 ms",
+        "C": "5 ms",
+        "D": "1 ms"
+      },
+      "correct": "B",
+      "explanation": "Różnice: 0, 0, 0, 0; średnia = 0 ms. (RTP używa wygładzonej odmiany tego estymatora, RFC 3550.)"
+    },
+    {
+      "question": "Kolejne RTT wynoszą 10, 30, 10, 30, 10 ms. Ile wynosi jitter liczony jako średnia bezwzględnych różnic sąsiednich pomiarów?",
+      "options": {
+        "A": "20 ms",
+        "B": "40 ms",
+        "C": "21 ms",
+        "D": "18 ms"
+      },
+      "correct": "A",
+      "explanation": "Różnice: 20, 20, 20, 20; średnia = 20 ms. (RTP używa wygładzonej odmiany tego estymatora, RFC 3550.)"
+    },
+    {
+      "question": "Kolejne RTT wynoszą 100, 105, 95, 100, 110 ms. Ile wynosi jitter liczony jako średnia bezwzględnych różnic sąsiednich pomiarów?",
+      "options": {
+        "A": "7,5 ms",
+        "B": "102 ms",
+        "C": "8,5 ms",
+        "D": "15 ms"
+      },
+      "correct": "A",
+      "explanation": "Różnice: 5, 10, 5, 10; średnia = 7,5 ms. (RTP używa wygładzonej odmiany tego estymatora, RFC 3550.)"
+    },
+    {
+      "question": "SLO 99,9% dobrych żądań przy 1 000 000 żądań w okresie. Ile wynosi budżet błędów?",
+      "options": {
+        "A": "10 000 żądań",
+        "B": "100 żądań",
+        "C": "999 000 żądań",
+        "D": "1000 żądań"
+      },
+      "correct": "D",
+      "explanation": "(100% − 99,9%) × 1 000 000 = 1000."
+    },
+    {
+      "question": "SLO 99,5% dobrych żądań przy 2 000 000 żądań w okresie. Ile wynosi budżet błędów?",
+      "options": {
+        "A": "100 000 żądań",
+        "B": "1000 żądań",
+        "C": "10 000 żądań",
+        "D": "1 990 000 żądań"
+      },
+      "correct": "C",
+      "explanation": "(100% − 99,5%) × 2 000 000 = 10 000."
+    },
+    {
+      "question": "SLO 99,99% dobrych żądań przy 50 000 000 żądań w okresie. Ile wynosi budżet błędów?",
+      "options": {
+        "A": "500 żądań",
+        "B": "5000 żądań",
+        "C": "50 000 żądań",
+        "D": "49 995 000 żądań"
+      },
+      "correct": "B",
+      "explanation": "(100% − 99,99%) × 50 000 000 = 5000."
+    },
+    {
+      "question": "SLO 99% dobrych żądań przy 300 000 żądań w okresie. Ile wynosi budżet błędów?",
+      "options": {
+        "A": "300 żądań",
+        "B": "3000 żądań",
+        "C": "30 000 żądań",
+        "D": "297 000 żądań"
+      },
+      "correct": "B",
+      "explanation": "(100% − 99%) × 300 000 = 3000."
+    },
+    {
+      "question": "Jakie minimalne okno TCP pozwoli jednemu połączeniu osiągnąć 200 Mb/s przy RTT 25 ms?",
+      "options": {
+        "A": "625 000 B",
+        "B": "5 000 000 B",
+        "C": "78 125 B",
+        "D": "65 535 B"
+      },
+      "correct": "A",
+      "explanation": "Okno ≥ BDP = 200·10⁶ × 0.025 / 8 = 625 000 B."
+    },
+    {
+      "question": "Jakie minimalne okno TCP pozwoli jednemu połączeniu osiągnąć 1000 Mb/s przy RTT 50 ms?",
+      "options": {
+        "A": "50 000 000 B",
+        "B": "65 535 B",
+        "C": "781 250 B",
+        "D": "6 250 000 B"
+      },
+      "correct": "D",
+      "explanation": "Okno ≥ BDP = 1000·10⁶ × 0.05 / 8 = 6 250 000 B."
+    },
+    {
+      "question": "Jakie minimalne okno TCP pozwoli jednemu połączeniu osiągnąć 50 Mb/s przy RTT 120 ms?",
+      "options": {
+        "A": "6 000 000 B",
+        "B": "93 750 B",
+        "C": "750 000 B",
+        "D": "65 535 B"
+      },
+      "correct": "C",
+      "explanation": "Okno ≥ BDP = 50·10⁶ × 0.12 / 8 = 750 000 B."
+    },
+    {
+      "question": "Jakie minimalne okno TCP pozwoli jednemu połączeniu osiągnąć 500 Mb/s przy RTT 8 ms?",
+      "options": {
+        "A": "65 535 B",
+        "B": "4 000 000 B",
+        "C": "62 500 B",
+        "D": "500 000 B"
+      },
+      "correct": "D",
+      "explanation": "Okno ≥ BDP = 500·10⁶ × 0.008 / 8 = 500 000 B."
+    },
+    {
+      "question": "Jakie minimalne okno TCP pozwoli jednemu połączeniu osiągnąć 2000 Mb/s przy RTT 30 ms?",
+      "options": {
+        "A": "7 500 000 B",
+        "B": "65 535 B",
+        "C": "60 000 000 B",
+        "D": "937 500 B"
+      },
+      "correct": "A",
+      "explanation": "Okno ≥ BDP = 2000·10⁶ × 0.03 / 8 = 7 500 000 B."
+    },
+    {
+      "question": "Którą metrykę analizujesz najpierw w sytuacji: Wideokonferencja rwie się, choć łącze jest wykorzystane w 20%?",
+      "options": {
+        "A": "liczba rdzeni serwera",
+        "B": "jitter i utrata pakietów",
+        "C": "rozmiar okna TCP",
+        "D": "przepustowość"
+      },
+      "correct": "B",
+      "explanation": "Najbardziej trafna: jitter i utrata pakietów."
+    },
+    {
+      "question": "Którą metrykę analizujesz najpierw w sytuacji: Kopia zapasowa do innego kontynentu idzie powoli przy niskim wykorzystaniu łącza?",
+      "options": {
+        "A": "jitter",
+        "B": "liczba skoków traceroute",
+        "C": "RTT, okno TCP i straty (BDP, wzór Mathisa)",
+        "D": "czas DNS"
+      },
+      "correct": "C",
+      "explanation": "Najbardziej trafna: RTT, okno TCP i straty (BDP, wzór Mathisa)."
+    },
+    {
+      "question": "Którą metrykę analizujesz najpierw w sytuacji: Użytkownicy narzekają na „czasem bardzo wolną” stronę, średnia wygląda dobrze?",
+      "options": {
+        "A": "przepustowość łącza",
+        "B": "percentyle p95/p99 czasu odpowiedzi",
+        "C": "średni czas odpowiedzi",
+        "D": "liczba adresów IP"
+      },
+      "correct": "B",
+      "explanation": "Najbardziej trafna: percentyle p95/p99 czasu odpowiedzi."
+    },
+    {
+      "question": "Którą metrykę analizujesz najpierw w sytuacji: Trzeba dobrać rozmiar puli połączeń JDBC?",
+      "options": {
+        "A": "TTL",
+        "B": "jitter",
+        "C": "tempo żądań i czas obsługi (prawo Little’a)",
+        "D": "MTU"
+      },
+      "correct": "C",
+      "explanation": "Najbardziej trafna: tempo żądań i czas obsługi (prawo Little’a)."
+    },
+    {
+      "question": "Którą metrykę analizujesz najpierw w sytuacji: Ruch wychodzący z serwera nagle wzrósł 50-krotnie w nocy?",
+      "options": {
+        "A": "rozmiar ramki",
+        "B": "p50 czasu odpowiedzi",
+        "C": "czas propagacji",
+        "D": "odchylenie przepływności od baseline (możliwa eksfiltracja)"
+      },
+      "correct": "D",
+      "explanation": "Najbardziej trafna: odchylenie przepływności od baseline (możliwa eksfiltracja)."
+    },
+    {
+      "question": "Którą składową opóźnienia opisuje: Czas wypchnięcia 1500 B na łącze 10 Mb/s?",
+      "options": {
+        "A": "transmisja (serializacja)",
+        "B": "kolejkowanie",
+        "C": "przetwarzanie",
+        "D": "propagacja"
+      },
+      "correct": "A",
+      "explanation": "To transmisja (serializacja)."
+    },
+    {
+      "question": "Którą składową opóźnienia opisuje: Czas przebiegu sygnału przez 3000 km światłowodu?",
+      "options": {
+        "A": "kolejkowanie",
+        "B": "przetwarzanie",
+        "C": "transmisja (serializacja)",
+        "D": "propagacja"
+      },
+      "correct": "D",
+      "explanation": "To propagacja."
+    },
+    {
+      "question": "Którą składową opóźnienia opisuje: Czas oczekiwania pakietu w buforze zatłoczonego routera?",
+      "options": {
+        "A": "kolejkowanie",
+        "B": "transmisja (serializacja)",
+        "C": "propagacja",
+        "D": "przetwarzanie"
+      },
+      "correct": "A",
+      "explanation": "To kolejkowanie."
+    },
+    {
+      "question": "Którą składową opóźnienia opisuje: Czas sprawdzenia nagłówka i wyszukania trasy w routerze?",
+      "options": {
+        "A": "transmisja (serializacja)",
+        "B": "kolejkowanie",
+        "C": "przetwarzanie",
+        "D": "propagacja"
+      },
+      "correct": "C",
+      "explanation": "To przetwarzanie."
+    },
+    {
+      "question": "Którą składową opóźnienia opisuje: Dodatkowe 300 ms opóźnienia przy uploadzie dużego pliku przez domowy router?",
+      "options": {
+        "A": "propagacja",
+        "B": "kolejkowanie",
+        "C": "transmisja (serializacja)",
+        "D": "przetwarzanie"
+      },
+      "correct": "B",
+      "explanation": "To kolejkowanie."
+    }
+  ]
 }
