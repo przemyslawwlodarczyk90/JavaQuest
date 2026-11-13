@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Dwa kable to nie zawsze dwa razy więcej",
+      "image": "netsec/ns02-08-vs-stp.svg",
+      "imageAlt": "Po lewej dwa łącza 1G między SW1 i SW2 bez agregacji: STP blokuje jedno, aktywne jest tylko jedno. Po prawej Port-channel1 z LACP: oba łącza aktywne jako jedno łącze logiczne, które STP traktuje jak jeden port. Podpis: pojedynczy przepływ TCP nadal korzysta z jednego kabla.",
+      "body": "Z lekcji 07 wiesz, że STP zablokuje drugi kabel między dwoma przełącznikami — redundancja jest, ale połowa przepustowości stoi bezczynnie, a awaria aktywnego kabla wywołuje przebudowę drzewa. **Agregacja łączy** (Link Aggregation, w Cisco **EtherChannel**, w Linuksie **bonding**, w Windows **NIC teaming**) łączy kilka fizycznych portów w **jeden port logiczny**:\n- **przepustowość** — ruch wielu przepływów rozkłada się na wszystkie łącza,\n- **redundancja** — awaria jednego kabla zmniejsza przepustowość, ale nie przerywa łącza logicznego i **nie zmienia topologii STP**,\n- **prostota** — STP, VLAN-y i adresacja widzą jeden interfejs (`Port-channel1`, `bond0`).\n\nStandardem negocjacji jest **LACP** (IEEE 802.3ad, dziś **802.1AX**); Cisco ma też własny, starszy **PAgP**, a tryb **on** tworzy kanał bez żadnego protokołu.\n\nDla Java developera najważniejsza jest jedna, notorycznie mylona prawda: **agregacja nie przyspiesza pojedynczego połączenia**. Przełącznik (lub jądro Linuksa) przypisuje każdy przepływ do jednego łącza na podstawie **hasha z nagłówków**, żeby nie zmieniać kolejności pakietów TCP. Kopia pliku przez jedno połączenie SCP po „4 × 10G” pojedzie z prędkością 10G. Wydajność rośnie dla wielu klientów, wielu połączeń (pula połączeń JDBC, równoległe strumienie) — a rozkład zależy od tego, jak różnorodne są adresy i porty.\n\nW tej lekcji: LACP vs PAgP vs on i macierz trybów, algorytmy hashowania i ich pułapki, konfiguracja i weryfikacja w Cisco IOS, **bonding mode 4 w Linuksie** (Guided Lab na namespace’ach), NIC teaming w Windows, **MLAG/vPC** w zarysie oraz aspekty bezpieczeństwa i diagnostyki. Odpowiada to celom CCNA 200-301 (D2: konfiguracja i weryfikacja EtherChannel L2/L3, LACP) i Network+ (D2: agregacja portów).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik agregacji łączy",
+      "body": "- **LAG (Link Aggregation Group)** — grupa portów działających jako jeden port logiczny; w Cisco **EtherChannel / Port-channel**, w Linuksie **bond**, w Windows **team**, w Junos **ae (aggregated Ethernet)**.\n- **LACP (Link Aggregation Control Protocol, 802.3ad → 802.1AX)** — standard negocjacji: strony wymieniają **LACPDU** (multicast `01:80:c2:00:00:02`, EtherType 0x8809 Slow Protocols), sprawdzają zgodność i włączają porty do grupy. Tryby: **active** (inicjuje), **passive** (odpowiada).\n- **PAgP** — protokół Cisco; tryby **desirable** (inicjuje), **auto** (odpowiada). Dziś rzadko używany.\n- **Tryb on** — kanał statyczny bez protokołu; nie wykrywa błędów okablowania ani niezgodnej konfiguracji drugiej strony.\n- **LACP rate** — częstotliwość LACPDU: **slow** co 30 s (timeout 90 s), **fast** co 1 s (timeout 3 s).\n- **System ID / Key / Port priority** — identyfikatory LACP: priorytet systemu + MAC, klucz grupy (porty o tym samym kluczu mogą się agregować), priorytet portu (które porty aktywne, gdy jest limit).\n- **Load balancing / hash** — algorytm wyboru łącza dla przepływu: `src-mac`, `dst-mac`, `src-dst-mac`, `src-dst-ip`, `src-dst-port`/`l3+l4`.\n- **min-links** — minimalna liczba aktywnych łączy, poniżej której cały kanał jest wyłączany (np. aby ruch poszedł inną drogą).\n- **Bonding (Linux)** — tryby 0–6; **mode 4 = 802.3ad (LACP)**, **mode 1 = active-backup**; parametr `xmit_hash_policy` (layer2, layer2+3, layer3+4).\n- **NIC teaming (Windows)** — tryby Switch Independent, Static, LACP; w Hyper-V nowszy **SET (Switch Embedded Teaming)**.\n- **MLAG / vPC / MC-LAG** — agregat zakończony na **dwóch** przełącznikach widocznych dla partnera jako jeden system LACP; standardowym następcą jest **EVPN multihoming**.\n- **L3 EtherChannel** — kanał z adresem IP (`no switchport`), np. między przełącznikami L3 lub do routera.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Autostrada z kilkoma pasami i zasadą „nie zmieniaj pasa”",
+      "body": "Agregat to **autostrada z kilkoma pasami** zamiast jednej drogi. Ale obowiązuje dziwna zasada: **każdy konwój (przepływ TCP) musi jechać jednym pasem od początku do końca**, bo gdyby ciężarówki z jednego konwoju jechały różnymi pasami, dojechałyby w złej kolejności i odbiorca musiałby je układać (zmiana kolejności pakietów TCP = retransmisje, spadek wydajności).\n- **Bramka przy wjeździe** (funkcja hash) przydziela pas na podstawie tablicy rejestracyjnej konwoju (adresy, porty) — nie patrzy, który pas jest pusty. Jeśli wszystkie konwoje mają podobne tablice (np. wszystkie z jednego routera, ten sam adres MAC), mogą trafić na ten sam pas, a pozostałe będą puste.\n- **Jeden konwój nigdy nie pojedzie szybciej niż pozwala jeden pas** — cztery pasy pomagają, gdy konwojów jest wiele.\n- **Zamknięcie pasa** (awaria kabla) — bramka przydziela jego konwoje do pozostałych pasów; ruch zwalnia, ale autostrada działa. Bez agregacji zamknięcie drogi oznaczałoby objazd przez inne miasto (przebudowa STP).\n- **LACP** to **dyspozytorzy po obu stronach**, którzy co chwilę przez radio potwierdzają: „pas 3 jest mój i prowadzi do ciebie”. Tryb **on** to brak radia: jeśli po drugiej stronie pas prowadzi gdzie indziej (błąd w okablowaniu), nikt się nie zorientuje — część ruchu wpadnie w przepaść.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Jak hash rozkłada przepływy — policz sam",
+      "image": "netsec/ns02-08-hash.svg",
+      "imageAlt": "Pięć przepływów od różnych klientów do serwerów trafia do funkcji hash liczonej z adresów IP i portów modulo liczba łączy; każdy przepływ przypisany do jednego z czterech łączy 1G, łącze 0 niesie dwa przepływy. Rozkład zależy od różnorodności nagłówków, nie od obciążenia.",
+      "body": "Producenci używają różnych funkcji hash, ale idea jest wspólna: z wybranych pól nagłówka liczona jest wartość, a jej dolne bity (modulo liczba łączy) wybierają łącze. W lekcji używamy **uproszczonego modelu dydaktycznego**: `(ostatni oktet src IP XOR ostatni oktet dst IP) mod N` dla `src-dst-ip` oraz z dodatkowym XOR portów dla `l3+l4`. Przykłady dla 4 łączy:",
+      "code": "src → dst                     src-dst-ip         l3+l4 (z portami)\n10.0.0.11 → 10.0.1.50         (11^50)%4 = 1       (51000^5432^57)%4 = 1\n10.0.0.12 → 10.0.1.50         (12^50)%4 = 2       (51001^5432^62)%4 = 3\n10.0.0.13 → 10.0.1.60         (13^60)%4 = 1       (51002^443^49)%4 = 0\n10.0.0.14 → 10.0.1.50         (14^50)%4 = 0       (51003^5432^60)%4 = 3\n10.0.0.15 → 10.0.1.70         (15^70)%4 = 1       (51004^9092^73)%4 = 1\n\nWniosek 1: ten sam przepływ zawsze daje ten sam wynik → zawsze to samo łącze → brak zmiany kolejności.\nWniosek 2: ruch z JEDNEGO klienta do JEDNEGO serwera przy src-dst-ip zawsze idzie jednym łączem,\n           nawet przy wielu połączeniach; l3+l4 rozkłada połączenia po portach źródłowych.\nWniosek 3: src-dst-mac między dwoma routerami (zawsze te same MAC) = wszystko na jednym łączu!\nWniosek 4: przy 3 łączach (lub 6) rozkład bywa nierówny — wybieraj 2, 4 lub 8 łączy."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "EtherChannel w Cisco IOS: konfiguracja i weryfikacja",
+      "body": "Wszystkie porty członkowskie muszą mieć **identyczną** konfigurację: prędkość, duplex, tryb (access/trunk), VLAN-y, native VLAN. Konfigurujesz porty fizyczne poleceniem `channel-group`, a dalsze ustawienia (trunk, VLAN-y) — na `interface Port-channel`.",
+      "code": "SW1(config)# interface range GigabitEthernet1/0/47 - 48\nSW1(config-if-range)# channel-group 1 mode active          ! LACP, inicjuje negocjację\nSW1(config-if-range)# exit\nSW1(config)# interface Port-channel1\nSW1(config-if)# switchport mode trunk\nSW1(config-if)# switchport trunk allowed vlan 10,20,30\nSW1(config-if)# switchport trunk native vlan 999\nSW1(config)# port-channel load-balance src-dst-ip          ! globalnie (platformy Catalyst)\nSW1(config)# lacp system-priority 100                       ! opcjonalnie\n\nSW1# show etherchannel summary\nFlags:  D - down        P - bundled in port-channel\n        I - stand-alone s - suspended\n        S - Layer2      U - in use      (SU = L2 i w użyciu)\nGroup  Port-channel  Protocol    Ports\n------+-------------+-----------+--------------------------------\n1      Po1(SU)         LACP      Gi1/0/47(P)   Gi1/0/48(P)\n\nSW1# show lacp neighbor                ! partner: System ID, port, klucz, flagi (fast/slow, active)\nSW1# show etherchannel load-balance    ! aktywny algorytm hash\nSW1# show interfaces Port-channel1     ! BW 2000000 Kbit (suma łączy)\nSW1# test etherchannel load-balance interface po1 ip 10.0.0.11 10.0.1.50   ! które łącze wybierze (niektóre platformy)\n\nFlaga (I) stand-alone lub (s) suspended przy porcie = niezgodna konfiguracja lub brak partnera LACP."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Guided Lab: bond LACP między dwoma namespace’ami",
+      "image": "netsec/ns02-08-modes.svg",
+      "imageAlt": "Macierz trybów kanału: active, passive, on, desirable, auto. Kanał LACP powstaje dla active z active i active z passive, PAgP dla desirable z desirable i desirable z auto, statyczny tylko dla on z on; passive z passive i auto z auto nie tworzą kanału, a on z trybem negocjowanym grozi pętlą lub utratą ruchu.",
+      "body": "Laboratorium z planu lekcji — na maszynie wirtualnej z Linuksem (root):\n1. **Utwórz dwa namespace’y** `ns1` i `ns2` oraz dwie pary veth łączące je bezpośrednio (`a1–b1`, `a2–b2`) — dwa „kable”.\n2. **Utwórz bond w ns1**: `ip link add bond0 type bond mode 802.3ad lacp_rate fast xmit_hash_policy layer3+4 miimon 100`; podepnij `a1` i `a2` (`ip link set a1 down; ip link set a1 master bond0`), nadaj adres 192.168.50.1/24, podnieś interfejsy. To samo w ns2 z `b1`, `b2` i adresem 192.168.50.2/24.\n3. **Sprawdź negocjację**: `ip netns exec ns1 cat /proc/net/bonding/bond0` — szukaj `Bonding Mode: IEEE 802.3ad`, `Partner Mac Address` różny od zer, ten sam `Aggregator ID` dla obu portów, `LACP rate: fast`.\n4. **Przechwyć LACPDU**: `ip netns exec ns1 tcpdump -i a1 -e ether proto 0x8809` — co sekundę (rate fast) pakiet do `01:80:c2:00:00:02`.\n5. **Test ciągłości**: `ip netns exec ns1 ping -i 0.2 192.168.50.2` i w trakcie `ip link set a1 down` (w ns1) — zanotuj liczbę utraconych pakietów (zwykle 0–1). Przywróć łącze.\n6. **Test rozkładu**: uruchom `iperf3 -s` w ns2 i `iperf3 -c 192.168.50.2 -P 8` w ns1; liczniki `ip -s link show a1` i `a2` pokażą ruch na obu łączach. Z `-P 1` (jeden strumień) — tylko na jednym.\n7. **Błąd celowy**: zmień w ns2 tryb na `active-backup` (bez LACP) — w ns1 `/proc/net/bonding/bond0` pokaże brak partnera i porty w osobnych agregatorach; zapisz, jak to wygląda, bo tak wygląda awaria konfiguracji w produkcji.\n8. **Posprzątaj**: `ip netns del ns1; ip netns del ns2`.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Tryby bondingu w Linuksie i ich wymagania",
+      "body": "Wybór trybu zależy od tego, co potrafi (i jak jest skonfigurowany) przełącznik po drugiej stronie. W serwerowni standardem jest **mode 4 (802.3ad)** z LACP na przełączniku; gdy nie masz wpływu na przełącznik — **mode 1 (active-backup)**.",
+      "code": "mode 0  balance-rr    pakiety po kolei na każde łącze (round-robin)  wymaga statycznego kanału po stronie przełącznika; zmienia kolejność pakietów TCP\nmode 1  active-backup jedno łącze aktywne, drugie czeka              działa z dowolnym przełącznikiem, bez konfiguracji na przełączniku\nmode 2  balance-xor   hash z adresów wybiera łącze                   wymaga statycznego kanału (on)\nmode 3  broadcast     każda ramka na wszystkie łącza                 zastosowania specjalne\nmode 4  802.3ad       LACP — dynamiczna agregacja z hashowaniem      wymaga LACP na przełączniku; standard w serwerowniach\nmode 5  balance-tlb   adaptacyjne równoważenie nadawania             bez konfiguracji przełącznika; odbiór jednym łączem\nmode 6  balance-alb   jak tlb + równoważenie odbioru przez ARP       bez konfiguracji przełącznika; manipuluje odpowiedziami ARP\n\nxmit_hash_policy (mode 2 i 4):\n  layer2     — XOR adresów MAC (domyślnie): ruch do bramy = zawsze jedno łącze\n  layer2+3   — MAC + IP: lepiej dla wielu hostów docelowych\n  layer3+4   — IP + porty: najlepszy rozkład wielu połączeń (uwaga: fragmenty IP bez portów)\n\nNetplan (Ubuntu):\n  bonds:\n    bond0:\n      interfaces: [enp1s0f0, enp1s0f1]\n      parameters: {mode: 802.3ad, lacp-rate: fast, transmit-hash-policy: layer3+4, mii-monitor-interval: 100}\n      addresses: [10.20.0.15/24]\nWindows Server:  New-NetLbfoTeam -Name Team1 -TeamMembers NIC1,NIC2 -TeamingMode Lacp -LoadBalancingAlgorithm Dynamic\nHyper-V (SET):   New-VMSwitch -Name SETswitch -NetAdapterName NIC1,NIC2 -EnableEmbeddedTeaming $true"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Diagnoza: czy agregat naprawdę działa",
+      "body": "Najczęstsze pytanie z produkcji: „mamy 2 × 10G, a kopia idzie 9,4 Gb/s” albo „jedno łącze ma 90%, drugie 5%”. Narzędzia i odpowiedzi:",
+      "code": "# Linux: stan bondingu i partnera LACP\ncat /proc/net/bonding/bond0\n#   Slave Interface: enp1s0f0 ... Aggregator ID: 1 ... Partner Mac Address: 00:1c:73:aa:bb:cc\n#   (różne Aggregator ID lub partner 00:00:00:00:00:00 = LACP nie wynegocjowany)\nip -s link show enp1s0f0 ; ip -s link show enp1s0f1      # rozkład bajtów TX/RX na łączach\nethtool enp1s0f0 | grep -E 'Speed|Duplex'                # członkowie muszą mieć tę samą prędkość\ncat /sys/class/net/bond0/bonding/xmit_hash_policy\n\n# Test przepustowości — jeden vs wiele przepływów\niperf3 -c 10.20.0.50 -t 20            # 1 strumień: max prędkość JEDNEGO łącza\niperf3 -c 10.20.0.50 -t 20 -P 8       # 8 strumieni: szansa na wykorzystanie wszystkich łączy\n\n# Cisco\nshow etherchannel summary             # P = w kanale, I = stand-alone, s = suspended, D = down\nshow lacp neighbor detail\nshow interfaces po1 counters          # porównaj liczniki członków: show interfaces gi1/0/47 counters\nshow etherchannel load-balance\n\n# Java: wiele połączeń zamiast jednego, żeby skorzystać z agregatu (np. równoległe pobieranie zakresów)\nHttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();\n// N żądań z nagłówkiem Range: bytes=a-b → N połączeń TCP → różne porty źródłowe → różne łącza (przy l3+l4)"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "image": "netsec/ns02-08-mlag.svg",
+      "imageAlt": "Dwa przełączniki LEAF-A i LEAF-B połączone peer-linkiem i keepalive tworzą parę MLAG; serwer z bondingiem LACP ma po jednym łączu do każdego i widzi je jako jednego partnera LACP. Awaria całego przełącznika nie odcina serwera.",
+      "body": "**Developer / DevOps / SRE:**\n- **Serwery bare metal i hiperwizory** — prawie zawsze dwa porty w bondzie LACP do pary przełączników MLAG/vPC: odporność na awarię kabla, karty, a nawet całego przełącznika. Na tym stoją bazy danych, węzły Kafki, Kubernetes on-prem.\n- **„Mamy 2 × 25G, a replikacja bazy idzie 25G”** — replikacja (PostgreSQL streaming, MySQL binlog) to zwykle jedno połączenie TCP → jedno łącze. To nie błąd sieci, tylko natura hashowania.\n- **Nierówny rozkład** — ruch do jednego adresu (np. load balancer, brama) przy `layer2` lub `src-dst-ip` ląduje na jednym łączu. Rozwiązanie: `layer3+4` (Linux) / `src-dst-port` lub `src-dst-mixed-ip-port` (przełącznik), więcej połączeń w puli.\n- **Kubernetes i chmura** — w chmurze publicznej nie konfigurujesz bondingu (dostawca robi to pod spodem), ale węzły on-prem i serwery bazodanowe — tak. Awaria jednego łącza w bondzie nie powinna generować żadnego zdarzenia w aplikacji; jeśli generuje — konfiguracja jest zła (np. mode 0 bez kanału na przełączniku).\n- **Testy wydajności** — mierz `iperf3 -P`, a wyniki pojedynczego strumienia interpretuj jako górną granicę dla jednego połączenia.\n\n**Blue team / dostępność:**\n- **Dostępność to część triady CIA** — agregaty i MLAG to podstawowa ochrona dostępności usług; monitoruj liczbę aktywnych członków (`min-links`, alert przy degradacji do jednego łącza — kolejna awaria oznacza przestój).\n- **Tryb on i błędy okablowania** — kanał statyczny po stronie przełącznika i brak kanału po stronie hosta lub błędnie wpięty kabel mogą tworzyć pętle L2; Cisco ma **EtherChannel Misconfig Guard** (porty err-disabled). LACP wykrywa takie sytuacje.\n- **Monitoring LACP** — logi `%EC-5-UNBUNDLE`, `%LINK-3-UPDOWN` na członkach, flapping LACP; nieoczekiwane zmiany partnera LACP (inny System ID) mogą oznaczać przepięcie kabla do nieautoryzowanego urządzenia.\n- **Analiza ruchu** — przy SPAN/TAP na agregacie trzeba objąć wszystkie łącza członkowskie (lub Port-channel), inaczej sensor IDS widzi tylko część przepływów (rozdział o NSM).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy z agregacją",
+      "body": "- **„4 × 10G = 40G dla mojego transferu”** — nie; pojedynczy przepływ korzysta z jednego łącza. Agregat skaluje liczbę przepływów, nie prędkość jednego.\n- **Niezgodna konfiguracja członków** — inna prędkość, duplex, VLAN-y, native VLAN lub tryb na jednym porcie → port w stanie suspended/stand-alone; kanał działa „na pół gwizdka”.\n- **Tryb on po jednej stronie, LACP po drugiej** — kanał nie powstaje poprawnie, ryzyko pętli lub utraty ruchu; zawsze LACP active (lub active/passive) po obu stronach.\n- **passive + passive (lub auto + auto)** — nikt nie inicjuje, kanał nie powstaje, a STP zablokuje nadmiarowe łącze; łatwo przeoczyć, bo „coś działa”.\n- **Bond mode 0 (balance-rr) na zwykłym przełączniku** — ten sam MAC pojawia się na dwóch portach naprzemiennie (MAC flapping), pakiety TCP przychodzą w złej kolejności; bez kanału statycznego na przełączniku to przepis na problemy.\n- **Agregat do dwóch różnych przełączników bez MLAG/vPC/stosu** — LACP wykryje dwóch różnych partnerów i utworzy dwa osobne agregatory (jeden nieaktywny) albo — w trybie statycznym — powstanie pętla/czarna dziura.\n- **Liczba łączy niebędąca potęgą dwójki** — 3 lub 6 łączy daje nierówny rozkład w wielu implementacjach hasha.\n- **Hash `src-mac`/`layer2` przy ruchu przez router** — wszystkie ramki mają ten sam MAC bramy → jedno łącze przeciążone, reszta pusta.\n- **LACP rate slow przy szybkich wymaganiach** — wykrycie „cichej” awarii (łącze up, ale partner nie odpowiada) trwa do 90 s; `lacp rate fast` skraca to do 3 s (detekcja utraty łącza fizycznego jest i tak natychmiastowa).",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: bond mode 0 na serwerze i kanał statyczny „na pałę”",
+      "body": "Serwer z dwiema kartami w trybie round-robin podłączony do dwóch zwykłych portów, a na innym przełączniku kanał `on` bez protokołu.",
+      "code": "# /etc/netplan/01-bond.yaml (serwer)\nbonds:\n  bond0:\n    interfaces: [eno1, eno2]\n    parameters: {mode: balance-rr}           # mode 0\n# Przełącznik: Gi1/0/5 i Gi1/0/6 jako zwykłe porty access (bez kanału)\n# Skutki: MAC serwera „skacze” między portami (MACFLAP), pakiety TCP w złej kolejności,\n#         retransmisje, losowe spadki wydajności aplikacji i dziwne timeouty.\n\n! Inny przełącznik: kanał bez protokołu\ninterface range Gi1/0/47 - 48\n channel-group 1 mode on\n! Druga strona skonfigurowana jako LACP active (lub w ogóle bez kanału):\n! kanał nie negocjuje się, porty mogą przejść w err-disabled albo tworzyć pętlę;\n! błędnie wpięty kabel (do innego przełącznika) nie zostanie wykryty."
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: LACP po obu stronach, MLAG, właściwy hash i monitoring",
+      "body": "Serwer w bondzie 802.3ad z `layer3+4` i `lacp_rate fast`, przełączniki w parze MLAG/vPC z kanałem LACP active, min-links i alertami.",
+      "code": "# Serwer (netplan)\nbonds:\n  bond0:\n    interfaces: [eno1, eno2]                  # eno1 → LEAF-A, eno2 → LEAF-B (para MLAG)\n    parameters:\n      mode: 802.3ad\n      lacp-rate: fast\n      transmit-hash-policy: layer3+4\n      mii-monitor-interval: 100\n\n! LEAF-A i LEAF-B (Arista EOS, MLAG — analogicznie vPC w NX-OS)\ninterface Ethernet5\n channel-group 5 mode active\ninterface Port-Channel5\n switchport access vlan 20\n mlag 5                                       ! ten sam numer na obu przełącznikach pary\n port-channel min-links 1\n spanning-tree portfast\n spanning-tree bpduguard enable\n!\n! Monitoring: alert, gdy liczba aktywnych członków < 2 (degradacja),\n! syslog: zdarzenia unbundle/LACP timeout, zmiana partnera LACP; SNMP/gNMI: liczniki per członek."
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy agregacja, a kiedy coś innego",
+      "body": "- **Agregacja LACP** — połączenia przełącznik–przełącznik (zamiast blokowanych przez STP łączy), serwery i hiperwizory z dwiema kartami, połączenia do firewalli i load balancerów. Zawsze z LACP active, nigdy `on` bez ważnego powodu.\n- **MLAG/vPC/EVPN multihoming** — gdy chcesz przetrwać awarię całego przełącznika (serwery krytyczne, pary dystrybucyjne). Wymaga dodatkowej konfiguracji i dyscypliny (peer-link, keepalive, spójna konfiguracja pary).\n- **Active-backup (mode 1)** — gdy nie masz wpływu na przełącznik lub łącza idą do różnych, niezależnych przełączników bez MLAG; tylko redundancja, bez sumowania przepustowości.\n- **Szybsze łącze zamiast agregatu** — jeśli potrzebujesz przepustowości dla pojedynczych przepływów (backup, replikacja, duże transfery), 1 × 25G lepiej niż 4 × 10G. Agregat nie zastąpi szybszego portu.\n- **Routing L3 z ECMP** — w centrach danych (spine-leaf) między przełącznikami zamiast LAG-ów stosuje się routing z wieloma równymi trasami — podobna idea (hash przepływów), ale na L3 i bez ograniczeń L2.\n- **Aplikacja** — jeśli chcesz wykorzystać kilka łączy, używaj wielu połączeń (pula, równoległe strumienie, HTTP/2 do wielu backendów), a nie jednego „grubego” połączenia.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Agregacja (EtherChannel, bond, team) łączy porty w jeden logiczny: więcej przepustowości dla wielu przepływów, redundancja, brak blokowania przez STP.\n- Protokoły: LACP (802.1AX; active/passive), PAgP (Cisco; desirable/auto), on (statyczny). Kanał powstaje: active+active, active+passive, desirable+desirable/auto, on+on.\n- Hash przypisuje każdy przepływ do jednego łącza → jeden przepływ TCP nie przyspieszy; rozkład zależy od różnorodności adresów i portów (layer3+4 / src-dst-port najlepszy dla wielu połączeń).\n- Członkowie muszą mieć identyczną konfigurację; weryfikacja: show etherchannel summary (P, I, s, D), show lacp neighbor, /proc/net/bonding/bond0.\n- Linux: mode 4 = 802.3ad (LACP, wymaga przełącznika), mode 1 = active-backup (bez przełącznika); mode 0 bez kanału na przełączniku = MAC flapping.\n- LACP rate: slow 30 s (timeout 90 s), fast 1 s (timeout 3 s); min-links i alerty o degradacji.\n- MLAG/vPC/EVPN multihoming: agregat do dwóch przełączników — odporność na awarię całego urządzenia.\n- Następna lekcja: **LLDP i CDP — kto jest po drugiej stronie kabla**.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Dla par trybów active/passive, passive/passive, on/active, desirable/auto, active/desirable określ, czy powstanie kanał i dlaczego.",
+      "hint": "LACP: active inicjuje; PAgP: desirable inicjuje; on bez protokołu; protokoły się nie mieszają.",
+      "solution": "active/passive: kanał LACP; passive/passive: obie strony czekają — kanał nie powstanie, łącza działają osobno (STP zablokuje nadmiarowe); on/active: brak kanału po stronie negocjującej, strona „on” wysyła ruch po wszystkich łączach — ryzyko pętli lub utraty ruchu (Cisco zwykle wyłącza porty jako err-disabled przez EtherChannel guard); desirable/auto: kanał PAgP; active/desirable: różne protokoły (LACP vs PAgP) — kanał nie powstanie."
+    },
+    {
+      "prompt": "W modelu dydaktycznym src-dst-ip (ostatni oktet src XOR ostatni oktet dst, mod N) wyznacz łącze dla przepływu 10.0.0.21 → 10.0.0.1 w agregacie 2 łączy. Czy odpowiedź (10.0.0.1 → 10.0.0.21) pójdzie tym samym łączem?",
+      "hint": "XOR jest przemienny.",
+      "solution": "21 XOR 1 = 20, mod 2 = 0 → łącze 0. Odpowiedź daje ten sam XOR (przemienność), więc po stronie przełącznika z tym samym algorytmem trafi na łącze o tym samym numerze — ale uwaga: każda strona agregatu liczy hash niezależnie i może mieć inny algorytm, więc ruch w dwie strony może iść różnymi kablami."
+    },
+    {
+      "prompt": "W modelu dydaktycznym src-dst-ip (ostatni oktet src XOR ostatni oktet dst, mod N) wyznacz łącze dla przepływu 192.168.5.7 → 192.168.9.200 w agregacie 4 łączy. Czy odpowiedź (192.168.9.200 → 192.168.5.7) pójdzie tym samym łączem?",
+      "hint": "XOR jest przemienny.",
+      "solution": "7 XOR 200 = 207, mod 4 = 3 → łącze 3. Odpowiedź daje ten sam XOR (przemienność), więc po stronie przełącznika z tym samym algorytmem trafi na łącze o tym samym numerze — ale uwaga: każda strona agregatu liczy hash niezależnie i może mieć inny algorytm, więc ruch w dwie strony może iść różnymi kablami."
+    },
+    {
+      "prompt": "W modelu dydaktycznym src-dst-ip (ostatni oktet src XOR ostatni oktet dst, mod N) wyznacz łącze dla przepływu 172.16.0.33 → 172.16.1.17 w agregacie 8 łączy. Czy odpowiedź (172.16.1.17 → 172.16.0.33) pójdzie tym samym łączem?",
+      "hint": "XOR jest przemienny.",
+      "solution": "33 XOR 17 = 48, mod 8 = 0 → łącze 0. Odpowiedź daje ten sam XOR (przemienność), więc po stronie przełącznika z tym samym algorytmem trafi na łącze o tym samym numerze — ale uwaga: każda strona agregatu liczy hash niezależnie i może mieć inny algorytm, więc ruch w dwie strony może iść różnymi kablami."
+    },
+    {
+      "prompt": "Agregat 4 × 10 Gb/s. Ile maksymalnie może osiągnąć pojedynczy przepływ TCP i jaka jest suma przepustowości kanału?",
+      "hint": "Jeden przepływ = jedno łącze; suma = liczba łączy × prędkość.",
+      "solution": "Suma kanału: 40 Gb/s. Pojedynczy przepływ: maks. 10 Gb/s (jedno łącze)."
+    },
+    {
+      "prompt": "Agregat 4 × 10 Gb/s. Ile maksymalnie może osiągnąć 16 równoległych przepływów (przy idealnym rozkładzie) i jaka jest suma przepustowości kanału?",
+      "hint": "Jeden przepływ = jedno łącze; suma = liczba łączy × prędkość.",
+      "solution": "Suma kanału: 40 Gb/s. 16 przepływów: maks. 40 Gb/s łącznie (każdy przepływ ≤ 10 Gb/s; w praktyce rozkład hasha jest nierówny, więc wynik będzie niższy)."
+    },
+    {
+      "prompt": "Agregat 2 × 25 Gb/s. Ile maksymalnie może osiągnąć 3 równoległych przepływów (przy idealnym rozkładzie) i jaka jest suma przepustowości kanału?",
+      "hint": "Jeden przepływ = jedno łącze; suma = liczba łączy × prędkość.",
+      "solution": "Suma kanału: 50 Gb/s. 3 przepływów: maks. 50 Gb/s łącznie (każdy przepływ ≤ 25 Gb/s; w praktyce rozkład hasha jest nierówny, więc wynik będzie niższy)."
+    },
+    {
+      "prompt": "Wykonaj Guided Lab z lekcji (bond LACP między namespace’ami) i przedstaw: fragment /proc/net/bonding/bond0, liczbę utraconych pakietów przy wyłączeniu jednego łącza, wynik iperf3 dla -P 1 i -P 8.",
+      "hint": "Partner MAC, Aggregator ID, liczniki ip -s link.",
+      "solution": "Przykład: Bonding Mode: IEEE 802.3ad Dynamic link aggregation; Transmit Hash Policy: layer3+4; LACP rate: fast; oba slave’y Aggregator ID: 1, Partner Mac Address: (MAC bond0 w ns2). Wyłączenie a1: 0–1 utraconych pakietów przy ping -i 0.2. iperf3 -P 1: ruch tylko na jednym veth (liczniki drugiego prawie stałe); -P 8: ruch na obu. Po zmianie trybu ns2 na active-backup: Partner Mac 00:00:00:00:00:00, różne Aggregator ID."
+    },
+    {
+      "prompt": "Skonfiguruj na dwóch przełącznikach Cisco EtherChannel LACP z dwóch portów jako trunk z VLAN-ami 10 i 20. Podaj kolejność poleceń i weryfikację. Co się stanie, jeśli na jednym porcie członkowskim zostanie inny native VLAN?",
+      "hint": "channel-group N mode active na portach, potem konfiguracja Port-channel.",
+      "solution": "Na obu: interface range Gi1/0/47 - 48; channel-group 1 mode active; interface Port-channel1; switchport mode trunk; switchport trunk allowed vlan 10,20; switchport trunk native vlan 999. Weryfikacja: show etherchannel summary — Po1(SU) LACP Gi1/0/47(P) Gi1/0/48(P); show interfaces trunk — Po1. Port z innym native VLAN zostanie zawieszony (s) lub stand-alone (I) — niezgodna konfiguracja; kanał działa na pozostałym łączu."
+    },
+    {
+      "prompt": "Zespół bazodanowy zgłasza: „serwer ma bond 2 × 10G, a replikacja do repliki osiąga max 9,4 Gb/s”. Wyjaśnij przyczynę i zaproponuj trzy opcje poprawy.",
+      "hint": "Jeden przepływ = jedno łącze.",
+      "solution": "Replikacja to jedno połączenie TCP; hash przypisuje je do jednego łącza 10G, więc 9,4 Gb/s to praktyczne maksimum (narzut nagłówków). Opcje: (1) szybsze łącze (25G/100G) zamiast agregatu; (2) mechanizm replikacji/kopii z wieloma równoległymi połączeniami (np. równoległe strumienie backupu, pgBackRest z process-max); (3) jumbo frames i tuning TCP podnoszą efektywność, ale nie przekroczą 10G. Agregat nadal daje redundancję i przepustowość dla wielu klientów."
+    },
+    {
+      "prompt": "Na serwerze z bond mode 4 widzisz w /proc/net/bonding/bond0 dla jednego portu „Partner Mac Address: 00:00:00:00:00:00” i inny Aggregator ID. Co to oznacza i co sprawdzisz?",
+      "hint": "Port nie wynegocjował LACP z partnerem.",
+      "solution": "Ten port nie otrzymuje LACPDU od przełącznika (lub otrzymuje od innego systemu), więc nie należy do aktywnego agregatora — ruch idzie tylko przez pozostałe łącza (degradacja). Sprawdzić: czy port przełącznika jest w channel-group z mode active/passive (a nie on lub bez kanału), czy kabel jest wpięty do właściwego przełącznika (w parze MLAG — czy MLAG jest skonfigurowany), show lacp neighbor po stronie przełącznika, prędkość/duplex portu (ethtool)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego ruch między dwoma routerami połączonymi agregatem 4 łączy z algorytmem src-dst-mac może trafić tylko na jedno łącze. Co zmienić?",
+      "hint": "Ile różnych par MAC widzi agregat między dwoma routerami?",
+      "solution": "Między dwoma routerami wszystkie ramki mają ten sam MAC źródłowy i docelowy (interfejsy routerów), więc hash z MAC zawsze daje ten sam wynik — cały ruch na jednym łączu. Zmiana: algorytm z adresami IP i portami (src-dst-ip lub src-dst-mixed-ip-port / l3+l4), który różnicuje przepływy różnych hostów i połączeń; alternatywnie zamiast LAG — łącza L3 z ECMP."
+    },
+    {
+      "prompt": "Porównaj tryby bondingu mode 1 (active-backup) i mode 4 (802.3ad): wymagania wobec przełącznika, przepustowość, czas przełączenia i ryzyka.",
+      "hint": "Mode 1 nie wymaga nic od przełącznika.",
+      "solution": "Mode 1: jedno łącze aktywne, drugie zapasowe; działa z dowolnymi przełącznikami (także dwoma niezależnymi), bez konfiguracji; przepustowość jednego łącza; po awarii przełączenie w czasie miimon (np. 100 ms) + gratuitous ARP do aktualizacji tablic MAC. Mode 4: wszystkie łącza aktywne (rozkład hashem), wymaga LACP na przełączniku (lub parze MLAG); przy awarii natychmiastowe przeniesienie przepływów. Ryzyka: mode 1 — niewykorzystana przepustowość; mode 4 — zależność od poprawnej konfiguracji po obu stronach."
+    },
+    {
+      "prompt": "Opisz, jak działa MLAG/vPC i jakie są typowe pułapki (peer-link, keepalive, split brain).",
+      "hint": "Dwa przełączniki udają jeden system LACP.",
+      "solution": "Para przełączników wymienia stan przez peer-link (synchronizacja tablic MAC, ruch, gdy jedna strona straciła łącze do hosta) i osobny keepalive (wykrywanie, czy partner żyje). Wobec hosta oba używają wspólnego System ID LACP, więc host widzi jednego partnera i tworzy jeden agregat. Pułapki: awaria peer-link przy działającym keepalive — urządzenie podrzędne wyłącza swoje porty MLAG (by uniknąć split brain); brak keepalive przez osobną ścieżkę — ryzyko, że oba uznają się za główne; niespójna konfiguracja VLAN-ów/portów po obu stronach; porty orphan (podłączone tylko do jednego przełącznika)."
+    },
+    {
+      "prompt": "Zaplanuj monitoring agregatów w środowisku produkcyjnym: jakie metryki i alerty skonfigurujesz?",
+      "hint": "Liczba aktywnych członków, rozkład ruchu, zdarzenia LACP.",
+      "solution": "Metryki: liczba aktywnych członków na kanał (alert przy < liczby skonfigurowanej — degradacja), wykorzystanie każdego członka osobno (alert przy dużej nierównowadze, np. > 80% na jednym przy < 30% na innych), błędy CRC na członkach, zdarzenia LACP (unbundle, timeout, zmiana partnera). Źródła: SNMP/gNMI (IF-MIB, LAG-MIB), syslog (%EC-5-UNBUNDLE, %LINK-3-UPDOWN), na serwerach node_exporter (bonding collector: node_bonding_active vs node_bonding_slaves)."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest L3 EtherChannel i kiedy go użyjesz zamiast trunku L2 lub routingu ECMP.",
+      "hint": "no switchport na Port-channel, adres IP.",
+      "solution": "L3 EtherChannel to kanał bez funkcji przełączania — Port-channel ma adres IP (no switchport) i działa jak jeden interfejs routowany. Użycie: połączenie dwóch przełączników L3 lub przełącznika z routerem/firewallem, gdy chcesz jednego sąsiedztwa routingu i jednej podsieci punkt-punkt z odpornością na awarię kabla. ECMP (wiele osobnych łączy L3) daje podobny efekt, ale wymaga wielu sąsiedztw i adresów; L2 trunk w kanale — gdy potrzebujesz przenieść VLAN-y."
+    },
+    {
+      "prompt": "Analizujesz SPAN/TAP dla sensora IDS na łączu, które jest agregatem 2 × 10G. Co zrobisz, by sensor widział cały ruch, i jaki problem może się pojawić?",
+      "hint": "Ruch jednego przepływu na jednym łączu, ale różne przepływy na różnych.",
+      "solution": "Trzeba objąć wszystkie łącza członkowskie (lub interfejs Port-channel jako źródło SPAN, jeśli platforma pozwala) i zebrać je do sensora (agregujący TAP / packet broker). Monitorując tylko jedno łącze, sensor widzi część przepływów, a jeśli kierunki jednego połączenia idą różnymi kablami (niezależne hashe po obu stronach) — widzi tylko połowę rozmowy, co psuje rekonstrukcję sesji TCP i detekcję. Uwaga też na przepustowość portu SPAN (2 × 10G nie zmieści się w jednym porcie 10G)."
+    },
+    {
+      "prompt": "Zaimplementuj w Javie dydaktyczny wybór łącza dla przepływu (src/dst IP i port, liczba łączy) w wariantach src-dst-ip i l3+l4 i sprawdź rozkład 1000 losowych połączeń z jednego klienta do jednego serwera.",
+      "hint": "Użyj ostatnich oktetów i XOR; zlicz wyniki w tablicy.",
+      "solution": "static int hashIp(byte[] s, byte[] d, int n) { return ((s[3] & 0xff) ^ (d[3] & 0xff)) % n; }\nstatic int hashL4(byte[] s, byte[] d, int sp, int dp, int n) { return ((sp ^ dp) ^ ((s[3] & 0xff) ^ (d[3] & 0xff))) % n; }\n// 1000 połączeń z losowymi portami źródłowymi (49152–65535) do portu 5432:\n// src-dst-ip: wszystkie 1000 na jednym łączu (stałe adresy),\n// l3+l4: ok. 250 na każde z 4 łączy — dlatego dla puli połączeń do jednej bazy wybiera się hash z portami."
+    },
+    {
+      "prompt": "Opisz, jak skonfigurujesz NIC teaming LACP w Windows Server i jak zweryfikujesz jego stan. Czym różni się SET w Hyper-V?",
+      "hint": "New-NetLbfoTeam, Get-NetLbfoTeam; SET = Switch Embedded Teaming.",
+      "solution": "New-NetLbfoTeam -Name Team1 -TeamMembers \"NIC1\",\"NIC2\" -TeamingMode Lacp -LoadBalancingAlgorithm Dynamic; weryfikacja: Get-NetLbfoTeam, Get-NetLbfoTeamMember (OperationalStatus Active), liczniki w Menedżerze zadań. Port przełącznika: kanał LACP. SET (Hyper-V, Azure Stack HCI) wbudowuje teaming w wirtualny przełącznik, obsługuje RDMA i jest zalecany dla nowych wdrożeń Hyper-V; działa w trybie Switch Independent (bez LACP na przełączniku)."
+    },
+    {
+      "prompt": "Na przełączniku pojawił się log „%EC-5-CANNOT_BUNDLE2: Gi1/0/48 is not compatible with Gi1/0/47 and will be suspended (speed of Gi1/0/48 is 100M)”. Co się stało i jak naprawić?",
+      "hint": "Członkowie muszą mieć tę samą prędkość.",
+      "solution": "Port Gi1/0/48 wynegocjował 100 Mb/s (zły kabel, uszkodzona para, ustawienie speed na drugim końcu), więc nie może dołączyć do kanału z portem 1G — zostaje zawieszony; kanał działa na jednym łączu (brak redundancji). Naprawa: sprawdzić kabel (test cable-diagnostics tdr), ustawienia speed/duplex po obu stronach, wymienić patchcord/SFP; po naprawie port dołączy automatycznie (flaga P)."
+    },
+    {
+      "prompt": "Wyjaśnij, czym różni się wykrycie awarii łącza fizycznego od awarii „cichej” w LACP i jak lacp rate wpływa na czas reakcji.",
+      "hint": "Link down vs partner przestaje wysyłać LACPDU.",
+      "solution": "Utrata sygnału (kabel wyjęty) jest wykrywana natychmiast — port przechodzi w down i wypada z kanału. Awaria cicha (łącze fizycznie up, ale partner nie przetwarza ruchu, np. zawieszony proces, problem w konwerterze, łącze jednokierunkowe) wykrywana jest dopiero po braku LACPDU: rate slow — 3 × 30 s = 90 s, rate fast — 3 × 1 s = 3 s. W tym czasie część przepływów trafia w czarną dziurę. Dlatego w serwerowniach często lacp rate fast (plus UDLD/BFD)."
+    },
+    {
+      "prompt": "Przygotuj listę kontrolną wdrożenia agregatu serwer–przełącznik (minimum 6 punktów).",
+      "hint": "Konfiguracja obu stron, okablowanie, testy.",
+      "solution": "1) Tryb LACP active po stronie przełącznika (i 802.3ad na serwerze), nigdy on/balance-rr bez uzgodnienia. 2) Identyczne ustawienia członków: prędkość, VLAN-y, MTU. 3) Hash z portami (layer3+4 / src-dst-port), liczba łączy 2/4/8. 4) Przy dwóch przełącznikach — MLAG/vPC skonfigurowany i zweryfikowany. 5) PortFast/edge + BPDU Guard na Port-channel do serwera. 6) Testy: wyjęcie każdego kabla po kolei z ciągłym pingiem/ruchem aplikacji, iperf3 -P. 7) Monitoring: alert przy degradacji członków. 8) Dokumentacja: które porty serwera do których portów przełączników (LLDP — lekcja 09)."
+    },
+    {
+      "prompt": "Zastanów się, jak duży wpływ na aplikację Java z pulą 20 połączeń do jednej bazy ma wybór algorytmu hash na agregacie 2 × 10G przy src-dst-ip vs l3+l4.",
+      "hint": "Wszystkie połączenia mają te same adresy IP, różne porty źródłowe.",
+      "solution": "src-dst-ip: wszystkie 20 połączeń (te same IP klienta i bazy) trafia na jedno łącze — limit 10G dla całej puli, drugie łącze bezczynne (tylko redundancja). l3+l4: połączenia rozkładają się po portach źródłowych na oba łącza (statystycznie ok. 10/10) — pula może wykorzystać do 20G. Wniosek: dla ruchu typu „wiele połączeń między tymi samymi hostami” hash musi uwzględniać porty."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest LACP System ID i do czego służy porównanie System ID partnera na każdym łączu.",
+      "hint": "Priorytet systemu + MAC; porty z różnymi partnerami nie mogą być w jednym agregatorze.",
+      "solution": "System ID = priorytet systemu LACP (2 bajty) + MAC systemu. Każdy LACPDU niesie System ID nadawcy i klucz; port może dołączyć do agregatora tylko z portami, które widzą tego samego partnera (System ID i klucz). Dzięki temu błędnie wpięty kabel do innego przełącznika zostanie wykryty (inny partner → osobny agregator, nieaktywny). W MLAG oba przełączniki pary ogłaszają ten sam wirtualny System ID."
+    },
+    {
+      "prompt": "Agregat 4 łączy, model src-dst-ip. Wyznacz łącza dla przepływów: 10.0.0.11 → 10.0.1.50, 10.0.0.12 → 10.0.1.50, 10.0.0.13 → 10.0.1.50, 10.0.0.14 → 10.0.1.50. Ile łączy jest wykorzystanych i co to mówi o rozkładzie?",
+      "hint": "Policz XOR ostatnich oktetów modulo liczba łączy dla każdego przepływu.",
+      "solution": "10.0.0.11 → 10.0.1.50: (11^50)%4 = łącze 1; 10.0.0.12 → 10.0.1.50: (12^50)%4 = łącze 2; 10.0.0.13 → 10.0.1.50: (13^50)%4 = łącze 3; 10.0.0.14 → 10.0.1.50: (14^50)%4 = łącze 0. Wykorzystane łącza: 4 z 4. Rozkład równy dla tego zestawu adresów."
+    },
+    {
+      "prompt": "Agregat 2 łączy, model src-dst-ip. Wyznacz łącza dla przepływów: 192.168.1.2 → 192.168.1.100, 192.168.1.4 → 192.168.1.100, 192.168.1.6 → 192.168.1.100, 192.168.1.8 → 192.168.1.100. Ile łączy jest wykorzystanych i co to mówi o rozkładzie?",
+      "hint": "Policz XOR ostatnich oktetów modulo liczba łączy dla każdego przepływu.",
+      "solution": "192.168.1.2 → 192.168.1.100: (2^100)%2 = łącze 0; 192.168.1.4 → 192.168.1.100: (4^100)%2 = łącze 0; 192.168.1.6 → 192.168.1.100: (6^100)%2 = łącze 0; 192.168.1.8 → 192.168.1.100: (8^100)%2 = łącze 0. Wykorzystane łącza: 1 z 2. Rozkład nierówny — hash zależy od wzorca adresów, nie od obciążenia; pomóc może algorytm z portami."
+    },
+    {
+      "prompt": "Agregat 4 łączy, model src-dst-ip. Wyznacz łącza dla przepływów: 10.5.0.1 → 10.5.0.9, 10.5.0.2 → 10.5.0.10, 10.5.0.3 → 10.5.0.11, 10.5.0.4 → 10.5.0.12. Ile łączy jest wykorzystanych i co to mówi o rozkładzie?",
+      "hint": "Policz XOR ostatnich oktetów modulo liczba łączy dla każdego przepływu.",
+      "solution": "10.5.0.1 → 10.5.0.9: (1^9)%4 = łącze 0; 10.5.0.2 → 10.5.0.10: (2^10)%4 = łącze 0; 10.5.0.3 → 10.5.0.11: (3^11)%4 = łącze 0; 10.5.0.4 → 10.5.0.12: (4^12)%4 = łącze 0. Wykorzystane łącza: 1 z 4. Rozkład nierówny — hash zależy od wzorca adresów, nie od obciążenia; pomóc może algorytm z portami."
+    },
+    {
+      "prompt": "Opisz różnicę między agregacją łączy (LAG) a ECMP na L3. Kiedy który mechanizm jest lepszy?",
+      "hint": "LAG = jeden interfejs L2/L3; ECMP = wiele tras o równym koszcie.",
+      "solution": "LAG łączy porty w jeden interfejs logiczny między dwoma urządzeniami (lub parą MLAG), działa niezależnie od routingu, przenosi VLAN-y; awaria członka jest niewidoczna dla wyższych warstw. ECMP to wiele równorzędnych tras L3 (różne łącza, często do różnych urządzeń) — router hashuje przepływy między next-hopy; skaluje się na wiele urządzeń (spine-leaf), nie wymaga L2 ani MLAG. LAG — do serwerów, hiperwizorów, połączeń, które muszą przenosić VLAN-y; ECMP — szkielet centrum danych i sieci L3."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego zmiana liczby członków agregatu (dodanie łącza) może chwilowo zmienić ścieżki wielu przepływów i jakie to ma skutki.",
+      "hint": "Hash mod N — zmienia się N.",
+      "solution": "Wybór łącza to hash mod N; po zmianie N (z 2 na 3 lub 4) większość przepływów dostaje nowe łącze. Przy przenoszeniu przepływu pakiety w locie na starym łączu mogą dotrzeć po pakietach z nowego — chwilowa zmiana kolejności i drobne retransmisje TCP. Zwykle niezauważalne, ale przy wrażliwych aplikacjach (VoIP, handel) zmiany robi się w oknie serwisowym. Niektóre platformy stosują „resilient hashing”, który minimalizuje przemieszanie przepływów."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest LACP port priority i system priority oraz kiedy mają znaczenie.",
+      "hint": "Limit aktywnych portów i wybór, która strona decyduje.",
+      "solution": "System priority (z MAC) wyznacza, która strona agregatu decyduje o tym, które porty są aktywne, gdy nie wszystkie mogą być (niższa wartość = decydująca). Port priority określa, które porty zostaną aktywne przy limicie (np. 16 skonfigurowanych, 8 aktywnych — reszta w hot-standby); niższa wartość wygrywa. W typowych agregatach 2–4 portów nie trzeba ich zmieniać."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb active, a druga active?",
+      "options": {
+        "A": "Tak — kanał statyczny",
+        "B": "Tak — kanał LACP",
+        "C": "Tak — kanał PAgP",
+        "D": "Nie — kanał nie powstanie"
+      },
+      "correct": "B",
+      "explanation": "kanał LACP."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb active, a druga passive?",
+      "options": {
+        "A": "Tak — kanał PAgP",
+        "B": "Nie — kanał nie powstanie",
+        "C": "Tak — kanał statyczny",
+        "D": "Tak — kanał LACP"
+      },
+      "correct": "D",
+      "explanation": "kanał LACP."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb passive, a druga passive?",
+      "options": {
+        "A": "Tak — kanał LACP",
+        "B": "Tak — kanał PAgP",
+        "C": "Nie — kanał nie powstanie",
+        "D": "Tak — kanał statyczny"
+      },
+      "correct": "C",
+      "explanation": "obie strony czekają — kanał nie powstanie, łącza działają osobno (STP zablokuje nadmiarowe)."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb on, a druga on?",
+      "options": {
+        "A": "Tak — kanał statyczny",
+        "B": "Nie — kanał nie powstanie",
+        "C": "Tak — kanał LACP",
+        "D": "Tak — kanał PAgP"
+      },
+      "correct": "A",
+      "explanation": "kanał statyczny bez protokołu."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb on, a druga active?",
+      "options": {
+        "A": "Tak — kanał statyczny",
+        "B": "Nie — ryzyko pętli lub utraty ruchu",
+        "C": "Tak — kanał LACP",
+        "D": "Tak — kanał PAgP"
+      },
+      "correct": "B",
+      "explanation": "brak kanału po stronie negocjującej, strona „on” wysyła ruch po wszystkich łączach — ryzyko pętli lub utraty ruchu (Cisco zwykle wyłącza porty jako err-disabled przez EtherChannel guard)."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb desirable, a druga auto?",
+      "options": {
+        "A": "Tak — kanał LACP",
+        "B": "Tak — kanał statyczny",
+        "C": "Tak — kanał PAgP",
+        "D": "Nie — kanał nie powstanie"
+      },
+      "correct": "C",
+      "explanation": "kanał PAgP."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb auto, a druga auto?",
+      "options": {
+        "A": "Tak — kanał PAgP",
+        "B": "Tak — kanał LACP",
+        "C": "Tak — kanał statyczny",
+        "D": "Nie — kanał nie powstanie"
+      },
+      "correct": "D",
+      "explanation": "obie strony czekają — kanał nie powstanie."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb desirable, a druga desirable?",
+      "options": {
+        "A": "Tak — kanał PAgP",
+        "B": "Nie — kanał nie powstanie",
+        "C": "Tak — kanał LACP",
+        "D": "Tak — kanał statyczny"
+      },
+      "correct": "A",
+      "explanation": "kanał PAgP."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb active, a druga desirable?",
+      "options": {
+        "A": "Nie — kanał nie powstanie",
+        "B": "Tak — kanał LACP",
+        "C": "Tak — kanał statyczny",
+        "D": "Tak — kanał PAgP"
+      },
+      "correct": "A",
+      "explanation": "różne protokoły (LACP vs PAgP) — kanał nie powstanie."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb passive, a druga auto?",
+      "options": {
+        "A": "Tak — kanał statyczny",
+        "B": "Tak — kanał LACP",
+        "C": "Tak — kanał PAgP",
+        "D": "Nie — kanał nie powstanie"
+      },
+      "correct": "D",
+      "explanation": "różne protokoły (LACP vs PAgP) — kanał nie powstanie."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb on, a druga passive?",
+      "options": {
+        "A": "Tak — kanał PAgP",
+        "B": "Nie — ryzyko pętli lub utraty ruchu",
+        "C": "Tak — kanał statyczny",
+        "D": "Tak — kanał LACP"
+      },
+      "correct": "B",
+      "explanation": "brak kanału po stronie negocjującej, strona „on” wysyła ruch po wszystkich łączach — ryzyko pętli lub utraty ruchu (Cisco zwykle wyłącza porty jako err-disabled przez EtherChannel guard)."
+    },
+    {
+      "question": "Czy powstanie EtherChannel, gdy jedna strona ma tryb auto, a druga desirable?",
+      "options": {
+        "A": "Tak — kanał LACP",
+        "B": "Tak — kanał statyczny",
+        "C": "Tak — kanał PAgP",
+        "D": "Nie — kanał nie powstanie"
+      },
+      "correct": "C",
+      "explanation": "kanał PAgP."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 4. Na które łącze trafi przepływ 10.0.0.11 → 10.0.1.50?",
+      "options": {
+        "A": "łącze 2",
+        "B": "łącze 0",
+        "C": "łącze 1",
+        "D": "łącze 3"
+      },
+      "correct": "C",
+      "explanation": "11 XOR 50 = 57; mod 4 = 1."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 4. Na które łącze trafi przepływ 10.0.0.12 → 10.0.1.50?",
+      "options": {
+        "A": "łącze 1",
+        "B": "łącze 2",
+        "C": "łącze 0",
+        "D": "łącze 3"
+      },
+      "correct": "B",
+      "explanation": "12 XOR 50 = 62; mod 4 = 2."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 2. Na które łącze trafi przepływ 192.168.1.10 → 192.168.1.20?",
+      "options": {
+        "A": "łącze 3",
+        "B": "łącze 1",
+        "C": "łącze 2",
+        "D": "łącze 0"
+      },
+      "correct": "D",
+      "explanation": "10 XOR 20 = 30; mod 2 = 0."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 2. Na które łącze trafi przepływ 192.168.1.10 → 192.168.1.21?",
+      "options": {
+        "A": "łącze 1",
+        "B": "łącze 0",
+        "C": "łącze 3",
+        "D": "łącze 2"
+      },
+      "correct": "A",
+      "explanation": "10 XOR 21 = 31; mod 2 = 1."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 8. Na które łącze trafi przepływ 172.16.0.7 → 172.16.5.100?",
+      "options": {
+        "A": "łącze 1",
+        "B": "łącze 2",
+        "C": "łącze 0",
+        "D": "łącze 3"
+      },
+      "correct": "D",
+      "explanation": "7 XOR 100 = 99; mod 8 = 3."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 4. Na które łącze trafi przepływ 10.1.1.255 → 10.1.1.1?",
+      "options": {
+        "A": "łącze 3",
+        "B": "łącze 1",
+        "C": "łącze 2",
+        "D": "łącze 0"
+      },
+      "correct": "C",
+      "explanation": "255 XOR 1 = 254; mod 4 = 2."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 8. Na które łącze trafi przepływ 10.9.9.64 → 10.9.9.65?",
+      "options": {
+        "A": "łącze 1",
+        "B": "łącze 0",
+        "C": "łącze 2",
+        "D": "łącze 3"
+      },
+      "correct": "A",
+      "explanation": "64 XOR 65 = 1; mod 8 = 1."
+    },
+    {
+      "question": "Model dydaktyczny src-dst-ip: (ostatni oktet src XOR ostatni oktet dst) mod 4. Na które łącze trafi przepływ 10.2.2.3 → 10.2.2.200?",
+      "options": {
+        "A": "łącze 0",
+        "B": "łącze 3",
+        "C": "łącze 1",
+        "D": "łącze 2"
+      },
+      "correct": "B",
+      "explanation": "3 XOR 200 = 203; mod 4 = 3."
+    },
+    {
+      "question": "Model dydaktyczny l3+l4: ((port src XOR port dst) XOR (oktet src XOR oktet dst)) mod 4. Łącze dla 10.0.0.11:51000 → 10.0.1.50:5432?",
+      "options": {
+        "A": "łącze 0",
+        "B": "łącze 2",
+        "C": "łącze 3",
+        "D": "łącze 1"
+      },
+      "correct": "D",
+      "explanation": "(51000 ^ 5432) ^ (11 ^ 50) = 53817; mod 4 = 1. Zmiana portu źródłowego może zmienić łącze."
+    },
+    {
+      "question": "Model dydaktyczny l3+l4: ((port src XOR port dst) XOR (oktet src XOR oktet dst)) mod 4. Łącze dla 10.0.0.11:51001 → 10.0.1.50:5432?",
+      "options": {
+        "A": "łącze 1",
+        "B": "łącze 0",
+        "C": "łącze 3",
+        "D": "łącze 2"
+      },
+      "correct": "B",
+      "explanation": "(51001 ^ 5432) ^ (11 ^ 50) = 53816; mod 4 = 0. Zmiana portu źródłowego może zmienić łącze."
+    },
+    {
+      "question": "Model dydaktyczny l3+l4: ((port src XOR port dst) XOR (oktet src XOR oktet dst)) mod 4. Łącze dla 10.0.0.11:51002 → 10.0.1.50:5432?",
+      "options": {
+        "A": "łącze 3",
+        "B": "łącze 0",
+        "C": "łącze 1",
+        "D": "łącze 2"
+      },
+      "correct": "A",
+      "explanation": "(51002 ^ 5432) ^ (11 ^ 50) = 53819; mod 4 = 3. Zmiana portu źródłowego może zmienić łącze."
+    },
+    {
+      "question": "Model dydaktyczny l3+l4: ((port src XOR port dst) XOR (oktet src XOR oktet dst)) mod 2. Łącze dla 10.0.0.20:40000 → 10.0.1.30:443?",
+      "options": {
+        "A": "łącze 2",
+        "B": "łącze 3",
+        "C": "łącze 1",
+        "D": "łącze 0"
+      },
+      "correct": "C",
+      "explanation": "(40000 ^ 443) ^ (20 ^ 30) = 40433; mod 2 = 1. Zmiana portu źródłowego może zmienić łącze."
+    },
+    {
+      "question": "Jaką maksymalną przepustowość osiągnie pojedynczy przepływ TCP w agregacie 2 × 1 Gb/s?",
+      "options": {
+        "A": "2 Gb/s",
+        "B": "3 Gb/s",
+        "C": "1 Gb/s",
+        "D": "0.5 Gb/s"
+      },
+      "correct": "C",
+      "explanation": "Przepływ jest przypisany do jednego łącza."
+    },
+    {
+      "question": "Jaka jest sumaryczna przepustowość agregatu 2 × 1 Gb/s?",
+      "options": {
+        "A": "3 Gb/s",
+        "B": "2 Gb/s",
+        "C": "4 Gb/s",
+        "D": "1 Gb/s"
+      },
+      "correct": "B",
+      "explanation": "Suma prędkości łączy członkowskich."
+    },
+    {
+      "question": "Jaką maksymalną przepustowość osiągnie pojedynczy przepływ TCP w agregacie 4 × 10 Gb/s?",
+      "options": {
+        "A": "10 Gb/s",
+        "B": "5 Gb/s",
+        "C": "20 Gb/s",
+        "D": "40 Gb/s"
+      },
+      "correct": "A",
+      "explanation": "Przepływ jest przypisany do jednego łącza."
+    },
+    {
+      "question": "Jaka jest sumaryczna przepustowość agregatu 4 × 10 Gb/s?",
+      "options": {
+        "A": "80 Gb/s",
+        "B": "10 Gb/s",
+        "C": "14 Gb/s",
+        "D": "40 Gb/s"
+      },
+      "correct": "D",
+      "explanation": "Suma prędkości łączy członkowskich."
+    },
+    {
+      "question": "Jaką maksymalną przepustowość osiągnie pojedynczy przepływ TCP w agregacie 2 × 25 Gb/s?",
+      "options": {
+        "A": "75 Gb/s",
+        "B": "50 Gb/s",
+        "C": "25 Gb/s",
+        "D": "12.5 Gb/s"
+      },
+      "correct": "C",
+      "explanation": "Przepływ jest przypisany do jednego łącza."
+    },
+    {
+      "question": "Jaka jest sumaryczna przepustowość agregatu 2 × 25 Gb/s?",
+      "options": {
+        "A": "100 Gb/s",
+        "B": "25 Gb/s",
+        "C": "27 Gb/s",
+        "D": "50 Gb/s"
+      },
+      "correct": "D",
+      "explanation": "Suma prędkości łączy członkowskich."
+    },
+    {
+      "question": "Jaką maksymalną przepustowość osiągnie pojedynczy przepływ TCP w agregacie 8 × 10 Gb/s?",
+      "options": {
+        "A": "10 Gb/s",
+        "B": "80 Gb/s",
+        "C": "5 Gb/s",
+        "D": "40 Gb/s"
+      },
+      "correct": "A",
+      "explanation": "Przepływ jest przypisany do jednego łącza."
+    },
+    {
+      "question": "Jaka jest sumaryczna przepustowość agregatu 8 × 10 Gb/s?",
+      "options": {
+        "A": "160 Gb/s",
+        "B": "80 Gb/s",
+        "C": "18 Gb/s",
+        "D": "10 Gb/s"
+      },
+      "correct": "B",
+      "explanation": "Suma prędkości łączy członkowskich."
+    },
+    {
+      "question": "Jaką maksymalną przepustowość osiągnie pojedynczy przepływ TCP w agregacie 4 × 100 Gb/s?",
+      "options": {
+        "A": "100 Gb/s",
+        "B": "200 Gb/s",
+        "C": "400 Gb/s",
+        "D": "50 Gb/s"
+      },
+      "correct": "A",
+      "explanation": "Przepływ jest przypisany do jednego łącza."
+    },
+    {
+      "question": "Jaka jest sumaryczna przepustowość agregatu 4 × 100 Gb/s?",
+      "options": {
+        "A": "104 Gb/s",
+        "B": "400 Gb/s",
+        "C": "800 Gb/s",
+        "D": "100 Gb/s"
+      },
+      "correct": "B",
+      "explanation": "Suma prędkości łączy członkowskich."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: pakiety po kolei na każde łącze (round-robin)?",
+      "options": {
+        "A": "mode 2 (balance-xor)",
+        "B": "mode 3 (broadcast)",
+        "C": "mode 0 (balance-rr)",
+        "D": "mode 1 (active-backup)"
+      },
+      "correct": "C",
+      "explanation": "mode 0 = balance-rr."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: jedno łącze aktywne, drugie czeka?",
+      "options": {
+        "A": "mode 3 (broadcast)",
+        "B": "mode 0 (balance-rr)",
+        "C": "mode 2 (balance-xor)",
+        "D": "mode 1 (active-backup)"
+      },
+      "correct": "D",
+      "explanation": "mode 1 = active-backup."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: hash z adresów wybiera łącze?",
+      "options": {
+        "A": "mode 2 (balance-xor)",
+        "B": "mode 1 (active-backup)",
+        "C": "mode 3 (broadcast)",
+        "D": "mode 0 (balance-rr)"
+      },
+      "correct": "A",
+      "explanation": "mode 2 = balance-xor."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: każda ramka na wszystkie łącza?",
+      "options": {
+        "A": "mode 1 (active-backup)",
+        "B": "mode 3 (broadcast)",
+        "C": "mode 2 (balance-xor)",
+        "D": "mode 0 (balance-rr)"
+      },
+      "correct": "B",
+      "explanation": "mode 3 = broadcast."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: LACP — dynamiczna agregacja z hashowaniem?",
+      "options": {
+        "A": "mode 0 (balance-rr)",
+        "B": "mode 1 (active-backup)",
+        "C": "mode 2 (balance-xor)",
+        "D": "mode 4 (802.3ad)"
+      },
+      "correct": "D",
+      "explanation": "mode 4 = 802.3ad."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: adaptacyjne równoważenie nadawania?",
+      "options": {
+        "A": "mode 1 (active-backup)",
+        "B": "mode 2 (balance-xor)",
+        "C": "mode 5 (balance-tlb)",
+        "D": "mode 0 (balance-rr)"
+      },
+      "correct": "C",
+      "explanation": "mode 5 = balance-tlb."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa działa tak: jak tlb + równoważenie odbioru przez ARP?",
+      "options": {
+        "A": "mode 0 (balance-rr)",
+        "B": "mode 2 (balance-xor)",
+        "C": "mode 6 (balance-alb)",
+        "D": "mode 1 (active-backup)"
+      },
+      "correct": "C",
+      "explanation": "mode 6 = balance-alb."
+    },
+    {
+      "question": "Co ile sekund wysyłane są LACPDU przy lacp rate fast?",
+      "options": {
+        "A": "2 s",
+        "B": "10 s",
+        "C": "30 s",
+        "D": "1 s"
+      },
+      "correct": "D",
+      "explanation": "Rate fast: co 1 s, timeout 3 s."
+    },
+    {
+      "question": "Po jakim czasie bez LACPDU port wypada z kanału przy lacp rate fast?",
+      "options": {
+        "A": "3 s",
+        "B": "60 s",
+        "C": "15 s",
+        "D": "90 s"
+      },
+      "correct": "A",
+      "explanation": "Trzy pominięte LACPDU."
+    },
+    {
+      "question": "Co ile sekund wysyłane są LACPDU przy lacp rate slow?",
+      "options": {
+        "A": "2 s",
+        "B": "30 s",
+        "C": "10 s",
+        "D": "1 s"
+      },
+      "correct": "B",
+      "explanation": "Rate slow: co 30 s, timeout 90 s."
+    },
+    {
+      "question": "Po jakim czasie bez LACPDU port wypada z kanału przy lacp rate slow?",
+      "options": {
+        "A": "60 s",
+        "B": "3 s",
+        "C": "15 s",
+        "D": "90 s"
+      },
+      "correct": "D",
+      "explanation": "Trzy pominięte LACPDU."
+    },
+    {
+      "question": "Jaki standard IEEE opisuje LACP?",
+      "options": {
+        "A": "802.1D",
+        "B": "802.3ad (obecnie 802.1AX)",
+        "C": "802.1Q",
+        "D": "802.1X"
+      },
+      "correct": "B",
+      "explanation": "802.1Q to VLAN, 802.1D STP, 802.1X kontrola dostępu."
+    },
+    {
+      "question": "Na jaki adres MAC wysyłane są LACPDU?",
+      "options": {
+        "A": "01:80:c2:00:00:02",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:0c:cc:cc:cc",
+        "D": "01:80:c2:00:00:00"
+      },
+      "correct": "A",
+      "explanation": "Slow Protocols, EtherType 0x8809."
+    },
+    {
+      "question": "Jaki EtherType mają ramki LACP?",
+      "options": {
+        "A": "0x8100",
+        "B": "0x88CC",
+        "C": "0x8809",
+        "D": "0x0806"
+      },
+      "correct": "C",
+      "explanation": "0x88CC to LLDP."
+    },
+    {
+      "question": "Który tryb LACP inicjuje negocjację?",
+      "options": {
+        "A": "auto",
+        "B": "active",
+        "C": "on",
+        "D": "passive"
+      },
+      "correct": "B",
+      "explanation": "passive tylko odpowiada."
+    },
+    {
+      "question": "Który protokół agregacji jest własnością Cisco?",
+      "options": {
+        "A": "LLDP",
+        "B": "LACP",
+        "C": "MSTP",
+        "D": "PAgP"
+      },
+      "correct": "D",
+      "explanation": "Tryby desirable i auto."
+    },
+    {
+      "question": "Dlaczego agregat przypisuje przepływ do jednego łącza zamiast rozdzielać pakiety?",
+      "options": {
+        "A": "Bo pakiety są szyfrowane",
+        "B": "Bo łącza mają różne adresy IP",
+        "C": "Aby nie zmieniać kolejności pakietów w przepływie",
+        "D": "Bo STP tego wymaga"
+      },
+      "correct": "C",
+      "explanation": "Zmiana kolejności szkodzi TCP."
+    },
+    {
+      "question": "Jak STP traktuje EtherChannel?",
+      "options": {
+        "A": "Jako jeden port logiczny",
+        "B": "Wyłącza się na kanale",
+        "C": "Blokuje wszystkie łącza poza jednym",
+        "D": "Każde łącze jako osobny port root"
+      },
+      "correct": "A",
+      "explanation": "Awaria członka nie zmienia topologii."
+    },
+    {
+      "question": "Co musi być identyczne na portach członkowskich kanału?",
+      "options": {
+        "A": "Adresy MAC",
+        "B": "Opisy portów",
+        "C": "Prędkość, duplex, tryb (access/trunk), VLAN-y i native VLAN",
+        "D": "Numery portów"
+      },
+      "correct": "C",
+      "explanation": "Inaczej port jest zawieszany."
+    },
+    {
+      "question": "Co oznacza flaga (P) przy porcie w show etherchannel summary?",
+      "options": {
+        "A": "Port jest wyłączony",
+        "B": "Port jest zablokowany przez STP",
+        "C": "Port jest w trybie passive",
+        "D": "Port jest w kanale (bundled)"
+      },
+      "correct": "D",
+      "explanation": "(I) stand-alone, (s) suspended, (D) down."
+    },
+    {
+      "question": "Co oznacza (SU) przy Port-channel?",
+      "options": {
+        "A": "Kanał warstwy 2 w użyciu",
+        "B": "Kanał warstwy 3 wyłączony",
+        "C": "Kanał bez członków",
+        "D": "Kanał zawieszony"
+      },
+      "correct": "A",
+      "explanation": "R oznaczałoby kanał L3."
+    },
+    {
+      "question": "Który algorytm hash da najlepszy rozkład wielu połączeń między tymi samymi dwoma hostami?",
+      "options": {
+        "A": "src-mac",
+        "B": "Z portami warstwy 4 (src-dst-port / layer3+4)",
+        "C": "src-dst-ip",
+        "D": "dst-mac"
+      },
+      "correct": "B",
+      "explanation": "Połączenia różnią się portami źródłowymi."
+    },
+    {
+      "question": "Dlaczego hash src-dst-mac między dwoma routerami jest złym wyborem?",
+      "options": {
+        "A": "Bo routery nie mają MAC",
+        "B": "Bo MAC są szyfrowane",
+        "C": "Bo wszystkie ramki mają te same MAC i trafiają na jedno łącze",
+        "D": "Bo powoduje pętle"
+      },
+      "correct": "C",
+      "explanation": "Wybierz hash z IP/portami."
+    },
+    {
+      "question": "Dlaczego warto mieć 2, 4 lub 8 łączy w agregacie?",
+      "options": {
+        "A": "Bo STP wymaga parzystej liczby",
+        "B": "Bo inaczej LACP nie działa",
+        "C": "Bo kable są sprzedawane parami",
+        "D": "Bo wiele implementacji hasha równomiernie dzieli ruch tylko na potęgi dwójki"
+      },
+      "correct": "D",
+      "explanation": "Przy 3 łączach rozkład bywa nierówny."
+    },
+    {
+      "question": "Co daje min-links w kanale?",
+      "options": {
+        "A": "Wyłącza kanał, gdy liczba aktywnych łączy spadnie poniżej progu",
+        "B": "Wymusza tryb on",
+        "C": "Zmniejsza MTU",
+        "D": "Ogranicza liczbę VLAN-ów"
+      },
+      "correct": "A",
+      "explanation": "Ruch może pójść inną, sprawniejszą ścieżką."
+    },
+    {
+      "question": "Który tryb bondingu Linuksa nie wymaga konfiguracji przełącznika i daje tylko redundancję?",
+      "options": {
+        "A": "mode 4 (802.3ad)",
+        "B": "mode 1 (active-backup)",
+        "C": "mode 2 (balance-xor)",
+        "D": "mode 0 (balance-rr)"
+      },
+      "correct": "B",
+      "explanation": "Jedno łącze aktywne."
+    },
+    {
+      "question": "Jaki problem powoduje bond mode 0 podłączony do zwykłych portów przełącznika?",
+      "options": {
+        "A": "Wyłączenie STP",
+        "B": "MAC flapping i zmiana kolejności pakietów TCP",
+        "C": "Brak adresu IP",
+        "D": "Szyfrowanie ruchu"
+      },
+      "correct": "B",
+      "explanation": "Wymaga kanału statycznego."
+    },
+    {
+      "question": "Gdzie w Linuksie sprawdzisz stan LACP bondu?",
+      "options": {
+        "A": "/proc/net/bonding/bond0",
+        "B": "/etc/hosts",
+        "C": "/proc/net/arp",
+        "D": "/sys/class/net/bond0/address"
+      },
+      "correct": "A",
+      "explanation": "Partner MAC, Aggregator ID, rate."
+    },
+    {
+      "question": "Co wskazuje Partner Mac Address 00:00:00:00:00:00 w bondzie 802.3ad?",
+      "options": {
+        "A": "Szyfrowanie LACP",
+        "B": "Tryb active-backup",
+        "C": "Poprawną negocjację",
+        "D": "Brak partnera LACP na tym łączu"
+      },
+      "correct": "D",
+      "explanation": "Sprawdź konfigurację przełącznika."
+    },
+    {
+      "question": "Czym jest MLAG/vPC?",
+      "options": {
+        "A": "Agregatem między dwoma portami jednego serwera bez przełącznika",
+        "B": "Protokołem routingu",
+        "C": "Agregatem zakończonym na dwóch przełącznikach widocznych jako jeden partner LACP",
+        "D": "Odmianą STP"
+      },
+      "correct": "C",
+      "explanation": "Odporność na awarię całego przełącznika."
+    },
+    {
+      "question": "Do czego służy peer-link w MLAG/vPC?",
+      "options": {
+        "A": "Do zarządzania przez SSH",
+        "B": "Do zasilania PoE",
+        "C": "Do synchronizacji stanu i przenoszenia ruchu między przełącznikami pary",
+        "D": "Do łączenia z Internetem"
+      },
+      "correct": "C",
+      "explanation": "Keepalive idzie osobną ścieżką."
+    },
+    {
+      "question": "Co zrobi LACP, gdy jeden kabel agregatu zostanie błędnie wpięty do innego przełącznika?",
+      "options": {
+        "A": "Wykryje innego partnera i nie włączy tego portu do agregatu",
+        "B": "Utworzy pętlę",
+        "C": "Nic nie zauważy",
+        "D": "Wyłączy cały kanał"
+      },
+      "correct": "A",
+      "explanation": "W trybie on błąd nie zostałby wykryty."
+    },
+    {
+      "question": "Czym jest L3 EtherChannel?",
+      "options": {
+        "A": "Kanałem tylko dla VLAN 3",
+        "B": "Kanałem z adresem IP działającym jak interfejs routowany",
+        "C": "Kanałem z szyfrowaniem L3",
+        "D": "Kanałem z trzema łączami"
+      },
+      "correct": "B",
+      "explanation": "no switchport na Port-channel."
+    },
+    {
+      "question": "Które polecenie Cisco pokaże partnera LACP na portach?",
+      "options": {
+        "A": "show mac address-table",
+        "B": "show ip route",
+        "C": "show cdp neighbors",
+        "D": "show lacp neighbor"
+      },
+      "correct": "D",
+      "explanation": "System ID, klucz, flagi."
+    },
+    {
+      "question": "Jak Windows nazywa agregację kart sieciowych?",
+      "options": {
+        "A": "Port-channel",
+        "B": "Bridge",
+        "C": "NIC teaming (LBFO) lub SET w Hyper-V",
+        "D": "Bonding"
+      },
+      "correct": "C",
+      "explanation": "New-NetLbfoTeam."
+    },
+    {
+      "question": "Jaki sposób na wykorzystanie agregatu przez aplikację jest właściwy?",
+      "options": {
+        "A": "Wiele równoległych połączeń (pula, równoległe strumienie)",
+        "B": "Zmiana portu docelowego na 0",
+        "C": "Zwiększenie bufora jednego połączenia",
+        "D": "Wyłączenie Nagle’a"
+      },
+      "correct": "A",
+      "explanation": "Hash rozkłada przepływy, nie pakiety."
+    },
+    {
+      "question": "Ile maksymalnie aktywnych łączy obsługuje typowo EtherChannel na Catalyst (LACP)?",
+      "options": {
+        "A": "2",
+        "B": "64",
+        "C": "4",
+        "D": "8 aktywnych (plus do 8 w gotowości)"
+      },
+      "correct": "D",
+      "explanation": "LACP pozwala skonfigurować 16 portów, z czego 8 aktywnych."
+    },
+    {
+      "question": "Co stanie się z ruchem po awarii jednego z czterech łączy agregatu?",
+      "options": {
+        "A": "Wszystkie połączenia TCP zostaną zerwane",
+        "B": "Przepływy z tego łącza zostaną przeniesione na pozostałe, kanał działa dalej",
+        "C": "STP przebuduje drzewo",
+        "D": "Cały kanał przestanie działać"
+      },
+      "correct": "B",
+      "explanation": "Spada tylko sumaryczna przepustowość."
+    },
+    {
+      "question": "Czy agregat może łączyć porty o różnych prędkościach (1G i 10G)?",
+      "options": {
+        "A": "Nie — członkowie muszą mieć tę samą prędkość",
+        "B": "Tak, jeśli to LACP",
+        "C": "Tak, zawsze",
+        "D": "Tylko w trybie on"
+      },
+      "correct": "A",
+      "explanation": "Port o innej prędkości jest zawieszany."
+    },
+    {
+      "question": "Który tryb bondingu jest odpowiednikiem kanału LACP po stronie serwera?",
+      "options": {
+        "A": "mode 1 (active-backup)",
+        "B": "mode 4 (802.3ad)",
+        "C": "mode 3 (broadcast)",
+        "D": "mode 6 (balance-alb)"
+      },
+      "correct": "B",
+      "explanation": "Wymaga LACP na przełączniku."
+    },
+    {
+      "question": "Jakie polecenie przypisuje port Cisco do kanału 1 w trybie LACP active?",
+      "options": {
+        "A": "lacp enable 1",
+        "B": "port-channel 1 lacp",
+        "C": "channel-group 1 mode active",
+        "D": "switchport channel 1"
+      },
+      "correct": "C",
+      "explanation": "Konfiguracja na portach fizycznych."
+    },
+    {
+      "question": "Gdzie konfiguruje się trunk i VLAN-y dla EtherChannelu w Cisco?",
+      "options": {
+        "A": "W trybie VLAN",
+        "B": "Na interfejsie SVI",
+        "C": "Tylko na pierwszym porcie członkowskim",
+        "D": "Na interfejsie Port-channel"
+      },
+      "correct": "D",
+      "explanation": "Ustawienia propagują się do członków."
+    },
+    {
+      "question": "Co oznacza flaga (s) przy porcie w show etherchannel summary?",
+      "options": {
+        "A": "Port w trybie standby LACP",
+        "B": "Port bezpieczny",
+        "C": "Port zawieszony (suspended) z powodu niezgodności",
+        "D": "Port szybki (fast)"
+      },
+      "correct": "C",
+      "explanation": "Sprawdź prędkość, VLAN-y, tryb."
+    },
+    {
+      "question": "Co oznacza flaga (I) przy porcie w show etherchannel summary?",
+      "options": {
+        "A": "Port wyłączony administracyjnie",
+        "B": "Port w trybie IPv6",
+        "C": "Port z błędami CRC",
+        "D": "Port działa samodzielnie (stand-alone), bez kanału"
+      },
+      "correct": "D",
+      "explanation": "Zwykle brak partnera LACP."
+    },
+    {
+      "question": "Dlaczego tryb on jest ryzykowny?",
+      "options": {
+        "A": "Bo jest wolniejszy od LACP",
+        "B": "Bo nie wykrywa błędów okablowania ani braku kanału po drugiej stronie",
+        "C": "Bo wyłącza VLAN-y",
+        "D": "Bo wymaga licencji"
+      },
+      "correct": "B",
+      "explanation": "Zalecany LACP active."
+    },
+    {
+      "question": "Jaki parametr Linuksa wybiera algorytm hash dla bondingu?",
+      "options": {
+        "A": "xmit_hash_policy",
+        "B": "lacp_rate",
+        "C": "miimon",
+        "D": "primary"
+      },
+      "correct": "A",
+      "explanation": "layer2, layer2+3, layer3+4."
+    },
+    {
+      "question": "Do czego służy parametr miimon w bondingu?",
+      "options": {
+        "A": "Do wyboru trybu LACP",
+        "B": "Do ustawienia MTU",
+        "C": "Do szyfrowania",
+        "D": "Do okresowego sprawdzania stanu łącza (np. co 100 ms)"
+      },
+      "correct": "D",
+      "explanation": "Wykrywanie awarii łącza."
+    },
+    {
+      "question": "Jaki jest domyślny xmit_hash_policy w bondingu Linuksa?",
+      "options": {
+        "A": "encap3+4",
+        "B": "layer2",
+        "C": "layer2+3",
+        "D": "layer3+4"
+      },
+      "correct": "B",
+      "explanation": "XOR adresów MAC."
+    },
+    {
+      "question": "Jak bond mode 6 (balance-alb) równoważy ruch przychodzący?",
+      "options": {
+        "A": "Manipulując odpowiedziami ARP, by różni klienci używali różnych MAC",
+        "B": "Przez STP",
+        "C": "Przez DNS",
+        "D": "Przez LACP"
+      },
+      "correct": "A",
+      "explanation": "Nie wymaga konfiguracji przełącznika."
+    },
+    {
+      "question": "Dlaczego test iperf3 z jednym strumieniem nie pokaże przepustowości całego agregatu?",
+      "options": {
+        "A": "Bo iperf3 wymaga UDP",
+        "B": "Bo iperf3 nie obsługuje agregatów",
+        "C": "Bo jeden strumień TCP jedzie jednym łączem",
+        "D": "Bo agregat wyłącza TCP"
+      },
+      "correct": "C",
+      "explanation": "Użyj -P z wieloma strumieniami."
+    },
+    {
+      "question": "Co jest typowym objawem nierównego hashowania?",
+      "options": {
+        "A": "Wszystkie łącza wyłączone",
+        "B": "Błędy CRC",
+        "C": "Jedno łącze mocno obciążone, pozostałe prawie puste",
+        "D": "Zmiana root bridge"
+      },
+      "correct": "C",
+      "explanation": "Zmień algorytm lub zwiększ różnorodność przepływów."
+    },
+    {
+      "question": "Kto oblicza hash dla ruchu w danym kierunku w agregacie?",
+      "options": {
+        "A": "Root bridge",
+        "B": "Zawsze przełącznik",
+        "C": "Zawsze serwer",
+        "D": "Strona nadająca (każda strona niezależnie)"
+      },
+      "correct": "D",
+      "explanation": "Kierunki tego samego połączenia mogą iść różnymi łączami."
+    },
+    {
+      "question": "Co oznacza „orphan port” w parze MLAG/vPC?",
+      "options": {
+        "A": "Port bez VLAN-u",
+        "B": "Port podłączony tylko do jednego przełącznika pary",
+        "C": "Port wyłączony przez BPDU Guard",
+        "D": "Port w trybie on"
+      },
+      "correct": "B",
+      "explanation": "Nie ma redundancji przy awarii tego przełącznika."
+    },
+    {
+      "question": "Co robi przełącznik podrzędny w vPC, gdy padnie peer-link, a keepalive działa?",
+      "options": {
+        "A": "Wyłącza swoje porty vPC, aby uniknąć split brain",
+        "B": "Restartuje się",
+        "C": "Przełącza porty w tryb on",
+        "D": "Zostaje rootem STP"
+      },
+      "correct": "A",
+      "explanation": "Ruch idzie przez przełącznik główny."
+    },
+    {
+      "question": "Który standard zastępuje rozwiązania MLAG różnych producentów w nowoczesnych sieciach?",
+      "options": {
+        "A": "STP",
+        "B": "EVPN multihoming (ESI)",
+        "C": "PAgP",
+        "D": "VTP"
+      },
+      "correct": "B",
+      "explanation": "Oparty na BGP EVPN."
+    },
+    {
+      "question": "Dlaczego sensor IDS podłączony do SPAN jednego członka agregatu może widzieć niepełne sesje?",
+      "options": {
+        "A": "Bo LACP szyfruje ruch",
+        "B": "Bo SPAN nie działa na agregatach",
+        "C": "Bo członkowie nie mają MAC",
+        "D": "Bo różne przepływy (a czasem kierunki) idą różnymi łączami"
+      },
+      "correct": "D",
+      "explanation": "Monitoruj wszystkie członki lub Port-channel."
+    },
+    {
+      "question": "Jaki log Cisco informuje o wyłączeniu portu z kanału?",
+      "options": {
+        "A": "%DHCP-6-ADDRESS_ASSIGN",
+        "B": "%SYS-5-RESTART",
+        "C": "%EC-5-UNBUNDLE",
+        "D": "%SPANTREE-5-ROOTCHANGE"
+      },
+      "correct": "C",
+      "explanation": "Warto alarmować w monitoringu."
+    },
+    {
+      "question": "Co zapewnia lacp rate fast?",
+      "options": {
+        "A": "Szybsze wykrycie cichej awarii partnera (3 s zamiast 90 s)",
+        "B": "Szyfrowanie LACPDU",
+        "C": "Lepszy rozkład hasha",
+        "D": "Wyższą prędkość łącza"
+      },
+      "correct": "A",
+      "explanation": "Utrata sygnału jest wykrywana natychmiast niezależnie od rate."
+    },
+    {
+      "question": "Jaki jest główny cel agregacji z punktu widzenia triady CIA?",
+      "options": {
+        "A": "Rozliczalność",
+        "B": "Integralność",
+        "C": "Dostępność",
+        "D": "Poufność"
+      },
+      "correct": "C",
+      "explanation": "Redundancja łączy i urządzeń."
+    },
+    {
+      "question": "Co jest lepszym wyborem dla pojedynczego dużego transferu: 4 × 10G w agregacie czy 1 × 40G?",
+      "options": {
+        "A": "1 × 40G",
+        "B": "4 × 10G",
+        "C": "2 × 10G",
+        "D": "Bez różnicy"
+      },
+      "correct": "A",
+      "explanation": "Pojedynczy przepływ ograniczony prędkością jednego łącza."
+    },
+    {
+      "question": "Jak nazywa się agregat w Juniper Junos?",
+      "options": {
+        "A": "Port-channel",
+        "B": "team",
+        "C": "bond",
+        "D": "ae (aggregated Ethernet)"
+      },
+      "correct": "D",
+      "explanation": "np. ae0."
+    },
+    {
+      "question": "Co trzeba skonfigurować na porcie przełącznika podłączonym do serwera z bondem active-backup?",
+      "options": {
+        "A": "Kanał LACP",
+        "B": "Nic szczególnego — zwykłe porty, bez kanału",
+        "C": "PAgP desirable",
+        "D": "Kanał on"
+      },
+      "correct": "B",
+      "explanation": "Tylko jedno łącze nadaje naraz."
+    },
+    {
+      "question": "Co wysyła bond active-backup po przełączeniu na zapasowe łącze?",
+      "options": {
+        "A": "LACPDU",
+        "B": "Gratuitous ARP, aby przełączniki zaktualizowały tablice MAC",
+        "C": "IGMP join",
+        "D": "BPDU"
+      },
+      "correct": "B",
+      "explanation": "Ruch szybko trafia na nowy port."
+    },
+    {
+      "question": "Czy LACP pozwala połączyć porty z dwóch niezależnych przełączników (bez MLAG/stosu) w jeden aktywny agregat?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Tak, jeśli są w tym samym VLAN-ie",
+        "C": "Nie — porty widzą różnych partnerów i trafią do różnych agregatorów",
+        "D": "Tak, w trybie passive"
+      },
+      "correct": "C",
+      "explanation": "Potrzebny MLAG/vPC lub stos."
+    },
+    {
+      "question": "Jakie polecenie Cisco zmienia algorytm rozkładu ruchu w EtherChannelu?",
+      "options": {
+        "A": "channel-group hash",
+        "B": "etherchannel hash ip",
+        "C": "lacp load-balance",
+        "D": "port-channel load-balance src-dst-ip"
+      },
+      "correct": "D",
+      "explanation": "Zwykle globalnie."
+    },
+    {
+      "question": "Co jest zaletą LACP nad PAgP?",
+      "options": {
+        "A": "Jest standardem IEEE działającym między różnymi producentami",
+        "B": "Jest szybszy w transmisji danych",
+        "C": "Szyfruje ruch",
+        "D": "Nie wymaga konfiguracji"
+      },
+      "correct": "A",
+      "explanation": "PAgP działa tylko z Cisco."
+    }
+  ]
 }
