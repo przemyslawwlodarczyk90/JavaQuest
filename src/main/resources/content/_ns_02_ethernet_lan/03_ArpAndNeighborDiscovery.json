@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Most między IP a MAC",
+      "image": "netsec/ns02-03-arp-exchange.svg",
+      "imageAlt": "Diagram sekwencji: laptop 192.168.1.20 wysyła rozgłoszeniowe zapytanie ARP o adres 192.168.1.1; inne hosty je ignorują; brama odpowiada unicastem z adresem 00:1a:2b:3c:4d:5e; laptop i brama zapisują wpisy w cache, a dopiero potem laptop wysyła ramkę z pakietem IP na MAC bramy. Uwaga u dołu: ARP nie ma uwierzytelnienia, stąd ARP spoofing i obrona DAI.",
+      "body": "Aplikacja zna adres IP celu. Karta sieciowa potrafi wysłać ramkę tylko na **adres MAC**. Między jednym a drugim stoi mały, niepozorny protokół: **ARP** (Address Resolution Protocol) w IPv4 i **Neighbor Discovery** (ND, część ICMPv6) w IPv6.\n\nZanim Twój Spring Boot wyśle pierwszy bajt do bazy w tej samej podsieci albo do bramy domyślnej, jądro systemu musi zapytać: *„kto ma adres 10.0.3.1? podaj swój MAC”*. Odpowiedź trafia do **cache sąsiadów** i jest używana przez kolejne minuty.\n\nTo dlaczego ta lekcja jest tak ważna?\n- **Diagnoza**: objawy „ping działa raz na jakiś czas”, „po wymianie serwera połączenia wiszą przez minutę”, „po przełączeniu VIP część klientów nie widzi usługi” to zwykle ARP/ND.\n- **Wysoka dostępność**: VRRP, keepalived i wirtualne IP przenoszone między węzłami działają dzięki **gratuitous ARP**.\n- **Bezpieczeństwo**: ARP nie ma żadnego uwierzytelnienia. Każdy w segmencie może ogłosić „to ja jestem bramą” — to **ARP spoofing**, klasyczna droga do ataku man-in-the-middle w LAN. W IPv6 odpowiednikami są fałszywe Neighbor/Router Advertisement. Obrońca musi umieć rozpoznać ich ślady i znać kontrole: DHCP snooping, Dynamic ARP Inspection, RA Guard.\n\nPoznasz budowę pakietu ARP, stany cache sąsiadów w Linuksie, komunikaty ND (RS, RA, NS, NA), adresy solicited-node i DAD, a na koniec przechwycisz rozwiązanie adresu bramy w IPv4 i IPv6.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "ARP i Neighbor Discovery: pojęcia",
+      "body": "- **ARP Request** — broadcast (`ff:ff:ff:ff:ff:ff`) „kto ma IP X? powiedz Y”; pole *Target MAC* = `00:00:00:00:00:00`.\n- **ARP Reply** — unicast „IP X jest pod MAC M”.\n- **Cache ARP / tablica sąsiadów** — mapowanie IP → MAC z czasem ważności (Linux: `ip neigh`; Windows: `Get-NetNeighbor`, `arp -a`).\n- **Gratuitous ARP (GARP)** — ARP, w którym nadawca ogłasza własny adres (Sender IP = Target IP); służy do wykrywania konfliktów IP i aktualizacji cache innych hostów po przeniesieniu adresu (failover).\n- **Proxy ARP** — router odpowiada na ARP w imieniu hostów z innej sieci; dziś rzadkie, bywa źródłem dziwnych zachowań.\n- **Neighbor Discovery (ND, RFC 4861)** — zestaw komunikatów ICMPv6 zastępujących ARP i część DHCP w IPv6:\n  - **RS (Router Solicitation, typ 133)** — host prosi routery o ogłoszenie,\n  - **RA (Router Advertisement, typ 134)** — router ogłasza prefiksy, bramę, MTU, flagi SLAAC/DHCPv6,\n  - **NS (Neighbor Solicitation, typ 135)** — odpowiednik ARP Request (i test osiągalności),\n  - **NA (Neighbor Advertisement, typ 136)** — odpowiednik ARP Reply,\n  - **Redirect (typ 137)** — router wskazuje lepszy next hop.\n- **Adres solicited-node multicast** — `ff02::1:ff` + ostatnie 24 bity adresu IPv6; NS jest wysyłany na ten adres zamiast broadcastu (IPv6 nie ma broadcastu).\n- **DAD (Duplicate Address Detection)** — przed użyciem adresu host wysyła NS z adresu `::`, by sprawdzić, czy nikt go nie używa.\n- **NUD (Neighbor Unreachability Detection)** — mechanizm sprawdzania osiągalności sąsiadów (stany REACHABLE, STALE, DELAY, PROBE).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Pytanie zadane na cały pokój",
+      "body": "Jesteś na sali konferencyjnej i musisz oddać dokument osobie o nazwisku „Kowalska” (adres IP), ale nie wiesz, jak wygląda (adres MAC).\n- Wstajesz i pytasz **na cały pokój**: „Kto z państwa to pani Kowalska?” (ARP Request — broadcast).\n- Wszyscy słyszą, ale odpowiada tylko ona: „To ja, siedzę przy oknie w niebieskim swetrze” (ARP Reply — unicast).\n- **Zapisujesz w notesie**: „Kowalska — niebieski sweter przy oknie” (cache). Przy kolejnym dokumencie nie pytasz znowu, dopóki wpis jest świeży.\n- Gdy Kowalska przesiądzie się, sama ogłasza: „Uwaga, teraz siedzę przy drzwiach!” (gratuitous ARP po failoverze).\n\nA teraz problem bezpieczeństwa: nikt nie sprawdza dokumentów. Ktokolwiek może wstać i powiedzieć: „To ja jestem Kowalską” — a Ty oddasz mu dokument (ARP spoofing). Albo powtarzać co kilka sekund „Kowalska siedzi tutaj!”, żeby wszyscy poprawili notesy. W sali, gdzie ochrona na wejściu wydaje identyfikatory i pilnuje listy (DHCP snooping + DAI), taka sztuczka nie przejdzie.\n\nW IPv6 zamiast pytać cały pokój, pytasz tylko stolik osób o tej samej końcówce nazwiska (solicited-node multicast) — mniej hałasu, ten sam brak uwierzytelnienia.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Pakiet ARP od środka",
+      "image": "netsec/ns02-03-arp-packet.svg",
+      "imageAlt": "Pola pakietu ARP z rozmiarami: HTYPE 2 B (1 = Ethernet), PTYPE 2 B (0x0800 = IPv4), HLEN 1 B (6), PLEN 1 B (4), OPER 2 B (1 request, 2 reply), SHA 6 B (MAC nadawcy), SPA 4 B (IP nadawcy), THA 6 B (MAC celu, zera w zapytaniu), TPA 4 B (szukany IP). Obok przykład zapytania w Wiresharku i opis gratuitous ARP.",
+      "body": "ARP nie jest pakietem IP — jedzie bezpośrednio w ramce Ethernet z EtherType **0x0806**. Tak wygląda para zapytanie–odpowiedź w `tcpdump -nn -e arp`:",
+      "code": "3c:52:82:1a:f0:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42:\n    Request who-has 192.168.1.1 tell 192.168.1.20, length 28\n00:1a:2b:3c:4d:5e > 3c:52:82:1a:f0:07, ethertype ARP (0x0806), length 42:\n    Reply 192.168.1.1 is-at 00:1a:2b:3c:4d:5e, length 28\n\nGratuitous ARP (np. po przełączeniu VRRP na zapasowy router):\n00:1a:2b:3c:4d:99 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 42:\n    Request who-has 192.168.1.1 tell 192.168.1.1, length 28     ← Sender IP = Target IP\n\nIPv6 — to samo przez ICMPv6 (tcpdump -nn -e icmp6):\n3c:52:82:1a:f0:07 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd):\n    fe80::3e52:82ff:fe1a:f007 > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::1\n00:1a:2b:3c:4d:5e > 3c:52:82:1a:f0:07, ethertype IPv6 (0x86dd):\n    fe80::1 > fe80::3e52:82ff:fe1a:f007: ICMP6, neighbor advertisement, tgt is fe80::1"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Odczyt tablicy sąsiadów z Javy i obserwacja zmian MAC bramy",
+      "body": "Java nie ma API do ARP, ale na Linuksie tablica jest dostępna w `/proc/net/arp`, a pełne stany zwraca `ip -j neigh` (JSON). Prosty monitor zmian MAC bramy to zaczątek detekcji ARP spoofingu na hoście (tak działa arpwatch).",
+      "code": "import java.nio.file.*;\nimport java.util.*;\n\npublic class GatewayMacWatch {\n    // /proc/net/arp: IP address  HW type  Flags  HW address  Mask  Device\n    static Map<String, String> readArp() throws Exception {\n        Map<String, String> m = new HashMap<>();\n        for (String line : Files.readAllLines(Path.of(\"/proc/net/arp\")).subList(1, Integer.MAX_VALUE == 0 ? 1 : Files.readAllLines(Path.of(\"/proc/net/arp\")).size())) {\n            String[] c = line.trim().split(\"\\\\s+\");\n            if (c.length >= 4 && !c[3].equals(\"00:00:00:00:00:00\")) m.put(c[0], c[3]);\n        }\n        return m;\n    }\n\n    public static void main(String[] args) throws Exception {\n        String gw = args[0];                                   // np. 192.168.1.1\n        String known = readArp().get(gw);\n        System.out.println(\"MAC bramy: \" + known);\n        while (true) {\n            Thread.sleep(5_000);\n            String now = readArp().get(gw);\n            if (now != null && known != null && !now.equals(known)) {\n                System.out.printf(\"ALERT: MAC bramy %s zmienił się %s → %s%n\", gw, known, now);   // → SIEM\n            }\n            if (now != null) known = now;\n        }\n    }\n}\n// W produkcji tę rolę pełnią arpwatch, Zeek (arp.log z pakietem) i reguły IDS — ale mechanizm jest ten sam."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Packet Lab: rozwiązanie adresu bramy w IPv4 i IPv6",
+      "image": "netsec/ns02-03-neigh-states.svg",
+      "imageAlt": "Automat stanów sąsiada w Linuksie: INCOMPLETE (wysłano zapytanie), REACHABLE (potwierdzony), STALE (nieaktualny), DELAY (czeka na potwierdzenie z TCP), PROBE (aktywnie sprawdza), FAILED (brak odpowiedzi), ze strzałkami przejść; poniżej przykładowy wynik ip neigh i uwaga, że FAILED lub INCOMPLETE dla bramy oznacza problem warstwy 2.",
+      "body": "Ćwiczenie z planu lekcji (Linux/WSL lub kontener z `--cap-add NET_ADMIN`):\n1. **Sprawdź bramę**: `ip route` (IPv4) i `ip -6 route` (IPv6, brama zwykle `fe80::…`).\n2. **Obejrzyj cache**: `ip neigh` — stan wpisu bramy (REACHABLE/STALE).\n3. **Uruchom przechwytywanie**: `tcpdump -i eth0 -nn -e 'arp or icmp6' -w neigh.pcap`.\n4. **Wyczyść cache**: `sudo ip neigh flush dev eth0` (IPv4 i IPv6).\n5. **Wygeneruj ruch**: `ping -c 2 <brama>` i `ping -6 -c 2 <brama-ipv6>%eth0` (adres link-local wymaga strefy/interfejsu).\n6. **Zatrzymaj i przeanalizuj w Wiresharku**: filtr `arp` — Request (broadcast) i Reply (unicast); filtr `icmpv6.type == 135 || icmpv6.type == 136` — NS na adres solicited-node (`ff02::1:ff…`, MAC `33:33:ff:…`) i NA.\n7. **Obserwuj stany**: `watch -n1 ip neigh` — po odpowiedzi REACHABLE, po ok. 30 s bez potwierdzeń STALE, przy kolejnym ruchu DELAY → PROBE → REACHABLE.\n8. **Wywołaj FAILED**: `ping -c 3 <nieistniejący-adres-w-podsieci>` → `ip neigh` pokazuje INCOMPLETE, potem FAILED; ping zgłasza „Destination Host Unreachable” z Twojego własnego adresu (to Twój host nie znalazł MAC).\n9. **Zobacz DAD i RA** (opcjonalnie): `sudo ip -6 addr add 2001:db8::99/64 dev eth0` i obserwuj NS z adresu `::`; `rdisc6 eth0` (pakiet ndisc6) wysyła RS i pokazuje RA routera.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Adresy solicited-node i multicast MAC w IPv6",
+      "body": "IPv6 nie ma broadcastu. Zamiast pytać wszystkich, NS trafia do grupy multicast, do której należy tylko szukany host (i nieliczne inne o tej samej końcówce). Obliczenie jest mechaniczne:",
+      "code": "solicited-node(adres) = ff02::1:ff  +  ostatnie 24 bity adresu\nMAC dla multicastu IPv6 = 33:33     +  ostatnie 32 bity adresu multicast\n\nadres                          ostatnie 24 bity   solicited-node             MAC docelowy ramki\n2001:db8::1                    000001            ff02::1:ff00:0001          33:33:ff:00:00:01\nfe80::a8bb:ccff:fe00:2         000002            ff02::1:ff00:0002          33:33:ff:00:00:02\n2001:db8:10::4a:bc12           4abc12            ff02::1:ff4a:bc12          33:33:ff:4a:bc:12\nfe80::1                        000001            ff02::1:ff00:0001          33:33:ff:00:00:01\n2001:db8:abcd:12::1f00:77      000077            ff02::1:ff00:0077          33:33:ff:00:00:77\nfd00:1::dead:beef              adbeef            ff02::1:ffad:beef          33:33:ff:ad:be:ef\n\nInne ważne adresy ND:\nff02::1   wszystkie węzły (np. RA wysyłane okresowo)    MAC 33:33:00:00:00:01\nff02::2   wszystkie routery (cel RS)                    MAC 33:33:00:00:00:02\n::        adres nieokreślony (źródło NS przy DAD)"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Polecenia: ip neigh, arping, Windows i przełączniki",
+      "body": "Narzędzia do diagnozy i do ćwiczeń z gratuitous ARP (wyłącznie w labie):",
+      "code": "# Linux — tablica sąsiadów\nip neigh                                  # IPv4 i IPv6, ze stanami\nip -6 neigh show dev eth0\nsudo ip neigh flush dev eth0              # wyczyszczenie (wymusza nowe zapytania)\nsudo ip neigh replace 192.168.1.1 lladdr 00:1a:2b:3c:4d:5e dev eth0 nud permanent   # wpis statyczny\nsysctl net.ipv4.neigh.eth0.base_reachable_time_ms     # domyślnie 30000 (losowo 15–45 s)\n\n# arping (pakiet iputils-arping)\narping -I eth0 -c 3 192.168.1.1           # zapytania ARP na poziomie L2 (działa mimo blokady ICMP)\narping -D -I eth0 -c 2 192.168.1.50       # wykrywanie duplikatu: czy ktoś już używa adresu?\narping -U -I eth0 -c 2 192.168.1.50       # gratuitous ARP (ogłoszenie) — tylko własny adres, w labie\n\n# Windows\nGet-NetNeighbor -AddressFamily IPv4 | Where-Object State -ne Unreachable\narp -a\nRemove-NetNeighbor -InterfaceAlias Ethernet -Confirm:$false\n\n# Cisco — obrona L2\nip dhcp snooping\nip dhcp snooping vlan 10\nip arp inspection vlan 10                  # DAI: ARP sprawdzane z tablicą wiązań DHCP snooping\ninterface Gi1/0/1\n ip dhcp snooping trust                    # tylko port do serwera DHCP / uplink\n ip arp inspection trust\nipv6 nd raguard policy HOSTS               # RA Guard: hosty nie mogą wysyłać RA\n device-role host\nshow ip arp inspection statistics"
+    },
+    {
+      "type": "USAGE",
+      "heading": "ARP i ND w pracy developera, SRE i obrońcy",
+      "image": "netsec/ns02-03-arp-spoofing-defense.svg",
+      "imageAlt": "Po lewej objawy ARP spoofingu: w cache ofiary MAC bramy zmienia się z 00:1a:2b:3c:4d:5e na 66:77:88:99:aa:bb, w przechwyceniu seria niezamówionych odpowiedzi ARP, Wireshark ostrzega o zduplikowanym użyciu adresu. Po prawej wykrywanie i obrona: DHCP snooping, Dynamic ARP Inspection, arpwatch i Zeek, IDS, statyczne wpisy, 802.1X, TLS. Na dole odpowiedniki IPv6: fałszywe NA i RA oraz obrona RA Guard i ND Inspection.",
+      "body": "**Developer / SRE:**\n- **Wirtualne IP i failover** (keepalived/VRRP przed Nginx, Pacemaker, Patroni dla PostgreSQL, MetalLB w trybie L2 w Kubernetesie) przenoszą adres na inny węzeł i wysyłają **gratuitous ARP**. Jeśli przełącznik lub klienci go zignorują, część ruchu przez kilkadziesiąt sekund trafia do martwego węzła.\n- **Wymiana serwera z tym samym IP** — klienci w podsieci mają stary MAC w cache; objaw: „nowy serwer działa, ale niektóre usługi łączą się dopiero po minucie”.\n- **Konflikt adresów IP** — dwa hosty z tym samym IP (statyczny adres w puli DHCP): połączenia losowo zrywane, logi o „duplicate address”.\n- **Chmura** — w AWS/Azure/GCP ARP obsługuje warstwa wirtualizacji (hypervisor odpowiada za VPC), dlatego gratuitous ARP nie przenosi tam adresów — failover robi się przez API (przeniesienie Elastic IP/ENI, routing).\n\n**Blue team:**\n- **ARP spoofing / poisoning** (MITRE ATT&CK T1557.002) — napastnik w LAN ogłasza się jako brama i przechwytuje ruch. Ślady: zmiana MAC bramy w cache, zalew niezamówionych ARP Reply, ten sam MAC dla wielu IP, alert „duplicate use of IP” w Wiresharku, alerty arpwatch/Zeek/IDS.\n- **Rogue RA (IPv6)** — fałszywy router ogłasza prefiks i bramę; hosty z włączonym IPv6 (domyślnie wszystkie współczesne systemy) zaczynają kierować ruch przez napastnika, nawet w „sieci tylko IPv4”. Obrona: **RA Guard**, monitorowanie RA (np. `ndpmon`, Zeek), wyłączenie IPv6 tylko tam, gdzie świadomie nie jest używany — lepiej je kontrolować niż ignorować.\n- **Kontrole**: DHCP snooping + **Dynamic ARP Inspection**, RA Guard/ND Inspection, 802.1X, segmentacja VLAN, a w warstwie aplikacji **TLS z weryfikacją certyfikatów** — nawet skuteczny MITM nie odczyta ani nie zmieni treści.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Typowe problemy i błędne założenia",
+      "body": "- **„Destination Host Unreachable” = problem po stronie celu** — często komunikat wysyła **Twój własny host**: nie dostał odpowiedzi ARP (cel wyłączony, zły VLAN, zła maska).\n- **Ping działa „co jakiś czas”** — konflikt IP (dwa MAC odpowiadają na ARP naprzemiennie) albo źle działający failover.\n- **Blokowanie ICMPv6 jak ICMP w IPv4** — w IPv6 bez ICMPv6 (NS/NA/RS/RA/Packet Too Big) sieć przestaje działać. Filtruj selektywnie, nie całościowo.\n- **„W mojej sieci nie ma IPv6”** — hosty i tak mają adresy link-local i słuchają RA; brak kontroli IPv6 to otwarta furtka dla rogue RA.\n- **Statyczne wpisy ARP jako ochrona całej sieci** — nie skalują się i łatwo o pomyłkę; stosuj je wyłącznie punktowo (krytyczne hosty), a ochronę opieraj na DAI i 802.1X.\n- **Adres link-local bez interfejsu** — `ping fe80::1` bez `%eth0` nie wie, którym interfejsem wysłać.\n- **Długie cache w urządzeniach sieciowych** — routery i przełączniki L3 często trzymają ARP 4 godziny; po migracji serwera potrzebny GARP albo ręczne wyczyszczenie.\n- **Gratuitous ARP z cudzym adresem w labie, który „przeciekł” do sieci domowej** — ćwiczenia ze spoofingiem tylko w odizolowanych sieciach Dockera/namespace’ach.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: zaufanie do sieci lokalnej „bo to LAN”",
+      "body": "Usługa wewnętrzna łączy się z bazą i API innego zespołu bez TLS „bo wszystko jest w tym samym VLAN-ie”. Wystarczy jeden przejęty host w segmencie i ARP spoofing, by przechwycić hasła i dane.",
+      "code": "# application.yml\nspring:\n  datasource:\n    url: jdbc:postgresql://10.0.3.10:5432/orders?sslmode=disable   # hasło i dane jawnie w sieci\nintegration:\n  billing-url: http://10.0.3.20:8080/api                            # tokeny w nagłówkach jawnie\n\n# „Zabezpieczenie” sieci:\n# - jeden płaski VLAN dla serwerów aplikacji, baz i stacji administratorów\n# - brak DHCP snooping, DAI i RA Guard na przełącznikach\n# - brak monitoringu zmian ARP"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: obrona w głąb — L2, sieć i aplikacja",
+      "body": "Kontrole na przełącznikach utrudniają spoofing, segmentacja ogranicza zasięg, a TLS z weryfikacją certyfikatu sprawia, że nawet udany MITM nic nie daje (połączenie się nie zestawi).",
+      "code": "# application.yml — weryfikacja tożsamości serwera, nie tylko szyfrowanie\nspring:\n  datasource:\n    url: jdbc:postgresql://db.internal:5432/orders?sslmode=verify-full&sslrootcert=/etc/pki/internal-ca.pem\nintegration:\n  billing-url: https://billing.internal/api           # TLS (lub mTLS) z firmowym CA\n\n# Przełączniki (dostęp):\n#   ip dhcp snooping vlan 30 + ip arp inspection vlan 30   (DAI)\n#   ipv6 nd raguard policy HOSTS na portach dostępowych\n#   port security / 802.1X\n# Sieć: osobne VLAN-y dla baz, aplikacji i stacji administracyjnych (rozdział 21)\n# Monitoring: Zeek arp/ndp + reguła SIEM „zmiana MAC bramy” i statystyki DAI"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Które narzędzie i kontrolę wybrać",
+      "body": "- **`ip neigh` / `Get-NetNeighbor`** — pierwszy krok przy problemach w obrębie podsieci i z bramą (warstwa 2 z rozdziału 01).\n- **`arping`** — sprawdzenie osiągalności L2 (gdy ICMP jest blokowany), wykrywanie duplikatów IP (`-D`), test failoveru VIP.\n- **tcpdump/Wireshark z filtrem `arp or icmp6`** — gdy cache się nie wypełnia, wpisy skaczą lub podejrzewasz spoofing.\n- **Gratuitous ARP** — po przeniesieniu adresu IP (keepalived/VRRP robi to automatycznie); ręcznie tylko w labie lub w procedurze migracji.\n- **DHCP snooping + DAI** — każda sieć dostępowa z użytkownikami; najskuteczniejsza ochrona przed ARP spoofingiem.\n- **RA Guard / ND Inspection** — każda sieć z hostami (także „bez IPv6”).\n- **Statyczne wpisy ARP** — tylko pojedyncze, krytyczne relacje (np. serwer ↔ brama w odizolowanej strefie).\n- **TLS z weryfikacją** — zawsze w aplikacjach; to ostatnia linia obrony, gdy warstwa 2 zawiedzie.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- ARP (IPv4, EtherType 0x0806) i Neighbor Discovery (IPv6, ICMPv6) zamieniają adres IP następnego skoku na adres MAC.\n- ARP Request to broadcast z Target MAC = 00…00; Reply to unicast; wynik ląduje w cache (`ip neigh`) ze stanami REACHABLE, STALE, DELAY, PROBE, FAILED.\n- ND: RS (133), RA (134), NS (135), NA (136), Redirect (137); NS idzie na adres solicited-node `ff02::1:ff` + 24 bity (MAC `33:33:ff:…`); DAD sprawdza duplikaty z adresu `::`.\n- Gratuitous ARP ogłasza własny adres — podstawa failoveru VIP (VRRP, keepalived); w chmurze failover robi się przez API.\n- ARP i ND nie mają uwierzytelnienia: ARP spoofing i rogue RA umożliwiają MITM. Obrona: DHCP snooping + DAI, RA Guard, 802.1X, segmentacja, monitoring zmian i TLS z weryfikacją certyfikatów.\n- Następna lekcja: **unicast, broadcast, multicast i anycast**.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Wykonaj Packet Lab z lekcji i zapisz: numer ramki z ARP Request, numer ramki z Reply, MAC bramy, czas między nimi.",
+      "hint": "Filtr arp; kolumna Time ustawiona na „since previous displayed”.",
+      "solution": "Request: broadcast od Twojego MAC, „Who has <brama>? Tell <Twój IP>”; Reply: unicast od bramy z jej MAC; czas zwykle poniżej 1 ms w LAN. Zapisz MAC bramy — przyda się jako baseline do wykrywania spoofingu."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego ping do nieistniejącego adresu w Twojej podsieci zwraca „Destination Host Unreachable” z Twojego własnego adresu, a ping do nieistniejącego adresu w Internecie — timeout.",
+      "hint": "Pierwszy cel jest w tej samej podsieci (ARP), drugi przez bramę.",
+      "solution": "Adres w tej samej podsieci: host wysyła ARP o MAC celu, nie dostaje odpowiedzi (INCOMPLETE → FAILED) i sam generuje komunikat unreachable. Adres w Internecie: ramka idzie do bramy (MAC bramy znany), a dalej pakiet ginie lub nikt nie odpowiada — brak komunikatu, więc timeout (chyba że router odeśle ICMP)."
+    },
+    {
+      "prompt": "Policz adres solicited-node i MAC docelowy ramki NS dla adresu 2001:db8:1::abcd:1234.",
+      "hint": "Ostatnie 24 bity: cd:1234.",
+      "solution": "Solicited-node: ff02::1:ffcd:1234; MAC: 33:33:ff:cd:12:34."
+    },
+    {
+      "prompt": "Zaobserwuj DAD: dodaj adres IPv6 do interfejsu w labie i przechwyć ruch ICMPv6. Jak wygląda NS przy DAD i czym różni się od zwykłego NS?",
+      "hint": "Źródło NS przy DAD to ::.",
+      "solution": "NS przy DAD: źródło :: (adres nieokreślony), cel ff02::1:ffXX:XXXX (solicited-node testowanego adresu), Target = testowany adres, brak opcji Source Link-Layer Address. Jeśli nikt nie odpowie NA, adres przechodzi ze stanu tentative do preferred (ip -6 addr pokazuje „tentative”, potem znika)."
+    },
+    {
+      "prompt": "W labie z dwoma namespace’ami ustaw ten sam adres IP na obu i pokaż konflikt: co pokaże arping -D oraz co dzieje się z połączeniami?",
+      "hint": "arping -D -I <if> <adres> zwraca kod błędu, gdy ktoś odpowie.",
+      "solution": "arping -D otrzymuje odpowiedź od drugiego hosta → „Received 1 response(s)” i kod wyjścia 1 (duplikat). Trzeci host, który komunikuje się z tym IP, ma w cache raz jeden, raz drugi MAC — połączenia TCP zrywają się (RST od hosta, który nie zna połączenia). Linux może też logować „duplicate address detected” dla IPv6."
+    },
+    {
+      "prompt": "Skonfiguruj keepalived (VRRP) dla dwóch kontenerów Nginx w labie z wirtualnym IP i przechwyć gratuitous ARP przy przełączeniu. Ile trwała przerwa dla klienta?",
+      "hint": "Zatrzymaj główny węzeł i obserwuj tcpdump -nn -e arp oraz pętlę curl z timestampami.",
+      "solution": "Po zatrzymaniu MASTER zapasowy węzeł przejmuje VIP po kilku interwałach VRRP (np. 3 × 1 s) i wysyła serię gratuitous ARP z nowym MAC. Klienci aktualizują cache, przełącznik — tablicę MAC. Przerwa widziana przez klienta: zwykle 1–4 s; trwające połączenia TCP zostają zerwane (nowy węzeł ich nie zna)."
+    },
+    {
+      "prompt": "Napisz regułę detekcji (pseudokod lub zapytanie SIEM) wykrywającą ARP spoofing na podstawie logów Zeek arp.log lub alertów DAI.",
+      "hint": "Szukaj zmian mapowania IP → MAC dla bramy i dużej liczby niezamówionych odpowiedzi.",
+      "solution": "Przykład: dla IP bramy z listy (gateway_ips) alert, gdy zaobserwowany MAC ≠ MAC z baseline; dodatkowo: count(ARP reply bez wcześniejszego request) od jednego MAC > 20 w 1 min; jeden MAC ogłaszający > 3 różne IP w 5 min. Dla przełączników: syslog DAI „%SW_DAI-4-DHCP_SNOOPING_DENY” → alert z portem i MAC."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego TLS z weryfikacją certyfikatu chroni przed skutkami ARP spoofingu, a TLS bez weryfikacji (trust all) — nie.",
+      "hint": "MITM może zestawić TLS z ofiarą, ale nie ma klucza prywatnego serwera.",
+      "solution": "Napastnik w środku może przechwycić połączenie, ale nie przedstawi poprawnego certyfikatu serwera podpisanego przez zaufane CA dla tej nazwy — klient z weryfikacją przerwie handshake. Klient „trust all” (wyłączona walidacja, sslmode=require bez verify) przyjmie certyfikat napastnika — MITM odczyta i zmodyfikuje cały ruch."
+    },
+    {
+      "prompt": "Na przełączniku (lub w opisie) skonfiguruj DHCP snooping i DAI dla VLAN 30. Które porty oznaczysz jako trusted i dlaczego?",
+      "hint": "Trusted tylko w stronę legalnego serwera DHCP i uplinków.",
+      "solution": "ip dhcp snooping; ip dhcp snooping vlan 30; ip arp inspection vlan 30; na uplinku i porcie serwera DHCP: ip dhcp snooping trust + ip arp inspection trust. Porty dostępowe (użytkownicy) pozostają untrusted — ich ARP jest sprawdzany z tablicą wiązań, a oferty DHCP z nich są blokowane (ochrona przed rogue DHCP). Hosty ze statycznym IP wymagają wpisów ARP ACL."
+    },
+    {
+      "prompt": "Dlaczego gratuitous ARP nie działa jako mechanizm failoveru w AWS VPC i jak realizuje się tam przenoszenie adresu?",
+      "hint": "Kto odpowiada na ARP w VPC?",
+      "solution": "W VPC ruch L2 obsługuje warstwa wirtualizacji AWS, która zna przypisania IP do interfejsów ENI i nie uczy się z GARP. Przeniesienie adresu: przypisanie secondary private IP lub Elastic IP do innej ENI przez API (np. skrypt keepalived wywołujący AWS CLI), zmiana tras w route table albo load balancer (NLB) przed instancjami."
+    },
+    {
+      "prompt": "Porównaj wynik ip neigh i Get-NetNeighbor (Windows) dla tej samej sieci. Jak nazywają się odpowiedniki stanów REACHABLE, STALE i FAILED?",
+      "hint": "Windows ma stany Reachable, Stale, Unreachable, Permanent, Incomplete, Probe, Delay.",
+      "solution": "Linux REACHABLE ↔ Windows Reachable; STALE ↔ Stale; FAILED ↔ Unreachable; INCOMPLETE ↔ Incomplete; PERMANENT ↔ Permanent (wpisy statyczne). Oba systemy implementują NUD z RFC 4861 także dla IPv4."
+    },
+    {
+      "prompt": "Przygotuj procedurę migracji serwera bazy na nowy sprzęt z tym samym adresem IP, minimalizującą problemy z cache ARP u klientów i na routerze.",
+      "hint": "Myśl o GARP, czasach ARP na routerach i weryfikacji.",
+      "solution": "1) Obniż czas przerwy: przygotuj nowy serwer z adresem w stanie down. 2) Wyłącz interfejs starego, włącz na nowym i wyślij GARP (arping -U -c 3). 3) Sprawdź na routerze/przełączniku L3 wpis ARP (show ip arp <IP>) — jeśli stary, wyczyść (clear ip arp <IP>). 4) Zweryfikuj z klientów: ip neigh, połączenia aplikacji, logi puli połączeń. 5) Plan wycofania: odwrotna kolejność."
+    },
+    {
+      "prompt": "Policz adres solicited-node i adres MAC ramki Neighbor Solicitation dla 2001:db8::1.",
+      "hint": "ff02::1:ff + ostatnie 24 bity; MAC 33:33 + ostatnie 32 bity adresu multicast.",
+      "solution": "Adres rozwinięty: 2001:0db8:0000:0000:0000:0000:0000:0001. Solicited-node: ff02::1:ff00:0001. MAC: 33:33:ff:00:00:01."
+    },
+    {
+      "prompt": "Policz adres solicited-node i adres MAC ramki Neighbor Solicitation dla fe80::a8bb:ccff:fe00:2.",
+      "hint": "ff02::1:ff + ostatnie 24 bity; MAC 33:33 + ostatnie 32 bity adresu multicast.",
+      "solution": "Adres rozwinięty: fe80:0000:0000:0000:a8bb:ccff:fe00:0002. Solicited-node: ff02::1:ff00:0002. MAC: 33:33:ff:00:00:02."
+    },
+    {
+      "prompt": "Policz adres solicited-node i adres MAC ramki Neighbor Solicitation dla fd00:1::dead:beef.",
+      "hint": "ff02::1:ff + ostatnie 24 bity; MAC 33:33 + ostatnie 32 bity adresu multicast.",
+      "solution": "Adres rozwinięty: fd00:0001:0000:0000:0000:0000:dead:beef. Solicited-node: ff02::1:ffad:beef. MAC: 33:33:ff:ad:be:ef."
+    },
+    {
+      "prompt": "Policz adres solicited-node i adres MAC ramki Neighbor Solicitation dla 2001:db8:abcd:12::1f00:77.",
+      "hint": "ff02::1:ff + ostatnie 24 bity; MAC 33:33 + ostatnie 32 bity adresu multicast.",
+      "solution": "Adres rozwinięty: 2001:0db8:abcd:0012:0000:0000:1f00:0077. Solicited-node: ff02::1:ff00:0077. MAC: 33:33:ff:00:00:77."
+    },
+    {
+      "prompt": "Zinterpretuj linię z przechwycenia: „Request who-has 10.0.0.1 tell 10.0.0.1”.",
+      "hint": "Kto wysyła, do kogo i czy jest odpowiedź?",
+      "solution": "Gratuitous ARP — host ogłasza własny adres 10.0.0.1 (np. po starcie interfejsu lub przejęciu VIP)."
+    },
+    {
+      "prompt": "Zinterpretuj linię z przechwycenia: „Reply 10.0.0.1 is-at 66:77:88:99:aa:bb (wielokrotnie co 2 s, bez zapytań)”.",
+      "hint": "Kto wysyła, do kogo i czy jest odpowiedź?",
+      "solution": "Seria niezamówionych odpowiedzi — typowy objaw ARP spoofingu (podszywanie się pod 10.0.0.1), zwłaszcza jeśli MAC różni się od znanego MAC bramy."
+    },
+    {
+      "prompt": "Zinterpretuj linię z przechwycenia: „Request who-has 10.0.0.77 tell 10.0.0.20 (powtarzane co 1 s, brak odpowiedzi)”.",
+      "hint": "Kto wysyła, do kogo i czy jest odpowiedź?",
+      "solution": "Host 10.0.0.20 próbuje dotrzeć do 10.0.0.77, który nie odpowiada: wyłączony, w innym VLAN-ie lub nie istnieje — w cache stan INCOMPLETE/FAILED."
+    },
+    {
+      "prompt": "Zinterpretuj linię z przechwycenia: „ICMP6, router advertisement from fe80::bad:1, prefix 2001:db8:66::/64 (w sieci, w której nie ma routera IPv6)”.",
+      "hint": "Kto wysyła, do kogo i czy jest odpowiedź?",
+      "solution": "Podejrzenie rogue RA — urządzenie ogłasza się jako router IPv6; hosty mogą skonfigurować adresy i bramę przez napastnika. Weryfikacja źródła (port, MAC) i włączenie RA Guard."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego w IPv6 nie wolno blokować całego ICMPv6 na firewallach hostów i sieci. Wypisz typy, które muszą przechodzić.",
+      "hint": "ND i PMTUD w IPv6 opierają się na ICMPv6.",
+      "solution": "Bez ICMPv6 nie działa: rozwiązywanie adresów (NS 135, NA 136), autokonfiguracja i wykrywanie routerów (RS 133, RA 134), PMTUD (Packet Too Big, typ 2), diagnostyka (Echo 128/129, Time Exceeded 3, Destination Unreachable 1, Parameter Problem 4). RFC 4890 opisuje rekomendacje filtrowania — przepuszczaj typy niezbędne, filtruj resztę (np. ograniczaj RA/Redirect z nieuprawnionych źródeł)."
+    },
+    {
+      "prompt": "Zaprojektuj prosty „sentinel” dla laboratorium SOC: Zeek na porcie SPAN w VLAN-ie użytkowników. Jakie logi i alerty z warstwy 2 i ND warto zbierać?",
+      "hint": "Zeek ma analizatory ARP (pakiet) i ICMPv6/NDP.",
+      "solution": "Zbierać: zmiany IP ↔ MAC (arp, z baseline), niezamówione odpowiedzi ARP, ten sam MAC dla wielu IP, RA od nieuprawnionych źródeł (porównanie z listą routerów), duże ilości NS (skanowanie sąsiadów), DAD z konfliktami. Alerty kierować do SIEM z identyfikacją portu (łączenie z tablicą MAC przełącznika)."
+    },
+    {
+      "prompt": "Odczytaj w Wiresharku pola pakietu ARP Request z Twojego przechwycenia (Sender MAC/IP, Target MAC/IP, Opcode) i porównaj z ilustracją lekcji.",
+      "hint": "Rozwiń drzewo Address Resolution Protocol.",
+      "solution": "Opcode request (1), Sender MAC = MAC Twojej karty, Sender IP = Twój adres, Target MAC = 00:00:00:00:00:00, Target IP = adres bramy. W Reply: Opcode 2, Sender = brama, Target = Ty."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego po zapytaniu ARP od laptopa także brama ma w cache wpis laptopa, choć nic o niego nie pytała.",
+      "hint": "Brama widzi Sender IP i Sender MAC w zapytaniu.",
+      "solution": "Odbiorca zapytania (cel) zapisuje mapowanie nadawcy z pól SPA/SHA — i tak za chwilę będzie musiał odpowiedzieć i wymieniać ramki z pytającym. Oszczędza to drugie zapytanie ARP w przeciwnym kierunku."
+    },
+    {
+      "prompt": "W labie (dwa namespace’y i bridge) ustaw na jednym z nich statyczny wpis ARP z błędnym MAC drugiego. Co się stanie z pingiem i jak to wykryjesz?",
+      "hint": "ip neigh replace … nud permanent.",
+      "solution": "Ramki trafiają na nieistniejący MAC — przełącznik je zalewa lub odrzuca, ping nie działa, a ip neigh pokazuje PERMANENT z błędnym adresem (wpis nie wygasa, więc problem nie zniknie sam). Wykrycie: porównanie MAC w ip neigh z ip link drugiego hosta; usunięcie wpisu ip neigh del."
+    },
+    {
+      "prompt": "Przygotuj w Javie metodę, która dla adresu IPv6 zwraca jego adres solicited-node (z użyciem Inet6Address i operacji na bajtach).",
+      "hint": "Ostatnie 3 bajty adresu + prefiks ff02::1:ff00:0/104.",
+      "solution": "byte[] a = InetAddress.getByName(addr).getAddress();\nbyte[] sn = new byte[16];\nsn[0] = (byte) 0xff; sn[1] = 0x02; sn[11] = 0x01; sn[12] = (byte) 0xff;\nsn[13] = a[13]; sn[14] = a[14]; sn[15] = a[15];\nreturn InetAddress.getByAddress(sn).getHostAddress();   // np. ff02:0:0:0:0:1:ff00:1"
+    },
+    {
+      "prompt": "Przy przełączeniu VIP keepalived część klientów nadal przez 2 minuty łączy się ze starym węzłem. Wymień trzy możliwe przyczyny i sposoby weryfikacji.",
+      "hint": "GARP nie dotarł, cache długi, przełącznik.",
+      "solution": "1) GARP zablokowany (DAI, polityki przełącznika, VLAN) — tcpdump na kliencie; 2) klienci/routery ignorują GARP lub mają długie cache (routery L3 nawet 4 h) — show ip arp, ip neigh; 3) przełącznik ma stary wpis MAC na porcie starego węzła — show mac address-table. Rozwiązania: garp_master_repeat/refresh w keepalived, krótsze cache, wyjątki DAI dla VIP."
+    },
+    {
+      "prompt": "Opisz, jak wyglądałby atak rogue RA w sieci „bez IPv6” i dlaczego wyłączenie IPv6 na hostach nie zawsze jest najlepszą odpowiedzią.",
+      "hint": "Hosty mają IPv6 włączone domyślnie i preferują je.",
+      "solution": "Napastnik wysyła RA z prefiksem i sobą jako bramą — hosty konfigurują adresy IPv6 i (np. z fałszywym serwerem DNS przez RDNSS) kierują część ruchu przez napastnika. Wyłączenie IPv6 na wszystkich hostach bywa trudne (aktualizacje, aplikacje Microsoft zakładają IPv6) i niezalecane; lepiej kontrolować IPv6: RA Guard na przełącznikach, monitoring RA, docelowo świadome wdrożenie IPv6."
+    },
+    {
+      "prompt": "Porównaj liczbę ramek rozgłoszeniowych w dużym VLAN-ie IPv4 (2000 hostów) i jego odpowiedniku IPv6. Dlaczego ND jest „cichsze”?",
+      "hint": "Broadcast vs solicited-node multicast z IGMP/MLD snooping.",
+      "solution": "W IPv4 każde zapytanie ARP to broadcast — przetwarza je każdy z 2000 hostów. W IPv6 NS trafia do grupy solicited-node, do której należy zwykle jeden host; z MLD snooping przełącznik wysyła je tylko na właściwy port. Hosty nie są przerywane cudzymi zapytaniami."
+    },
+    {
+      "prompt": "Na podstawie lekcji przygotuj krótką listę kontrolną „podejrzewam ARP spoofing” dla dyżurnego SOC.",
+      "hint": "Od weryfikacji do ograniczenia skutków.",
+      "solution": "1) Porównaj MAC bramy u ofiary (ip neigh/arp -a) z wartością baseline. 2) Ustal, do którego portu należy podejrzany MAC (tablica MAC przełącznika). 3) Sprawdź logi DAI/DHCP snooping i alerty IDS. 4) Odizoluj port (shutdown/VLAN kwarantanny), zabezpiecz przechwycenie ruchu. 5) Oceń, jakie sesje mogły zostać przechwycone (protokoły bez TLS), wymuś zmianę haseł/tokenów. 6) Popraw kontrole (DAI, 802.1X)."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki jest adres solicited-node multicast dla 2001:db8::1?",
+      "options": {
+        "A": "ff02::1:ff00:0100",
+        "B": "ff02::1:0000:0001",
+        "C": "ff02::1:ff00:0001",
+        "D": "ff02::2:ff00:0001"
+      },
+      "correct": "C",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (000001) → ff02::1:ff00:0001."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla fe80::a8bb:ccff:fe00:2?",
+      "options": {
+        "A": "ff02::1:ff00:0200",
+        "B": "ff02::1:fe00:0002",
+        "C": "ff02::2:ff00:0002",
+        "D": "ff02::1:ff00:0002"
+      },
+      "correct": "D",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (000002) → ff02::1:ff00:0002."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla 2001:db8:10::4a:bc12?",
+      "options": {
+        "A": "ff02::1:ff4a:bc12",
+        "B": "ff02::1:ffbc:124a",
+        "C": "ff02::2:ff4a:bc12",
+        "D": "ff02::1:004a:bc12"
+      },
+      "correct": "A",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (4abc12) → ff02::1:ff4a:bc12."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla fe80::1?",
+      "options": {
+        "A": "ff02::1:ff00:0100",
+        "B": "ff02::1:ff00:0001",
+        "C": "ff02::1:0000:0001",
+        "D": "ff02::2:ff00:0001"
+      },
+      "correct": "B",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (000001) → ff02::1:ff00:0001."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla 2001:db8:abcd:12::1f00:77?",
+      "options": {
+        "A": "ff02::1:1f00:0077",
+        "B": "ff02::1:ff00:0077",
+        "C": "ff02::2:ff00:0077",
+        "D": "ff02::1:ff00:7700"
+      },
+      "correct": "B",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (000077) → ff02::1:ff00:0077."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla fd00:1::dead:beef?",
+      "options": {
+        "A": "ff02::1:dead:beef",
+        "B": "ff02::1:ffbe:efad",
+        "C": "ff02::1:ffad:beef",
+        "D": "ff02::2:ffad:beef"
+      },
+      "correct": "C",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (adbeef) → ff02::1:ffad:beef."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla 2001:db8:5::7:8?",
+      "options": {
+        "A": "ff02::1:ff07:0008",
+        "B": "ff02::2:ff07:0008",
+        "C": "ff02::1:0007:0008",
+        "D": "ff02::1:ff00:0807"
+      },
+      "correct": "A",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (070008) → ff02::1:ff07:0008."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla fe80::200:5eff:fe00:101?",
+      "options": {
+        "A": "ff02::2:ff00:0101",
+        "B": "ff02::1:ff01:0100",
+        "C": "ff02::1:fe00:0101",
+        "D": "ff02::1:ff00:0101"
+      },
+      "correct": "D",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (000101) → ff02::1:ff00:0101."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla 2001:db8::c0a8:164?",
+      "options": {
+        "A": "ff02::1:ff01:64a8",
+        "B": "ff02::2:ffa8:0164",
+        "C": "ff02::1:c0a8:0164",
+        "D": "ff02::1:ffa8:0164"
+      },
+      "correct": "D",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (a80164) → ff02::1:ffa8:0164."
+    },
+    {
+      "question": "Jaki jest adres solicited-node multicast dla fd12:3456::ab:cdef?",
+      "options": {
+        "A": "ff02::2:ffab:cdef",
+        "B": "ff02::1:ffcd:efab",
+        "C": "ff02::1:ffab:cdef",
+        "D": "ff02::1:00ab:cdef"
+      },
+      "correct": "C",
+      "explanation": "ff02::1:ff + ostatnie 24 bity (abcdef) → ff02::1:ffab:cdef."
+    },
+    {
+      "question": "Jaki adres MAC docelowy ma ramka do grupy multicast IPv6 ff02::1?",
+      "options": {
+        "A": "33:33:ff:00:00:00",
+        "B": "33:33:00:00:00:01",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "01:00:5e:00:00:01"
+      },
+      "correct": "B",
+      "explanation": "33:33 + ostatnie 32 bity adresu (00000001) → 33:33:00:00:00:01."
+    },
+    {
+      "question": "Jaki adres MAC docelowy ma ramka do grupy multicast IPv6 ff02::2?",
+      "options": {
+        "A": "33:33:00:00:00:02",
+        "B": "33:33:ff:00:00:00",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "01:00:5e:00:00:02"
+      },
+      "correct": "A",
+      "explanation": "33:33 + ostatnie 32 bity adresu (00000002) → 33:33:00:00:00:02."
+    },
+    {
+      "question": "Jaki adres MAC docelowy ma ramka do grupy multicast IPv6 ff02::1:ff00:1?",
+      "options": {
+        "A": "33:33:ff:00:00:01",
+        "B": "01:00:5e:00:00:01",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:ff:ff:00:00"
+      },
+      "correct": "A",
+      "explanation": "33:33 + ostatnie 32 bity adresu (ff000001) → 33:33:ff:00:00:01."
+    },
+    {
+      "question": "Jaki adres MAC docelowy ma ramka do grupy multicast IPv6 ff02::1:ff1a:f007?",
+      "options": {
+        "A": "33:33:ff:ff:1a:f0",
+        "B": "01:00:5e:1a:f0:07",
+        "C": "33:33:ff:1a:f0:07",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "C",
+      "explanation": "33:33 + ostatnie 32 bity adresu (ff1af007) → 33:33:ff:1a:f0:07."
+    },
+    {
+      "question": "Jaki adres MAC docelowy ma ramka do grupy multicast IPv6 ff02::fb?",
+      "options": {
+        "A": "01:00:5e:00:00:fb",
+        "B": "33:33:00:00:00:fb",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:ff:00:00:00"
+      },
+      "correct": "B",
+      "explanation": "33:33 + ostatnie 32 bity adresu (000000fb) → 33:33:00:00:00:fb."
+    },
+    {
+      "question": "Jaki adres MAC docelowy ma ramka do grupy multicast IPv6 ff02::1:ffbe:ef?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "33:33:ff:ff:be:00",
+        "C": "01:00:5e:be:00:ef",
+        "D": "33:33:ff:be:00:ef"
+      },
+      "correct": "D",
+      "explanation": "33:33 + ostatnie 32 bity adresu (ffbe00ef) → 33:33:ff:be:00:ef."
+    },
+    {
+      "question": "Który komunikat ND ma typ ICMPv6 133?",
+      "options": {
+        "A": "Neighbor Solicitation",
+        "B": "Router Advertisement",
+        "C": "Neighbor Advertisement",
+        "D": "Router Solicitation"
+      },
+      "correct": "D",
+      "explanation": "133 = Router Solicitation."
+    },
+    {
+      "question": "Jaki numer typu ICMPv6 ma Router Solicitation?",
+      "options": {
+        "A": "133",
+        "B": "135",
+        "C": "136",
+        "D": "134"
+      },
+      "correct": "A",
+      "explanation": "Router Solicitation = typ 133."
+    },
+    {
+      "question": "Który komunikat ND ma typ ICMPv6 134?",
+      "options": {
+        "A": "Router Solicitation",
+        "B": "Neighbor Solicitation",
+        "C": "Router Advertisement",
+        "D": "Neighbor Advertisement"
+      },
+      "correct": "C",
+      "explanation": "134 = Router Advertisement."
+    },
+    {
+      "question": "Jaki numer typu ICMPv6 ma Router Advertisement?",
+      "options": {
+        "A": "133",
+        "B": "134",
+        "C": "136",
+        "D": "135"
+      },
+      "correct": "B",
+      "explanation": "Router Advertisement = typ 134."
+    },
+    {
+      "question": "Który komunikat ND ma typ ICMPv6 135?",
+      "options": {
+        "A": "Neighbor Advertisement",
+        "B": "Neighbor Solicitation",
+        "C": "Router Solicitation",
+        "D": "Router Advertisement"
+      },
+      "correct": "B",
+      "explanation": "135 = Neighbor Solicitation."
+    },
+    {
+      "question": "Jaki numer typu ICMPv6 ma Neighbor Solicitation?",
+      "options": {
+        "A": "133",
+        "B": "136",
+        "C": "134",
+        "D": "135"
+      },
+      "correct": "D",
+      "explanation": "Neighbor Solicitation = typ 135."
+    },
+    {
+      "question": "Który komunikat ND ma typ ICMPv6 136?",
+      "options": {
+        "A": "Neighbor Solicitation",
+        "B": "Router Solicitation",
+        "C": "Neighbor Advertisement",
+        "D": "Router Advertisement"
+      },
+      "correct": "C",
+      "explanation": "136 = Neighbor Advertisement."
+    },
+    {
+      "question": "Jaki numer typu ICMPv6 ma Neighbor Advertisement?",
+      "options": {
+        "A": "136",
+        "B": "133",
+        "C": "134",
+        "D": "135"
+      },
+      "correct": "A",
+      "explanation": "Neighbor Advertisement = typ 136."
+    },
+    {
+      "question": "Który komunikat ND ma typ ICMPv6 137?",
+      "options": {
+        "A": "Neighbor Solicitation",
+        "B": "Redirect",
+        "C": "Router Solicitation",
+        "D": "Router Advertisement"
+      },
+      "correct": "B",
+      "explanation": "137 = Redirect."
+    },
+    {
+      "question": "Jaki numer typu ICMPv6 ma Redirect?",
+      "options": {
+        "A": "137",
+        "B": "133",
+        "C": "135",
+        "D": "134"
+      },
+      "correct": "A",
+      "explanation": "Redirect = typ 137."
+    },
+    {
+      "question": "Co oznacza stan „REACHABLE” w wyniku ip neigh?",
+      "options": {
+        "A": "Wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia",
+        "B": "Rozwiązanie adresu się nie powiodło — brak odpowiedzi",
+        "C": "Wysłano zapytanie, nie ma jeszcze odpowiedzi",
+        "D": "Sąsiad niedawno potwierdził osiągalność"
+      },
+      "correct": "D",
+      "explanation": "REACHABLE: sąsiad niedawno potwierdził osiągalność."
+    },
+    {
+      "question": "Co oznacza stan „STALE” w wyniku ip neigh?",
+      "options": {
+        "A": "Wysłano zapytanie, nie ma jeszcze odpowiedzi",
+        "B": "Sąsiad niedawno potwierdził osiągalność",
+        "C": "Wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia",
+        "D": "Rozwiązanie adresu się nie powiodło — brak odpowiedzi"
+      },
+      "correct": "C",
+      "explanation": "STALE: wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia."
+    },
+    {
+      "question": "Co oznacza stan „INCOMPLETE” w wyniku ip neigh?",
+      "options": {
+        "A": "Wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia",
+        "B": "Rozwiązanie adresu się nie powiodło — brak odpowiedzi",
+        "C": "Wysłano zapytanie, nie ma jeszcze odpowiedzi",
+        "D": "Sąsiad niedawno potwierdził osiągalność"
+      },
+      "correct": "C",
+      "explanation": "INCOMPLETE: wysłano zapytanie, nie ma jeszcze odpowiedzi."
+    },
+    {
+      "question": "Co oznacza stan „FAILED” w wyniku ip neigh?",
+      "options": {
+        "A": "Wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia",
+        "B": "Wysłano zapytanie, nie ma jeszcze odpowiedzi",
+        "C": "Sąsiad niedawno potwierdził osiągalność",
+        "D": "Rozwiązanie adresu się nie powiodło — brak odpowiedzi"
+      },
+      "correct": "D",
+      "explanation": "FAILED: rozwiązanie adresu się nie powiodło — brak odpowiedzi."
+    },
+    {
+      "question": "Co oznacza stan „PROBE” w wyniku ip neigh?",
+      "options": {
+        "A": "Host aktywnie sprawdza sąsiada zapytaniami unicast",
+        "B": "Sąsiad niedawno potwierdził osiągalność",
+        "C": "Wysłano zapytanie, nie ma jeszcze odpowiedzi",
+        "D": "Wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia"
+      },
+      "correct": "A",
+      "explanation": "PROBE: host aktywnie sprawdza sąsiada zapytaniami unicast."
+    },
+    {
+      "question": "Co oznacza stan „PERMANENT” w wyniku ip neigh?",
+      "options": {
+        "A": "Wysłano zapytanie, nie ma jeszcze odpowiedzi",
+        "B": "Wpis statyczny dodany ręcznie, nie wygasa",
+        "C": "Sąsiad niedawno potwierdził osiągalność",
+        "D": "Wpis nieaktualny — używany, ale wymaga ponownego potwierdzenia"
+      },
+      "correct": "B",
+      "explanation": "PERMANENT: wpis statyczny dodany ręcznie, nie wygasa."
+    },
+    {
+      "question": "Jaki EtherType ma ARP?",
+      "options": {
+        "A": "0x0806",
+        "B": "0x86DD",
+        "C": "0x8100",
+        "D": "0x0800"
+      },
+      "correct": "A",
+      "explanation": "ARP jedzie bezpośrednio w ramce Ethernet, nie w IP."
+    },
+    {
+      "question": "Na jaki adres MAC wysyłane jest zapytanie ARP Request?",
+      "options": {
+        "A": "00:00:00:00:00:00",
+        "B": "33:33:00:00:00:01",
+        "C": "ff:ff:ff:ff:ff:ff (broadcast)",
+        "D": "Adres MAC bramy"
+      },
+      "correct": "C",
+      "explanation": "Pytający nie zna MAC celu."
+    },
+    {
+      "question": "Jaką wartość ma pole Target MAC w ARP Request?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "00:00:00:00:00:00",
+        "C": "MAC nadawcy",
+        "D": "MAC bramy"
+      },
+      "correct": "B",
+      "explanation": "Pole jest nieznane — to właśnie szukamy."
+    },
+    {
+      "question": "Jaki kod operacji (OPER) ma ARP Reply?",
+      "options": {
+        "A": "6",
+        "B": "0",
+        "C": "1",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "1 = request, 2 = reply."
+    },
+    {
+      "question": "Ile bajtów ma pakiet ARP dla Ethernet i IPv4?",
+      "options": {
+        "A": "20",
+        "B": "28",
+        "C": "42",
+        "D": "64"
+      },
+      "correct": "B",
+      "explanation": "8 B nagłówka + 2 × (6 + 4) B adresów; ramka po dopełnieniu ma 60/64 B."
+    },
+    {
+      "question": "Czym charakteryzuje się gratuitous ARP?",
+      "options": {
+        "A": "Adres IP nadawcy jest równy adresowi IP celu — host ogłasza własny adres",
+        "B": "Jest wysyłany tylko przez routery",
+        "C": "Ma zawsze kod 3",
+        "D": "Jest szyfrowany"
+      },
+      "correct": "A",
+      "explanation": "Używany przy failoverze i wykrywaniu konfliktów."
+    },
+    {
+      "question": "Do czego służy gratuitous ARP w VRRP/keepalived?",
+      "options": {
+        "A": "Do wyboru mastera",
+        "B": "Do synchronizacji czasu",
+        "C": "Do szyfrowania VIP",
+        "D": "Do aktualizacji cache ARP klientów i tablic przełączników po przejęciu wirtualnego IP"
+      },
+      "correct": "D",
+      "explanation": "Bez niego klienci wysyłaliby ruch do martwego węzła."
+    },
+    {
+      "question": "Dlaczego ARP jest podatny na spoofing?",
+      "options": {
+        "A": "Bo jest szyfrowany słabym algorytmem",
+        "B": "Bo używa UDP",
+        "C": "Bo nie ma uwierzytelnienia — hosty przyjmują odpowiedzi od każdego w segmencie",
+        "D": "Bo działa tylko w Wi-Fi"
+      },
+      "correct": "C",
+      "explanation": "Stąd potrzeba DAI i innych kontroli."
+    },
+    {
+      "question": "Które zabezpieczenie przełącznika sprawdza pakiety ARP z tablicą wiązań DHCP snooping?",
+      "options": {
+        "A": "BPDU Guard",
+        "B": "Storm control",
+        "C": "RA Guard",
+        "D": "Dynamic ARP Inspection (DAI)"
+      },
+      "correct": "D",
+      "explanation": "Odrzuca ARP z niezgodnym mapowaniem IP ↔ MAC."
+    },
+    {
+      "question": "Które zabezpieczenie chroni przed fałszywymi Router Advertisement w IPv6?",
+      "options": {
+        "A": "RA Guard",
+        "B": "Port security",
+        "C": "DAI",
+        "D": "HSTS"
+      },
+      "correct": "A",
+      "explanation": "Blokuje RA z portów hostów."
+    },
+    {
+      "question": "Jak nazywa się technika ATT&CK obejmująca ARP cache poisoning?",
+      "options": {
+        "A": "Phishing (T1566)",
+        "B": "Valid Accounts (T1078)",
+        "C": "Adversary-in-the-Middle (T1557.002)",
+        "D": "Data Encrypted for Impact (T1486)"
+      },
+      "correct": "C",
+      "explanation": "Podtechnika ARP Cache Poisoning."
+    },
+    {
+      "question": "Co ogłasza Router Advertisement?",
+      "options": {
+        "A": "Listę użytkowników",
+        "B": "Prefiksy, bramę domyślną (router), MTU i flagi konfiguracji (SLAAC/DHCPv6)",
+        "C": "Certyfikat TLS",
+        "D": "Adres MAC przełącznika"
+      },
+      "correct": "B",
+      "explanation": "Na tej podstawie hosty konfigurują IPv6."
+    },
+    {
+      "question": "Z jakiego adresu źródłowego wysyłany jest NS podczas DAD?",
+      "options": {
+        "A": "Z testowanego adresu",
+        "B": "::",
+        "C": "ff02::1",
+        "D": "fe80::1"
+      },
+      "correct": "B",
+      "explanation": "Adres nie jest jeszcze potwierdzony, więc host nie może go użyć."
+    },
+    {
+      "question": "Dlaczego IPv6 używa adresu solicited-node zamiast broadcastu?",
+      "options": {
+        "A": "Bo IPv6 nie ma broadcastu, a multicast ogranicza zapytanie do nielicznych hostów",
+        "B": "Bo broadcast jest szyfrowany",
+        "C": "Bo tak wymaga TCP",
+        "D": "Bo MAC w IPv6 ma 64 bity"
+      },
+      "correct": "A",
+      "explanation": "Mniej przerwań dla hostów, których zapytanie nie dotyczy."
+    },
+    {
+      "question": "Kto wysyła komunikat „Destination Host Unreachable” przy pingu do wyłączonego hosta w tej samej podsieci?",
+      "options": {
+        "A": "Zawsze router brzegowy",
+        "B": "Host docelowy",
+        "C": "Najczęściej własny host nadawcy, który nie otrzymał odpowiedzi ARP",
+        "D": "Serwer DNS"
+      },
+      "correct": "C",
+      "explanation": "Warto patrzeć, z jakiego adresu przyszedł komunikat."
+    },
+    {
+      "question": "Które polecenie wykryje, czy adres IP jest już używany w sieci, zanim go przydzielisz?",
+      "options": {
+        "A": "dig <adres>",
+        "B": "ping -6 <adres>",
+        "C": "ip route get <adres>",
+        "D": "arping -D -I eth0 <adres>"
+      },
+      "correct": "D",
+      "explanation": "Tryb wykrywania duplikatów (DAD w IPv4)."
+    },
+    {
+      "question": "Dlaczego gratuitous ARP nie przenosi adresu IP w AWS VPC?",
+      "options": {
+        "A": "Bo GARP jest szyfrowany",
+        "B": "Bo VPC nie ma adresów MAC",
+        "C": "Bo AWS nie obsługuje IPv4",
+        "D": "Bo mapowania w VPC zarządza warstwa wirtualizacji, która nie uczy się z GARP"
+      },
+      "correct": "D",
+      "explanation": "Failover robi się przez API (ENI, Elastic IP, trasy)."
+    },
+    {
+      "question": "Co jest najskuteczniejszą ochroną treści komunikacji, gdy napastnikowi uda się ARP spoofing?",
+      "options": {
+        "A": "Wyłączenie IPv6",
+        "B": "TLS z weryfikacją certyfikatu serwera",
+        "C": "Statyczny wpis ARP na jednym hoście",
+        "D": "Dłuższy czas cache ARP"
+      },
+      "correct": "B",
+      "explanation": "MITM nie przedstawi poprawnego certyfikatu."
+    },
+    {
+      "question": "Jak wysłać ping do adresu link-local fe80::1 w Linuksie?",
+      "options": {
+        "A": "ping fe80::1",
+        "B": "arping fe80::1",
+        "C": "ping -6 fe80::1%eth0 (z identyfikatorem interfejsu)",
+        "D": "ping -4 fe80::1"
+      },
+      "correct": "C",
+      "explanation": "Link-local jest niejednoznaczny bez interfejsu."
+    },
+    {
+      "question": "Jaki objaw sugeruje konflikt adresów IP w podsieci?",
+      "options": {
+        "A": "Połączenia losowo zrywane, a w przechwyceniu dwa różne MAC odpowiadają na ARP dla tego samego IP",
+        "B": "Brak rekordów DNS",
+        "C": "Stały wysoki RTT",
+        "D": "Błędy certyfikatu TLS"
+      },
+      "correct": "A",
+      "explanation": "Wireshark: „duplicate use of IP detected”."
+    },
+    {
+      "question": "Czym jest proxy ARP?",
+      "options": {
+        "A": "Odpowiadaniem routera na zapytania ARP w imieniu hostów z innej sieci",
+        "B": "ARP przez HTTP proxy",
+        "C": "Szyfrowaniem ARP",
+        "D": "Buforowaniem ARP w przeglądarce"
+      },
+      "correct": "A",
+      "explanation": "Dziś rzadko używane, bywa źródłem nieoczekiwanych zachowań."
+    },
+    {
+      "question": "Ile domyślnie wynosi bazowy czas osiągalności sąsiada w Linuksie (base_reachable_time)?",
+      "options": {
+        "A": "Wpis nigdy nie wygasa",
+        "B": "4 godziny",
+        "C": "1 sekunda",
+        "D": "30 sekund (losowo 15–45 s)"
+      },
+      "correct": "D",
+      "explanation": "Routery i przełączniki L3 często trzymają ARP dłużej (np. 4 h)."
+    },
+    {
+      "question": "Jak sklasyfikować zdarzenie: „Request who-has 192.168.1.1 tell 192.168.1.1”?",
+      "options": {
+        "A": "Wykrywanie duplikatu adresu (DAD)",
+        "B": "Gratuitous ARP",
+        "C": "Podejrzenie rogue RA",
+        "D": "Zwykła odpowiedź ARP"
+      },
+      "correct": "B",
+      "explanation": "Gratuitous ARP."
+    },
+    {
+      "question": "Jak sklasyfikować zdarzenie: „Reply 192.168.1.1 is-at 00:1a:2b:3c:4d:5e (po zapytaniu)”?",
+      "options": {
+        "A": "Wykrywanie duplikatu adresu (DAD)",
+        "B": "Gratuitous ARP",
+        "C": "Zwykła odpowiedź ARP",
+        "D": "Podejrzenie rogue RA"
+      },
+      "correct": "C",
+      "explanation": "Zwykła odpowiedź ARP."
+    },
+    {
+      "question": "Jak sklasyfikować zdarzenie: „NS z adresu :: dla 2001:db8::5”?",
+      "options": {
+        "A": "Zwykła odpowiedź ARP",
+        "B": "Gratuitous ARP",
+        "C": "Wykrywanie duplikatu adresu (DAD)",
+        "D": "Podejrzenie rogue RA"
+      },
+      "correct": "C",
+      "explanation": "Wykrywanie duplikatu adresu (DAD)."
+    },
+    {
+      "question": "Jak sklasyfikować zdarzenie: „RA od nieznanego urządzenia na porcie użytkownika”?",
+      "options": {
+        "A": "Wykrywanie duplikatu adresu (DAD)",
+        "B": "Podejrzenie rogue RA",
+        "C": "Zwykła odpowiedź ARP",
+        "D": "Gratuitous ARP"
+      },
+      "correct": "B",
+      "explanation": "Podejrzenie rogue RA."
+    },
+    {
+      "question": "Jak sklasyfikować zdarzenie: „Seria niezamówionych Reply z nowym MAC dla IP bramy”?",
+      "options": {
+        "A": "Gratuitous ARP",
+        "B": "Zwykła odpowiedź ARP",
+        "C": "Wykrywanie duplikatu adresu (DAD)",
+        "D": "Podejrzenie ARP spoofingu"
+      },
+      "correct": "D",
+      "explanation": "Podejrzenie ARP spoofingu."
+    },
+    {
+      "question": "Host 10.0.0.20 (MAC 3c:52:82:1a:f0:07) pyta ARP o 10.0.0.1. Jaki jest Target IP (TPA) w zapytaniu?",
+      "options": {
+        "A": "10.0.0.1",
+        "B": "255.255.255.255",
+        "C": "0.0.0.0",
+        "D": "10.0.0.20"
+      },
+      "correct": "A",
+      "explanation": "TPA to szukany adres IP."
+    },
+    {
+      "question": "Host 10.0.0.20 (MAC 3c:52:82:1a:f0:07) pyta ARP o 10.0.0.1. Jaki jest Target MAC (THA) w zapytaniu?",
+      "options": {
+        "A": "3c:52:82:1a:f0:07",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:00:00:00:01",
+        "D": "00:00:00:00:00:00"
+      },
+      "correct": "D",
+      "explanation": "MAC celu jest nieznany — pole wypełnione zerami (adres ramki to broadcast)."
+    },
+    {
+      "question": "Host 10.0.0.20 (MAC 3c:52:82:1a:f0:07) pyta ARP o 10.0.0.1. Jaki jest docelowy adres MAC ramki Ethernet z tym zapytaniem?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "3c:52:82:1a:f0:07",
+        "C": "01:00:5e:00:00:01",
+        "D": "00:00:00:00:00:00"
+      },
+      "correct": "A",
+      "explanation": "ARP Request jest rozgłaszany."
+    },
+    {
+      "question": "Host 10.0.0.1 odpowiada na zapytanie ARP od 10.0.0.20 (3c:52:82:1a:f0:07). Jaki jest docelowy adres MAC ramki z odpowiedzią?",
+      "options": {
+        "A": "00:00:00:00:00:00",
+        "B": "3c:52:82:1a:f0:07",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:ff:00:00:01"
+      },
+      "correct": "B",
+      "explanation": "ARP Reply jest wysyłany unicastem do pytającego."
+    },
+    {
+      "question": "Host 192.168.5.7 (MAC 00:50:56:9a:bc:01) pyta ARP o 192.168.5.254. Jaki jest Target IP (TPA) w zapytaniu?",
+      "options": {
+        "A": "255.255.255.255",
+        "B": "0.0.0.0",
+        "C": "192.168.5.254",
+        "D": "192.168.5.7"
+      },
+      "correct": "C",
+      "explanation": "TPA to szukany adres IP."
+    },
+    {
+      "question": "Host 192.168.5.7 (MAC 00:50:56:9a:bc:01) pyta ARP o 192.168.5.254. Jaki jest Target MAC (THA) w zapytaniu?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "00:00:00:00:00:00",
+        "C": "33:33:00:00:00:01",
+        "D": "00:50:56:9a:bc:01"
+      },
+      "correct": "B",
+      "explanation": "MAC celu jest nieznany — pole wypełnione zerami (adres ramki to broadcast)."
+    },
+    {
+      "question": "Host 192.168.5.7 (MAC 00:50:56:9a:bc:01) pyta ARP o 192.168.5.254. Jaki jest docelowy adres MAC ramki Ethernet z tym zapytaniem?",
+      "options": {
+        "A": "00:00:00:00:00:00",
+        "B": "00:50:56:9a:bc:01",
+        "C": "01:00:5e:00:00:01",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "D",
+      "explanation": "ARP Request jest rozgłaszany."
+    },
+    {
+      "question": "Host 192.168.5.254 odpowiada na zapytanie ARP od 192.168.5.7 (00:50:56:9a:bc:01). Jaki jest docelowy adres MAC ramki z odpowiedzią?",
+      "options": {
+        "A": "33:33:ff:00:00:01",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "00:50:56:9a:bc:01",
+        "D": "00:00:00:00:00:00"
+      },
+      "correct": "C",
+      "explanation": "ARP Reply jest wysyłany unicastem do pytającego."
+    },
+    {
+      "question": "Host 172.16.3.40 (MAC 02:42:ac:10:03:28) pyta ARP o 172.16.3.41. Jaki jest Target IP (TPA) w zapytaniu?",
+      "options": {
+        "A": "172.16.3.41",
+        "B": "172.16.3.40",
+        "C": "255.255.255.255",
+        "D": "0.0.0.0"
+      },
+      "correct": "A",
+      "explanation": "TPA to szukany adres IP."
+    },
+    {
+      "question": "Host 172.16.3.40 (MAC 02:42:ac:10:03:28) pyta ARP o 172.16.3.41. Jaki jest Target MAC (THA) w zapytaniu?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "00:00:00:00:00:00",
+        "C": "02:42:ac:10:03:28",
+        "D": "33:33:00:00:00:01"
+      },
+      "correct": "B",
+      "explanation": "MAC celu jest nieznany — pole wypełnione zerami (adres ramki to broadcast)."
+    },
+    {
+      "question": "Host 172.16.3.40 (MAC 02:42:ac:10:03:28) pyta ARP o 172.16.3.41. Jaki jest docelowy adres MAC ramki Ethernet z tym zapytaniem?",
+      "options": {
+        "A": "01:00:5e:00:00:01",
+        "B": "00:00:00:00:00:00",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "02:42:ac:10:03:28"
+      },
+      "correct": "C",
+      "explanation": "ARP Request jest rozgłaszany."
+    },
+    {
+      "question": "Host 172.16.3.41 odpowiada na zapytanie ARP od 172.16.3.40 (02:42:ac:10:03:28). Jaki jest docelowy adres MAC ramki z odpowiedzią?",
+      "options": {
+        "A": "33:33:ff:00:00:01",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "00:00:00:00:00:00",
+        "D": "02:42:ac:10:03:28"
+      },
+      "correct": "D",
+      "explanation": "ARP Reply jest wysyłany unicastem do pytającego."
+    },
+    {
+      "question": "Host 10.10.10.5 (MAC b8:27:eb:12:34:56) pyta ARP o 10.10.10.1. Jaki jest Target IP (TPA) w zapytaniu?",
+      "options": {
+        "A": "10.10.10.1",
+        "B": "0.0.0.0",
+        "C": "10.10.10.5",
+        "D": "255.255.255.255"
+      },
+      "correct": "A",
+      "explanation": "TPA to szukany adres IP."
+    },
+    {
+      "question": "Host 10.10.10.5 (MAC b8:27:eb:12:34:56) pyta ARP o 10.10.10.1. Jaki jest Target MAC (THA) w zapytaniu?",
+      "options": {
+        "A": "33:33:00:00:00:01",
+        "B": "b8:27:eb:12:34:56",
+        "C": "00:00:00:00:00:00",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "C",
+      "explanation": "MAC celu jest nieznany — pole wypełnione zerami (adres ramki to broadcast)."
+    },
+    {
+      "question": "Host 10.10.10.5 (MAC b8:27:eb:12:34:56) pyta ARP o 10.10.10.1. Jaki jest docelowy adres MAC ramki Ethernet z tym zapytaniem?",
+      "options": {
+        "A": "00:00:00:00:00:00",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "b8:27:eb:12:34:56",
+        "D": "01:00:5e:00:00:01"
+      },
+      "correct": "B",
+      "explanation": "ARP Request jest rozgłaszany."
+    },
+    {
+      "question": "Host 10.10.10.1 odpowiada na zapytanie ARP od 10.10.10.5 (b8:27:eb:12:34:56). Jaki jest docelowy adres MAC ramki z odpowiedzią?",
+      "options": {
+        "A": "b8:27:eb:12:34:56",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "00:00:00:00:00:00",
+        "D": "33:33:ff:00:00:01"
+      },
+      "correct": "A",
+      "explanation": "ARP Reply jest wysyłany unicastem do pytającego."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres 2001:db8::a:b?",
+      "options": {
+        "A": "33:33:00:00:00:01",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:00:0a:00:0b",
+        "D": "33:33:ff:0a:00:0b"
+      },
+      "correct": "D",
+      "explanation": "Solicited-node ff02::1:ff0a:000b → MAC 33:33 + ostatnie 32 bity = 33:33:ff:0a:00:0b."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres fe80::1234:5678?",
+      "options": {
+        "A": "33:33:ff:34:56:78",
+        "B": "33:33:00:34:56:78",
+        "C": "33:33:00:00:00:01",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "A",
+      "explanation": "Solicited-node ff02::1:ff34:5678 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:34:56:78."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres 2001:db8:1:2:3:4:5:6?",
+      "options": {
+        "A": "33:33:00:05:00:06",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:ff:05:00:06",
+        "D": "33:33:00:00:00:01"
+      },
+      "correct": "C",
+      "explanation": "Solicited-node ff02::1:ff05:0006 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:05:00:06."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres fe80::42:acff:fe11:2?",
+      "options": {
+        "A": "ff:ff:ff:ff:ff:ff",
+        "B": "33:33:ff:11:00:02",
+        "C": "33:33:00:00:00:01",
+        "D": "33:33:00:11:00:02"
+      },
+      "correct": "B",
+      "explanation": "Solicited-node ff02::1:ff11:0002 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:11:00:02."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres fd00::100?",
+      "options": {
+        "A": "33:33:00:00:01:00",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:00:00:00:01",
+        "D": "33:33:ff:00:01:00"
+      },
+      "correct": "D",
+      "explanation": "Solicited-node ff02::1:ff00:0100 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:00:01:00."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres 2001:db8::ff:fe00:1?",
+      "options": {
+        "A": "33:33:00:00:00:01",
+        "B": "33:33:ff:00:00:01",
+        "C": "01:00:5e:00:00:fb",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "B",
+      "explanation": "Solicited-node ff02::1:ff00:0001 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:00:00:01."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres fe80::dead:beef:cafe?",
+      "options": {
+        "A": "33:33:ff:ef:ca:fe",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:00:00:00:01",
+        "D": "33:33:00:ef:ca:fe"
+      },
+      "correct": "A",
+      "explanation": "Solicited-node ff02::1:ffef:cafe → MAC 33:33 + ostatnie 32 bity = 33:33:ff:ef:ca:fe."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres 2001:db8:aa::bbbb:cccc?",
+      "options": {
+        "A": "33:33:00:00:00:01",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "33:33:00:bb:cc:cc",
+        "D": "33:33:ff:bb:cc:cc"
+      },
+      "correct": "D",
+      "explanation": "Solicited-node ff02::1:ffbb:cccc → MAC 33:33 + ostatnie 32 bity = 33:33:ff:bb:cc:cc."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres fd34::1:2:3?",
+      "options": {
+        "A": "33:33:00:00:00:01",
+        "B": "33:33:00:02:00:03",
+        "C": "33:33:ff:02:00:03",
+        "D": "ff:ff:ff:ff:ff:ff"
+      },
+      "correct": "C",
+      "explanation": "Solicited-node ff02::1:ff02:0003 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:02:00:03."
+    },
+    {
+      "question": "Jaki adres MAC docelowy będzie miała ramka z Neighbor Solicitation o adres 2001:db8:0:1::9?",
+      "options": {
+        "A": "33:33:00:00:00:09",
+        "B": "33:33:00:00:00:01",
+        "C": "ff:ff:ff:ff:ff:ff",
+        "D": "33:33:ff:00:00:09"
+      },
+      "correct": "D",
+      "explanation": "Solicited-node ff02::1:ff00:0009 → MAC 33:33 + ostatnie 32 bity = 33:33:ff:00:00:09."
+    },
+    {
+      "question": "Który komunikat ND służy do: host chce poznać mac sąsiada ipv6?",
+      "options": {
+        "A": "Router Advertisement",
+        "B": "Neighbor Solicitation",
+        "C": "Neighbor Advertisement",
+        "D": "Router Solicitation"
+      },
+      "correct": "B",
+      "explanation": "Host chce poznać MAC sąsiada IPv6: Neighbor Solicitation."
+    },
+    {
+      "question": "Który komunikat ND służy do: sąsiad podaje swój mac w odpowiedzi?",
+      "options": {
+        "A": "Router Solicitation",
+        "B": "Router Advertisement",
+        "C": "Neighbor Advertisement",
+        "D": "Neighbor Solicitation"
+      },
+      "correct": "C",
+      "explanation": "Sąsiad podaje swój MAC w odpowiedzi: Neighbor Advertisement."
+    },
+    {
+      "question": "Który komunikat ND służy do: host po uruchomieniu prosi routery o ogłoszenie?",
+      "options": {
+        "A": "Router Solicitation",
+        "B": "Neighbor Solicitation",
+        "C": "Neighbor Advertisement",
+        "D": "Router Advertisement"
+      },
+      "correct": "A",
+      "explanation": "Host po uruchomieniu prosi routery o ogłoszenie: Router Solicitation."
+    },
+    {
+      "question": "Który komunikat ND służy do: router okresowo ogłasza prefiks i bramę?",
+      "options": {
+        "A": "Router Solicitation",
+        "B": "Neighbor Advertisement",
+        "C": "Router Advertisement",
+        "D": "Neighbor Solicitation"
+      },
+      "correct": "C",
+      "explanation": "Router okresowo ogłasza prefiks i bramę: Router Advertisement."
+    },
+    {
+      "question": "Który komunikat ND służy do: router wskazuje hostowi lepszy następny skok?",
+      "options": {
+        "A": "Neighbor Solicitation",
+        "B": "Redirect",
+        "C": "Router Solicitation",
+        "D": "Neighbor Advertisement"
+      },
+      "correct": "B",
+      "explanation": "Router wskazuje hostowi lepszy następny skok: Redirect."
+    },
+    {
+      "question": "Który komunikat ND służy do: host sprawdza, czy nikt nie używa jego nowego adresu (dad)?",
+      "options": {
+        "A": "Neighbor Solicitation",
+        "B": "Router Advertisement",
+        "C": "Router Solicitation",
+        "D": "Neighbor Advertisement"
+      },
+      "correct": "A",
+      "explanation": "Host sprawdza, czy nikt nie używa jego nowego adresu (DAD): Neighbor Solicitation."
+    },
+    {
+      "question": "Który komunikat ND służy do: host ogłasza zmianę swojego adresu mac (niezamówione ogłoszenie)?",
+      "options": {
+        "A": "Neighbor Solicitation",
+        "B": "Router Advertisement",
+        "C": "Router Solicitation",
+        "D": "Neighbor Advertisement"
+      },
+      "correct": "D",
+      "explanation": "Host ogłasza zmianę swojego adresu MAC (niezamówione ogłoszenie): Neighbor Advertisement."
+    },
+    {
+      "question": "Które polecenie Linuksa czyści tablicę sąsiadów na interfejsie eth0?",
+      "options": {
+        "A": "ss -K",
+        "B": "ip route flush",
+        "C": "ip neigh flush dev eth0",
+        "D": "arp -a"
+      },
+      "correct": "C",
+      "explanation": "Wymusza ponowne rozwiązanie adresów."
+    },
+    {
+      "question": "Które polecenie Windows PowerShell pokaże tablicę sąsiadów IPv4?",
+      "options": {
+        "A": "Resolve-DnsName",
+        "B": "Get-NetTCPConnection",
+        "C": "Get-NetRoute",
+        "D": "Get-NetNeighbor -AddressFamily IPv4"
+      },
+      "correct": "D",
+      "explanation": "Odpowiednik ip neigh."
+    },
+    {
+      "question": "Która opcja arping wysyła gratuitous ARP (ogłoszenie)?",
+      "options": {
+        "A": "-I",
+        "B": "-U",
+        "C": "-c",
+        "D": "-D"
+      },
+      "correct": "B",
+      "explanation": "-D służy do wykrywania duplikatów, -U do niezamówionego ogłoszenia."
+    },
+    {
+      "question": "Na jaki adres IPv6 wysyłane jest Router Solicitation?",
+      "options": {
+        "A": "ff02::2 (wszystkie routery)",
+        "B": "ff02::1:ff00:1",
+        "C": "::",
+        "D": "ff02::1"
+      },
+      "correct": "A",
+      "explanation": "Odpowiedź RA może przyjść na ff02::1 lub unicastem."
+    },
+    {
+      "question": "Na jaki adres IPv6 router okresowo wysyła Router Advertisement?",
+      "options": {
+        "A": "ff02::2",
+        "B": "ff02::1 (wszystkie węzły)",
+        "C": "fe80::1",
+        "D": "ff02::fb"
+      },
+      "correct": "B",
+      "explanation": "Wszystkie hosty w łączu słuchają RA."
+    },
+    {
+      "question": "Co zawiera tablica wiązań DHCP snooping, z której korzysta DAI?",
+      "options": {
+        "A": "Tablicę routingu",
+        "B": "Listę certyfikatów",
+        "C": "Mapowania adres IP ↔ MAC ↔ port ↔ VLAN z przydziałów DHCP",
+        "D": "Hasła użytkowników"
+      },
+      "correct": "C",
+      "explanation": "ARP niezgodny z tablicą jest odrzucany."
+    },
+    {
+      "question": "Dlaczego DAI wymaga szczególnej konfiguracji dla hostów ze statycznym adresem IP?",
+      "options": {
+        "A": "Bo statyczne adresy nie używają ARP",
+        "B": "Bo DAI działa tylko w IPv6",
+        "C": "Bo statyczne hosty nie mają MAC",
+        "D": "Bo nie mają wpisu w tablicy wiązań DHCP — potrzebne są ARP ACL lub wpisy statyczne"
+      },
+      "correct": "D",
+      "explanation": "Inaczej ich ARP zostanie zablokowany."
+    },
+    {
+      "question": "Który element w Wiresharku sygnalizuje możliwy ARP spoofing?",
+      "options": {
+        "A": "Ostrzeżenie Expert Info „duplicate use of IP detected”",
+        "B": "Kolor zielony dla HTTP",
+        "C": "Kolumna Length",
+        "D": "Statystyka Protocol Hierarchy"
+      },
+      "correct": "A",
+      "explanation": "Dwa różne MAC dla jednego IP."
+    }
+  ]
 }
