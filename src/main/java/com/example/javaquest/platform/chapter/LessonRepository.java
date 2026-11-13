@@ -43,4 +43,7 @@ public interface LessonRepository extends JpaRepository<Lesson, Long> {
 
     @Query("select count(m) from LessonMaterial m where m.lesson = :lesson")
     long countMaterials(Lesson lesson);
+
+    @Query("select count(b) from ContentBlock b where b.lesson = :lesson")
+    long countContentBlocks(Lesson lesson);
 }
