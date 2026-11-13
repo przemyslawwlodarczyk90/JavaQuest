@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Pakiety nie kłamią",
+      "image": "netsec/ns01-07-capture-points.svg",
+      "imageAlt": "Schemat hosta z kontenerem klienta i kontenerem aplikacji połączonymi przez bridge Dockera, z interfejsem pętli zwrotnej lo i fizycznym interfejsem połączonym z przełącznikiem z portem SPAN. Litery A–E oznaczają punkty przechwytywania: interfejs kontenera, bridge, interfejs hosta, pętlę zwrotną i port SPAN.",
+      "body": "Logi aplikacji mówią, co aplikacja *myśli*, że się stało. Metryki mówią, *ile* czegoś się stało. **Przechwycony ruch** pokazuje, co *naprawdę* przeszło przez sieć: czy żądanie w ogóle wyszło, kto odpowiedział RST, czy TLS dostał certyfikat, który nagłówek był inny niż w kodzie.\n\n**Wireshark** (graficzny analizator) i **tcpdump** (narzędzie wiersza poleceń) to dwa podstawowe narzędzia każdego, kto pracuje z siecią: developera diagnozującego `Connection reset`, administratora szukającego pętli i analityka SOC zabezpieczającego dowody incydentu. Oba korzystają z biblioteki **libpcap** (na Windows **Npcap**) i zapisują pliki **pcap/pcapng**.\n\nNajważniejsza decyzja przy przechwytywaniu to **gdzie** to zrobić. Na ilustracji ten sam ruch wygląda inaczej w kontenerze aplikacji, na bridge’u Dockera, na interfejsie hosta (już po NAT) i na porcie lustrzanym przełącznika. Połączenia na `127.0.0.1` w ogóle nie pojawią się na `eth0`.\n\nW tej lekcji:\n- przechwycisz żądanie do Spring Boot w labie i przeczytasz je w trzech panelach Wiresharka,\n- nauczysz się różnicy między **filtrem przechwytywania (BPF)** a **filtrem wyświetlania**,\n- użyjesz **Follow TCP Stream** i `tshark` do wyciągania danych,\n- poznasz zasady **etyki i bezpieczeństwa** pracy z przechwyconym ruchem — pliki pcap zawierają hasła, tokeny i dane osobowe.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik przechwytywania ruchu",
+      "body": "- **libpcap / Npcap** — biblioteki do przechwytywania pakietów z interfejsów; używają ich tcpdump, Wireshark, Zeek, Suricata, Nmap.\n- **dumpcap** — właściwy proces przechwytujący Wiresharka; tylko on potrzebuje uprawnień, GUI nie powinno działać jako root.\n- **pcap / pcapng** — formaty plików; pcapng przechowuje dodatkowo wiele interfejsów, komentarze i klucze TLS (DSB).\n- **Tryb promiscuous** — karta przyjmuje ramki nie tylko do siebie. W sieci z przełącznikiem i tak zobaczysz głównie własny ruch, broadcast i multicast.\n- **Tryb monitor** — dla Wi-Fi: przechwytywanie surowych ramek 802.11 (zarządzanie, sygnały) zamiast ruchu po zestawieniu połączenia.\n- **SPAN (port mirroring) i TAP** — kopia ruchu z przełącznika na port analizatora lub urządzenie pasywnie rozgałęziające łącze; tak zasila się sensory IDS/NSM.\n- **Filtr przechwytywania (BPF)** — wyrażenie Berkeley Packet Filter (`tcp port 8080`), oceniane w jądrze; czego nie przepuści, tego nie ma w pliku.\n- **Filtr wyświetlania** — wyrażenie Wiresharka na polach dekoderów (`http.request.method == \"POST\"`); tylko ukrywa pakiety w już zapisanym pliku.\n- **Snaplen** — ile bajtów z każdego pakietu zapisać (`-s`); mniejszy snaplen = mniejsze pliki i mniej danych wrażliwych.\n- **Dissector (dekoder)** — moduł Wiresharka rozumiejący dany protokół; dekodery działają po numerach portów lub heurystycznie (`Decode As…` dla niestandardowych portów).\n- **Strumień TCP (`tcp.stream`)** — numer nadany przez Wiresharka połączeniu (czwórce adresów i portów); podstawa „Follow TCP Stream”.\n- **Ring buffer** — przechwytywanie do wielu plików z rotacją (`-C`, `-W`, `-G`), by nie zapełnić dysku.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Kamera monitoringu i przeglądanie nagrania",
+      "body": "Przechwytywanie ruchu przypomina monitoring wizyjny w budynku:\n- **Miejsce kamery** to interfejs przechwytywania. Kamera przy wejściu głównym (interfejs hosta) nie widzi, co dzieje się między pokojami na jednym piętrze (ruch między kontenerami na bridge’u). Kamera w pokoju (interfejs kontenera) widzi tylko ten pokój.\n- **Ustawienie kamery przed nagraniem** to filtr BPF: jeśli skierujesz ją tylko na drzwi do serwerowni, nie odtworzysz potem, kto wszedł do kuchni. Oszczędzasz taśmę, ale tracisz kontekst.\n- **Przewijanie i wyszukiwanie w nagraniu** to filtr wyświetlania: możesz szukać „osób w czerwonych kurtkach”, ile razy chcesz, i nic z nagrania nie znika.\n- **Nagrania to dane osobowe** — przechowuje się je tylko tyle, ile trzeba, z kontrolą dostępu, i nie wrzuca na publiczny czat.\n- **Zgoda i podstawa prawna** — kamerę możesz zawiesić we własnym budynku, ale nie w cudzym mieszkaniu. Z ruchem sieciowym jest tak samo.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Trzy panele Wiresharka",
+      "image": "netsec/ns01-07-wireshark-panes.svg",
+      "imageAlt": "Makieta Wiresharka: u góry zielony pasek filtra „http || tcp.flags.syn == 1”, niżej lista czterech pakietów (SYN, SYN-ACK, GET /users/42, odpowiedź 200), pod nią drzewo szczegółów pakietu 4 z warstwami Frame, Ethernet, IP, TCP i HTTP, a na dole panel bajtów z podświetlonym fragmentem GET /users.",
+      "body": "Okno Wiresharka ma trzy główne panele, które odpowiadają trzem poziomom szczegółowości:",
+      "code": "1. LISTA PAKIETÓW — jeden wiersz na ramkę\n   No.  Time      Source       Destination  Protocol Length Info\n   kolumna Info to streszczenie najwyższej rozpoznanej warstwy (np. „GET /users/42 HTTP/1.1”)\n   kolory: reguły kolorowania (View → Coloring Rules); czarne tło z czerwonym tekstem = problem TCP\n\n2. SZCZEGÓŁY (drzewo dekoderów) — warstwy od dołu do góry:\n   Frame        metadane przechwycenia: czas, długość, interfejs\n   Ethernet II  MAC źródłowy/docelowy, EtherType\n   IPv4/IPv6    adresy, TTL, flagi, suma kontrolna\n   TCP/UDP      porty, seq/ack, flagi, okno, [analiza: retransmisje, RTT, numer strumienia]\n   HTTP/TLS/DNS pola protokołu aplikacyjnego\n   pola w [nawiasach] wylicza Wireshark — nie ma ich w bajtach na kablu\n\n3. BAJTY — szesnastkowo i ASCII; kliknięcie pola w drzewie podświetla jego bajty\n\nSkróty, które oszczędzają godziny:\n   prawy klik na polu → Apply as Filter / Prepare as Filter  (gotowy filtr bez znajomości nazwy pola)\n   prawy klik na polu → Apply as Column                       (np. http.host jako kolumna)\n   Statistics → Conversations / Endpoints / Protocol Hierarchy / IO Graphs\n   Analyze → Expert Information                                (retransmisje, RST, błędy)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "tcpdump: niezbędnik",
+      "body": "Na serwerach zwykle nie ma GUI — przechwytujesz `tcpdump`, a plik analizujesz w Wiresharku na swoim komputerze. Najważniejsze opcje:",
+      "code": "tcpdump -D                                   # lista interfejsów\ntcpdump -i eth0 -nn port 8080                # -nn: bez rozwiązywania nazw hostów i portów (szybciej, czytelniej)\ntcpdump -i any -nn host 10.0.3.10 and tcp port 5432\ntcpdump -i eth0 -nn -c 20 'tcp[tcpflags] & (tcp-syn|tcp-rst) != 0'   # tylko SYN i RST (pierwsze 20)\ntcpdump -i eth0 -nn -A -s 0 port 8080        # -A: treść jako ASCII (HTTP bez TLS), -s 0: cały pakiet\ntcpdump -i eth0 -nn -e arp                   # -e: pokaż adresy MAC (warstwa 2)\ntcpdump -i eth0 -nn -v icmp                  # -v: więcej pól (TTL, długość, flagi)\ntcpdump -i eth0 -nn -w cap.pcap port 443     # zapis do pliku (bez dekodowania na ekran)\ntcpdump -r cap.pcap -nn 'tcp port 443 and host 1.2.3.4'   # odczyt z pliku z dodatkowym filtrem\ntcpdump -i eth0 -w ring-%H%M.pcap -G 300 -W 12 -s 256 port 53   # rotacja co 5 min, 12 plików, 256 B z pakietu\n\n# Przykładowa linia wyniku:\n# 14:02:11.481235 IP 172.17.0.3.51334 > 172.17.0.2.8080: Flags [P.], seq 1:80, ack 1, win 502, length 79: HTTP: GET /users/42 HTTP/1.1\n# Flagi: [S] SYN, [S.] SYN-ACK, [.] ACK, [P.] PSH-ACK, [F.] FIN-ACK, [R] RST"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Pierwszy capture: żądanie do Spring Boot w labie",
+      "image": "netsec/ns01-07-follow-stream.svg",
+      "imageAlt": "Okno Follow TCP Stream z żądaniem GET /users/42 klienta na czerwono i odpowiedzią HTTP 200 z JSON-em na niebiesko; ramki z opisem kolorów, filtrem tcp.stream eq 3 i ostrzeżeniem, że przechwycony ruch jawny zawiera dane osobowe.",
+      "body": "Ćwiczenie z planu lekcji — porównasz żądanie na drucie z logiem aplikacji:\n1. **Uruchom lab**: aplikacja Spring Boot na porcie 8080 (HTTP bez TLS, tylko w labie) i kontener klienta w tej samej sieci Dockera. Włącz w aplikacji logowanie żądań (`logging.level.org.springframework.web=DEBUG` lub `CommonsRequestLoggingFilter`).\n2. **Wybierz punkt przechwytywania** — najprościej interfejs kontenera aplikacji: `docker run --rm -it --net container:app -v $PWD:/cap nicolaka/netshoot tcpdump -i eth0 -nn -w /cap/first.pcap port 8080`.\n3. **Wygeneruj ruch**: `docker exec client curl -s http://app:8080/users/42`. Zatrzymaj tcpdump (Ctrl+C) — wypisze liczbę przechwyconych pakietów.\n4. **Otwórz plik w Wiresharku** i wpisz filtr `http`. Zobaczysz żądanie i odpowiedź.\n5. **Prześledź połączenie**: prawy klik → *Follow → TCP Stream*. Czerwony tekst to klient, niebieski — serwer. Wireshark ustawił filtr `tcp.stream eq N`; widać też handshake (SYN, SYN-ACK, ACK) i zamknięcie (FIN).\n6. **Odczytaj nagłówki z bajtów**: kliknij `Host` w drzewie HTTP i znajdź jego bajty w panelu dolnym (`48 6f 73 74 3a` = „Host:”).\n7. **Porównaj z logiem aplikacji**: ścieżka, nagłówki, czas. Zwróć uwagę, że aplikacja widzi adres klienta 172.17.0.3 — ten sam co w pakiecie, bo nie ma po drodze proxy.\n8. **Policz czasy**: *Statistics → Conversations → TCP* (czas trwania) i kolumna *Time* z `View → Time Display Format → Seconds Since Previous Displayed Packet` — ile czekał klient na odpowiedź.\n9. **Posprzątaj**: plik zawiera dane (w realnej aplikacji — osobowe). Usuń go po ćwiczeniu albo przechowuj w zaszyfrowanym katalogu.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "BPF vs filtr wyświetlania — ściąga składni",
+      "image": "netsec/ns01-07-filters.svg",
+      "imageAlt": "Lejek po lewej: cały ruch na interfejsie przechodzi przez filtr BPF tcp port 8080 i trafia do pliku pcapng. Lejek po prawej: filtr wyświetlania http.response.code >= 500 tylko ukrywa pakiety w pliku. Podpis: czego nie przechwyciłeś filtrem BPF, tego już nie odzyskasz.",
+      "body": "Dwie różne składnie, które łatwo pomylić. BPF jest prosty i działa w jądrze; filtr wyświetlania zna tysiące pól protokołów.",
+      "code": "cel                                 BPF (tcpdump, dumpcap -f)            filtr wyświetlania (Wireshark, tshark -Y)\nruch z/do hosta                     host 10.0.0.5                        ip.addr == 10.0.0.5\ntylko jako źródło                   src host 10.0.0.5                    ip.src == 10.0.0.5\nport TCP                            tcp port 443                         tcp.port == 443\nzakres portów                       portrange 8000-8999                  tcp.port in {8000..8999}\npodsieć                             net 192.168.1.0/24                   ip.addr == 192.168.1.0/24\nbez SSH                             not port 22                          !(tcp.port == 22)\ntylko SYN                           'tcp[tcpflags] == tcp-syn'           tcp.flags.syn == 1 && tcp.flags.ack == 0\nDNS                                 udp port 53                          dns\nzapytania DNS o domenę              (niewygodne w BPF)                   dns.qry.name contains \"javaquest\"\nmetoda HTTP                         (niewygodne w BPF)                   http.request.method == \"POST\"\nbłędy serwera HTTP                  (niemożliwe w BPF)                   http.response.code >= 500\nSNI w TLS                           (niemożliwe w BPF)                   tls.handshake.extensions_server_name == \"api.example.com\"\nretransmisje                        (niemożliwe w BPF)                   tcp.analysis.retransmission\nreset połączeń                      'tcp[tcpflags] & tcp-rst != 0'       tcp.flags.reset == 1\n\nUwaga: w filtrze wyświetlania „!=” przy polach występujących wielokrotnie bywa mylące —\nbezpieczniej !(ip.addr == 10.0.0.5) niż ip.addr != 10.0.0.5."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Przechwytywanie w kontenerach, Kubernetesie i tshark",
+      "body": "W kontenerach zwykle nie ma tcpdump (obrazy distroless). Zamiast instalować narzędzia w obrazie produkcyjnym, dołącz się do przestrzeni nazw sieci kontenera:",
+      "code": "# Docker: kontener narzędziowy w przestrzeni sieci aplikacji\ndocker run --rm -it --net container:app -v \"$PWD:/cap\" nicolaka/netshoot \\\n    tcpdump -i eth0 -nn -w /cap/app.pcap\n\n# Linux: nsenter do przestrzeni sieci procesu (PID z docker inspect -f '{{.State.Pid}}' app)\nsudo nsenter -t <PID> -n tcpdump -i eth0 -nn -w app.pcap\n\n# Kubernetes: kontener efemeryczny w podzie (bez restartu)\nkubectl debug -it pod/orders-7d9c --image=nicolaka/netshoot --target=orders -- \\\n    tcpdump -i eth0 -nn -w /tmp/orders.pcap port 8080\nkubectl cp orders-7d9c:/tmp/orders.pcap ./orders.pcap -c <nazwa-kontenera-debug>\n\n# Windows bez instalacji: pktmon (wbudowany)\npktmon start --capture --pkt-size 0 -f C:\\cap\\trace.etl ; pktmon stop\npktmon etl2pcap C:\\cap\\trace.etl -o C:\\cap\\trace.pcapng\n\n# tshark: Wireshark w wierszu poleceń — wyciąganie danych do analizy i skryptów\ntshark -r app.pcap -Y 'http.request' -T fields -e frame.time_relative -e ip.src -e http.request.method -e http.request.uri\ntshark -r app.pcap -q -z conv,tcp                 # statystyka rozmów TCP\ntshark -r app.pcap -q -z http,tree                # statystyka metod i kodów HTTP\neditcap -A '2026-11-13 14:00:00' -B '2026-11-13 14:05:00' big.pcap window.pcap   # wycięcie okna czasu\nmergecap -w all.pcap client.pcap server.pcap      # złączenie przechwyceń z dwóch punktów\nsha256sum app.pcap > app.pcap.sha256              # skrót do łańcucha dowodowego"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Kiedy capture ratuje developera i analityka SOC",
+      "body": "**Developer / SRE:**\n- `Connection reset` lub `502` — kto wysłał RST: serwer, proxy czy firewall? Przechwytywanie po obu stronach proxy rozstrzyga spór.\n- „Klient wysyła zły nagłówek” — na drucie widać dokładnie, co wysłał `RestClient` lub przeglądarka (przy HTTPS: w labie z kluczami sesji).\n- Opóźnienia — gdzie mija czas: handshake, TLS, czekanie na pierwszy bajt, retransmisje (`tcp.analysis.retransmission`, kolumna `tcp.time_delta`).\n- Integracje z niestandardowymi protokołami (Kafka, PostgreSQL, Redis) — Wireshark ma dekodery większości z nich (`pgsql`, `kafka`, `resp`).\n\n**Blue team / SOC / IR:**\n- **Network Security Monitoring** — sensory (Security Onion, Zeek, Suricata) przechwytują ruch z SPAN/TAP; pełny zapis pakietów (FPC) pozwala odtworzyć incydent po fakcie.\n- **Analiza alertu** — alert IDS to hipoteza; pcap z okna czasowego to dowód: co zostało wysłane, czy atak się powiódł.\n- **Dowody w incydencie** — pcap zabezpiecza się z sumą SHA-256, opisem miejsca i czasu przechwycenia oraz łańcuchem dowodowym (rozdział DFIR).\n- **Wyciąganie artefaktów** — pliki przesłane HTTP/SMB (`File → Export Objects`), zapytania DNS do domen C2, certyfikaty serwerów.\n- **Egzaminy** — BTL1, CyberDefenders, CySA+ PBQ: analiza pcap to standardowe zadanie praktyczne.\n\n**Szyfrowanie**: przy HTTPS zobaczysz tylko handshake TLS (SNI, certyfikat serwera w TLS 1.2; w TLS 1.3 certyfikat jest zaszyfrowany) i rekordy *Application Data*. W labie możesz odszyfrować ruch, eksportując klucze sesji (`SSLKEYLOGFILE` dla curl i przeglądarek; dla JVM — agent, np. *extract-tls-secrets*) i wskazując plik w *Preferences → Protocols → TLS*. Nigdy nie rób tego na produkcji bez procedury — plik z kluczami odszyfrowuje wszystko.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Najczęstsze błędy przy przechwytywaniu",
+      "body": "- **Zły interfejs** — przechwytujesz `eth0`, a ruch idzie przez `lo`, bridge Dockera albo tunel VPN. Zacznij od `tcpdump -D` i `ip route get <cel>`.\n- **Za wąski filtr BPF** — przechwytujesz tylko `port 443`, a problemem jest DNS albo ICMP „fragmentation needed”. W razie wątpliwości filtruj szeroko (`host X`), zawężaj w Wiresharku.\n- **Rozwiązywanie nazw w tcpdump** — bez `-nn` tcpdump wysyła zapytania DNS dla każdego adresu: spowalnia przechwytywanie i generuje własny ruch w pliku.\n- **Pełny dysk** — `tcpdump -w` bez rotacji na zajętym serwerze potrafi zapełnić partycję i położyć aplikację. Używaj `-C/-G/-W`, snaplen i limitu czasu.\n- **Artefakty offloadingu** — „błędne” sumy kontrolne i segmenty większe niż MTU na nadawcy to efekt TSO/checksum offload, nie awaria.\n- **Tryb promiscuous na przełączniku** — w sieci przełączanej nie zobaczysz cudzego ruchu (i dobrze); do tego służy SPAN/TAP.\n- **Wireshark uruchomiony jako root** — dekodery to złożony kod parsujący niezaufane dane; mają historię podatności. Przechwytuje `dumpcap` z uprawnieniami (grupa `wireshark`), a GUI działa jako zwykły użytkownik. Nieznane pliki pcap otwieraj w izolowanym środowisku.\n- **Udostępnianie pcap** — plik z ruchem jawnym zawiera hasła, ciasteczka, tokeny, dane osobowe. Nie wrzucaj go do zgłoszenia, na czat ani do repozytorium.\n- **Różne zegary** — łącząc przechwycenia z kilku maszyn, sprawdź synchronizację NTP, inaczej kolejność zdarzeń będzie fałszywa.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: „złap wszystko i wyślij na czat”",
+      "body": "Typowa reakcja na pilny incydent: przechwytywanie bez filtra, rotacji i limitu, na produkcji, z uprawnieniami roota w GUI, a plik trafia do zgłoszenia w systemie ticketowym.",
+      "code": "# na serwerze produkcyjnym z aplikacją płatności\nsudo tcpdump -i any -w /tmp/all.pcap           # bez filtra, bez snaplen, bez rotacji\n# ... po 2 godzinach: /tmp pełne, aplikacja nie może zapisywać plików tymczasowych → awaria\n\nsudo wireshark /tmp/all.pcap                   # GUI z dekoderami jako root\nscp prod:/tmp/all.pcap . && upload do JIRA      # w pliku: tokeny sesji, dane kart w ruchu wewnętrznym bez TLS,\n                                               # nagłówki Authorization — dostępne dla każdego z dostępem do zgłoszenia"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: celowany, ograniczony i zabezpieczony capture",
+      "body": "Przechwytujemy tylko to, czego potrzebuje diagnoza, z limitami, a plik traktujemy jak dane wrażliwe: skrót, ograniczony dostęp, termin usunięcia. Zgodnie z procedurą i za zgodą właściciela systemu.",
+      "code": "# 1. Zakres: jeden kierunek ruchu, jedna usługa, ograniczony rozmiar i czas\nsudo timeout 600 tcpdump -i eth0 -nn -s 512 \\\n     -w /var/tmp/cap/payments-%H%M%S.pcap -G 120 -W 5 \\\n     'host 10.0.3.10 and tcp port 5432'\n\n# 2. Uprawnienia: tylko dumpcap ma capabilities, analiza jako zwykły użytkownik\nsudo setcap cap_net_raw,cap_net_admin=eip /usr/bin/dumpcap   # (lub grupa wireshark z dpkg-reconfigure)\n\n# 3. Ochrona pliku\nchmod 600 /var/tmp/cap/*.pcap\nsha256sum /var/tmp/cap/*.pcap > /var/tmp/cap/SHA256SUMS      # integralność (dowód)\ngpg --encrypt -r soc-team /var/tmp/cap/payments-*.pcap        # przekazanie tylko zaszyfrowane\n\n# 4. Minimalizacja przy udostępnianiu: tylko istotne pakiety, bez treści\ntshark -r payments-140210.pcap -Y 'tcp.flags.reset == 1' -w resets-only.pcap\n# opcjonalnie anonimizacja adresów/treści (np. TraceWrangler) przed wysłaniem do dostawcy\n\n# 5. Usunięcie po zamknięciu zgłoszenia — zgodnie z polityką retencji"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy sięgać po capture, a kiedy po logi i metryki",
+      "body": "- **Najpierw logi i metryki** — są tańsze, stale zbierane i nie zawierają tylu danych wrażliwych. Wystarczą przy większości problemów aplikacyjnych.\n- **Capture, gdy logi się nie zgadzają lub milczą** — RST z nieznanego źródła, zawieszone połączenia, podejrzenie, że coś po drodze modyfikuje ruch (proxy, NAT, firewall, MTU).\n- **Capture po obu stronach** podejrzanego elementu, gdy zespoły przerzucają się winą („to sieć” / „to aplikacja”).\n- **Pełny zapis pakietów (FPC) w NSM** — w strefach o wysokiej wartości (DMZ, wyjście do Internetu), z retencją dni–tygodni; dla incydentów to bezcenne źródło.\n- **Metadane zamiast pakietów** (Zeek, NetFlow) — gdy potrzebujesz długiej retencji i szerokiego pokrycia przy mniejszych kosztach i ryzyku prywatności.\n- **Nigdy bez uprawnienia** — przechwytuj tylko ruch własnych systemów lub za pisemną zgodą ich właściciela i zgodnie z polityką firmy. Nieuprawnione przechwytywanie cudzej transmisji jest przestępstwem (art. 267 § 3 Kodeksu karnego), a ruch zawierający dane osobowe podlega RODO.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Capture pokazuje, co naprawdę przeszło przez sieć; tcpdump przechwytuje, Wireshark analizuje (libpcap/Npcap, pliki pcap/pcapng).\n- **Miejsce przechwytywania** decyduje o wyniku: kontener, bridge, interfejs hosta (po NAT), lo, SPAN/TAP.\n- **BPF** filtruje w jądrze przed zapisem (`host`, `port`, `net`); **filtr wyświetlania** ukrywa w zapisanym pliku (`ip.addr`, `tcp.port`, `http.response.code`).\n- Trzy panele Wiresharka: lista, szczegóły, bajty; *Follow TCP Stream*, *Conversations*, *Expert Information*, *Export Objects*.\n- `tcpdump -nn`, `-w` z rotacją (`-G`, `-W`, `-C`) i snaplen; w kontenerach `--net container:`, `nsenter`, `kubectl debug`; `tshark` do skryptów.\n- Pliki pcap to **dane wrażliwe**: minimalizacja, ograniczony dostęp, skrót SHA-256, szyfrowanie, retencja.\n- Przechwytuj wyłącznie za zgodą i we własnych systemach — etyka i prawo są częścią warsztatu obrońcy.\n- Następna lekcja: **Boss — Packet Journey**: śledzisz jedno żądanie przez NAT, proxy i aplikację w trzech punktach przechwytywania.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Napisz filtr przechwytywania BPF (dla tcpdump): cały ruch do i z hosta 10.0.3.10 poza SSH.",
+      "hint": "BPF używa słów host, net, port, src/dst, and/or/not.",
+      "solution": "tcpdump -i eth0 -nn host 10.0.3.10 and not port 22"
+    },
+    {
+      "prompt": "Napisz filtr przechwytywania BPF (dla tcpdump): tylko zapytania i odpowiedzi DNS.",
+      "hint": "BPF używa słów host, net, port, src/dst, and/or/not.",
+      "solution": "tcpdump -i eth0 -nn udp port 53 or tcp port 53"
+    },
+    {
+      "prompt": "Napisz filtr przechwytywania BPF (dla tcpdump): połączenia do PostgreSQL w podsieci 10.0.3.0/24.",
+      "hint": "BPF używa słów host, net, port, src/dst, and/or/not.",
+      "solution": "tcpdump -i eth0 -nn tcp port 5432 and net 10.0.3.0/24"
+    },
+    {
+      "prompt": "Napisz filtr przechwytywania BPF (dla tcpdump): tylko segmenty z flagą RST.",
+      "hint": "BPF używa słów host, net, port, src/dst, and/or/not.",
+      "solution": "tcpdump -i eth0 -nn 'tcp[tcpflags] & tcp-rst != 0'"
+    },
+    {
+      "prompt": "Napisz filtr przechwytywania BPF (dla tcpdump): ruch ICMP (w tym fragmentation needed).",
+      "hint": "BPF używa słów host, net, port, src/dst, and/or/not.",
+      "solution": "tcpdump -i eth0 -nn icmp or icmp6"
+    },
+    {
+      "prompt": "Napisz filtr przechwytywania BPF (dla tcpdump): ruch HTTP na portach 8000–8999 z hosta 172.17.0.3.",
+      "hint": "BPF używa słów host, net, port, src/dst, and/or/not.",
+      "solution": "tcpdump -i eth0 -nn src host 172.17.0.3 and tcp portrange 8000-8999"
+    },
+    {
+      "prompt": "Napisz filtr wyświetlania Wiresharka: wszystkie żądania POST do ścieżek zaczynających się od /api/admin.",
+      "hint": "Użyj nazw pól dekoderów; prawy klik na polu → Prepare as Filter podpowie nazwę.",
+      "solution": "http.request.method == \"POST\" && http.request.uri matches \"^/api/admin\""
+    },
+    {
+      "prompt": "Napisz filtr wyświetlania Wiresharka: odpowiedzi HTTP z błędami serwera.",
+      "hint": "Użyj nazw pól dekoderów; prawy klik na polu → Prepare as Filter podpowie nazwę.",
+      "solution": "http.response.code >= 500"
+    },
+    {
+      "prompt": "Napisz filtr wyświetlania Wiresharka: handshake TLS z SNI zawierającym „javaquest”.",
+      "hint": "Użyj nazw pól dekoderów; prawy klik na polu → Prepare as Filter podpowie nazwę.",
+      "solution": "tls.handshake.type == 1 && tls.handshake.extensions_server_name contains \"javaquest\""
+    },
+    {
+      "prompt": "Napisz filtr wyświetlania Wiresharka: retransmisje i zduplikowane ACK.",
+      "hint": "Użyj nazw pól dekoderów; prawy klik na polu → Prepare as Filter podpowie nazwę.",
+      "solution": "tcp.analysis.retransmission || tcp.analysis.duplicate_ack"
+    },
+    {
+      "prompt": "Napisz filtr wyświetlania Wiresharka: zapytania DNS, które dostały odpowiedź NXDOMAIN.",
+      "hint": "Użyj nazw pól dekoderów; prawy klik na polu → Prepare as Filter podpowie nazwę.",
+      "solution": "dns.flags.rcode == 3"
+    },
+    {
+      "prompt": "Napisz filtr wyświetlania Wiresharka: nowe połączenia TCP (pierwszy SYN) do portu 22.",
+      "hint": "Użyj nazw pól dekoderów; prawy klik na polu → Prepare as Filter podpowie nazwę.",
+      "solution": "tcp.flags.syn == 1 && tcp.flags.ack == 0 && tcp.dstport == 22"
+    },
+    {
+      "prompt": "W labie Docker przechwyć żądanie curl do aplikacji Spring Boot na interfejsie kontenera aplikacji, otwórz plik w Wiresharku, użyj Follow TCP Stream i porównaj nagłówki z logiem aplikacji. Zapisz trzy różnice lub zgodności.",
+      "hint": "Postępuj według kroków z lekcji; włącz logowanie żądań w aplikacji.",
+      "solution": "Przykładowe obserwacje: ścieżka i metoda identyczne; curl dodał nagłówki User-Agent: curl/8.x i Accept: */*, których kod nie ustawiał; aplikacja widzi adres klienta 172.17.0.3 jak w pakiecie (brak proxy); odpowiedź ma nagłówki dodane przez Spring (Content-Type, Transfer-Encoding: chunked lub Content-Length), których nie ma w kodzie kontrolera."
+    },
+    {
+      "prompt": "Przechwyć to samo żądanie jednocześnie na interfejsie kontenera klienta i na interfejsie hosta podczas wywołania serwisu zewnętrznego (np. curl https://example.com z kontenera). Porównaj adresy IP i porty w obu plikach.",
+      "hint": "Ruch wychodzący z kontenera przechodzi przez NAT (masquerade) na hoście.",
+      "solution": "W kontenerze: źródło 172.17.0.x i port efemeryczny kontenera. Na hoście: źródło = adres hosta (po SNAT/masquerade), port może zostać zmieniony. Docelowy adres i port bez zmian. W pliku hosta widać też ruch innych procesów — potrzebny filtr. To praktyczna demonstracja enkapsulacji i NAT z poprzednich lekcji."
+    },
+    {
+      "prompt": "Użyj tshark, aby z pliku z ruchem HTTP wypisać tabelę: czas względny, adres klienta, metoda, URI i kod odpowiedzi. Jak powiązać żądanie z odpowiedzią?",
+      "hint": "Pola: frame.time_relative, ip.src, http.request.method, http.request.uri, http.response.code; Wireshark łączy je polem http.response_in / http.request_in.",
+      "solution": "tshark -r app.pcap -Y 'http.request' -T fields -E header=y -e frame.number -e frame.time_relative -e ip.src -e http.request.method -e http.request.uri -e http.response_in\ntshark -r app.pcap -Y 'http.response' -T fields -e frame.number -e http.response.code -e http.request_in -e http.time\nPole http.response_in w żądaniu wskazuje numer ramki odpowiedzi; http.time to czas od żądania do odpowiedzi."
+    },
+    {
+      "prompt": "Zapisz przechwytywanie z rotacją: pliki co 10 minut, maksymalnie 6 plików, tylko pierwsze 256 bajtów każdego pakietu, tylko ruch DNS. Wyjaśnij, dlaczego taki zapis jest bezpieczniejszy dla serwera i prywatności.",
+      "hint": "Opcje -G (sekundy), -W (liczba plików), -s (snaplen), nazwa pliku z formatem czasu.",
+      "solution": "tcpdump -i eth0 -nn -s 256 -G 600 -W 6 -w 'dns-%Y%m%d-%H%M.pcap' port 53\nRotacja ogranicza zajętość dysku (najwyżej 6 plików), snaplen ogranicza ilość treści (mniej danych wrażliwych, mniejsze pliki), filtr ogranicza zakres do potrzebnego protokołu."
+    },
+    {
+      "prompt": "Z otrzymanego pliku pcap (np. z ćwiczenia CyberDefenders) wyeksportuj pliki przesłane przez HTTP i policz ich skróty SHA-256. Dlaczego nie należy otwierać ich na swoim komputerze?",
+      "hint": "File → Export Objects → HTTP; skróty: sha256sum lub Get-FileHash.",
+      "solution": "Wireshark: File → Export Objects → HTTP → Save All do odizolowanego katalogu (najlepiej w VM analizy). Skróty: sha256sum * — reputację sprawdza się po skrócie (np. w VirusTotal), bez wysyłania pliku. Pliki mogą być złośliwe (malware dostarczone przez HTTP); otwiera się je tylko w odizolowanym laboratorium analizy, nigdy na stacji roboczej."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego uruchamianie Wiresharka jako root jest złą praktyką, i skonfiguruj przechwytywanie jako zwykły użytkownik na Linuksie.",
+      "hint": "Rozdziel uprawnienia: dumpcap przechwytuje, GUI analizuje.",
+      "solution": "Wireshark zawiera setki dekoderów parsujących niezaufane dane z sieci — błąd w jednym z nich (historycznie zdarzały się podatności) przy uruchomieniu jako root daje napastnikowi pełne uprawnienia. Konfiguracja: sudo dpkg-reconfigure wireshark-common (tak), sudo usermod -aG wireshark $USER (ponowne zalogowanie) lub setcap cap_net_raw,cap_net_admin=eip /usr/bin/dumpcap. GUI uruchamiane jako zwykły użytkownik."
+    },
+    {
+      "prompt": "Przechwyć ruch HTTPS z curl w labie, a następnie odszyfruj go w Wiresharku za pomocą SSLKEYLOGFILE. Opisz, co było widoczne przed i po odszyfrowaniu.",
+      "hint": "export SSLKEYLOGFILE=$PWD/keys.log przed curl; w Wiresharku Preferences → Protocols → TLS → (Pre)-Master-Secret log filename.",
+      "solution": "Przed: handshake TLS (ClientHello z SNI, ServerHello), w TLS 1.3 reszta zaszyfrowana; rekordy Application Data bez treści. Po: Wireshark pokazuje zdekodowane HTTP/2 lub HTTP/1.1 — metodę, ścieżkę, nagłówki, odpowiedź. Plik keys.log jest równie wrażliwy jak klucz prywatny: usunąć po ćwiczeniu."
+    },
+    {
+      "prompt": "Analityk dostał alert IDS „ET POLICY curl User-Agent Outbound” z serwera aplikacji. Opisz, jak użyjesz pcap z sensora NSM, aby ocenić alert (kroki i filtry).",
+      "hint": "Alert to hipoteza; szukasz kontekstu przed i po.",
+      "solution": "Kroki: 1) wyciągnij okno czasowe wokół alertu (editcap -A/-B) dla hosta (ip.addr == serwer); 2) Follow TCP Stream — dokąd (http.host, tls SNI), co pobrano/wysłano; 3) sprawdź, czy to znane zachowanie (skrypt aktualizacji, health check) — porównaj z historią; 4) Export Objects — skróty pobranych plików; 5) dns.qry.name dla domen kontaktowanych przez host; 6) decyzja: fałszywy alarm (dokumentacja, tuning) lub incydent (izolacja hosta, eskalacja)."
+    },
+    {
+      "prompt": "Dlaczego w sieci z przełącznikiem włączenie trybu promiscuous na laptopie nie pozwala zobaczyć ruchu kolegów? Jakie mechanizmy służą legalnemu monitorowaniu wielu hostów?",
+      "hint": "Jak przełącznik wysyła ramki unicast?",
+      "solution": "Przełącznik wysyła ramki unicast tylko na port docelowego MAC, więc do laptopa trafia jego własny ruch oraz broadcast/multicast (i ramki do nieznanych MAC — flooding). Legalne monitorowanie: port lustrzany SPAN/RSPAN/ERSPAN, sprzętowy TAP, przechwytywanie na hostach (agenty EDR/NSM), NetFlow/IPFIX z routerów. Próba obejścia (np. ARP spoofing) to atak, wykrywany przez DAI i IDS."
+    },
+    {
+      "prompt": "Przygotuj krótką procedurę (6–8 punktów) przechwytywania ruchu na produkcji dla swojego zespołu: zgody, zakres, ochrona danych, przechowywanie, usunięcie.",
+      "hint": "Pomyśl o RODO, uprawnieniach, wpływie na system i dowodach.",
+      "solution": "Przykład: 1) zgłoszenie z uzasadnieniem i zgoda właściciela systemu/bezpieczeństwa; 2) minimalny zakres (host, port, czas, snaplen); 3) rotacja i limit dysku; 4) przechwytywanie przez dumpcap/tcpdump z uprawnieniami, analiza bez roota; 5) skrót SHA-256 i opis (kto, gdzie, kiedy); 6) przechowywanie zaszyfrowane, dostęp tylko dla zespołu, nie w ticketach/czatach; 7) udostępnianie wyłącznie przefiltrowanych lub zanonimizowanych wycinków; 8) usunięcie po zamknięciu sprawy, wpis w rejestrze."
+    },
+    {
+      "prompt": "Na przechwyceniu połączenia aplikacji z PostgreSQL znajdź w Wiresharku zapytanie SQL i czas jego wykonania. Jaki wniosek dla bezpieczeństwa płynie z tego, że zapytanie jest czytelne?",
+      "hint": "Dekoder pgsql; filtr pgsql; szukaj komunikatów Parse/Bind/Query i odpowiedzi.",
+      "solution": "Filtr pgsql pokazuje komunikaty protokołu: Query/Parse (treść SQL), Bind (parametry), DataRow (dane wyników), CommandComplete. Czas: różnica między żądaniem a CommandComplete (kolumna czasu względnego). Wniosek: połączenie z bazą bez TLS przesyła zapytania, parametry i dane jawnie — każdy z dostępem do sieci (lub do pcap) je zobaczy. Należy włączyć sslmode=verify-full w JDBC i TLS na serwerze PostgreSQL."
+    },
+    {
+      "prompt": "Porównaj, co zobaczysz w Wiresharku dla tego samego żądania przez HTTP/1.1 bez TLS, HTTPS z TLS 1.2 i HTTPS z TLS 1.3 (bez kluczy sesji).",
+      "hint": "Co jest zaszyfrowane w każdej wersji?",
+      "solution": "HTTP/1.1: wszystko jawne — metoda, ścieżka, nagłówki, treść. TLS 1.2: jawny ClientHello (SNI), ServerHello i certyfikat serwera, potem zaszyfrowane Application Data. TLS 1.3: jawny ClientHello (SNI, chyba że ECH) i ServerHello; certyfikat już zaszyfrowany; reszta zaszyfrowana. We wszystkich wariantach widać adresy IP, porty, rozmiary i czasy pakietów."
+    },
+    {
+      "prompt": "Zinterpretuj fragment wyniku tcpdump i wskaż warstwę oraz prawdopodobną przyczynę:\n10:01:02.100 IP 10.0.1.5.48812 > 10.0.3.10.5432: Flags [S], seq 1912, win 64240, options [mss 1460,sackOK,TS val 1 ecr 0,nop,wscale 7], length 0\n10:01:02.100 IP 10.0.3.10.5432 > 10.0.1.5.48812: Flags [R.], seq 0, ack 1913, win 0, length 0",
+      "hint": "Zwróć uwagę na flagi, odpowiedzi i odstępy czasu.",
+      "solution": "Klient wysłał SYN do 5432, host bazy natychmiast odpowiedział RST — host żyje, ale nic nie nasłuchuje na 5432 (lub nasłuchuje na innym adresie). W Javie: ConnectException: Connection refused."
+    },
+    {
+      "prompt": "Zinterpretuj fragment wyniku tcpdump i wskaż warstwę oraz prawdopodobną przyczynę:\n10:05:00.000 IP 10.0.1.5.50110 > 10.0.9.20.443: Flags [S], seq 77, win 64240, length 0\n10:05:01.012 IP 10.0.1.5.50110 > 10.0.9.20.443: Flags [S], seq 77, win 64240, length 0\n10:05:03.044 IP 10.0.1.5.50110 > 10.0.9.20.443: Flags [S], seq 77, win 64240, length 0",
+      "hint": "Zwróć uwagę na flagi, odpowiedzi i odstępy czasu.",
+      "solution": "Te same SYN-y ponawiane po ~1 s i ~2 s (wykładnicze odstępy), bez żadnej odpowiedzi — pakiety giną po drodze (firewall DROP, Security Group, brak trasy powrotnej). W Javie: SocketTimeoutException: Connect timed out."
+    },
+    {
+      "prompt": "Zinterpretuj fragment wyniku tcpdump i wskaż warstwę oraz prawdopodobną przyczynę:\n10:07:11.300 ARP, Request who-has 192.168.1.1 tell 192.168.1.20, length 28\n10:07:12.301 ARP, Request who-has 192.168.1.1 tell 192.168.1.20, length 28\n10:07:13.302 ARP, Request who-has 192.168.1.1 tell 192.168.1.20, length 28",
+      "hint": "Zwróć uwagę na flagi, odpowiedzi i odstępy czasu.",
+      "solution": "Host pyta o MAC bramy i nie dostaje odpowiedzi (brak „is-at”) — problem warstwy 2: brama wyłączona, zły VLAN na porcie, zła podsieć lub odcięty kabel po drodze."
+    },
+    {
+      "prompt": "W labie zatrzymaj aplikację i przechwyć próbę połączenia curl, a potem zablokuj port regułą DROP w nftables i przechwyć ponownie. Porównaj oba przechwycenia i komunikaty curl.",
+      "hint": "Pierwszy przypadek: RST; drugi: retransmisje SYN.",
+      "solution": "Zatrzymana aplikacja: SYN → RST,ACK natychmiast; curl: „Failed to connect … Connection refused” w milisekundach. DROP: SYN, ponowienia SYN co 1, 2, 4 s, brak odpowiedzi; curl: „Connection timed out” po czasie timeoutu. Wniosek: refused = ktoś odpowiedział, timeout = nikt nie odpowiedział. Reguła REJECT zachowałaby się jak refused (lub ICMP port unreachable)."
+    },
+    {
+      "prompt": "Przechwyć ruch DNS z kontenera podczas curl do nazwy zewnętrznej i znajdź zapytania A/AAAA, ich odpowiedzi oraz czas odpowiedzi resolvera (dns.time).",
+      "hint": "Filtr dns; kolumna dns.time pokazuje czas odpowiedzi.",
+      "solution": "Widoczne zwykle dwa zapytania (A i AAAA) do resolvera Dockera 127.0.0.11 lub resolvera hosta; odpowiedzi z adresami i TTL; dns.time np. 0,002–0,05 s. Jeśli kontener ma search domains, mogą pojawić się dodatkowe zapytania z sufiksami (NXDOMAIN) — źródło spowolnień opisane w rozdziale DNS."
+    },
+    {
+      "prompt": "Użyj Statistics → IO Graphs, aby narysować liczbę pakietów i retransmisji na sekundę w przechwyceniu z testu z tc netem (1% strat). Jak odczytać wpływ strat na przepływność?",
+      "hint": "Dodaj wykres z filtrem tcp.analysis.retransmission.",
+      "solution": "Wykres 1: wszystkie pakiety/s; wykres 2: filtr tcp.analysis.retransmission. Przy 1% strat widać regularne retransmisje, a po nich spadki przepływności (zmniejszenie okna przeciążenia) i stopniowy wzrost — „zęby piły” typowe dla CUBIC. To praktyczna ilustracja wzoru Mathisa z poprzedniej lekcji."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „host 10.0.0.5”?",
+      "options": {
+        "A": "ip.addr == 192.168.1.0/24",
+        "B": "ip.src == 10.0.0.5",
+        "C": "ip.addr == 10.0.0.5",
+        "D": "tcp.port == 443"
+      },
+      "correct": "C",
+      "explanation": "BPF „host 10.0.0.5” ≈ filtr wyświetlania „ip.addr == 10.0.0.5”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „tcp port 443”?",
+      "options": {
+        "A": "ip.addr == 10.0.0.5",
+        "B": "ip.src == 10.0.0.5",
+        "C": "ip.addr == 192.168.1.0/24",
+        "D": "tcp.port == 443"
+      },
+      "correct": "D",
+      "explanation": "BPF „tcp port 443” ≈ filtr wyświetlania „tcp.port == 443”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „src host 10.0.0.5”?",
+      "options": {
+        "A": "ip.addr == 192.168.1.0/24",
+        "B": "ip.src == 10.0.0.5",
+        "C": "tcp.port == 443",
+        "D": "ip.addr == 10.0.0.5"
+      },
+      "correct": "B",
+      "explanation": "BPF „src host 10.0.0.5” ≈ filtr wyświetlania „ip.src == 10.0.0.5”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „net 192.168.1.0/24”?",
+      "options": {
+        "A": "ip.addr == 192.168.1.0/24",
+        "B": "tcp.port == 443",
+        "C": "ip.addr == 10.0.0.5",
+        "D": "ip.src == 10.0.0.5"
+      },
+      "correct": "A",
+      "explanation": "BPF „net 192.168.1.0/24” ≈ filtr wyświetlania „ip.addr == 192.168.1.0/24”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „udp port 53”?",
+      "options": {
+        "A": "ip.src == 10.0.0.5",
+        "B": "tcp.port == 443",
+        "C": "ip.addr == 10.0.0.5",
+        "D": "udp.port == 53"
+      },
+      "correct": "D",
+      "explanation": "BPF „udp port 53” ≈ filtr wyświetlania „udp.port == 53”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „not port 22”?",
+      "options": {
+        "A": "ip.src == 10.0.0.5",
+        "B": "!(tcp.port == 22 || udp.port == 22)",
+        "C": "ip.addr == 10.0.0.5",
+        "D": "tcp.port == 443"
+      },
+      "correct": "B",
+      "explanation": "BPF „not port 22” ≈ filtr wyświetlania „!(tcp.port == 22 || udp.port == 22)”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „dst port 8080”?",
+      "options": {
+        "A": "tcp.dstport == 8080 || udp.dstport == 8080",
+        "B": "tcp.port == 443",
+        "C": "ip.addr == 10.0.0.5",
+        "D": "ip.src == 10.0.0.5"
+      },
+      "correct": "A",
+      "explanation": "BPF „dst port 8080” ≈ filtr wyświetlania „tcp.dstport == 8080 || udp.dstport == 8080”."
+    },
+    {
+      "question": "Który filtr wyświetlania Wiresharka odpowiada filtrowi BPF „icmp”?",
+      "options": {
+        "A": "tcp.port == 443",
+        "B": "ip.addr == 10.0.0.5",
+        "C": "icmp",
+        "D": "ip.src == 10.0.0.5"
+      },
+      "correct": "C",
+      "explanation": "BPF „icmp” ≈ filtr wyświetlania „icmp”."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-nn”?",
+      "options": {
+        "A": "Przechwytuje ze wszystkich interfejsów",
+        "B": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "C": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "D": "Czyta pakiety z pliku"
+      },
+      "correct": "B",
+      "explanation": "-nn: nie rozwiązuje nazw hostów ani numerów portów."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-w plik.pcap”?",
+      "options": {
+        "A": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "B": "Przechwytuje ze wszystkich interfejsów",
+        "C": "Czyta pakiety z pliku",
+        "D": "Nie rozwiązuje nazw hostów ani numerów portów"
+      },
+      "correct": "A",
+      "explanation": "-w plik.pcap: zapisuje surowe pakiety do pliku zamiast je dekodować."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-r plik.pcap”?",
+      "options": {
+        "A": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "B": "Przechwytuje ze wszystkich interfejsów",
+        "C": "Czyta pakiety z pliku",
+        "D": "Nie rozwiązuje nazw hostów ani numerów portów"
+      },
+      "correct": "C",
+      "explanation": "-r plik.pcap: czyta pakiety z pliku."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-i any”?",
+      "options": {
+        "A": "Czyta pakiety z pliku",
+        "B": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "C": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "D": "Przechwytuje ze wszystkich interfejsów"
+      },
+      "correct": "D",
+      "explanation": "-i any: przechwytuje ze wszystkich interfejsów."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-c 50”?",
+      "options": {
+        "A": "Kończy po 50 pakietach",
+        "B": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "C": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "D": "Czyta pakiety z pliku"
+      },
+      "correct": "A",
+      "explanation": "-c 50: kończy po 50 pakietach."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-s 128”?",
+      "options": {
+        "A": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "B": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "C": "Zapisuje tylko pierwsze 128 bajtów każdego pakietu",
+        "D": "Czyta pakiety z pliku"
+      },
+      "correct": "C",
+      "explanation": "-s 128: zapisuje tylko pierwsze 128 bajtów każdego pakietu."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-A”?",
+      "options": {
+        "A": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "B": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "C": "Czyta pakiety z pliku",
+        "D": "Wypisuje treść pakietów jako ASCII"
+      },
+      "correct": "D",
+      "explanation": "-A: wypisuje treść pakietów jako ascii."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-e”?",
+      "options": {
+        "A": "Zapisuje surowe pakiety do pliku zamiast je dekodować",
+        "B": "Pokazuje nagłówek warstwy 2 (adresy MAC)",
+        "C": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "D": "Czyta pakiety z pliku"
+      },
+      "correct": "B",
+      "explanation": "-e: pokazuje nagłówek warstwy 2 (adresy mac)."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-G 300”?",
+      "options": {
+        "A": "Rozpoczyna nowy plik co 300 sekund",
+        "B": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "C": "Czyta pakiety z pliku",
+        "D": "Zapisuje surowe pakiety do pliku zamiast je dekodować"
+      },
+      "correct": "A",
+      "explanation": "-G 300: rozpoczyna nowy plik co 300 sekund."
+    },
+    {
+      "question": "Co robi opcja tcpdump „-D”?",
+      "options": {
+        "A": "Nie rozwiązuje nazw hostów ani numerów portów",
+        "B": "Czyta pakiety z pliku",
+        "C": "Wypisuje listę dostępnych interfejsów",
+        "D": "Zapisuje surowe pakiety do pliku zamiast je dekodować"
+      },
+      "correct": "C",
+      "explanation": "-D: wypisuje listę dostępnych interfejsów."
+    },
+    {
+      "question": "Co wyświetli filtr „tcp.analysis.retransmission”?",
+      "options": {
+        "A": "Odpowiedzi HTTP z błędem serwera",
+        "B": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP",
+        "C": "Nazwa serwera (SNI) w ClientHello TLS",
+        "D": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)"
+      },
+      "correct": "B",
+      "explanation": "tcp.analysis.retransmission → pakiety oznaczone przez wiresharka jako retransmisje tcp."
+    },
+    {
+      "question": "Co wyświetli filtr „http.response.code >= 500”?",
+      "options": {
+        "A": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP",
+        "B": "Nazwa serwera (SNI) w ClientHello TLS",
+        "C": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)",
+        "D": "Odpowiedzi HTTP z błędem serwera"
+      },
+      "correct": "D",
+      "explanation": "http.response.code >= 500 → odpowiedzi http z błędem serwera."
+    },
+    {
+      "question": "Co wyświetli filtr „dns.flags.rcode == 3”?",
+      "options": {
+        "A": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP",
+        "B": "Nazwa serwera (SNI) w ClientHello TLS",
+        "C": "Odpowiedzi HTTP z błędem serwera",
+        "D": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)"
+      },
+      "correct": "D",
+      "explanation": "dns.flags.rcode == 3 → odpowiedzi dns nxdomain (nazwa nie istnieje)."
+    },
+    {
+      "question": "Co wyświetli filtr „tls.handshake.extensions_server_name”?",
+      "options": {
+        "A": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)",
+        "B": "Nazwa serwera (SNI) w ClientHello TLS",
+        "C": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP",
+        "D": "Odpowiedzi HTTP z błędem serwera"
+      },
+      "correct": "B",
+      "explanation": "tls.handshake.extensions_server_name → nazwa serwera (sni) w clienthello tls."
+    },
+    {
+      "question": "Co wyświetli filtr „tcp.flags.reset == 1”?",
+      "options": {
+        "A": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)",
+        "B": "Odpowiedzi HTTP z błędem serwera",
+        "C": "Segmenty TCP z flagą RST",
+        "D": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP"
+      },
+      "correct": "C",
+      "explanation": "tcp.flags.reset == 1 → segmenty tcp z flagą rst."
+    },
+    {
+      "question": "Co wyświetli filtr „tcp.stream eq 7”?",
+      "options": {
+        "A": "Wszystkie pakiety ósmego połączenia TCP (numeracja od 0)",
+        "B": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP",
+        "C": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)",
+        "D": "Odpowiedzi HTTP z błędem serwera"
+      },
+      "correct": "A",
+      "explanation": "tcp.stream eq 7 → wszystkie pakiety ósmego połączenia tcp (numeracja od 0)."
+    },
+    {
+      "question": "Co wyświetli filtr „frame.time_delta_displayed > 1”?",
+      "options": {
+        "A": "Pakiety, przed którymi (wśród wyświetlanych) była przerwa dłuższa niż 1 s",
+        "B": "Odpowiedzi HTTP z błędem serwera",
+        "C": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP",
+        "D": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)"
+      },
+      "correct": "A",
+      "explanation": "frame.time_delta_displayed > 1 → pakiety, przed którymi (wśród wyświetlanych) była przerwa dłuższa niż 1 s."
+    },
+    {
+      "question": "Co wyświetli filtr „http.request.method == \"POST\"”?",
+      "options": {
+        "A": "Odpowiedzi HTTP z błędem serwera",
+        "B": "Odpowiedzi DNS NXDOMAIN (nazwa nie istnieje)",
+        "C": "Żądania HTTP metodą POST",
+        "D": "Pakiety oznaczone przez Wiresharka jako retransmisje TCP"
+      },
+      "correct": "C",
+      "explanation": "http.request.method == \"POST\" → żądania http metodą post."
+    },
+    {
+      "question": "Gdzie przechwycisz ruch? Chcesz zobaczyć ruch między dwoma kontenerami w tej samej sieci Dockera.",
+      "options": {
+        "A": "Na porcie SPAN przełącznika",
+        "B": "Na routerze ISP",
+        "C": "Na fizycznym interfejsie hosta",
+        "D": "Na bridge’u tej sieci Dockera (docker0/br-…) lub w przestrzeni sieci jednego z kontenerów"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy punkt: na bridge’u tej sieci dockera (docker0/br-…) lub w przestrzeni sieci jednego z kontenerów."
+    },
+    {
+      "question": "Gdzie przechwycisz ruch? Aplikacja łączy się z bazą na 127.0.0.1:5432.",
+      "options": {
+        "A": "Na bridge’u Dockera",
+        "B": "Na interfejsie pętli zwrotnej lo",
+        "C": "Na eth0",
+        "D": "Na porcie SPAN"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy punkt: na interfejsie pętli zwrotnej lo."
+    },
+    {
+      "question": "Gdzie przechwycisz ruch? Podejrzewasz, że reverse proxy zrywa połączenia z backendem.",
+      "options": {
+        "A": "Tylko na kliencie",
+        "B": "Na interfejsie pętli zwrotnej klienta",
+        "C": "Po obu stronach proxy: między klientem a proxy oraz między proxy a backendem",
+        "D": "Tylko na backendzie"
+      },
+      "correct": "C",
+      "explanation": "Najlepszy punkt: po obu stronach proxy: między klientem a proxy oraz między proxy a backendem."
+    },
+    {
+      "question": "Gdzie przechwycisz ruch? Sensor IDS ma widzieć ruch wszystkich serwerów w DMZ.",
+      "options": {
+        "A": "Na laptopie analityka w trybie promiscuous",
+        "B": "W kontenerze aplikacji",
+        "C": "Na interfejsie lo serwera",
+        "D": "Na porcie SPAN lub TAP-ie na łączu do DMZ"
+      },
+      "correct": "D",
+      "explanation": "Najlepszy punkt: na porcie span lub tap-ie na łączu do dmz."
+    },
+    {
+      "question": "Gdzie przechwycisz ruch? Chcesz sprawdzić, jaki adres źródłowy ma ruch kontenera po wyjściu z hosta.",
+      "options": {
+        "A": "Na interfejsie hosta skierowanym do sieci (po NAT)",
+        "B": "Na eth0 wewnątrz kontenera",
+        "C": "Na lo",
+        "D": "Na bridge’u Dockera"
+      },
+      "correct": "A",
+      "explanation": "Najlepszy punkt: na interfejsie hosta skierowanym do sieci (po nat)."
+    },
+    {
+      "question": "Gdzie przechwycisz ruch? Pod w Kubernetesie ma obraz distroless bez narzędzi.",
+      "options": {
+        "A": "Instalując tcpdump w obrazie produkcyjnym",
+        "B": "W kontenerze efemerycznym dołączonym przez kubectl debug --target",
+        "C": "Nie da się przechwycić ruchu poda",
+        "D": "Na węźle bez filtra, bo pod nie ma interfejsu"
+      },
+      "correct": "B",
+      "explanation": "Najlepszy punkt: w kontenerze efemerycznym dołączonym przez kubectl debug --target."
+    },
+    {
+      "question": "Czym różni się filtr przechwytywania od filtra wyświetlania?",
+      "options": {
+        "A": "Filtr przechwytywania decyduje, co zostanie zapisane; filtr wyświetlania tylko ukrywa pakiety w zapisanym pliku",
+        "B": "Filtr przechwytywania można zmienić po zapisie",
+        "C": "To ta sama składnia i ten sam efekt",
+        "D": "Filtr wyświetlania działa w jądrze"
+      },
+      "correct": "A",
+      "explanation": "Czego nie przechwycisz, tego nie odzyskasz."
+    },
+    {
+      "question": "Jaka biblioteka przechwytuje pakiety dla tcpdump i Wiresharka na Linuksie?",
+      "options": {
+        "A": "OpenSSL",
+        "B": "libpcap",
+        "C": "glibc",
+        "D": "Netty"
+      },
+      "correct": "B",
+      "explanation": "Na Windows jej odpowiednikiem jest Npcap."
+    },
+    {
+      "question": "Który proces Wiresharka powinien mieć uprawnienia do przechwytywania?",
+      "options": {
+        "A": "tshark zawsze jako root",
+        "B": "wireshark (GUI)",
+        "C": "żaden",
+        "D": "dumpcap"
+      },
+      "correct": "D",
+      "explanation": "GUI z dekoderami powinno działać jako zwykły użytkownik."
+    },
+    {
+      "question": "Dlaczego tcpdump uruchamia się zwykle z opcją -nn?",
+      "options": {
+        "A": "Aby przechwytywał tylko IPv6",
+        "B": "Aby nie zapisywał nagłówków",
+        "C": "Aby nie wykonywał zapytań DNS i nie tłumaczył portów na nazwy — szybciej i bez dodatkowego ruchu",
+        "D": "Aby szyfrował plik"
+      },
+      "correct": "C",
+      "explanation": "Rozwiązywanie nazw spowalnia i generuje własny ruch DNS w przechwyceniu."
+    },
+    {
+      "question": "Co oznacza tryb promiscuous karty sieciowej?",
+      "options": {
+        "A": "Karta szyfruje ruch",
+        "B": "Karta blokuje broadcast",
+        "C": "Karta działa tylko w Wi-Fi",
+        "D": "Karta przyjmuje ramki zaadresowane także do innych urządzeń"
+      },
+      "correct": "D",
+      "explanation": "W sieci z przełącznikiem i tak trafia do niej głównie własny ruch."
+    },
+    {
+      "question": "Do czego służy port SPAN na przełączniku?",
+      "options": {
+        "A": "Do blokowania pętli",
+        "B": "Do kopiowania ruchu z wybranych portów lub VLAN-ów na port analizatora",
+        "C": "Do zwiększenia przepustowości",
+        "D": "Do przydzielania adresów IP"
+      },
+      "correct": "B",
+      "explanation": "Tak zasila się sensory IDS/NSM; alternatywą jest TAP."
+    },
+    {
+      "question": "Co pokazuje Follow TCP Stream?",
+      "options": {
+        "A": "Złożoną treść jednego połączenia TCP w obu kierunkach",
+        "B": "Trasę pakietu przez routery",
+        "C": "Wszystkie połączenia hosta",
+        "D": "Tylko nagłówki IP"
+      },
+      "correct": "A",
+      "explanation": "Wireshark składa segmenty jednego strumienia (tcp.stream)."
+    },
+    {
+      "question": "Co zobaczysz w przechwyceniu HTTPS z TLS 1.3 bez kluczy sesji?",
+      "options": {
+        "A": "Hasła użytkowników",
+        "B": "Certyfikat serwera w postaci jawnej",
+        "C": "ClientHello z SNI, ServerHello, a dalej tylko zaszyfrowane rekordy Application Data",
+        "D": "Pełne nagłówki HTTP"
+      },
+      "correct": "C",
+      "explanation": "W TLS 1.3 certyfikat serwera jest już zaszyfrowany; SNI ukrywa dopiero ECH."
+    },
+    {
+      "question": "Do czego służy zmienna SSLKEYLOGFILE?",
+      "options": {
+        "A": "Do logowania błędów SSL w aplikacji",
+        "B": "Do wyłączenia TLS",
+        "C": "Do zapisania kluczy sesji TLS, którymi Wireshark może odszyfrować przechwycony ruch",
+        "D": "Do zapisania certyfikatów CA"
+      },
+      "correct": "C",
+      "explanation": "Obsługują ją m.in. curl, Firefox, Chrome; plik jest bardzo wrażliwy."
+    },
+    {
+      "question": "Dlaczego pliki pcap należy traktować jak dane wrażliwe?",
+      "options": {
+        "A": "Bo zajmują dużo miejsca",
+        "B": "Bo są zawsze zaszyfrowane",
+        "C": "Bo zawierają klucze prywatne serwera",
+        "D": "Mogą zawierać hasła, tokeny, ciasteczka i dane osobowe przesłane w sieci"
+      },
+      "correct": "D",
+      "explanation": "Minimalizacja, kontrola dostępu, szyfrowanie i retencja zgodnie z RODO."
+    },
+    {
+      "question": "Który przepis Kodeksu karnego dotyczy nieuprawnionego przechwytywania informacji?",
+      "options": {
+        "A": "Art. 286",
+        "B": "Art. 267 (m.in. § 3 — urządzenie podsłuchowe/oprogramowanie do przechwytywania)",
+        "C": "Art. 212",
+        "D": "Art. 148"
+      },
+      "correct": "B",
+      "explanation": "Przechwytuj wyłącznie we własnych systemach lub za zgodą właściciela."
+    },
+    {
+      "question": "Jak przechwycić ruch kontenera Dockera bez instalowania tcpdump w jego obrazie?",
+      "options": {
+        "A": "Uruchomić kontener narzędziowy z --net container:<nazwa> i w nim tcpdump",
+        "B": "Edytując obraz produkcyjny",
+        "C": "Nie da się",
+        "D": "Restartując kontener w trybie privileged"
+      },
+      "correct": "A",
+      "explanation": "Kontener narzędziowy współdzieli przestrzeń nazw sieci z aplikacją."
+    },
+    {
+      "question": "Co robi tshark?",
+      "options": {
+        "A": "Skanuje porty",
+        "B": "Szyfruje pliki pcap",
+        "C": "Generuje ruch testowy",
+        "D": "Jest wierszowym odpowiednikiem Wiresharka z dekoderami i filtrami wyświetlania"
+      },
+      "correct": "D",
+      "explanation": "Przydaje się w skryptach (-T fields, -z statystyki)."
+    },
+    {
+      "question": "Do czego służy editcap -A ... -B ...?",
+      "options": {
+        "A": "Do łączenia plików",
+        "B": "Do wycięcia z pliku pakietów z zadanego przedziału czasu",
+        "C": "Do odszyfrowania TLS",
+        "D": "Do zmiany adresów MAC"
+      },
+      "correct": "B",
+      "explanation": "mergecap łączy pliki; editcap tnie i konwertuje."
+    },
+    {
+      "question": "Dlaczego przed udostępnieniem pcapu dostawcy warto go przefiltrować lub zanonimizować?",
+      "options": {
+        "A": "Aby przekazać tylko dane potrzebne do diagnozy, bez zbędnych danych osobowych i poufnych",
+        "B": "Bo dostawca nie umie czytać dużych plików",
+        "C": "Bo Wireshark nie otwiera pełnych plików",
+        "D": "Bo anonimizacja przyspiesza sieć"
+      },
+      "correct": "A",
+      "explanation": "Zasada minimalizacji danych."
+    },
+    {
+      "question": "Wireshark na nadawcy pokazuje „TCP checksum incorrect” dla wszystkich wysyłanych pakietów. Co to zwykle oznacza?",
+      "options": {
+        "A": "Uszkodzony kabel",
+        "B": "Błąd w aplikacji",
+        "C": "Sumy liczy karta sieciowa (checksum offload), a przechwycenie nastąpiło przed nią",
+        "D": "Atak modyfikujący pakiety"
+      },
+      "correct": "C",
+      "explanation": "To artefakt przechwytywania na hoście wysyłającym."
+    },
+    {
+      "question": "Jaki skrót kryptograficzny dołącza się do pcapu zabezpieczanego jako dowód w incydencie?",
+      "options": {
+        "A": "MD5 adresu IP",
+        "B": "Hasło do pliku w tytule",
+        "C": "Numer portu",
+        "D": "SHA-256 pliku z opisem kto, gdzie i kiedy przechwycił"
+      },
+      "correct": "D",
+      "explanation": "Skrót pozwala wykazać, że plik nie został zmieniony (łańcuch dowodowy)."
+    },
+    {
+      "question": "Który widok Wiresharka najszybciej pokaże, które hosty wymieniły najwięcej danych?",
+      "options": {
+        "A": "Statistics → Conversations",
+        "B": "Edit → Preferences",
+        "C": "File → Export Specified Packets",
+        "D": "View → Coloring Rules"
+      },
+      "correct": "A",
+      "explanation": "Endpoints i Protocol Hierarchy to kolejne przydatne widoki."
+    },
+    {
+      "question": "Do czego służy Analyze → Expert Information?",
+      "options": {
+        "A": "Do zapisu pliku",
+        "B": "Do konfiguracji interfejsów",
+        "C": "Do przeglądu zdarzeń oznaczonych przez dekodery: retransmisji, RST, błędów, ostrzeżeń",
+        "D": "Do aktualizacji dekoderów"
+      },
+      "correct": "C",
+      "explanation": "Szybki przegląd problemów w przechwyceniu."
+    },
+    {
+      "question": "Co oznacza w wyniku tcpdump zapis „Flags [S.]”?",
+      "options": {
+        "A": "Segment SYN",
+        "B": "Segment SYN-ACK",
+        "C": "Segment RST",
+        "D": "Segment FIN"
+      },
+      "correct": "B",
+      "explanation": "[S] SYN, [S.] SYN+ACK, [.] ACK, [P.] PSH+ACK, [F.] FIN+ACK, [R] RST."
+    },
+    {
+      "question": "Co oznacza w wyniku tcpdump zapis „Flags [R]”?",
+      "options": {
+        "A": "Retransmisja",
+        "B": "Reset połączenia (RST)",
+        "C": "Żądanie HTTP",
+        "D": "Odpowiedź DNS"
+      },
+      "correct": "B",
+      "explanation": "RST natychmiast kończy połączenie — w Javie zobaczysz Connection refused lub Connection reset."
+    },
+    {
+      "question": "Jak w Wiresharku odczytać ruch HTTP na niestandardowym porcie 9123?",
+      "options": {
+        "A": "Analyze → Decode As… i wybrać HTTP dla portu 9123",
+        "B": "Przechwycić ponownie z opcją -A",
+        "C": "Nie da się",
+        "D": "Zmienić filtr BPF"
+      },
+      "correct": "A",
+      "explanation": "Dekodery dobierają się po portach; Decode As nadpisuje to przypisanie."
+    },
+    {
+      "question": "Dlaczego przy łączeniu przechwyceń z kilku hostów ważna jest synchronizacja czasu (NTP)?",
+      "options": {
+        "A": "Bo NTP szyfruje pliki",
+        "B": "Bo pcap nie zapisuje czasu",
+        "C": "Bo bez NTP nie działa tcpdump",
+        "D": "Bez niej kolejność zdarzeń z różnych plików będzie błędna"
+      },
+      "correct": "D",
+      "explanation": "Znaczniki czasu pochodzą z zegara hosta przechwytującego."
+    },
+    {
+      "question": "Co jest bezpieczniejszą alternatywą dla pełnego zapisu pakietów przy długiej retencji?",
+      "options": {
+        "A": "Logi przełącznika STP",
+        "B": "Zrzuty ekranu Wiresharka",
+        "C": "Metadane połączeń (Zeek, NetFlow/IPFIX)",
+        "D": "Zapis wszystkiego bez limitu"
+      },
+      "correct": "C",
+      "explanation": "Metadane dają szerokie pokrycie przy mniejszym koszcie i ryzyku prywatności."
+    },
+    {
+      "question": "Co powinno poprzedzać przechwytywanie ruchu na systemie produkcyjnym w firmie?",
+      "options": {
+        "A": "Wyłączenie TLS",
+        "B": "Nic, jeśli jest się administratorem",
+        "C": "Zgoda właściciela systemu i zgodność z procedurą (zakres, ochrona i retencja danych)",
+        "D": "Restart serwera"
+      },
+      "correct": "C",
+      "explanation": "Etyka i prawo są częścią warsztatu obrońcy."
+    },
+    {
+      "question": "Jak w Wiresharku dodać nazwę hosta HTTP jako kolumnę listy pakietów?",
+      "options": {
+        "A": "Edit → Find Packet",
+        "B": "Statistics → IO Graph",
+        "C": "View → Zoom In",
+        "D": "Prawy klik na polu Host w szczegółach → Apply as Column"
+      },
+      "correct": "D",
+      "explanation": "Działa dla każdego pola dekodera."
+    },
+    {
+      "question": "Dlaczego nieznane pliki pcap (np. z Internetu) warto otwierać w odizolowanym środowisku?",
+      "options": {
+        "A": "Bo Wireshark wysyła je do chmury",
+        "B": "Dekodery Wiresharka parsują niezaufane dane i miały w przeszłości podatności",
+        "C": "Bo pliki pcap zawsze zawierają wirusy",
+        "D": "Bo pcap uruchamia skrypty"
+      },
+      "correct": "B",
+      "explanation": "Ostrożność jak przy każdym parserze niezaufanych danych."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.2.41000 > 10.0.0.9.80: Flags [S]”?",
+      "options": {
+        "A": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "B": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)",
+        "C": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK",
+        "D": "Klient rozpoczyna zamykanie połączenia (FIN)"
+      },
+      "correct": "A",
+      "explanation": "Klient otwiera połączenie TCP (SYN) do portu 80."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.9.80 > 10.0.0.2.41000: Flags [R.]”?",
+      "options": {
+        "A": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK",
+        "B": "Klient rozpoczyna zamykanie połączenia (FIN)",
+        "C": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "D": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)"
+      },
+      "correct": "D",
+      "explanation": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.2.41000 > 10.0.0.9.80: Flags [P.], length 120: HTTP: GET / HTTP/1.1”?",
+      "options": {
+        "A": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "B": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)",
+        "C": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK",
+        "D": "Klient rozpoczyna zamykanie połączenia (FIN)"
+      },
+      "correct": "C",
+      "explanation": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.2.41000 > 10.0.0.9.80: Flags [F.]”?",
+      "options": {
+        "A": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)",
+        "B": "Klient rozpoczyna zamykanie połączenia (FIN)",
+        "C": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "D": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK"
+      },
+      "correct": "B",
+      "explanation": "Klient rozpoczyna zamykanie połączenia (FIN)."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.2.53211 > 10.0.0.53.53: 4127+ A? api.example.com. (33)”?",
+      "options": {
+        "A": "Zapytanie DNS o rekord A dla api.example.com",
+        "B": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK",
+        "C": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "D": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)"
+      },
+      "correct": "A",
+      "explanation": "Zapytanie DNS o rekord A dla api.example.com."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.53.53 > 10.0.0.2.53211: 4127 NXDomain 0/1/0 (108)”?",
+      "options": {
+        "A": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "B": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK",
+        "C": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)",
+        "D": "Odpowiedź DNS: nazwa nie istnieje"
+      },
+      "correct": "D",
+      "explanation": "Odpowiedź DNS: nazwa nie istnieje."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „ARP, Reply 10.0.0.1 is-at 00:11:22:33:44:55”?",
+      "options": {
+        "A": "Odpowiedź ARP z adresem MAC bramy 10.0.0.1",
+        "B": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)",
+        "C": "Klient otwiera połączenie TCP (SYN) do portu 80",
+        "D": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK"
+      },
+      "correct": "A",
+      "explanation": "Odpowiedź ARP z adresem MAC bramy 10.0.0.1."
+    },
+    {
+      "question": "Co oznacza linia wyniku tcpdump: „IP 10.0.0.1 > 10.0.0.2: ICMP time exceeded in-transit”?",
+      "options": {
+        "A": "Serwer odrzucił połączenie resetem (brak usługi lub REJECT)",
+        "B": "Router odrzucił pakiet z wyzerowanym TTL (ślad traceroute lub pętli)",
+        "C": "Klient wysłał dane aplikacji (żądanie HTTP) z flagami PSH i ACK",
+        "D": "Klient otwiera połączenie TCP (SYN) do portu 80"
+      },
+      "correct": "B",
+      "explanation": "Router odrzucił pakiet z wyzerowanym TTL (ślad traceroute lub pętli)."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: cały ruch do i z 192.168.1.50?",
+      "options": {
+        "A": "src net 10.10.0.0/16",
+        "B": "tcp port 443",
+        "C": "host 192.168.1.50",
+        "D": "udp port 53"
+      },
+      "correct": "C",
+      "explanation": "BPF: host 192.168.1.50."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch HTTPS?",
+      "options": {
+        "A": "src net 10.10.0.0/16",
+        "B": "host 192.168.1.50",
+        "C": "tcp port 443",
+        "D": "udp port 53"
+      },
+      "correct": "C",
+      "explanation": "BPF: tcp port 443."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch DNS po UDP?",
+      "options": {
+        "A": "src net 10.10.0.0/16",
+        "B": "udp port 53",
+        "C": "host 192.168.1.50",
+        "D": "tcp port 443"
+      },
+      "correct": "B",
+      "explanation": "BPF: udp port 53."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch z podsieci 10.10.0.0/16?",
+      "options": {
+        "A": "src net 10.10.0.0/16",
+        "B": "tcp port 443",
+        "C": "host 192.168.1.50",
+        "D": "udp port 53"
+      },
+      "correct": "A",
+      "explanation": "BPF: src net 10.10.0.0/16."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: wszystko oprócz SSH?",
+      "options": {
+        "A": "tcp port 443",
+        "B": "host 192.168.1.50",
+        "C": "udp port 53",
+        "D": "not port 22"
+      },
+      "correct": "D",
+      "explanation": "BPF: not port 22."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch ARP?",
+      "options": {
+        "A": "arp",
+        "B": "host 192.168.1.50",
+        "C": "udp port 53",
+        "D": "tcp port 443"
+      },
+      "correct": "A",
+      "explanation": "BPF: arp."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch ICMP?",
+      "options": {
+        "A": "tcp port 443",
+        "B": "host 192.168.1.50",
+        "C": "icmp",
+        "D": "udp port 53"
+      },
+      "correct": "C",
+      "explanation": "BPF: icmp."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch do portu 8080 hosta 172.17.0.2?",
+      "options": {
+        "A": "tcp port 443",
+        "B": "dst host 172.17.0.2 and tcp dst port 8080",
+        "C": "host 192.168.1.50",
+        "D": "udp port 53"
+      },
+      "correct": "B",
+      "explanation": "BPF: dst host 172.17.0.2 and tcp dst port 8080."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: ruch VLAN 100?",
+      "options": {
+        "A": "tcp port 443",
+        "B": "udp port 53",
+        "C": "host 192.168.1.50",
+        "D": "vlan 100"
+      },
+      "correct": "D",
+      "explanation": "BPF: vlan 100."
+    },
+    {
+      "question": "Który filtr BPF przechwyci: tylko pakiety IPv6?",
+      "options": {
+        "A": "tcp port 443",
+        "B": "udp port 53",
+        "C": "ip6",
+        "D": "host 192.168.1.50"
+      },
+      "correct": "C",
+      "explanation": "BPF: ip6."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: żądania HTTP do hosta api.javaquest.local?",
+      "options": {
+        "A": "http.host == \"api.javaquest.local\"",
+        "B": "http.response.code == 404",
+        "C": "dns.qry.name contains \"javaquest\"",
+        "D": "tcp.analysis.zero_window"
+      },
+      "correct": "A",
+      "explanation": "Filtr: http.host == \"api.javaquest.local\"."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: odpowiedzi HTTP 404?",
+      "options": {
+        "A": "tcp.analysis.zero_window",
+        "B": "dns.qry.name contains \"javaquest\"",
+        "C": "http.host == \"api.javaquest.local\"",
+        "D": "http.response.code == 404"
+      },
+      "correct": "D",
+      "explanation": "Filtr: http.response.code == 404."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: zapytania DNS zawierające „javaquest”?",
+      "options": {
+        "A": "tcp.analysis.zero_window",
+        "B": "dns.qry.name contains \"javaquest\"",
+        "C": "http.host == \"api.javaquest.local\"",
+        "D": "http.response.code == 404"
+      },
+      "correct": "B",
+      "explanation": "Filtr: dns.qry.name contains \"javaquest\"."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: pakiety TCP z oknem zero?",
+      "options": {
+        "A": "tcp.analysis.zero_window",
+        "B": "http.response.code == 404",
+        "C": "dns.qry.name contains \"javaquest\"",
+        "D": "http.host == \"api.javaquest.local\""
+      },
+      "correct": "A",
+      "explanation": "Filtr: tcp.analysis.zero_window."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: ClientHello TLS?",
+      "options": {
+        "A": "http.response.code == 404",
+        "B": "http.host == \"api.javaquest.local\"",
+        "C": "dns.qry.name contains \"javaquest\"",
+        "D": "tls.handshake.type == 1"
+      },
+      "correct": "D",
+      "explanation": "Filtr: tls.handshake.type == 1."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: pakiety z TTL mniejszym niż 5?",
+      "options": {
+        "A": "http.response.code == 404",
+        "B": "dns.qry.name contains \"javaquest\"",
+        "C": "ip.ttl < 5",
+        "D": "http.host == \"api.javaquest.local\""
+      },
+      "correct": "C",
+      "explanation": "Filtr: ip.ttl < 5."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: ruch SMB?",
+      "options": {
+        "A": "http.host == \"api.javaquest.local\"",
+        "B": "smb2",
+        "C": "http.response.code == 404",
+        "D": "dns.qry.name contains \"javaquest\""
+      },
+      "correct": "B",
+      "explanation": "Filtr: smb2."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: ruch PostgreSQL?",
+      "options": {
+        "A": "dns.qry.name contains \"javaquest\"",
+        "B": "http.response.code == 404",
+        "C": "http.host == \"api.javaquest.local\"",
+        "D": "pgsql"
+      },
+      "correct": "D",
+      "explanation": "Filtr: pgsql."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: segmenty z flagą SYN bez ACK?",
+      "options": {
+        "A": "http.host == \"api.javaquest.local\"",
+        "B": "http.response.code == 404",
+        "C": "tcp.flags.syn == 1 && tcp.flags.ack == 0",
+        "D": "dns.qry.name contains \"javaquest\""
+      },
+      "correct": "C",
+      "explanation": "Filtr: tcp.flags.syn == 1 && tcp.flags.ack == 0."
+    },
+    {
+      "question": "Który filtr wyświetlania pokaże: pakiety większe niż 1400 bajtów?",
+      "options": {
+        "A": "dns.qry.name contains \"javaquest\"",
+        "B": "frame.len > 1400",
+        "C": "http.host == \"api.javaquest.local\"",
+        "D": "http.response.code == 404"
+      },
+      "correct": "B",
+      "explanation": "Filtr: frame.len > 1400."
+    },
+    {
+      "question": "Do czego służy w Wiresharku „File → Export Objects → HTTP”?",
+      "options": {
+        "A": "Zapisanie plików przesłanych przez HTTP",
+        "B": "Lista hostów z liczbą pakietów i bajtów",
+        "C": "Wykres ruchu w czasie z własnymi filtrami",
+        "D": "Udział protokołów w przechwyceniu"
+      },
+      "correct": "A",
+      "explanation": "File → Export Objects → HTTP: zapisanie plików przesłanych przez http."
+    },
+    {
+      "question": "Do czego służy w Wiresharku „Statistics → Endpoints”?",
+      "options": {
+        "A": "Udział protokołów w przechwyceniu",
+        "B": "Lista hostów z liczbą pakietów i bajtów",
+        "C": "Zapisanie plików przesłanych przez HTTP",
+        "D": "Wykres ruchu w czasie z własnymi filtrami"
+      },
+      "correct": "B",
+      "explanation": "Statistics → Endpoints: lista hostów z liczbą pakietów i bajtów."
+    },
+    {
+      "question": "Do czego służy w Wiresharku „Statistics → Protocol Hierarchy”?",
+      "options": {
+        "A": "Zapisanie plików przesłanych przez HTTP",
+        "B": "Lista hostów z liczbą pakietów i bajtów",
+        "C": "Wykres ruchu w czasie z własnymi filtrami",
+        "D": "Udział protokołów w przechwyceniu"
+      },
+      "correct": "D",
+      "explanation": "Statistics → Protocol Hierarchy: udział protokołów w przechwyceniu."
+    },
+    {
+      "question": "Do czego służy w Wiresharku „Statistics → IO Graphs”?",
+      "options": {
+        "A": "Wykres ruchu w czasie z własnymi filtrami",
+        "B": "Lista hostów z liczbą pakietów i bajtów",
+        "C": "Zapisanie plików przesłanych przez HTTP",
+        "D": "Udział protokołów w przechwyceniu"
+      },
+      "correct": "A",
+      "explanation": "Statistics → IO Graphs: wykres ruchu w czasie z własnymi filtrami."
+    },
+    {
+      "question": "Do czego służy w Wiresharku „File → Export Specified Packets”?",
+      "options": {
+        "A": "Lista hostów z liczbą pakietów i bajtów",
+        "B": "Udział protokołów w przechwyceniu",
+        "C": "Zapis tylko wyświetlanych (przefiltrowanych) pakietów do nowego pliku",
+        "D": "Zapisanie plików przesłanych przez HTTP"
+      },
+      "correct": "C",
+      "explanation": "File → Export Specified Packets: zapis tylko wyświetlanych (przefiltrowanych) pakietów do nowego pliku."
+    },
+    {
+      "question": "Do czego służy w Wiresharku „Edit → Preferences → Protocols → TLS”?",
+      "options": {
+        "A": "Wskazanie pliku z kluczami sesji do odszyfrowania TLS",
+        "B": "Zapisanie plików przesłanych przez HTTP",
+        "C": "Udział protokołów w przechwyceniu",
+        "D": "Lista hostów z liczbą pakietów i bajtów"
+      },
+      "correct": "A",
+      "explanation": "Edit → Preferences → Protocols → TLS: wskazanie pliku z kluczami sesji do odszyfrowania tls."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „pgsql”?",
+      "options": {
+        "A": "Apache Kafka",
+        "B": "HTTP/2",
+        "C": "DNS",
+        "D": "PostgreSQL"
+      },
+      "correct": "D",
+      "explanation": "Dekoder pgsql — PostgreSQL."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „kafka”?",
+      "options": {
+        "A": "PostgreSQL",
+        "B": "HTTP/2",
+        "C": "Apache Kafka",
+        "D": "DNS"
+      },
+      "correct": "C",
+      "explanation": "Dekoder kafka — Apache Kafka."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „dns”?",
+      "options": {
+        "A": "HTTP/2",
+        "B": "DNS",
+        "C": "PostgreSQL",
+        "D": "Apache Kafka"
+      },
+      "correct": "B",
+      "explanation": "Dekoder dns — DNS."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „http2”?",
+      "options": {
+        "A": "PostgreSQL",
+        "B": "HTTP/2",
+        "C": "Apache Kafka",
+        "D": "DNS"
+      },
+      "correct": "B",
+      "explanation": "Dekoder http2 — HTTP/2."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „tls”?",
+      "options": {
+        "A": "TLS",
+        "B": "DNS",
+        "C": "Apache Kafka",
+        "D": "PostgreSQL"
+      },
+      "correct": "A",
+      "explanation": "Dekoder tls — TLS."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „arp”?",
+      "options": {
+        "A": "PostgreSQL",
+        "B": "DNS",
+        "C": "ARP",
+        "D": "Apache Kafka"
+      },
+      "correct": "C",
+      "explanation": "Dekoder arp — ARP."
+    },
+    {
+      "question": "Ruch jakiego protokołu pokaże filtr wyświetlania „icmp”?",
+      "options": {
+        "A": "DNS",
+        "B": "PostgreSQL",
+        "C": "Apache Kafka",
+        "D": "ICMP"
+      },
+      "correct": "D",
+      "explanation": "Dekoder icmp — ICMP."
+    }
+  ]
 }
