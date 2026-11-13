@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Laboratorium, które możesz bezpiecznie psuć",
+      "image": "netsec/ns00-02-lab-architecture.svg",
+      "imageAlt": "Schemat warstw: Windows 11 z przeglądarką, Wiresharkiem, IntelliJ i Docker Desktop; wewnątrz WSL2 z Ubuntu i narzędziami sieciowymi; w nim Docker Engine z siecią edge (Caddy) i wewnętrzną siecią backend (app, postgres). Obok hypervisor z maszynami wirtualnymi: kontroler domeny, stacja Windows z Sysmon, Security Onion lub Wazuh, REMnux lub FLARE.",
+      "body": "Bez laboratorium nauka sieci i bezpieczeństwa zamienia się w czytanie o pływaniu. W tym torze niemal każda lekcja ma część praktyczną: przechwytujesz pakiety, psujesz DNS, odtwarzasz w izolacji atak ARP spoofing, budujesz detekcję w SIEM, badasz artefakty incydentu. Do tego potrzebujesz środowiska, które:\n- **uruchamia się jednym poleceniem** i równie łatwo **wraca do stanu początkowego**,\n- jest **izolowane** — celowo podatne aplikacje i ruch ćwiczeniowy nie mogą wydostać się do Twojej sieci domowej, firmowej czy Internetu,\n- jest **powtarzalne** — to samo na Twoim laptopie, u kolegi i w CI,\n- jest **tanie** — działa na zwykłym komputerze developera.\n\nFundamentem jest **Docker** (na Windows 11 przez **WSL2**) — kontenery i ich sieci wystarczą do całej części I i większości części III. Od rozdziału o Windows i Active Directory dochodzą **maszyny wirtualne** (Hyper-V lub VirtualBox), bo kontroler domeny, Sysmon czy analiza malware wymagają pełnych systemów.\n\nW tej lekcji skonfigurujesz stanowisko, zainstalujesz narzędzia, poznasz anatomię pakietu laboratorium i uruchomisz **lab-zero**: Caddy (reverse proxy z TLS) → Spring Boot → PostgreSQL, sprawdzony skryptem `check.sh` i zresetowany `reset.sh`.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik stanowiska laboratoryjnego",
+      "body": "- **WSL2 (Windows Subsystem for Linux 2)** — lekka maszyna wirtualna z prawdziwym jądrem Linux zintegrowana z Windows. Daje natywne narzędzia (tcpdump, ip, dig) i backend dla Docker Desktop.\n- **Tryb sieci WSL2** — domyślnie **NAT** (WSL ma własną podsieć, Windows przekierowuje `localhost`); w Windows 11 dostępny tryb **mirrored** (`networkingMode=mirrored` w `.wslconfig`), w którym WSL widzi te same interfejsy co Windows.\n- **Docker Desktop** — Docker Engine w WSL2 plus integracja z Windows (publikowanie portów, GUI). Na Linuksie wystarczy Docker Engine.\n- **Docker Compose** — opis wielu usług, sieci, wolumenów i sekretów w jednym pliku YAML; `docker compose up -d` / `down -v`.\n- **Sieć użytkownika Dockera (bridge)** — wirtualny przełącznik z wbudowanym DNS (nazwy usług); **`internal: true`** — sieć bez trasy na zewnątrz.\n- **Publikowanie portu** — `ports: [\"127.0.0.1:8443:443\"]` mapuje port hosta na port kontenera; bez adresu — na wszystkich interfejsach hosta (0.0.0.0).\n- **Hypervisor** — Hyper-V (wbudowany w Windows Pro/Enterprise) lub VirtualBox; maszyny wirtualne z migawkami (snapshots) do szybkiego powrotu.\n- **Pakiet labu** — katalog z `docker-compose.yml`, `scenario.json`, `reset.sh`, `check.sh`, `tests/`, `expected/`, `config/`, `README.md`.\n- **Migawka (snapshot)** — zapis stanu maszyny wirtualnej; podstawa bezpiecznej pracy z malware i ćwiczeniami incydentowymi.\n- **Celowo podatna aplikacja** — aplikacja z wbudowanymi lukami do ćwiczeń (np. OWASP Juice Shop); uruchamiana wyłącznie lokalnie i w izolacji.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Pracownia chemiczna z dygestorium",
+      "body": "Laboratorium bezpieczeństwa przypomina szkolną pracownię chemiczną:\n- **Stół laboratoryjny** to Twoje kontenery — eksperymenty robisz na nim, a nie na kuchennym stole (systemie, z którego korzystasz na co dzień).\n- **Dygestorium** to izolacja sieci (`internal: true`, porty na `127.0.0.1`) — opary (ruch ćwiczeniowy, podatne usługi) nie wydostają się do reszty budynku.\n- **Instrukcja doświadczenia** to `README.md` i `scenario.json` — cel, kroki i oczekiwany wynik.\n- **Odczynniki w opisanych butelkach** to wersjonowane obrazy (`postgres:17`, `caddy:2`) — wiesz dokładnie, czego używasz.\n- **Sprzątanie stanowiska** to `reset.sh` i `docker compose down -v` — następne doświadczenie zaczyna się od czystego stołu.\n- **Sejf na niebezpieczne substancje** to oddzielne maszyny wirtualne z migawkami do analizy malware — nigdy na stole ogólnym.\n\nDoświadczony chemik nie jest odważny — jest systematyczny. Tak samo dobry obrońca: każdy eksperyment jest powtarzalny, izolowany i posprzątany.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Anatomia pakietu laboratorium",
+      "image": "netsec/ns00-02-lab-package.svg",
+      "imageAlt": "Drzewo katalogu lab-zero: docker-compose.yml (usługi, sieci, wolumeny), scenario.json (cel, poziom, kroki, punktacja), reset.sh (powrót do stanu początkowego), check.sh (automatyczne sprawdzenie celu), tests, expected, config i README.md.",
+      "body": "Każdy lab toru ma tę samą strukturę. Najważniejsze pliki to scenariusz i skrypty sprawdzające — dzięki nim wiesz, kiedy zadanie jest naprawdę wykonane:",
+      "code": "// scenario.json\n{\n  \"id\": \"ns-00-02-lab-zero\",\n  \"title\": \"lab-zero: proxy, aplikacja i baza\",\n  \"level\": \"L1\",\n  \"type\": \"Guided\",\n  \"goal\": \"Uruchomić lab, zweryfikować działanie i izolację, zresetować środowisko\",\n  \"steps\": [\"up\", \"check\", \"explore\", \"reset\"],\n  \"checks\": [\n    { \"id\": \"proxy_tls\",   \"cmd\": \"curl -sk https://127.0.0.1:8443/api/hello\", \"expect\": \"Hello\" },\n    { \"id\": \"health\",      \"cmd\": \"curl -sk https://127.0.0.1:8443/actuator/health\", \"expect\": \"\\\"UP\\\"\" },\n    { \"id\": \"db_isolated\", \"cmd\": \"nc -z -w 2 127.0.0.1 5432\", \"expectExit\": 1 }\n  ],\n  \"exam\": [\"N+ 1.0\", \"Sec+ V8 3.0\"],\n  \"cleanup\": \"docker compose down -v\"\n}"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Instalacja: WSL2, Docker i narzędzia",
+      "body": "Polecenia dla Windows 11 (PowerShell jako administrator) i Ubuntu w WSL2. Na natywnym Linuksie pomiń część Windows i zainstaluj Docker Engine z repozytorium Dockera.",
+      "code": "# Windows (PowerShell, administrator)\nwsl --install -d Ubuntu-24.04            # WSL2 + Ubuntu; po restarcie utwórz użytkownika\nwsl --set-default-version 2\nwinget install Docker.DockerDesktop      # w ustawieniach: Use WSL 2 based engine + integracja z Ubuntu\nwinget install WiresharkFoundation.Wireshark   # z Npcap\nwinget install EclipseAdoptium.Temurin.25.JDK\n\n# %UserProfile%\\.wslconfig (opcjonalnie)\n# [wsl2]\n# memory=8GB\n# networkingMode=mirrored                 # WSL widzi interfejsy Windows (Windows 11 nowszych wersji)\n\n# Ubuntu w WSL2\nsudo apt update && sudo apt install -y \\\n  iproute2 iputils-ping traceroute mtr-tiny tcpdump tshark dnsutils curl wget openssl \\\n  netcat-openbsd nmap iperf3 jq socat conntrack nftables git\nsudo usermod -aG wireshark $USER         # przechwytywanie bez roota (dumpcap)\ndocker version && docker compose version # sprawdzenie integracji z Docker Desktop\n\n# Kontener narzędziowy (gdy nie chcesz instalować wszystkiego lokalnie)\ndocker run --rm -it nicolaka/netshoot"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Guided Lab: uruchom, sprawdź i zresetuj lab-zero",
+      "image": "netsec/ns00-02-lab-zero.svg",
+      "imageAlt": "Topologia lab-zero: przeglądarka lub curl łączy się z https://127.0.0.1:8443 do Caddy (sieci edge i backend, TLS wewnętrzny), Caddy przekazuje żądania do aplikacji Spring Boot na porcie 8080 w wewnętrznej sieci backend, a aplikacja łączy się z PostgreSQL na 5432 bez portu na hoście.",
+      "body": "1. **Pobierz pakiet** labu do katalogu w systemie plików WSL (`~/labs/lab-zero`, nie `/mnt/c/...` — dostęp do dysku Windows z WSL jest wielokrotnie wolniejszy).\n2. **Wygeneruj sekret** i uruchom środowisko: `./reset.sh` (tworzy `secrets/db_password.txt`, wykonuje `docker compose down -v` i `up -d`).\n3. **Poczekaj na zdrowie usług**: `docker compose ps` — `postgres` w stanie *healthy*, `app` i `caddy` *running*.\n4. **Uruchom sprawdzenie**: `./check.sh` — trzy testy: proxy odpowiada przez TLS, `/actuator/health` zwraca `UP`, port 5432 jest **niedostępny** z hosta.\n5. **Zbadaj środowisko**: `docker network ls`, `docker network inspect lab-zero_backend` (kto jest w sieci, czy `Internal: true`), `docker compose exec app getent hosts postgres` (DNS Dockera), `curl -vk https://127.0.0.1:8443/api/hello` (handshake TLS z certyfikatem wewnętrznego CA Caddy).\n6. **Sprawdź izolację**: z innego urządzenia w sieci domowej spróbuj otworzyć `https://<IP-laptopa>:8443` — powinno się nie udać. Z kontenera aplikacji: `docker compose exec app curl -sS -m 3 https://example.com` — też powinno się nie udać (sieć wewnętrzna).\n7. **Zresetuj**: zmień coś (np. zatrzymaj bazę), uruchom `./check.sh` (test nie przechodzi), potem `./reset.sh` i ponownie `./check.sh` (przechodzi).\n8. **Posprzątaj**: `docker compose down -v` usuwa kontenery, sieci i wolumeny labu. Zapisz wyniki w dzienniku laboratoryjnym.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Izolacja labu: porty, sieci wewnętrzne i firewall",
+      "image": "netsec/ns00-02-isolation.svg",
+      "imageAlt": "Dwa panele: po lewej ports 8443:443 nasłuchuje na 0.0.0.0, więc zarówno przeglądarka na laptopie, jak i kolega w tym samym Wi-Fi mogą się połączyć; po prawej ports 127.0.0.1:8443:443 nasłuchuje tylko lokalnie i połączenie kolegi jest zablokowane.",
+      "body": "Laboratoria toru zawierają celowo podatne aplikacje i ruch ćwiczeniowy. Trzy zasady izolacji obowiązują zawsze:",
+      "code": "1. Porty na hoście tylko na pętli zwrotnej\n   ports: [\"127.0.0.1:8443:443\"]      ✔   ports: [\"8443:443\"]   ✘ (0.0.0.0 — cała sieć Wi-Fi)\n\n2. Usługi wewnętrzne bez portów i w sieciach internal\n   networks: { backend: { internal: true } }   — brak wyjścia do Internetu i brak dostępu z zewnątrz\n\n3. Nie polegaj na firewallu hosta przy portach Dockera (Linux)\n   Docker dodaje własne reguły iptables/nftables PRZED regułami UFW/firewalld,\n   więc „ufw deny 8443” NIE zablokuje portu opublikowanego przez kontener.\n   Skuteczne: publikowanie na 127.0.0.1, brak publikacji, reguły w łańcuchu DOCKER-USER.\n\nSprawdzenie, co faktycznie nasłuchuje:\n   ss -tlnp | grep 8443                         # Linux/WSL: 127.0.0.1:8443 czy 0.0.0.0:8443?\n   Get-NetTCPConnection -LocalPort 8443         # Windows: LocalAddress 127.0.0.1 czy 0.0.0.0\n   docker ps --format '{{.Names}} {{.Ports}}'   # 127.0.0.1:8443->443/tcp"
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "lab-zero: docker-compose.yml i Caddyfile",
+      "body": "Kompletna definicja środowiska. Zwróć uwagę na: publikację tylko na `127.0.0.1`, sieć `backend` jako wewnętrzną, brak portu bazy, sekret hasła z pliku (a nie w YAML), `healthcheck` i `depends_on` z warunkiem zdrowia.",
+      "code": "# lab-zero/docker-compose.yml\nservices:\n  caddy:\n    image: caddy:2\n    ports: [\"127.0.0.1:8443:443\"]          # tylko lokalny komputer\n    volumes: [\"./config/Caddyfile:/etc/caddy/Caddyfile:ro\"]\n    networks: [edge, backend]\n  app:\n    image: javaquest/lab-zero-app:1.0       # Spring Boot 3, GET /api/hello, /actuator/health\n    environment:\n      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/lab\n      SPRING_DATASOURCE_USERNAME: lab\n      SPRING_DATASOURCE_PASSWORD_FILE: /run/secrets/db_password\n    secrets: [db_password]\n    depends_on: { postgres: { condition: service_healthy } }\n    networks: [backend]\n  postgres:\n    image: postgres:17\n    environment: { POSTGRES_DB: lab, POSTGRES_USER: lab, POSTGRES_PASSWORD_FILE: /run/secrets/db_password }\n    secrets: [db_password]\n    healthcheck: { test: [\"CMD\", \"pg_isready\", \"-U\", \"lab\"], interval: 5s, retries: 10 }\n    networks: [backend]                     # brak \"ports:\" — baza niedostępna z hosta\n\nnetworks:\n  edge: {}\n  backend: { internal: true }\nsecrets:\n  db_password: { file: ./secrets/db_password.txt }   # plik w .gitignore, generowany przez reset.sh\n\n# config/Caddyfile\n# :443 {\n#   tls internal\n#   reverse_proxy app:8080\n# }"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Narzędzia stanowiska i gdzie ich użyjesz",
+      "body": "- **Wireshark / tshark / tcpdump** — analiza pakietów od rozdziału 01; w części III analiza incydentów i NSM.\n- **curl, openssl, dig, ip, ss, mtr, nc, iperf3** — codzienna diagnostyka warstw 3–7 (rozdziały 03–09).\n- **nmap** — inwentaryzacja *własnych* usług i weryfikacja reguł firewalla w labie (rozdziały 09, 20, 22). Skanowanie cudzych sieci bez zgody jest nielegalne (lekcja 03).\n- **OWASP ZAP i Burp Suite Community** — testy bezpieczeństwa *własnej* aplikacji Spring Boot w labie (rozdział 23); w pipeline CI — ZAP baseline (rozdział 24).\n- **Postman / Bruno / HTTPie** — praca z API (rozdział 06).\n- **JDK 21/25, Maven/Gradle, IntelliJ** — przykłady w Javie w każdym rozdziale.\n- **Maszyny wirtualne** — kontroler domeny i stacje Windows z Sysmon (rozdział 18), Security Onion/Wazuh (26, 28), REMnux i FLARE-VM (32), Velociraptor (34).\n- **Kontener netshoot** — zestaw narzędzi sieciowych do dołączania do przestrzeni sieci innych kontenerów (`--net container:`).\n\nZ perspektywy obrońcy laboratorium to także **trening dyscypliny operacyjnej**: wersjonowane środowisko, sekrety poza repozytorium, minimalna ekspozycja, dokumentacja i sprzątanie. Dokładnie tych nawyków wymaga praca w SOC i zespole IR.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Najczęstsze problemy ze stanowiskiem",
+      "body": "- **Pliki labu na `/mnt/c`** — operacje dyskowe z WSL na dysku Windows są wolne, a uprawnienia plików (`chmod +x`) działają inaczej. Trzymaj laby w `~` w WSL.\n- **„Port is already allocated”** — inny lab lub usługa zajmuje port; sprawdź `docker ps`, `ss -tlnp`, posprzątaj poprzedni lab (`down`).\n- **Konflikty podsieci** — sieci Dockera (172.17–172.31, 192.168.x) kolidują z VPN lub siecią firmową; ustaw własne zakresy (`ipam.config.subnet`) albo `default-address-pools` w daemon.json.\n- **Za mało pamięci** — WSL2 domyślnie bierze do połowy RAM; przy labach z wieloma kontenerami i VM ustaw limity w `.wslconfig` i zamykaj nieużywane środowiska.\n- **Brak uprawnień do przechwytywania** — dodaj użytkownika do grupy `wireshark` (po ponownym zalogowaniu), nie uruchamiaj Wiresharka jako root.\n- **Porty opublikowane na 0.0.0.0** — Twój podatny lab widzą wszyscy w sieci hotelowej. Zawsze `127.0.0.1:`.\n- **Wiara w UFW przy Dockerze** — na Linuksie reguły UFW nie chronią portów publikowanych przez kontenery.\n- **Sekrety w repozytorium** — hasło w `docker-compose.yml` trafia do historii Git. Używaj plików sekretów w `.gitignore` lub zmiennych z `.env` (też w `.gitignore`).\n- **Tag „latest”** — obraz zmienia się bez ostrzeżenia, lab przestaje być powtarzalny. Używaj konkretnych wersji (`postgres:17`), a w CI — skrótów (`@sha256:…`).",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: wygodny, ale niebezpieczny compose",
+      "body": "Wszystko na wszystkich interfejsach, hasła w pliku, najnowsze obrazy, celowo podatna aplikacja dostępna z sieci.",
+      "code": "services:\n  juice-shop:\n    image: bkimminich/juice-shop:latest     # celowo podatna aplikacja\n    ports: [\"3000:3000\"]                     # 0.0.0.0:3000 — każdy w Wi-Fi może ją „zhakować”…\n  postgres:                                  # …a potem dostać się do Twoich innych usług\n    image: postgres:latest\n    environment: { POSTGRES_PASSWORD: postgres }   # hasło w repo\n    ports: [\"5432:5432\"]                     # baza otwarta dla sieci\n# „Mam włączony UFW, więc jest bezpiecznie” — porty Dockera i tak go omijają"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: lokalnie, wersjonowanie, bez sekretów w pliku",
+      "body": "Ta sama funkcjonalność, ale z minimalną ekspozycją i powtarzalnością. Dodatkowo reguła w łańcuchu `DOCKER-USER` jako zabezpieczenie na wypadek pomyłki w publikacji portu.",
+      "code": "services:\n  juice-shop:\n    image: bkimminich/juice-shop:v17.3.0     # konkretna wersja (przykładowa)\n    ports: [\"127.0.0.1:3000:3000\"]          # tylko lokalnie\n    networks: [lab]\n  postgres:\n    image: postgres:17\n    environment: { POSTGRES_PASSWORD_FILE: /run/secrets/pg }\n    secrets: [pg]\n    networks: [lab]                          # bez ports:\nnetworks:\n  lab: { internal: false }                   # juice-shop potrzebuje tylko lokalnego dostępu\nsecrets:\n  pg: { file: ./secrets/pg.txt }             # .gitignore: secrets/\n\n# Linux: zabezpieczenie „pasa i szelek” — odrzuć ruch spoza hosta do kontenerów\n# (interfejs eth0 = wyjście do sieci LAN; dopasuj nazwę)\nsudo iptables -I DOCKER-USER -i eth0 ! -s 127.0.0.1 -j DROP"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kontener, maszyna wirtualna czy chmura?",
+      "body": "- **Kontener (Docker)** — sieci, usługi, aplikacje Java, proxy, bazy, większość ćwiczeń z ruchem i logami. Szybki start, mały koszt, łatwy reset. Domyślny wybór toru.\n- **Maszyna wirtualna** — gdy potrzebujesz pełnego systemu: Windows i Active Directory, EDR i Sysmon, sensor NSM z kilkoma interfejsami, analiza malware (izolacja na poziomie hypervisora + migawki), laboratoria z jądrem (eBPF, moduły).\n- **Containerlab** — topologie z routerami i przełącznikami (FRR, cEOS) w rozdziałach 02, 03, 13, 14.\n- **Chmura (konto testowe)** — laboratoria AWS/Azure (rozdziały 10, 16, 25): zawsze z budżetem i alertem kosztowym, bez kluczy w repozytorium, z porządkiem po ćwiczeniu (koszty i ekspozycja).\n- **Gotowe platformy treningowe** (CyberDefenders, Blue Team Labs Online, TryHackMe) — ćwiczenia śledcze na przygotowanych danych, dobre przed egzaminami praktycznymi.\n- **Nigdy**: produkcja, sieć firmowa bez zgody, cudze systemy — nawet „tylko do sprawdzenia”.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Stanowisko: Windows 11 + WSL2 + Docker (lub natywny Linux); od rozdziału 18 także maszyny wirtualne.\n- Narzędzia: Wireshark/tshark/tcpdump, curl, openssl, dig, ip, ss, mtr, nc, iperf3, nmap (tylko własny lab), ZAP/Burp (własna aplikacja), JDK i IntelliJ.\n- Pakiet labu: compose, scenariusz, `reset.sh`, `check.sh`, testy, wzorce, konfiguracja, README — uruchamiasz, sprawdzasz i resetujesz jednym poleceniem.\n- Izolacja: porty tylko na `127.0.0.1`, usługi wewnętrzne w sieciach `internal`, sekrety poza repozytorium, konkretne wersje obrazów; na Linuksie porty Dockera omijają UFW.\n- lab-zero: Caddy (TLS) → Spring Boot → PostgreSQL; `check.sh` potwierdza działanie i izolację.\n- Następna lekcja: **etyka, zakres i prawo** — gdzie kończy się ćwiczenie, a zaczyna przestępstwo.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zainstaluj WSL2 z Ubuntu i Docker Desktop z backendem WSL2. Pokaż wynik wsl -l -v oraz docker version w Ubuntu.",
+      "hint": "wsl -l -v powinno pokazać VERSION 2.",
+      "solution": "Przykład: „Ubuntu-24.04  Running  2”; docker version pokazuje Client i Server (Docker Desktop). Jeśli brak serwera — włącz integrację WSL w ustawieniach Docker Desktop (Resources → WSL Integration)."
+    },
+    {
+      "prompt": "Zainstaluj zestaw narzędzi z lekcji i sprawdź wersje: tcpdump --version, tshark -v, dig -v, openssl version, nmap --version, iperf3 --version.",
+      "hint": "Pakiety: tcpdump tshark dnsutils openssl nmap iperf3.",
+      "solution": "Każde polecenie powinno wypisać wersję. Brak dig oznacza brak pakietu dnsutils (Debian/Ubuntu) lub bind-utils (Fedora/RHEL)."
+    },
+    {
+      "prompt": "Skonfiguruj przechwytywanie bez roota w WSL i sprawdź, że tcpdump -i eth0 -c 3 działa bez sudo (lub z dumpcap).",
+      "hint": "Grupa wireshark i ponowne zalogowanie (wsl --shutdown).",
+      "solution": "sudo usermod -aG wireshark $USER; wsl --shutdown (z Windows); po ponownym uruchomieniu: groups pokazuje wireshark; dumpcap -i eth0 -c 3 -w /tmp/t.pcapng działa bez sudo. tcpdump bez sudo wymaga capabilities (setcap cap_net_raw,cap_net_admin=eip $(which tcpdump))."
+    },
+    {
+      "prompt": "Uruchom lab-zero i check.sh. Zapisz wynik każdego z trzech testów i wyjaśnij, co sprawdza test db_isolated.",
+      "hint": "Test oczekuje, że połączenie z 5432 NIE powiedzie się.",
+      "solution": "proxy_tls: OK (odpowiedź Hello przez TLS), health: OK (\"status\":\"UP\"), db_isolated: OK — nc -z 127.0.0.1 5432 kończy się kodem 1, bo baza nie publikuje portu. Ten test chroni przed przypadkowym wystawieniem bazy."
+    },
+    {
+      "prompt": "Sprawdź, na jakim adresie nasłuchuje opublikowany port lab-zero (ss -tlnp w WSL i Get-NetTCPConnection w Windows). Zmień publikację na \"8443:443\" i porównaj.",
+      "hint": "Zwróć uwagę na LocalAddress.",
+      "solution": "Z \"127.0.0.1:8443:443\": 127.0.0.1:8443. Z \"8443:443\": 0.0.0.0:8443 (i [::]:8443) — port dostępny dla innych urządzeń w sieci. Przywróć wersję z 127.0.0.1."
+    },
+    {
+      "prompt": "Z kontenera app spróbuj połączyć się z example.com i z postgres:5432. Wyjaśnij wyniki na podstawie konfiguracji sieci.",
+      "hint": "Sieć backend ma internal: true.",
+      "solution": "example.com: brak połączenia (sieć wewnętrzna nie ma trasy na zewnątrz; często także błąd DNS dla nazw zewnętrznych). postgres:5432: działa — oba kontenery są w sieci backend, a wbudowany DNS Dockera rozwiązuje nazwę usługi."
+    },
+    {
+      "prompt": "Wyświetl szczegóły sieci lab-zero_backend (docker network inspect) i wskaż: podsieć, bramę, pole Internal i listę kontenerów.",
+      "hint": "Szukaj kluczy IPAM.Config, Internal i Containers.",
+      "solution": "Przykład: Subnet 172.20.0.0/16, Gateway 172.20.0.1, \"Internal\": true, Containers: caddy, app, postgres z adresami IP. Brama istnieje na hoście, ale reguły nie przepuszczają ruchu na zewnątrz."
+    },
+    {
+      "prompt": "Zepsuj lab: zatrzymaj kontener postgres i uruchom check.sh. Który test nie przechodzi i dlaczego? Przywróć środowisko reset.sh.",
+      "hint": "Health aplikacji Spring Boot zależy od bazy.",
+      "solution": "Test health zwróci DOWN lub 503 (wskaźnik db w Actuatorze), proxy_tls może nadal działać dla /api/hello, jeśli endpoint nie używa bazy. reset.sh przywraca stan — ponowne check.sh przechodzi."
+    },
+    {
+      "prompt": "Napisz własny prosty check.sh dla lab-zero, który kończy się kodem 0 tylko wtedy, gdy wszystkie testy przechodzą, i wypisuje czytelny raport.",
+      "hint": "Użyj set -u, funkcji pomocniczej i licznika błędów.",
+      "solution": "#!/usr/bin/env bash\nset -u\nfail=0\ncheck() { local name=$1; shift; if \"$@\" >/dev/null 2>&1; then echo \"OK   $name\"; else echo \"FAIL $name\"; fail=1; fi; }\ncheck proxy_tls curl -sfk https://127.0.0.1:8443/api/hello\ncheck health sh -c \"curl -sk https://127.0.0.1:8443/actuator/health | grep -q UP\"\ncheck db_isolated sh -c \"! nc -z -w 2 127.0.0.1 5432\"\nexit $fail"
+    },
+    {
+      "prompt": "Przygotuj reset.sh, który: generuje losowe hasło do secrets/db_password.txt (jeśli nie istnieje), usuwa poprzednie środowisko z wolumenami i uruchamia je ponownie, czekając na zdrowie bazy.",
+      "hint": "openssl rand, docker compose down -v, up -d --wait.",
+      "solution": "#!/usr/bin/env bash\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\nmkdir -p secrets\n[ -f secrets/db_password.txt ] || openssl rand -base64 24 > secrets/db_password.txt\nchmod 600 secrets/db_password.txt\ndocker compose down -v --remove-orphans\ndocker compose up -d --wait   # czeka na healthcheck\ndocker compose ps"
+    },
+    {
+      "prompt": "Sprawdź, co pokazuje certyfikat TLS lab-zero (openssl s_client) i dlaczego curl wymaga -k. Jak sprawić, by curl ufał certyfikatowi bez -k?",
+      "hint": "Caddy z „tls internal” wystawia certyfikat z własnego, lokalnego CA.",
+      "solution": "openssl s_client -connect 127.0.0.1:8443 -servername localhost pokazuje łańcuch z wystawcą „Caddy Local Authority”. curl nie zna tego CA, więc bez -k odrzuca połączenie. Rozwiązanie: wyeksportuj certyfikat główny z kontenera (/data/caddy/pki/authorities/local/root.crt) i użyj curl --cacert root.crt (lub dodaj go do zaufanych w systemie labu — nie na stałe w przeglądarce codziennego użytku)."
+    },
+    {
+      "prompt": "Skonfiguruj .wslconfig z limitem pamięci i (jeśli Twój Windows to wspiera) trybem mirrored. Porównaj adres IP w WSL przed i po.",
+      "hint": "wsl --shutdown po zmianie konfiguracji.",
+      "solution": "Tryb NAT: eth0 w WSL ma adres z osobnej podsieci (np. 172.2x.x.x), inny niż Windows. Tryb mirrored: interfejsy WSL odzwierciedlają karty Windows (ten sam adres w sieci domowej). Limit pamięci sprawdzisz free -h."
+    },
+    {
+      "prompt": "Zmień podsieci sieci Dockera labu tak, by nie kolidowały z siecią VPN firmy (np. firma używa 172.16.0.0/12). Pokaż konfigurację.",
+      "hint": "networks: nazwa: ipam: config: - subnet.",
+      "solution": "networks:\n  edge: { ipam: { config: [{ subnet: 10.250.1.0/24 }] } }\n  backend: { internal: true, ipam: { config: [{ subnet: 10.250.2.0/24 }] } }\nGlobalnie: /etc/docker/daemon.json (lub ustawienia Docker Desktop) — \"default-address-pools\": [{\"base\":\"10.250.0.0/16\",\"size\":24}]."
+    },
+    {
+      "prompt": "Na Linuksie (VM lub natywnie) z włączonym UFW (deny incoming) opublikuj port kontenera \"8080:80\" i sprawdź z innego hosta, czy port jest dostępny. Wyjaśnij wynik i napraw.",
+      "hint": "Docker modyfikuje iptables/nftables przed regułami UFW.",
+      "solution": "Port jest dostępny mimo UFW: reguły NAT/forward Dockera omijają łańcuchy UFW (ruch do kontenera idzie przez FORWARD, nie INPUT). Naprawa: publikuj na 127.0.0.1, albo dodaj regułę w łańcuchu DOCKER-USER (np. -i eth0 -j DROP z wyjątkami), albo nie publikuj portu."
+    },
+    {
+      "prompt": "Utwórz migawkę maszyny wirtualnej (Hyper-V lub VirtualBox) przed instalacją oprogramowania, zainstaluj coś, a potem przywróć migawkę. Do czego posłuży to w rozdziale o malware?",
+      "hint": "Checkpoint w Hyper-V, Snapshot w VirtualBox.",
+      "solution": "Po przywróceniu VM wraca do stanu sprzed instalacji. W analizie malware: przed detonacją próbki robisz migawkę czystego systemu; po analizie przywracasz ją, mając pewność, że nie zostały żadne zmiany ani trwałość malware."
+    },
+    {
+      "prompt": "Sprawdź, ile zasobów zużywa lab-zero (docker stats) i oszacuj, ile takich labów uruchomisz jednocześnie na swoim komputerze.",
+      "hint": "Najwięcej pamięci zużyje JVM.",
+      "solution": "Typowo: app (JVM) 250–400 MB, postgres 30–80 MB, caddy 15–30 MB. Przy 8 GB dla WSL kilka labów naraz jest możliwe, ale lepiej uruchamiać jeden i sprzątać. Pamięć JVM w kontenerze można ograniczyć: JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50 i limit mem_limit/deploy.resources."
+    },
+    {
+      "prompt": "Dodaj do lab-zero kontener netshoot dołączony do przestrzeni sieci aplikacji i przechwyć ruch między app a postgres. Co widzisz?",
+      "hint": "docker run --rm -it --net container:<app> nicolaka/netshoot tcpdump -i eth0 -nn port 5432",
+      "solution": "Widać połączenie JDBC aplikacji z bazą: handshake TCP, komunikaty protokołu PostgreSQL. Jeśli połączenie nie używa TLS (domyślnie w labie), zapytania SQL są czytelne — ćwiczenie pokazuje, dlaczego produkcyjne połączenia do bazy powinny być szyfrowane (sslmode=verify-full)."
+    },
+    {
+      "prompt": "Przejrzyj docker-compose.yml lab-zero i wypisz wszystkie decyzje bezpieczeństwa (co najmniej 6) z uzasadnieniem.",
+      "hint": "Szukaj: porty, sieci, sekrety, wersje, healthcheck, uprawnienia.",
+      "solution": "1) port tylko na 127.0.0.1; 2) brak portu bazy; 3) sieć backend internal — brak wyjścia do Internetu; 4) hasło z pliku sekretu, nie w YAML; 5) konkretne wersje obrazów (postgres:17, caddy:2 — w CI warto przypiąć skrótem); 6) Caddyfile tylko do odczytu (:ro); 7) TLS na proxy; 8) zależności z warunkiem zdrowia (mniej niejasnych stanów). Do poprawy: użytkownik nie-root i read_only dla app, limity zasobów."
+    },
+    {
+      "prompt": "Utwórz w repozytorium dziennika katalog lab-zero z NOTES.md według szablonu z lekcji 01 i opisz w nim przebieg tego laboratorium.",
+      "hint": "Sekcje: cel, środowisko, kroki, obserwacje, wnioski, mapowanie na egzamin.",
+      "solution": "NOTES.md powinien zawierać wersje (Docker, WSL, obrazy), polecenia z wynikami (np. ss -tlnp, docker network inspect), obserwacje izolacji, wnioski (np. „UFW nie chroni portów Dockera”) i mapowanie (Network+ 1.x, Security+ V8 3.x — architektura)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego laby trzymane na /mnt/c w WSL działają wolniej i mają problemy z uprawnieniami. Gdzie je przenieść?",
+      "hint": "System plików Windows jest udostępniany do WSL przez protokół 9P.",
+      "solution": "Dostęp WSL2 do plików Windows (/mnt/c) przechodzi przez warstwę udostępniania (9P), co spowalnia operacje na wielu małych plikach (Maven, npm, Docker build) i nie wspiera w pełni uprawnień POSIX (bit wykonania, właściciel). Laby i repozytoria trzymaj w ~ (ext4 w WSL); z Windows są dostępne pod \\\\wsl$\\Ubuntu\\home\\<user>."
+    },
+    {
+      "prompt": "Uruchom OWASP ZAP baseline przeciwko lab-zero (tylko lokalnie) i przejrzyj ostrzeżenia. Które dotyczą nagłówków bezpieczeństwa?",
+      "hint": "docker run --rm --network host ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t https://127.0.0.1:8443 -I",
+      "solution": "Typowe ostrzeżenia: brak Content-Security-Policy, X-Content-Type-Options, Strict-Transport-Security, ewentualnie ujawnienie wersji serwera. Wróci to w rozdziale 23 (A02 Security Misconfiguration). Uruchamiaj ZAP wyłącznie wobec własnych aplikacji."
+    },
+    {
+      "prompt": "Zinwentaryzuj nmapem porty na własnym laptopie (127.0.0.1) przy działającym lab-zero. Które porty są otwarte i czy wszystkie znasz?",
+      "hint": "nmap -sT -p- 127.0.0.1 (pełny skan TCP własnego hosta).",
+      "solution": "Powinien pojawić się 8443 (lab) oraz porty innych lokalnych usług (np. IDE, Docker Desktop, bazy deweloperskie). Każdy nieznany port warto zidentyfikować (ss -tlnp / Get-NetTCPConnection z OwningProcess). To pierwszy krok inwentaryzacji powierzchni ataku."
+    },
+    {
+      "prompt": "Zaprojektuj strukturę katalogów ~/labs na cały tor (np. per rozdział) i skrypt, który wypisuje, które laby mają uruchomione kontenery.",
+      "hint": "docker compose ls pokazuje uruchomione projekty.",
+      "solution": "Przykład: ~/labs/<rozdział>-<lekcja>/ z pakietami; skrypt: docker compose ls --format json | jq -r '.[] | \"\\(.Name) \\(.Status)\"' — przypomnienie, by sprzątać laby po ćwiczeniach i nie zostawiać podatnych usług działających w tle."
+    },
+    {
+      "prompt": "Na podstawie lekcji przygotuj własną „checklistę bezpieczeństwa labu” (8–10 punktów), którą będziesz stosować w każdym kolejnym laboratorium.",
+      "hint": "Pomyśl o portach, sieciach, sekretach, wersjach, danych, sprzątaniu.",
+      "solution": "Przykład: porty tylko 127.0.0.1; usługi wewnętrzne bez portów; sieci internal tam, gdzie możliwe; sekrety w plikach poza repo; wersje obrazów przypięte; brak prawdziwych danych osobowych (dane syntetyczne); pliki pcap/logi poza repo; migawki VM przed ryzykownymi ćwiczeniami; sprzątanie po labie; ćwiczenia ofensywne tylko wewnątrz labu."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między docker compose down a docker compose down -v. Kiedy używać każdego?",
+      "hint": "Wolumeny przechowują dane baz.",
+      "solution": "down: zatrzymuje i usuwa kontenery i sieci, zostawia nazwane wolumeny (dane bazy przetrwają). down -v: usuwa także wolumeny — pełny reset danych. W labach (reset do stanu początkowego) — down -v; gdy chcesz zachować dane między sesjami — down."
+    },
+    {
+      "prompt": "Zastanów się, jakie dane mogą znaleźć się w Twoim labie (logi, pcap, zrzuty bazy) i dlaczego w labach używa się danych syntetycznych zamiast kopii produkcji.",
+      "hint": "RODO, tajemnica przedsiębiorstwa, ryzyko wycieku.",
+      "solution": "Kopie produkcyjne zawierają dane osobowe i poufne; przeniesienie ich do labu (laptop, repozytorium, pcap) tworzy niekontrolowaną kopię i ryzyko naruszenia RODO. Dane syntetyczne (generowane, np. Faker/Datafaker w Javie) dają ten sam efekt dydaktyczny bez ryzyka."
+    },
+    {
+      "prompt": "Sprawdź, jakie domyślne pule adresów Docker przydziela nowym sieciom i jak to może kolidować z typowymi sieciami domowymi i firmowymi.",
+      "hint": "docker network inspect bridge; docker network create test && docker network inspect test.",
+      "solution": "Domyślnie: bridge 172.17.0.0/16, kolejne sieci 172.18–172.31.0.0/16, potem 192.168.x.0/20. Kolizje: firmy często używają 172.16.0.0/12 lub 192.168.0.0/16 — trasy VPN mogą „przykryć” sieci Dockera lub odwrotnie. Rozwiązanie: default-address-pools z rzadko używanego zakresu (np. 10.250.0.0/16)."
+    },
+    {
+      "prompt": "Opisz, jak bezpiecznie uruchomić w labie celowo podatną aplikację (np. OWASP Juice Shop) do ćwiczeń z rozdziału 23.",
+      "hint": "Port, sieć, wersja, dane, czas działania.",
+      "solution": "Konkretna wersja obrazu; port tylko 127.0.0.1; osobna sieć bez dostępu do innych usług labu; uruchamianie na czas ćwiczenia i usuwanie po nim (docker compose down -v); brak montowania katalogów hosta; brak prawdziwych danych; ruch testowy wyłącznie z narzędzi na tym samym komputerze."
+    },
+    {
+      "prompt": "Zaplanuj zasoby sprzętowe na część III toru: ile RAM i dysku potrzebuje jednoczesne uruchomienie kontrolera domeny, stacji Windows, sensora Security Onion (eval) i Wazuh?",
+      "hint": "Sprawdź minimalne wymagania w dokumentacji narzędzi.",
+      "solution": "Orientacyjnie: DC 2–4 GB RAM, stacja Windows 4 GB, Security Onion eval 12–16 GB (wymagający), Wazuh all-in-one 4–8 GB → razem 24–32 GB RAM i 200+ GB dysku SSD. Przy 16 GB: uruchamiaj komponenty etapami lub użyj lżejszego stosu (Wazuh + Sysmon zamiast pełnego Security Onion)."
+    },
+    {
+      "prompt": "Udokumentuj w dzienniku wersje wszystkich składników stanowiska (Windows, WSL, jądro, Docker, Compose, JDK, Wireshark). Dlaczego jest to ważne przy zgłaszaniu problemów i w pracy IR?",
+      "hint": "wsl --version, uname -r, docker version, java -version.",
+      "solution": "Wersje determinują zachowanie (np. tryb mirrored WSL, funkcje Compose, domyślne algorytmy TLS w JDK). Przy zgłaszaniu problemu bez wersji nie da się go odtworzyć. W IR dokumentowanie wersji narzędzi użytych do zbierania dowodów jest wymagane dla wiarygodności i powtarzalności analizy."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Do czego służy w laboratorium narzędzie tcpdump?",
+      "options": {
+        "A": "Przechwytywanie pakietów w wierszu poleceń",
+        "B": "Graficzna analiza przechwyconych pakietów",
+        "C": "Diagnostyka połączenia TLS i certyfikatów",
+        "D": "Zapytania DNS i analiza odpowiedzi"
+      },
+      "correct": "A",
+      "explanation": "tcpdump: przechwytywanie pakietów w wierszu poleceń."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie Wireshark?",
+      "options": {
+        "A": "Przechwytywanie pakietów w wierszu poleceń",
+        "B": "Diagnostyka połączenia TLS i certyfikatów",
+        "C": "Zapytania DNS i analiza odpowiedzi",
+        "D": "Graficzna analiza przechwyconych pakietów"
+      },
+      "correct": "D",
+      "explanation": "Wireshark: graficzna analiza przechwyconych pakietów."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie dig?",
+      "options": {
+        "A": "Przechwytywanie pakietów w wierszu poleceń",
+        "B": "Zapytania DNS i analiza odpowiedzi",
+        "C": "Diagnostyka połączenia TLS i certyfikatów",
+        "D": "Graficzna analiza przechwyconych pakietów"
+      },
+      "correct": "B",
+      "explanation": "dig: zapytania dns i analiza odpowiedzi."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie openssl s_client?",
+      "options": {
+        "A": "Graficzna analiza przechwyconych pakietów",
+        "B": "Przechwytywanie pakietów w wierszu poleceń",
+        "C": "Diagnostyka połączenia TLS i certyfikatów",
+        "D": "Zapytania DNS i analiza odpowiedzi"
+      },
+      "correct": "C",
+      "explanation": "openssl s_client: diagnostyka połączenia tls i certyfikatów."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie mtr?",
+      "options": {
+        "A": "Zapytania DNS i analiza odpowiedzi",
+        "B": "Graficzna analiza przechwyconych pakietów",
+        "C": "Przechwytywanie pakietów w wierszu poleceń",
+        "D": "Ciągły pomiar opóźnień i strat na trasie"
+      },
+      "correct": "D",
+      "explanation": "mtr: ciągły pomiar opóźnień i strat na trasie."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie iperf3?",
+      "options": {
+        "A": "Zapytania DNS i analiza odpowiedzi",
+        "B": "Przechwytywanie pakietów w wierszu poleceń",
+        "C": "Pomiar przepływności między hostami",
+        "D": "Graficzna analiza przechwyconych pakietów"
+      },
+      "correct": "C",
+      "explanation": "iperf3: pomiar przepływności między hostami."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie nc (netcat)?",
+      "options": {
+        "A": "Graficzna analiza przechwyconych pakietów",
+        "B": "Sprawdzanie, czy port TCP/UDP przyjmuje połączenia",
+        "C": "Przechwytywanie pakietów w wierszu poleceń",
+        "D": "Zapytania DNS i analiza odpowiedzi"
+      },
+      "correct": "B",
+      "explanation": "nc (netcat): sprawdzanie, czy port tcp/udp przyjmuje połączenia."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie ss?",
+      "options": {
+        "A": "Wyświetlanie gniazd i nasłuchujących portów",
+        "B": "Graficzna analiza przechwyconych pakietów",
+        "C": "Przechwytywanie pakietów w wierszu poleceń",
+        "D": "Zapytania DNS i analiza odpowiedzi"
+      },
+      "correct": "A",
+      "explanation": "ss: wyświetlanie gniazd i nasłuchujących portów."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie nmap?",
+      "options": {
+        "A": "Graficzna analiza przechwyconych pakietów",
+        "B": "Inwentaryzacja usług i portów własnej infrastruktury",
+        "C": "Przechwytywanie pakietów w wierszu poleceń",
+        "D": "Zapytania DNS i analiza odpowiedzi"
+      },
+      "correct": "B",
+      "explanation": "nmap: inwentaryzacja usług i portów własnej infrastruktury."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie OWASP ZAP?",
+      "options": {
+        "A": "Dynamiczne testy bezpieczeństwa własnej aplikacji webowej",
+        "B": "Zapytania DNS i analiza odpowiedzi",
+        "C": "Przechwytywanie pakietów w wierszu poleceń",
+        "D": "Graficzna analiza przechwyconych pakietów"
+      },
+      "correct": "A",
+      "explanation": "OWASP ZAP: dynamiczne testy bezpieczeństwa własnej aplikacji webowej."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie conntrack?",
+      "options": {
+        "A": "Graficzna analiza przechwyconych pakietów",
+        "B": "Zapytania DNS i analiza odpowiedzi",
+        "C": "Przechwytywanie pakietów w wierszu poleceń",
+        "D": "Podgląd tablicy śledzenia połączeń i NAT"
+      },
+      "correct": "D",
+      "explanation": "conntrack: podgląd tablicy śledzenia połączeń i nat."
+    },
+    {
+      "question": "Do czego służy w laboratorium narzędzie jq?",
+      "options": {
+        "A": "Graficzna analiza przechwyconych pakietów",
+        "B": "Zapytania DNS i analiza odpowiedzi",
+        "C": "Przetwarzanie danych JSON w wierszu poleceń",
+        "D": "Przechwytywanie pakietów w wierszu poleceń"
+      },
+      "correct": "C",
+      "explanation": "jq: przetwarzanie danych json w wierszu poleceń."
+    },
+    {
+      "question": "Gdzie będzie dostępna usługa przy publikacji portu \"8443:443\"?",
+      "options": {
+        "A": "Na wszystkich interfejsach hosta (0.0.0.0) — także z sieci LAN",
+        "B": "Jawnie na wszystkich interfejsach IPv4 hosta",
+        "C": "Tylko na pętli zwrotnej — wyłącznie z tego komputera",
+        "D": "Port nie jest publikowany na hoście — dostępny tylko z sieci Dockera"
+      },
+      "correct": "A",
+      "explanation": "Na wszystkich interfejsach hosta (0.0.0.0) — także z sieci LAN."
+    },
+    {
+      "question": "Gdzie będzie dostępna usługa przy publikacji portu \"127.0.0.1:8443:443\"?",
+      "options": {
+        "A": "Jawnie na wszystkich interfejsach IPv4 hosta",
+        "B": "Port nie jest publikowany na hoście — dostępny tylko z sieci Dockera",
+        "C": "Na wszystkich interfejsach hosta (0.0.0.0) — także z sieci LAN",
+        "D": "Tylko na pętli zwrotnej — wyłącznie z tego komputera"
+      },
+      "correct": "D",
+      "explanation": "Tylko na pętli zwrotnej — wyłącznie z tego komputera."
+    },
+    {
+      "question": "Gdzie będzie dostępna usługa przy publikacji portu brak sekcji ports?",
+      "options": {
+        "A": "Tylko na pętli zwrotnej — wyłącznie z tego komputera",
+        "B": "Port nie jest publikowany na hoście — dostępny tylko z sieci Dockera",
+        "C": "Jawnie na wszystkich interfejsach IPv4 hosta",
+        "D": "Na wszystkich interfejsach hosta (0.0.0.0) — także z sieci LAN"
+      },
+      "correct": "B",
+      "explanation": "Port nie jest publikowany na hoście — dostępny tylko z sieci Dockera."
+    },
+    {
+      "question": "Gdzie będzie dostępna usługa przy publikacji portu \"0.0.0.0:8443:443\"?",
+      "options": {
+        "A": "Tylko na pętli zwrotnej — wyłącznie z tego komputera",
+        "B": "Port nie jest publikowany na hoście — dostępny tylko z sieci Dockera",
+        "C": "Jawnie na wszystkich interfejsach IPv4 hosta",
+        "D": "Na wszystkich interfejsach hosta (0.0.0.0) — także z sieci LAN"
+      },
+      "correct": "C",
+      "explanation": "Jawnie na wszystkich interfejsach IPv4 hosta."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: internal: true?",
+      "options": {
+        "A": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "B": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz",
+        "C": "Okresowe sprawdzanie, czy usługa w kontenerze działa poprawnie",
+        "D": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności"
+      },
+      "correct": "B",
+      "explanation": "internal: true: sieć bez trasy na zewnątrz i bez dostępu z zewnątrz."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: depends_on z condition: service_healthy?",
+      "options": {
+        "A": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz",
+        "B": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "C": "Okresowe sprawdzanie, czy usługa w kontenerze działa poprawnie",
+        "D": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności"
+      },
+      "correct": "D",
+      "explanation": "depends_on z condition: service_healthy: uruchomienie usługi dopiero po pozytywnym healthchecku zależności."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: secrets?",
+      "options": {
+        "A": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "B": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz",
+        "C": "Okresowe sprawdzanie, czy usługa w kontenerze działa poprawnie",
+        "D": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności"
+      },
+      "correct": "A",
+      "explanation": "secrets: przekazanie sekretu jako pliku zamiast zmiennej w yaml."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: healthcheck?",
+      "options": {
+        "A": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "B": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności",
+        "C": "Okresowe sprawdzanie, czy usługa w kontenerze działa poprawnie",
+        "D": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz"
+      },
+      "correct": "C",
+      "explanation": "healthcheck: okresowe sprawdzanie, czy usługa w kontenerze działa poprawnie."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: :ro przy wolumenie?",
+      "options": {
+        "A": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności",
+        "B": "Montowanie pliku lub katalogu tylko do odczytu",
+        "C": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "D": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz"
+      },
+      "correct": "B",
+      "explanation": ":ro przy wolumenie: montowanie pliku lub katalogu tylko do odczytu."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: docker compose down -v?",
+      "options": {
+        "A": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności",
+        "B": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "C": "Usunięcie kontenerów, sieci i wolumenów projektu",
+        "D": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz"
+      },
+      "correct": "C",
+      "explanation": "docker compose down -v: usunięcie kontenerów, sieci i wolumenów projektu."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: docker compose up -d --wait?",
+      "options": {
+        "A": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "B": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz",
+        "C": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności",
+        "D": "Uruchomienie w tle z oczekiwaniem na zdrowie usług"
+      },
+      "correct": "D",
+      "explanation": "docker compose up -d --wait: uruchomienie w tle z oczekiwaniem na zdrowie usług."
+    },
+    {
+      "question": "Co oznacza w Docker Compose: ipam.config.subnet?",
+      "options": {
+        "A": "Ustawienie własnej podsieci dla sieci Dockera",
+        "B": "Sieć bez trasy na zewnątrz i bez dostępu z zewnątrz",
+        "C": "Przekazanie sekretu jako pliku zamiast zmiennej w YAML",
+        "D": "Uruchomienie usługi dopiero po pozytywnym healthchecku zależności"
+      },
+      "correct": "A",
+      "explanation": "ipam.config.subnet: ustawienie własnej podsieci dla sieci dockera."
+    },
+    {
+      "question": "Jaką rolę pełni w pakiecie labu scenario.json?",
+      "options": {
+        "A": "Przywrócenie środowiska do stanu początkowego",
+        "B": "Cel, poziom, kroki i automatyczne testy laboratorium",
+        "C": "Wzorcowe wyniki do porównania",
+        "D": "Automatyczne sprawdzenie, czy cel laboratorium został osiągnięty"
+      },
+      "correct": "B",
+      "explanation": "scenario.json: cel, poziom, kroki i automatyczne testy laboratorium."
+    },
+    {
+      "question": "Jaką rolę pełni w pakiecie labu reset.sh?",
+      "options": {
+        "A": "Przywrócenie środowiska do stanu początkowego",
+        "B": "Wzorcowe wyniki do porównania",
+        "C": "Automatyczne sprawdzenie, czy cel laboratorium został osiągnięty",
+        "D": "Cel, poziom, kroki i automatyczne testy laboratorium"
+      },
+      "correct": "A",
+      "explanation": "reset.sh: przywrócenie środowiska do stanu początkowego."
+    },
+    {
+      "question": "Jaką rolę pełni w pakiecie labu check.sh?",
+      "options": {
+        "A": "Przywrócenie środowiska do stanu początkowego",
+        "B": "Wzorcowe wyniki do porównania",
+        "C": "Cel, poziom, kroki i automatyczne testy laboratorium",
+        "D": "Automatyczne sprawdzenie, czy cel laboratorium został osiągnięty"
+      },
+      "correct": "D",
+      "explanation": "check.sh: automatyczne sprawdzenie, czy cel laboratorium został osiągnięty."
+    },
+    {
+      "question": "Jaką rolę pełni w pakiecie labu expected/?",
+      "options": {
+        "A": "Przywrócenie środowiska do stanu początkowego",
+        "B": "Automatyczne sprawdzenie, czy cel laboratorium został osiągnięty",
+        "C": "Wzorcowe wyniki do porównania",
+        "D": "Cel, poziom, kroki i automatyczne testy laboratorium"
+      },
+      "correct": "C",
+      "explanation": "expected/: wzorcowe wyniki do porównania."
+    },
+    {
+      "question": "Jaką rolę pełni w pakiecie labu README.md?",
+      "options": {
+        "A": "Przywrócenie środowiska do stanu początkowego",
+        "B": "Cel, poziom, kroki i automatyczne testy laboratorium",
+        "C": "Automatyczne sprawdzenie, czy cel laboratorium został osiągnięty",
+        "D": "Instrukcja, wymagania i zasady sprzątania"
+      },
+      "correct": "D",
+      "explanation": "README.md: instrukcja, wymagania i zasady sprzątania."
+    },
+    {
+      "question": "Czym jest WSL2?",
+      "options": {
+        "A": "Emulatorem wywołań Linuksa bez jądra",
+        "B": "Przeglądarką plików Linux",
+        "C": "Lekką maszyną wirtualną z prawdziwym jądrem Linux zintegrowaną z Windows",
+        "D": "Kontenerem Dockera"
+      },
+      "correct": "C",
+      "explanation": "WSL2 uruchamia jądro Linux w lekkiej VM (Hyper-V)."
+    },
+    {
+      "question": "Co daje tryb networkingMode=mirrored w WSL2?",
+      "options": {
+        "A": "Wyłącza sieć w WSL",
+        "B": "WSL widzi te same interfejsy sieciowe co Windows",
+        "C": "Zastępuje Docker Desktop",
+        "D": "Szyfruje ruch WSL"
+      },
+      "correct": "B",
+      "explanation": "Domyślny tryb to NAT z osobną podsiecią."
+    },
+    {
+      "question": "Dlaczego laby lepiej trzymać w systemie plików WSL (~), a nie na /mnt/c?",
+      "options": {
+        "A": "Dostęp z WSL do dysku Windows jest wolny i nie wspiera w pełni uprawnień POSIX",
+        "B": "Bo /mnt/c jest tylko do odczytu",
+        "C": "Bo Docker nie widzi /mnt/c",
+        "D": "Bo Windows usuwa pliki z /mnt/c"
+      },
+      "correct": "A",
+      "explanation": "Pliki Windows są udostępniane przez warstwę 9P."
+    },
+    {
+      "question": "Dlaczego na Linuksie reguła UFW „deny” może nie chronić portu opublikowanego przez Dockera?",
+      "options": {
+        "A": "Bo UFW nie działa z IPv4",
+        "B": "Docker dodaje własne reguły iptables/nftables, przez które ruch do kontenerów omija łańcuchy UFW",
+        "C": "Bo Docker wyłącza UFW przy starcie",
+        "D": "Bo kontenery nie używają sieci hosta"
+      },
+      "correct": "B",
+      "explanation": "Skuteczne: publikacja na 127.0.0.1 lub reguły w DOCKER-USER."
+    },
+    {
+      "question": "Do czego służy łańcuch iptables DOCKER-USER?",
+      "options": {
+        "A": "Do konfiguracji DNS",
+        "B": "Do przechowywania haseł",
+        "C": "Do własnych reguł filtrujących ruch do kontenerów, przetwarzanych przed regułami Dockera",
+        "D": "Do logowania użytkowników Dockera"
+      },
+      "correct": "C",
+      "explanation": "Docker nie nadpisuje tego łańcucha przy restarcie."
+    },
+    {
+      "question": "Dlaczego w labach unika się tagu „latest”?",
+      "options": {
+        "A": "Obraz może się zmienić bez ostrzeżenia, co psuje powtarzalność",
+        "B": "Bo jest wolniejszy",
+        "C": "Bo Docker nie pozwala go używać",
+        "D": "Bo latest jest zawsze podatny"
+      },
+      "correct": "A",
+      "explanation": "Przypinaj wersje, a w CI — skróty sha256."
+    },
+    {
+      "question": "Jakie minimum pamięci RAM zalecamy dla części III toru z maszynami wirtualnymi?",
+      "options": {
+        "A": "2 GB",
+        "B": "256 GB",
+        "C": "4 GB",
+        "D": "16 GB (wygodnie 32 GB)"
+      },
+      "correct": "D",
+      "explanation": "Kontroler domeny, stacje Windows i SIEM zużywają dużo pamięci."
+    },
+    {
+      "question": "Kiedy zamiast kontenera potrzebna jest maszyna wirtualna?",
+      "options": {
+        "A": "Gdy potrzebny jest pełny system, np. Windows z Active Directory lub izolacja do analizy malware",
+        "B": "Do każdej aplikacji Java",
+        "C": "Nigdy",
+        "D": "Zawsze, kontenery są niebezpieczne"
+      },
+      "correct": "A",
+      "explanation": "Kontenery wystarczą do większości ćwiczeń sieciowych."
+    },
+    {
+      "question": "Do czego służy migawka (snapshot) maszyny wirtualnej w labie malware?",
+      "options": {
+        "A": "Do wysyłania próbki do chmury",
+        "B": "Do przyspieszenia procesora",
+        "C": "Do szyfrowania dysku",
+        "D": "Do przywrócenia czystego stanu systemu po analizie próbki"
+      },
+      "correct": "D",
+      "explanation": "Gwarantuje, że po analizie nie zostaje trwałość malware."
+    },
+    {
+      "question": "Co jest główną zasadą uruchamiania celowo podatnych aplikacji w labie?",
+      "options": {
+        "A": "Bez ograniczeń, bo to tylko lab",
+        "B": "Wyłącznie lokalnie, z portem na 127.0.0.1 i w odizolowanej sieci",
+        "C": "W sieci firmowej, by przetestować IDS",
+        "D": "Na publicznym serwerze, by inni mogli ćwiczyć"
+      },
+      "correct": "B",
+      "explanation": "Podatna aplikacja dostępna z sieci staje się realnym ryzykiem."
+    },
+    {
+      "question": "Gdzie przechowywać hasło bazy w lab-zero?",
+      "options": {
+        "A": "W nazwie kontenera",
+        "B": "W README.md",
+        "C": "W pliku sekretu poza repozytorium (np. secrets/ w .gitignore)",
+        "D": "Bezpośrednio w docker-compose.yml"
+      },
+      "correct": "C",
+      "explanation": "Hasło w YAML trafia do historii Git."
+    },
+    {
+      "question": "Co sprawdza test db_isolated w check.sh lab-zero?",
+      "options": {
+        "A": "Że baza działa szybko",
+        "B": "Że hasło jest silne",
+        "C": "Że baza ma kopię zapasową",
+        "D": "Że port PostgreSQL nie jest osiągalny z hosta"
+      },
+      "correct": "D",
+      "explanation": "Test pilnuje, by baza nie została przypadkiem wystawiona."
+    },
+    {
+      "question": "Dlaczego curl do lab-zero wymaga -k lub wskazania CA?",
+      "options": {
+        "A": "Bo lab nie używa TLS",
+        "B": "Caddy z tls internal używa certyfikatu z własnego lokalnego CA, którego curl nie zna",
+        "C": "Bo certyfikat jest wygasły",
+        "D": "Bo curl nie obsługuje TLS 1.3"
+      },
+      "correct": "B",
+      "explanation": "Rozwiązanie: --cacert z certyfikatem głównym Caddy."
+    },
+    {
+      "question": "Jakie polecenie pokaże, na jakim adresie nasłuchuje opublikowany port w Linuksie/WSL?",
+      "options": {
+        "A": "arp -a",
+        "B": "dig",
+        "C": "ss -tlnp",
+        "D": "ip route"
+      },
+      "correct": "C",
+      "explanation": "Kolumna Local Address: 127.0.0.1 czy 0.0.0.0."
+    },
+    {
+      "question": "Do czego służy kontener nicolaka/netshoot?",
+      "options": {
+        "A": "Do diagnostyki sieci z gotowym zestawem narzędzi, także w przestrzeni sieci innego kontenera",
+        "B": "Do szyfrowania dysków",
+        "C": "Do hostowania stron WWW",
+        "D": "Do budowania obrazów Javy"
+      },
+      "correct": "A",
+      "explanation": "Używany z --net container:<nazwa>."
+    },
+    {
+      "question": "Co oznacza, że ruch z kontenera w sieci internal: true do example.com się nie udaje?",
+      "options": {
+        "A": "Docker jest uszkodzony",
+        "B": "Izolacja działa — sieć nie ma trasy na zewnątrz",
+        "C": "DNS w Internecie nie działa",
+        "D": "Kontener ma błędny obraz"
+      },
+      "correct": "B",
+      "explanation": "To zamierzone zachowanie sieci wewnętrznej."
+    },
+    {
+      "question": "Jak kontenery w tej samej sieci użytkownika Dockera znajdują się nawzajem?",
+      "options": {
+        "A": "Przez wbudowany DNS Dockera — po nazwie usługi",
+        "B": "Przez broadcast NetBIOS",
+        "C": "Przez plik /etc/hosts hosta",
+        "D": "Nie mogą się znaleźć"
+      },
+      "correct": "A",
+      "explanation": "Domyślna sieć bridge nie ma DNS nazw usług; sieci użytkownika — mają."
+    },
+    {
+      "question": "Czym różnią się dane syntetyczne od kopii produkcyjnych w labie?",
+      "options": {
+        "A": "Nie można ich używać w Javie",
+        "B": "Są szyfrowane",
+        "C": "Są zawsze mniejsze",
+        "D": "Dane syntetyczne są generowane i nie zawierają prawdziwych danych osobowych"
+      },
+      "correct": "D",
+      "explanation": "Kopie produkcji w labie to ryzyko naruszenia RODO."
+    },
+    {
+      "question": "Które narzędzie wolno używać do skanowania portów w ramach toru?",
+      "options": {
+        "A": "Tylko narzędzia komercyjne",
+        "B": "nmap — wobec dowolnych adresów w Internecie",
+        "C": "nmap — wyłącznie wobec własnych systemów i labów",
+        "D": "Żadne"
+      },
+      "correct": "C",
+      "explanation": "Skanowanie cudzych sieci bez zgody może być przestępstwem."
+    },
+    {
+      "question": "Które polecenie Windows PowerShell pokaże adres nasłuchu portu 8443?",
+      "options": {
+        "A": "Test-Path 8443",
+        "B": "Get-Process 8443",
+        "C": "Resolve-DnsName 8443",
+        "D": "Get-NetTCPConnection -LocalPort 8443"
+      },
+      "correct": "D",
+      "explanation": "Kolumna LocalAddress pokazuje 127.0.0.1 lub 0.0.0.0."
+    },
+    {
+      "question": "Jak włączyć przechwytywanie pakietów bez uprawnień roota w Ubuntu?",
+      "options": {
+        "A": "Zainstalować Docker Desktop",
+        "B": "Wyłączyć firewall",
+        "C": "Dodać użytkownika do grupy wireshark (dumpcap z capabilities) i zalogować się ponownie",
+        "D": "Uruchomić Wiresharka przez sudo"
+      },
+      "correct": "C",
+      "explanation": "GUI nie powinno działać jako root."
+    },
+    {
+      "question": "Co robi „docker compose ls”?",
+      "options": {
+        "A": "Listuje pliki w katalogu",
+        "B": "Wypisuje projekty Compose i ich status",
+        "C": "Pokazuje logi kontenerów",
+        "D": "Usuwa wszystkie kontenery"
+      },
+      "correct": "B",
+      "explanation": "Przydatne do sprawdzenia, które laby działają w tle."
+    },
+    {
+      "question": "Jakie ryzyko niesie trzymanie wszystkich labów uruchomionych w tle?",
+      "options": {
+        "A": "Zużycie zasobów i pozostawione podatne usługi oraz konflikty portów i podsieci",
+        "B": "Szybsze działanie systemu",
+        "C": "Żadne",
+        "D": "Automatyczne aktualizacje"
+      },
+      "correct": "A",
+      "explanation": "Sprzątaj po każdym ćwiczeniu."
+    },
+    {
+      "question": "Gdzie ustawić globalne pule adresów dla nowych sieci Dockera?",
+      "options": {
+        "A": "W Caddyfile",
+        "B": "W pliku .wslconfig",
+        "C": "W /etc/hosts",
+        "D": "default-address-pools w daemon.json (lub ustawieniach Docker Desktop)"
+      },
+      "correct": "D",
+      "explanation": "Pozwala unikać kolizji z siecią VPN i firmową."
+    },
+    {
+      "question": "Jaki skutek ma zostawienie podatnej aplikacji labu na 0.0.0.0 w hotelowym Wi-Fi?",
+      "options": {
+        "A": "Aplikacja przestanie działać",
+        "B": "Inne osoby w tej sieci mogą ją zaatakować i wykorzystać jako punkt wejścia do laptopa",
+        "C": "Żaden — Wi-Fi hotelowe izoluje klientów zawsze",
+        "D": "Laptop wyłączy Wi-Fi"
+      },
+      "correct": "B",
+      "explanation": "Izolacja klientów nie zawsze jest włączona."
+    },
+    {
+      "question": "Do czego w toru używa się Containerlab?",
+      "options": {
+        "A": "Do topologii z routerami i przełącznikami (np. FRR, cEOS) w kontenerach",
+        "B": "Do testów frontendów",
+        "C": "Do analizy malware",
+        "D": "Do zarządzania hasłami"
+      },
+      "correct": "A",
+      "explanation": "Rozdziały o switchingu, routingu i automatyzacji."
+    },
+    {
+      "question": "Dlaczego wersje narzędzi zapisuje się w dzienniku laboratoryjnym?",
+      "options": {
+        "A": "Bo bez tego narzędzia nie działają",
+        "B": "Bo wersje są tajne",
+        "C": "Wersje wpływają na zachowanie i są potrzebne do powtórzenia wyników i zgłaszania problemów",
+        "D": "Bo tego wymaga Docker"
+      },
+      "correct": "C",
+      "explanation": "W IR to też element wiarygodności analizy."
+    },
+    {
+      "question": "Z czym w labach toru zwykle kojarzy się port 5432?",
+      "options": {
+        "A": "HTTPS",
+        "B": "aplikacja Spring Boot (domyślny port HTTP)",
+        "C": "OWASP Juice Shop (domyślnie)",
+        "D": "PostgreSQL"
+      },
+      "correct": "D",
+      "explanation": "Port 5432: PostgreSQL."
+    },
+    {
+      "question": "Z czym w labach toru zwykle kojarzy się port 8080?",
+      "options": {
+        "A": "HTTPS",
+        "B": "OWASP Juice Shop (domyślnie)",
+        "C": "aplikacja Spring Boot (domyślny port HTTP)",
+        "D": "PostgreSQL"
+      },
+      "correct": "C",
+      "explanation": "Port 8080: aplikacja Spring Boot (domyślny port HTTP)."
+    },
+    {
+      "question": "Z czym w labach toru zwykle kojarzy się port 443?",
+      "options": {
+        "A": "HTTPS",
+        "B": "aplikacja Spring Boot (domyślny port HTTP)",
+        "C": "OWASP Juice Shop (domyślnie)",
+        "D": "PostgreSQL"
+      },
+      "correct": "A",
+      "explanation": "Port 443: HTTPS."
+    },
+    {
+      "question": "Z czym w labach toru zwykle kojarzy się port 3000?",
+      "options": {
+        "A": "PostgreSQL",
+        "B": "OWASP Juice Shop (domyślnie)",
+        "C": "aplikacja Spring Boot (domyślny port HTTP)",
+        "D": "HTTPS"
+      },
+      "correct": "B",
+      "explanation": "Port 3000: OWASP Juice Shop (domyślnie)."
+    },
+    {
+      "question": "Z czym w labach toru zwykle kojarzy się port 6379?",
+      "options": {
+        "A": "HTTPS",
+        "B": "aplikacja Spring Boot (domyślny port HTTP)",
+        "C": "PostgreSQL",
+        "D": "Redis"
+      },
+      "correct": "D",
+      "explanation": "Port 6379: Redis."
+    },
+    {
+      "question": "Co pokazuje lub robi polecenie „wsl -l -v”?",
+      "options": {
+        "A": "Lista dystrybucji WSL z wersją (1 lub 2) i stanem",
+        "B": "Stan usług projektu, w tym zdrowie (healthy)",
+        "C": "Zatrzymanie wszystkich dystrybucji i maszyny WSL2",
+        "D": "Szczegóły sieci: podsieć, brama, Internal, kontenery"
+      },
+      "correct": "A",
+      "explanation": "wsl -l -v: lista dystrybucji wsl z wersją (1 lub 2) i stanem."
+    },
+    {
+      "question": "Co pokazuje lub robi polecenie „wsl --shutdown”?",
+      "options": {
+        "A": "Stan usług projektu, w tym zdrowie (healthy)",
+        "B": "Zatrzymanie wszystkich dystrybucji i maszyny WSL2",
+        "C": "Szczegóły sieci: podsieć, brama, Internal, kontenery",
+        "D": "Lista dystrybucji WSL z wersją (1 lub 2) i stanem"
+      },
+      "correct": "B",
+      "explanation": "wsl --shutdown: zatrzymanie wszystkich dystrybucji i maszyny wsl2."
+    },
+    {
+      "question": "Co pokazuje lub robi polecenie „docker network inspect <sieć>”?",
+      "options": {
+        "A": "Stan usług projektu, w tym zdrowie (healthy)",
+        "B": "Zatrzymanie wszystkich dystrybucji i maszyny WSL2",
+        "C": "Szczegóły sieci: podsieć, brama, Internal, kontenery",
+        "D": "Lista dystrybucji WSL z wersją (1 lub 2) i stanem"
+      },
+      "correct": "C",
+      "explanation": "docker network inspect <sieć>: szczegóły sieci: podsieć, brama, internal, kontenery."
+    },
+    {
+      "question": "Co pokazuje lub robi polecenie „docker compose ps”?",
+      "options": {
+        "A": "Stan usług projektu, w tym zdrowie (healthy)",
+        "B": "Zatrzymanie wszystkich dystrybucji i maszyny WSL2",
+        "C": "Lista dystrybucji WSL z wersją (1 lub 2) i stanem",
+        "D": "Szczegóły sieci: podsieć, brama, Internal, kontenery"
+      },
+      "correct": "A",
+      "explanation": "docker compose ps: stan usług projektu, w tym zdrowie (healthy)."
+    },
+    {
+      "question": "Co pokazuje lub robi polecenie „docker stats”?",
+      "options": {
+        "A": "Zatrzymanie wszystkich dystrybucji i maszyny WSL2",
+        "B": "Lista dystrybucji WSL z wersją (1 lub 2) i stanem",
+        "C": "Szczegóły sieci: podsieć, brama, Internal, kontenery",
+        "D": "Bieżące zużycie CPU i pamięci przez kontenery"
+      },
+      "correct": "D",
+      "explanation": "docker stats: bieżące zużycie cpu i pamięci przez kontenery."
+    },
+    {
+      "question": "Objaw: „docker compose up zgłasza „port is already allocated””. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Kolizja podsieci Dockera z trasami VPN",
+        "B": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "C": "Inny kontener lub proces już używa tego portu na hoście",
+        "D": "Brak uprawnień do przechwytywania (grupa wireshark/capabilities)"
+      },
+      "correct": "C",
+      "explanation": "Przyczyna: inny kontener lub proces już używa tego portu na hoście."
+    },
+    {
+      "question": "Objaw: „docker: command not found w Ubuntu WSL, choć Docker Desktop działa”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Kolizja podsieci Dockera z trasami VPN",
+        "B": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "C": "Inny kontener lub proces już używa tego portu na hoście",
+        "D": "Brak uprawnień do przechwytywania (grupa wireshark/capabilities)"
+      },
+      "correct": "B",
+      "explanation": "Przyczyna: brak włączonej integracji wsl dla tej dystrybucji w docker desktop."
+    },
+    {
+      "question": "Objaw: „Po włączeniu VPN kontenery nie łączą się ze sobą przez sieć hosta”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Kolizja podsieci Dockera z trasami VPN",
+        "B": "Inny kontener lub proces już używa tego portu na hoście",
+        "C": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "D": "Brak uprawnień do przechwytywania (grupa wireshark/capabilities)"
+      },
+      "correct": "A",
+      "explanation": "Przyczyna: kolizja podsieci dockera z trasami vpn."
+    },
+    {
+      "question": "Objaw: „tcpdump: eth0: You don’t have permission to capture on that device”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Kolizja podsieci Dockera z trasami VPN",
+        "B": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "C": "Brak uprawnień do przechwytywania (grupa wireshark/capabilities)",
+        "D": "Inny kontener lub proces już używa tego portu na hoście"
+      },
+      "correct": "C",
+      "explanation": "Przyczyna: brak uprawnień do przechwytywania (grupa wireshark/capabilities)."
+    },
+    {
+      "question": "Objaw: „Maven w WSL buduje projekt z /mnt/c kilka razy wolniej niż w ~”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Kolizja podsieci Dockera z trasami VPN",
+        "B": "Wolny dostęp WSL do systemu plików Windows",
+        "C": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "D": "Inny kontener lub proces już używa tego portu na hoście"
+      },
+      "correct": "B",
+      "explanation": "Przyczyna: wolny dostęp wsl do systemu plików windows."
+    },
+    {
+      "question": "Objaw: „check.sh: health zwraca DOWN, proxy_tls działa”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Kolizja podsieci Dockera z trasami VPN",
+        "B": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "C": "Inny kontener lub proces już używa tego portu na hoście",
+        "D": "Aplikacja działa, ale jej zależność (np. baza) jest niedostępna"
+      },
+      "correct": "D",
+      "explanation": "Przyczyna: aplikacja działa, ale jej zależność (np. baza) jest niedostępna."
+    },
+    {
+      "question": "Objaw: „Aplikacja w kontenerze nie rozwiązuje nazwy postgres”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "B": "Inny kontener lub proces już używa tego portu na hoście",
+        "C": "Kontenery są w różnych sieciach Dockera",
+        "D": "Kolizja podsieci Dockera z trasami VPN"
+      },
+      "correct": "C",
+      "explanation": "Przyczyna: kontenery są w różnych sieciach dockera."
+    },
+    {
+      "question": "Objaw: „WSL zajmuje prawie całą pamięć komputera”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Brak limitu memory w .wslconfig przy wielu labach naraz",
+        "B": "Kolizja podsieci Dockera z trasami VPN",
+        "C": "Inny kontener lub proces już używa tego portu na hoście",
+        "D": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop"
+      },
+      "correct": "A",
+      "explanation": "Przyczyna: brak limitu memory w .wslconfig przy wielu labach naraz."
+    },
+    {
+      "question": "Objaw: „Kolega w tej samej sieci Wi-Fi otworzył Twoją aplikację labową”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "B": "Port opublikowany bez adresu, czyli na 0.0.0.0",
+        "C": "Kolizja podsieci Dockera z trasami VPN",
+        "D": "Inny kontener lub proces już używa tego portu na hoście"
+      },
+      "correct": "B",
+      "explanation": "Przyczyna: port opublikowany bez adresu, czyli na 0.0.0.0."
+    },
+    {
+      "question": "Objaw: „Po aktualizacji obrazu lab zachowuje się inaczej niż tydzień temu”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Inny kontener lub proces już używa tego portu na hoście",
+        "B": "Kolizja podsieci Dockera z trasami VPN",
+        "C": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "D": "Użycie tagu latest zamiast przypiętej wersji"
+      },
+      "correct": "D",
+      "explanation": "Przyczyna: użycie tagu latest zamiast przypiętej wersji."
+    },
+    {
+      "question": "Objaw: „Mimo reguły ufw deny port kontenera jest osiągalny z sieci”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop",
+        "B": "Reguły Dockera omijają łańcuchy UFW",
+        "C": "Kolizja podsieci Dockera z trasami VPN",
+        "D": "Inny kontener lub proces już używa tego portu na hoście"
+      },
+      "correct": "B",
+      "explanation": "Przyczyna: reguły dockera omijają łańcuchy ufw."
+    },
+    {
+      "question": "Objaw: „curl: (60) SSL certificate problem: unable to get local issuer certificate dla lab-zero”. Jaka jest najbardziej prawdopodobna przyczyna?",
+      "options": {
+        "A": "Inny kontener lub proces już używa tego portu na hoście",
+        "B": "Kolizja podsieci Dockera z trasami VPN",
+        "C": "curl nie ufa lokalnemu CA Caddy (tls internal)",
+        "D": "Brak włączonej integracji WSL dla tej dystrybucji w Docker Desktop"
+      },
+      "correct": "C",
+      "explanation": "Przyczyna: curl nie ufa lokalnemu ca caddy (tls internal)."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie dig?",
+      "options": {
+        "A": "dnsutils",
+        "B": "netcat-openbsd",
+        "C": "mtr-tiny",
+        "D": "tshark"
+      },
+      "correct": "A",
+      "explanation": "dig → apt install dnsutils."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie tshark?",
+      "options": {
+        "A": "dnsutils",
+        "B": "mtr-tiny",
+        "C": "netcat-openbsd",
+        "D": "tshark"
+      },
+      "correct": "D",
+      "explanation": "tshark → apt install tshark."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie mtr?",
+      "options": {
+        "A": "tshark",
+        "B": "dnsutils",
+        "C": "mtr-tiny",
+        "D": "netcat-openbsd"
+      },
+      "correct": "C",
+      "explanation": "mtr → apt install mtr-tiny."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie nc (OpenBSD)?",
+      "options": {
+        "A": "mtr-tiny",
+        "B": "tshark",
+        "C": "dnsutils",
+        "D": "netcat-openbsd"
+      },
+      "correct": "D",
+      "explanation": "nc (OpenBSD) → apt install netcat-openbsd."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie ip, ss?",
+      "options": {
+        "A": "iproute2",
+        "B": "dnsutils",
+        "C": "tshark",
+        "D": "mtr-tiny"
+      },
+      "correct": "A",
+      "explanation": "ip, ss → apt install iproute2."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie conntrack?",
+      "options": {
+        "A": "tshark",
+        "B": "conntrack",
+        "C": "dnsutils",
+        "D": "mtr-tiny"
+      },
+      "correct": "B",
+      "explanation": "conntrack → apt install conntrack."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie ping?",
+      "options": {
+        "A": "mtr-tiny",
+        "B": "iputils-ping",
+        "C": "dnsutils",
+        "D": "tshark"
+      },
+      "correct": "B",
+      "explanation": "ping → apt install iputils-ping."
+    },
+    {
+      "question": "Który pakiet Ubuntu dostarcza narzędzie nft?",
+      "options": {
+        "A": "tshark",
+        "B": "mtr-tiny",
+        "C": "nftables",
+        "D": "dnsutils"
+      },
+      "correct": "C",
+      "explanation": "nft → apt install nftables."
+    },
+    {
+      "question": "Wynik check.sh: „OK proxy_tls, OK health, FAIL db_isolated”. Co to oznacza?",
+      "options": {
+        "A": "Baza została wystawiona na hoście — port 5432 jest osiągalny",
+        "B": "Lab działa poprawnie i baza jest odizolowana",
+        "C": "Proxy nie działa lub port 8443 nie jest opublikowany",
+        "D": "Aplikacja lub jej zależność zgłasza problem ze zdrowiem"
+      },
+      "correct": "A",
+      "explanation": "Baza została wystawiona na hoście — port 5432 jest osiągalny."
+    },
+    {
+      "question": "Wynik check.sh: „FAIL proxy_tls, FAIL health, OK db_isolated”. Co to oznacza?",
+      "options": {
+        "A": "Baza została wystawiona na hoście — port 5432 jest osiągalny",
+        "B": "Aplikacja lub jej zależność zgłasza problem ze zdrowiem",
+        "C": "Lab działa poprawnie i baza jest odizolowana",
+        "D": "Proxy nie działa lub port 8443 nie jest opublikowany"
+      },
+      "correct": "D",
+      "explanation": "Proxy nie działa lub port 8443 nie jest opublikowany."
+    },
+    {
+      "question": "Wynik check.sh: „OK proxy_tls, FAIL health, OK db_isolated”. Co to oznacza?",
+      "options": {
+        "A": "Baza została wystawiona na hoście — port 5432 jest osiągalny",
+        "B": "Aplikacja lub jej zależność zgłasza problem ze zdrowiem",
+        "C": "Proxy nie działa lub port 8443 nie jest opublikowany",
+        "D": "Lab działa poprawnie i baza jest odizolowana"
+      },
+      "correct": "B",
+      "explanation": "Aplikacja lub jej zależność zgłasza problem ze zdrowiem."
+    },
+    {
+      "question": "Wynik check.sh: „OK proxy_tls, OK health, OK db_isolated”. Co to oznacza?",
+      "options": {
+        "A": "Aplikacja lub jej zależność zgłasza problem ze zdrowiem",
+        "B": "Proxy nie działa lub port 8443 nie jest opublikowany",
+        "C": "Lab działa poprawnie i baza jest odizolowana",
+        "D": "Baza została wystawiona na hoście — port 5432 jest osiągalny"
+      },
+      "correct": "C",
+      "explanation": "Lab działa poprawnie i baza jest odizolowana."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: ports: [\"127.0.0.1:5432:5432\"] dla bazy w labie.",
+      "options": {
+        "A": "Dobra praktyka — sekret poza repozytorium",
+        "B": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "C": "Bezpieczne do ćwiczeń lokalnych",
+        "D": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)"
+      },
+      "correct": "D",
+      "explanation": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: ports: [\"5432:5432\"] i POSTGRES_PASSWORD: postgres.",
+      "options": {
+        "A": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "B": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)",
+        "C": "Dobra praktyka — sekret poza repozytorium",
+        "D": "Bezpieczne do ćwiczeń lokalnych"
+      },
+      "correct": "A",
+      "explanation": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Juice Shop w sieci internal z portem 127.0.0.1:3000.",
+      "options": {
+        "A": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "B": "Bezpieczne do ćwiczeń lokalnych",
+        "C": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)",
+        "D": "Dobra praktyka — sekret poza repozytorium"
+      },
+      "correct": "B",
+      "explanation": "Bezpieczne do ćwiczeń lokalnych."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Hasło bazy w pliku secrets/db_password.txt dodanym do .gitignore.",
+      "options": {
+        "A": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "B": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)",
+        "C": "Bezpieczne do ćwiczeń lokalnych",
+        "D": "Dobra praktyka — sekret poza repozytorium"
+      },
+      "correct": "D",
+      "explanation": "Dobra praktyka — sekret poza repozytorium."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Kopia produkcyjnej bazy klientów zaimportowana do labu na laptopie.",
+      "options": {
+        "A": "Niedopuszczalne — ryzyko naruszenia danych osobowych",
+        "B": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "C": "Bezpieczne do ćwiczeń lokalnych",
+        "D": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)"
+      },
+      "correct": "A",
+      "explanation": "Niedopuszczalne — ryzyko naruszenia danych osobowych."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Analiza próbki malware w kontenerze na stacji roboczej.",
+      "options": {
+        "A": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "B": "Bezpieczne do ćwiczeń lokalnych",
+        "C": "Niebezpieczne — do malware służy izolowana VM z migawkami",
+        "D": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)"
+      },
+      "correct": "C",
+      "explanation": "Niebezpieczne — do malware służy izolowana VM z migawkami."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Wireshark uruchamiany jako zwykły użytkownik z dumpcap w grupie wireshark.",
+      "options": {
+        "A": "Bezpieczne do ćwiczeń lokalnych",
+        "B": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)",
+        "C": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "D": "Dobra praktyka — minimalne uprawnienia"
+      },
+      "correct": "D",
+      "explanation": "Dobra praktyka — minimalne uprawnienia."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Laby w ~/labs w WSL, sprzątane docker compose down -v po ćwiczeniu.",
+      "options": {
+        "A": "Bezpieczne do ćwiczeń lokalnych",
+        "B": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci",
+        "C": "Dobra praktyka — wydajność i porządek",
+        "D": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)"
+      },
+      "correct": "C",
+      "explanation": "Dobra praktyka — wydajność i porządek."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Skan nmap całej podsieci biura „żeby sprawdzić lab”.",
+      "options": {
+        "A": "Bezpieczne do ćwiczeń lokalnych",
+        "B": "Niedopuszczalne bez zgody — dotyczy cudzych systemów",
+        "C": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)",
+        "D": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci"
+      },
+      "correct": "B",
+      "explanation": "Niedopuszczalne bez zgody — dotyczy cudzych systemów."
+    },
+    {
+      "question": "Oceń konfigurację lub praktykę: Obrazy przypięte do wersji i w CI do skrótu sha256.",
+      "options": {
+        "A": "Dobra praktyka — powtarzalność i integralność",
+        "B": "Bezpieczne do ćwiczeń lokalnych",
+        "C": "Akceptowalne — baza dostępna tylko lokalnie (choć lepiej bez publikacji)",
+        "D": "Niebezpieczne — baza ze słabym hasłem dostępna z całej sieci"
+      },
+      "correct": "A",
+      "explanation": "Dobra praktyka — powtarzalność i integralność."
+    }
+  ]
 }
