@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Kto jest po drugiej stronie tego kabla?",
+      "image": "netsec/ns02-09-exchange.svg",
+      "imageAlt": "Przełącznik SW-WAW-ACC-01 port Gi1/0/12 i serwer srv-app-07 port eno1 wymieniają co 30 s komunikaty LLDP na adres 01:80:c2:00:00:0e z TTL 120 s. Serwer widzi nazwę przełącznika, port, adres zarządzania, VLAN i system; przełącznik widzi nazwę serwera, port eno1, rolę stacji i opis systemu.",
+      "body": "Każdy, kto pracował przy serwerowni, zna to pytanie: „do którego portu którego przełącznika jest wpięty ten serwer?”. Dokumentacja jest nieaktualna, etykiety odpadły, kable krzyżują się w szafie. Odpowiedź od lat daje **protokół odkrywania sąsiadów warstwy 2**:\n- **LLDP (Link Layer Discovery Protocol, IEEE 802.1AB)** — standard wielu producentów; działa na przełącznikach, routerach, serwerach Linux (`lldpd`), hiperwizorach (VMware, Proxmox), telefonach IP i punktach dostępowych,\n- **CDP (Cisco Discovery Protocol)** — starszy, własny protokół Cisco, domyślnie włączony na urządzeniach Cisco.\n\nUrządzenie co kilkadziesiąt sekund wysyła na każdym porcie krótką ramkę: „jestem SW-WAW-ACC-01, to mój port Gi1/0/12, mój adres zarządzania to 10.99.0.11, jestem przełącznikiem, działam na IOS XE 17.12”. Sąsiad zapisuje to w **tabeli sąsiedztwa**, ale **nie przekazuje dalej** — LLDP widzi tylko bezpośrednich sąsiadów.\n\nDla developera i DevOpsa to szybka odpowiedź na „gdzie jest mój serwer”, sprawdzenie, czy oba łącza bondu idą do **różnych** przełączników, czy port ma właściwy VLAN, oraz źródło danych do automatycznych diagramów i CMDB. Dla blue teamu to **miecz obosieczny**: te same informacje (model, wersja oprogramowania, adres zarządzania, VLAN-y) za darmo dostaje każdy, kto podłączy laptopa do gniazdka — dlatego LLDP/CDP wyłącza się na portach brzegowych i niezaufanych.\n\nW tej lekcji: format ramki i **TLV** (policzysz nagłówki), polecenia na przełącznikach i w Linuksie, **LLDP-MED** dla telefonów VoIP, budowanie diagramu z danych sąsiedztwa oraz zasady bezpieczeństwa. To cele CCNA 200-301 (D2: konfiguracja i weryfikacja CDP i LLDP) i Network+ (narzędzia dokumentowania sieci).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik protokołów odkrywania",
+      "body": "- **LLDP (802.1AB)** — protokół jednokierunkowych ogłoszeń: każdy port wysyła **LLDPDU** na multicast `01:80:c2:00:00:0e` (EtherType **0x88CC**), domyślnie co **30 s** (msgTxInterval), z **TTL = interval × multiplier** (domyślnie 30 × 4 = **120 s**). Nie ma odpowiedzi ani potwierdzeń.\n- **LLDPDU** — ciąg struktur **TLV** (Type–Length–Value); nagłówek TLV: 7 bitów typu + 9 bitów długości.\n- **TLV obowiązkowe**: Chassis ID (1), Port ID (2), TTL (3), End (0). **Opcjonalne**: Port Description (4), System Name (5), System Description (6), System Capabilities (7), Management Address (8), Organizationally Specific (127).\n- **TLV 127 — rozszerzenia**: IEEE 802.1 (Port VLAN ID, nazwy VLAN-ów, agregacja), IEEE 802.3 (prędkość/duplex, PoE, MTU), **LLDP-MED** (TIA-1057: polityka sieci dla głosu — VLAN i priorytet, lokalizacja dla numerów alarmowych, inwentarz).\n- **CDP** — protokół Cisco: multicast `01:00:0c:cc:cc:cc` (enkapsulacja SNAP), ogłoszenia co **60 s**, **holdtime 180 s**; przekazuje m.in. Device ID, adres IP, platformę, wersję IOS, natywny VLAN, duplex, VTP domain.\n- **Tabela sąsiedztwa** — lista odebranych ogłoszeń z czasem wygaśnięcia; sąsiad znika po upływie TTL/holdtime bez nowego ogłoszenia.\n- **lldpd / lldpad** — demony LLDP w Linuksie; `lldpctl` / `lldpcli` do odczytu. **systemd-networkd** potrafi odbierać i wysyłać LLDP (`LLDP=yes`, `EmitLLDP=yes`).\n- **Inne protokoły odkrywania**: EDP (Extreme), FDP (Foundry/Brocade), MNDP (MikroTik), **NDP** (Nortel) — oraz w IPv6 zupełnie inny „Neighbor Discovery” (lekcja 03, nie mylić).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Wizytówka przyklejona po obu stronach drzwi",
+      "body": "Wyobraź sobie biurowiec, w którym drzwi między pokojami nie mają tabliczek. Każdy pracownik co 30 sekund przykleja na swoich drzwiach od strony korytarza **wizytówkę**: „Anna Kowalska, księgowość, pokój 12, telefon 1043, pracuję na Windows 11”. Na wizytówce jest **data ważności** (TTL 120 s) — jeśli nikt nie przyklei nowej, stara jest zrywana.\n- Sąsiad z naprzeciwka **czyta** wizytówkę i wie, kto jest po drugiej stronie — ale **nie przekazuje** jej dalej. Żeby poznać cały budynek, administrator musi obejść wszystkie pokoje i złożyć mapę z wizytówek (zbieranie sąsiedztwa ze wszystkich urządzeń).\n- **LLDP-MED** to dodatkowa naklejka dla telefonów: „telefony — proszę używać linii 30 i priorytetu 5” (voice VLAN i QoS).\n- **Problem bezpieczeństwa**: wizytówkę czyta każdy, kto przejdzie korytarzem — także **gość** czy **intruz**. Dowiaduje się, kto gdzie siedzi, jakim systemem pracuje (wersja oprogramowania → znane podatności) i jaki ma numer telefonu (adres zarządzania). Dlatego w korytarzu dla gości (porty dostępowe w strefie gości, łącze do Internetu) wizytówek się nie wiesza.\n- **Fałszywa wizytówka** — nic nie stoi na przeszkodzie, by ktoś przykleił wizytówkę z nieprawdziwymi danymi; LLDP nie ma uwierzytelniania. Danych z LLDP używaj do dokumentacji i diagnozy, ale nie do decyzji bezpieczeństwa bez dodatkowej weryfikacji.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "TLV: policz nagłówki jak parser",
+      "image": "netsec/ns02-09-tlv.svg",
+      "imageAlt": "Ramka LLDP: MAC docelowy 01:80:c2:00:00:0e, MAC źródłowy, EtherType 0x88CC, obowiązkowe TLV Chassis ID, Port ID i TTL, opcjonalne TLV 4–127 i End. Nagłówek TLV: 7 bitów typu i 9 bitów długości; przykład: System Name 13 bajtów → 0x0A0D, TTL → 0x0602 z wartością 0x0078.",
+      "body": "Nagłówek TLV to 16 bitów: górne 7 to **typ**, dolne 9 to **długość wartości** w bajtach. Kodowanie: `(typ << 9) | długość`; dekodowanie: `typ = h >> 9`, `długość = h & 0x1FF`. Format TLV spotkasz w dziesiątkach protokołów (RADIUS, BGP, TLS extensions, ASN.1/DER w uproszczeniu), więc warto go mieć „w palcach”.",
+      "code": "typ   1 dł.  7 → 0x0207   Chassis ID: podtyp 4 (MAC) + 6 B adresu\ntyp   2 dł.  9 → 0x0409   Port ID: podtyp 5 (nazwa) + „Gi1/0/12”\ntyp   3 dł.  2 → 0x0602   TTL: 0x0078 = 120 s\ntyp   4 dł. 10 → 0x080A   Port Description: „srv-app-07”\ntyp   5 dł. 13 → 0x0A0D   System Name: „SW-WAW-ACC-01”\ntyp   7 dł.  4 → 0x0E04   System Capabilities: 2 B dostępne + 2 B włączone\ntyp   8 dł. 12 → 0x100C   Management Address: IPv4 10.99.0.11\ntyp 127 dł.  6 → 0xFE06   Org. specific 802.1: OUI 00-80-C2, podtyp 1 (Port VLAN ID), VID 20\ntyp   0 dł.  0 → 0x0000   End of LLDPDU\n\nDekodowanie z surowych bajtów (tcpdump -xx):\n  02 07 04 00 1a 2b 3c 4d 5e  → 0x0207: typ 1 (Chassis ID), 7 B: podtyp 04 (MAC) + 00:1a:2b:3c:4d:5e\n  06 02 00 78                 → 0x0602: typ 3 (TTL), 2 B: 0x0078 = 120 s\nMaksymalna długość wartości: 2^9 − 1 = 511 bajtów."
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Polecenia: Cisco, Linux, Windows, VMware",
+      "body": "Na przełącznikach Cisco CDP jest zwykle włączony domyślnie, LLDP — nie zawsze. W Linuksie potrzebny jest demon `lldpd` (lub systemd-networkd).",
+      "code": "! Cisco IOS / IOS XE\nlldp run                                   ! globalnie włącz LLDP\ninterface Gi1/0/1\n lldp transmit / lldp receive              ! per port (no lldp transmit — tylko odbiór)\n no cdp enable                             ! wyłącz CDP na porcie\nshow lldp neighbors                        ! skrót: Device ID, Local Intf, Hold-time, Capability, Port ID\nshow lldp neighbors detail                 ! pełne TLV: system, adres zarządzania, VLAN, PoE\nshow cdp neighbors detail                  ! platforma, wersja IOS, IP, native VLAN, duplex\nshow lldp traffic                          ! liczniki wysłanych/odebranych/błędnych ramek\nlldp timer 30 / lldp holdtime 120          ! interwał i TTL\n\n# Linux (Debian/Ubuntu: apt install lldpd)\nsystemctl enable --now lldpd\nlldpcli show neighbors                     # sąsiedzi na każdym interfejsie\nlldpcli show neighbors details\nlldpcli show neighbors -f json             # do skryptów / CMDB\nlldpcli configure system hostname srv-app-07\nlldpcli configure lldp portidsubtype ifname\nnetworkctl lldp                            # alternatywnie systemd-networkd (LLDP=yes)\n\n# Podgląd surowych ramek\ntcpdump -i eno1 -nn -v -s 1500 'ether proto 0x88cc'\ntcpdump -i eno1 -nn -v 'ether host 01:00:0c:cc:cc:cc'      # CDP\n\n# Windows: brak wbudowanego klienta CLI; Windows Server ma funkcję „Data Center Bridging” (LLDP agent),\n# w praktyce: Wireshark z filtrem lldp || cdp albo narzędzia producenta karty.\n# VMware vSphere: Distributed Switch → Discovery protocol: LLDP/CDP, tryb Listen/Advertise/Both."
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Zadanie z planu: zbierz sąsiedztwo i narysuj diagram fizyczny",
+      "image": "netsec/ns02-09-diagram.svg",
+      "imageAlt": "Po lewej siedem par sąsiedztwa z trzech przełączników; po prawej narysowany z nich diagram: CORE1 połączony z ACC1 i ACC2, łącze ACC1–ACC2, serwer srv-db-01 z dwoma łączami do ACC1, punkt dostępowy i telefon przy ACC2. Wniosek: oba łącza serwera do jednego przełącznika — brak redundancji przełącznika.",
+      "body": "Laboratorium — w Containerlabie z lekcji 06 (cEOS/SR Linux mają LLDP domyślnie włączony; dla kontenerów Linux doinstaluj `lldpd`):\n1. **Włącz LLDP** na wszystkich urządzeniach labu (`lldp run`, `systemctl start lldpd`). Odczekaj 30–60 s.\n2. **Zbierz tabele sąsiedztwa** z każdego urządzenia: `show lldp neighbors` (przełączniki) i `lldpcli show neighbors -f json` (hosty). Zapisz je do plików.\n3. **Zbuduj listę krawędzi**: każda linia to para „urządzenie:port ↔ urządzenie:port”. Usuń duplikaty — każde łącze zobaczysz z obu stron.\n4. **Narysuj diagram** — ręcznie lub automatycznie: skrypt (Python/Java) zamienia krawędzie na plik **Graphviz DOT** lub **Mermaid**; Containerlab sam potrafi pokazać topologię (`containerlab graph`) — porównaj.\n5. **Zweryfikuj z zamierzonym projektem**: czy każde łącze jest tam, gdzie powinno? Czy oba porty bondu serwera idą do **różnych** przełączników? Czy port ma właściwy VLAN (TLV 802.1 Port VLAN ID)?\n6. **Odczytaj ryzyka**: które urządzenia ogłaszają wersję oprogramowania i adres zarządzania na portach, gdzie nie powinny (np. do hostów użytkowników)?\n7. **Wyłącz LLDP** na porcie do „hosta gościa” i sprawdź, że po upływie TTL (120 s) przełącznik znika z jego tabeli sąsiedztwa.\n8. **Wynik**: diagram (PNG/SVG) + tabela połączeń w repozytorium — tak wygląda „dokumentacja jako kod” sieci.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "LLDP vs CDP w liczbach",
+      "body": "Porównanie, które przydaje się na egzaminie i przy migracji sieci wielodostawczej:",
+      "code": "cecha                    LLDP (802.1AB)                 CDP (Cisco)\nstandard                 IEEE, wielu producentów        własnościowy Cisco\nadres docelowy           01:80:c2:00:00:0e              01:00:0c:cc:cc:cc\nenkapsulacja             EtherType 0x88CC               LLC/SNAP (PID 0x2000)\ninterwał                 30 s                           60 s\nczas życia               120 s (TTL = 30 × 4)           180 s (holdtime)\ndomyślnie na Cisco       często wyłączony (lldp run)    włączony\nprzekazywanie dalej      nie (tylko sąsiad)             nie (tylko sąsiad)\nrozszerzenia             TLV 127: 802.1, 802.3, MED     natywne pola: VTP, native VLAN, PoE\nVoIP                     LLDP-MED (network policy)      CDP voice VLAN (telefony Cisco)\nLinux                    lldpd, systemd-networkd        lldpd (odbiór i wysyłanie CDP)\nuwierzytelnianie         brak                           brak\n\nTTL = msgTxInterval × msgTxHold: 30 × 4 = 120 s; 10 × 4 = 40 s; 60 × 3 = 180 s."
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Automatyzacja: z JSON lldpcli do diagramu w Javie",
+      "body": "Prosty program, który z wyjścia `lldpcli show neighbors -f json` zebranego z wielu hostów (lub z odpowiedzi API przełączników) buduje listę unikatowych łączy i plik Graphviz DOT. Ten sam wzorzec stosują narzędzia typu NetBox (import), Nautobot, LibreNMS i Netdisco.",
+      "code": "import com.fasterxml.jackson.databind.*;\nimport java.nio.file.*;\nimport java.util.*;\n\npublic class LldpToDot {\n    record End(String device, String port) {}\n    record Link(End a, End b) {\n        Link normalized() {                       // A–B i B–A to to samo łącze\n            return (a.device + a.port).compareTo(b.device + b.port) <= 0 ? this : new Link(b, a);\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n        ObjectMapper om = new ObjectMapper();\n        Set<Link> links = new TreeSet<>(Comparator.comparing((Link l) -> l.a.device + l.a.port + l.b.device + l.b.port));\n        for (String file : args) {                // pliki: <hostname>.json\n            String host = Path.of(file).getFileName().toString().replace(\".json\", \"\");\n            JsonNode ifaces = om.readTree(Path.of(file).toFile()).path(\"lldp\").path(\"interface\");\n            for (JsonNode i : ifaces) {           // format lldpcli: {\"eno1\": {\"chassis\": {...}, \"port\": {...}}}\n                i.fields().forEachRemaining(e -> {\n                    String nbr = e.getValue().path(\"chassis\").fieldNames().next();\n                    String nbrPort = e.getValue().path(\"port\").path(\"id\").path(\"value\").asText();\n                    links.add(new Link(new End(host, e.getKey()), new End(nbr, nbrPort)).normalized());\n                });\n            }\n        }\n        StringBuilder dot = new StringBuilder(\"graph lan {\\n\");\n        links.forEach(l -> dot.append(\"  \\\"%s\\\" -- \\\"%s\\\" [label=\\\"%s ↔ %s\\\"];\\n\"\n            .formatted(l.a.device, l.b.device, l.a.port, l.b.port)));\n        Files.writeString(Path.of(\"lan.dot\"), dot.append(\"}\\n\"));   // dot -Tsvg lan.dot > lan.svg\n    }\n}"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "image": "netsec/ns02-09-security.svg",
+      "imageAlt": "Dwie kolumny: LLDP/CDP włączone na łączach między przełącznikami, portach do serwerów, hiperwizorów, telefonów VoIP, punktów dostępowych i w sieci zarządzania; wyłączone na interfejsach do Internetu, w strefie gości, salach konferencyjnych, DMZ i nieużywanych portach. Ramka ujawnia nazwę, model, wersję oprogramowania, adres zarządzania i VLAN-y.",
+      "body": "**Developer / DevOps / SRE:**\n- **„Gdzie jest mój serwer?”** — `lldpcli show neighbors` na serwerze od razu podaje przełącznik i port; bez szukania kabli i bez czekania na zespół sieci.\n- **Weryfikacja redundancji** — oba porty bondu (lekcja 08) muszą prowadzić do **dwóch różnych** przełączników pary MLAG; LLDP to pokazuje w sekundę.\n- **Weryfikacja VLAN-u i prędkości** — TLV 802.1 (Port VLAN ID) i 802.3 (MAC/PHY) pozwalają wykryć „serwer w złym VLAN-ie” czy „port wynegocjował 100M”.\n- **Automatyzacja i CMDB** — NetBox/Nautobot, Ansible (`lldp_neighbors`), Netdisco i LibreNMS budują z LLDP inwentarz i diagramy; provisioning serwerów bare metal (np. MAAS, Ironic/OpenStack, Metal3 w Kubernetesie) używa LLDP do automatycznego ustalenia, do którego portu podłączono nowy serwer.\n- **Hiperwizory** — vSphere Distributed Switch i Proxmox pokazują sąsiadów LLDP/CDP fizycznych kart — szybka diagnoza „VM-ki na tym hoście nie mają sieci”.\n\n**Blue team:**\n- **Rozpoznanie (reconnaissance)** — przechwycona ramka LLDP/CDP ujawnia model i wersję systemu przełącznika (porównanie z listą podatności), adres zarządzania (cel ataku), VLAN-y (w tym voice VLAN), nazwy hostów. ATT&CK: rozpoznanie sieci, T1590/T1016 (zbieranie informacji o konfiguracji sieci). Obrona: wyłączanie na portach brzegowych i niezaufanych.\n- **Fałszywe ogłoszenia** — LLDP/CDP nie ma uwierzytelniania; podszycie się pod telefon IP może dać dostęp do voice VLAN (telefon „dostaje” VLAN przez CDP/LLDP-MED). Obrona: 802.1X/MAB dla telefonów, ograniczenie voice VLAN do potrzebnego ruchu.\n- **DoS na tabelę sąsiedztwa** — zalewanie tysiącami fałszywych ogłoszeń CDP zużywało pamięć/CPU starszych urządzeń; aktualizacje i wyłączanie CDP tam, gdzie zbędny.\n- **Detekcja** — nieoczekiwany nowy sąsiad LLDP na porcie (np. przełącznik zamiast komputera), zmiana sąsiada na łączu między przełącznikami, ramki CDP/LLDP z portów użytkowników w sieci, gdzie LLDP jest wyłączony — to sygnały do SIEM/NAC.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste nieporozumienia i błędy",
+      "body": "- **„LLDP pokaże całą sieć”** — nie; widzisz tylko **bezpośrednich** sąsiadów. Pełna mapa wymaga zebrania danych ze wszystkich urządzeń.\n- **Mylenie LLDP z IPv6 Neighbor Discovery** — to zupełnie różne protokoły (L2 ogłoszenia vs ICMPv6 rozwiązywanie adresów — lekcja 03).\n- **CDP włączony domyślnie wszędzie** — na routerze brzegowym do operatora czy na porcie w sali konferencyjnej rozgłasza wersję IOS i adres zarządzania obcym. Wyłącz na interfejsach zewnętrznych i dostępowych tam, gdzie zbędny.\n- **Wyłączenie LLDP/CDP wszędzie „dla bezpieczeństwa”** — psuje telefony VoIP (voice VLAN, PoE negotiation), automatyzację i diagnozę. Wyłączaj selektywnie.\n- **Ufanie danym z LLDP** — informacje są nieuwierzytelnione; świetne do dokumentacji, nie jako podstawa decyzji dostępowych.\n- **Kontenery i maszyny wirtualne** — sąsiad LLDP serwera to przełącznik fizyczny; VM-ki za vSwitchem zwykle go nie widzą (vSwitch nie przekazuje ramek 01:80:c2:00:00:0e — to adres „nie przekazuj dalej”), a niektóre karty z firmware/DCB same przechwytują LLDP, przez co `lldpd` w systemie nic nie widzi.\n- **Różne podtypy Port ID** — jedno urządzenie ogłasza nazwę portu („Gi1/0/12”), inne MAC lub indeks; skrypty muszą to normalizować.\n- **Zbyt długi TTL po zmianie** — po przepięciu kabla stary sąsiad widnieje do 120 s (CDP 180 s); nie panikuj, odczekaj lub wyczyść tabelę (`clear lldp table`).",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: CDP i LLDP wszędzie, także na granicy",
+      "body": "Ustawienia domyślne na routerze brzegowym i przełączniku dostępowym w strefie gości.",
+      "code": "! Router brzegowy (interfejs do operatora / Internetu)\ninterface GigabitEthernet0/0/0\n description WAN do operatora\n ip address 203.0.113.2 255.255.255.252\n ! cdp enable (domyślnie), lldp transmit (jeśli lldp run)\n!\n! Przełącznik w strefie gości / sala konferencyjna\nlldp run\ninterface range Gi1/0/1 - 24\n switchport access vlan 60\n ! CDP i LLDP wysyłane na każdy port gościa\n!\n! Skutek: każdy gość z Wiresharkiem i każdy sąsiad u operatora widzi:\n! Device ID: RTR-EDGE-WAW, Platform: Cisco ISR4451, Version 17.6.x,\n! Management address: 10.99.0.1, Native VLAN: 1, VTP domain: CORP …"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: selektywnie — tam, gdzie pomaga, i tylko tam",
+      "body": "LLDP na łączach infrastrukturalnych, do serwerów, AP i telefonów (LLDP-MED); wyłączony na granicy i w strefach niezaufanych; CDP wyłączony tam, gdzie wystarczy LLDP.",
+      "code": "lldp run\nno cdp run                                 ! jeśli telefony/urządzenia nie wymagają CDP\n!\ninterface GigabitEthernet0/0/0             ! WAN\n no lldp transmit\n no lldp receive\n no cdp enable\n!\ninterface range Gi1/0/1 - 24               ! strefa gości\n no lldp transmit\n no lldp receive\n!\ninterface range Gi1/0/25 - 44              ! biuro z telefonami IP\n switchport access vlan 10\n switchport voice vlan 30\n lldp transmit                             ! LLDP-MED: network policy (VLAN 30, PCP 5)\n lldp receive\n authentication port-control auto          ! 802.1X/MAB dla telefonów i komputerów\n!\ninterface range Te1/1/1 - 4                ! uplinki i serwery\n lldp transmit\n lldp receive\n! Monitoring: zmiana sąsiada LLDP na uplinku → alert; sąsiad typu „Bridge” na porcie dostępowym → alert."
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Kiedy włączać, a kiedy nie",
+      "body": "- **Włączaj LLDP** na: łączach między przełącznikami i routerami (diagnoza, automatyczne diagramy), portach do serwerów i hiperwizorów (weryfikacja okablowania, provisioning bare metal), portach do telefonów IP i punktów dostępowych (LLDP-MED, PoE, voice VLAN), w sieci zarządzania.\n- **CDP** — tylko tam, gdzie potrzebują go urządzenia Cisco (starsze telefony, niektóre funkcje), w nowych projektach preferuj LLDP jako standard.\n- **Wyłączaj** na: interfejsach do Internetu i operatorów, portach w strefach gości, salach konferencyjnych, DMZ z obcymi systemami, portach nieużywanych i tam, gdzie nie masz kontroli nad sąsiadem.\n- **Tryb tylko odbiór** (`no lldp transmit`, `lldp receive`) — gdy chcesz wiedzieć, co jest podłączone, ale nie ujawniać informacji o sobie (np. porty dostępowe z NAC).\n- **Serwery Linux** — `lldpd` warto mieć w obrazie bazowym serwerów bare metal: kosztuje kilka MB, a skraca diagnozę okablowania z godzin do sekund.\n- **Dokumentacja** — traktuj LLDP jako źródło prawdy o fizycznych połączeniach do porównywania z dokumentacją (NetBox) i wykrywania odchyleń.",
+      "code": null
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- LLDP (IEEE 802.1AB) i CDP (Cisco) ogłaszają bezpośrednim sąsiadom: nazwę, port, rolę, system, adres zarządzania, VLAN; informacje nie są przekazywane dalej.\n- LLDP: 01:80:c2:00:00:0e, EtherType 0x88CC, co 30 s, TTL 120 s (30 × 4); CDP: 01:00:0c:cc:cc:cc (SNAP), co 60 s, holdtime 180 s.\n- LLDPDU to ciąg TLV: nagłówek = 7 bitów typu + 9 bitów długości → (typ << 9) | długość; obowiązkowe: Chassis ID (1), Port ID (2), TTL (3), End (0); rozszerzenia w TLV 127 (802.1, 802.3, LLDP-MED).\n- Narzędzia: show lldp/cdp neighbors [detail], lldpcli show neighbors [-f json], tcpdump 'ether proto 0x88cc'.\n- Zastosowania: lokalizacja serwerów, weryfikacja bondów i VLAN-ów, diagramy i CMDB, provisioning bare metal, VoIP (LLDP-MED).\n- Bezpieczeństwo: ujawnianie informacji i brak uwierzytelniania → wyłączaj na granicy i w strefach niezaufanych, monitoruj nieoczekiwanych sąsiadów.\n- Następna lekcja: **DHCP i autokonfiguracja adresów (SLAAC)**.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zakoduj nagłówek TLV LLDP dla typu 5 (System Name) o długości wartości 13 bajtów. Podaj wynik binarnie i szesnastkowo.",
+      "hint": "Nagłówek = (typ << 9) | długość; 7 bitów typu, 9 bitów długości.",
+      "solution": "(5 << 9) | 13 = 2560 + 13 = 2573 = 0x0A0D = 0000101 000001101 (typ 0000101, długość 000001101)."
+    },
+    {
+      "prompt": "Zakoduj nagłówek TLV LLDP dla typu 8 (Management Address) o długości wartości 12 bajtów. Podaj wynik binarnie i szesnastkowo.",
+      "hint": "Nagłówek = (typ << 9) | długość; 7 bitów typu, 9 bitów długości.",
+      "solution": "(8 << 9) | 12 = 4096 + 12 = 4108 = 0x100C = 0001000 000001100 (typ 0001000, długość 000001100)."
+    },
+    {
+      "prompt": "Zakoduj nagłówek TLV LLDP dla typu 6 (System Description) o długości wartości 120 bajtów. Podaj wynik binarnie i szesnastkowo.",
+      "hint": "Nagłówek = (typ << 9) | długość; 7 bitów typu, 9 bitów długości.",
+      "solution": "(6 << 9) | 120 = 3072 + 120 = 3192 = 0x0C78 = 0000110 001111000 (typ 0000110, długość 001111000)."
+    },
+    {
+      "prompt": "Zakoduj nagłówek TLV LLDP dla typu 127 (Organizationally Specific) o długości wartości 9 bajtów. Podaj wynik binarnie i szesnastkowo.",
+      "hint": "Nagłówek = (typ << 9) | długość; 7 bitów typu, 9 bitów długości.",
+      "solution": "(127 << 9) | 9 = 65024 + 9 = 65033 = 0xFE09 = 1111111 000001001 (typ 1111111, długość 000001001)."
+    },
+    {
+      "prompt": "Zdekoduj nagłówek TLV 0x0207: jaki to typ i ile bajtów ma wartość?",
+      "hint": "typ = h >> 9, długość = h & 0x1FF.",
+      "solution": "0x0207 = 0000001000000111 → typ 1 (Chassis ID), długość 7 B."
+    },
+    {
+      "prompt": "Zdekoduj nagłówek TLV 0x0A0D: jaki to typ i ile bajtów ma wartość?",
+      "hint": "typ = h >> 9, długość = h & 0x1FF.",
+      "solution": "0x0A0D = 0000101000001101 → typ 5 (System Name), długość 13 B."
+    },
+    {
+      "prompt": "Zdekoduj nagłówek TLV 0xFE06: jaki to typ i ile bajtów ma wartość?",
+      "hint": "typ = h >> 9, długość = h & 0x1FF.",
+      "solution": "0xFE06 = 1111111000000110 → typ 127 (Organizationally Specific), długość 6 B."
+    },
+    {
+      "prompt": "Zdekoduj nagłówek TLV 0x0C1C: jaki to typ i ile bajtów ma wartość?",
+      "hint": "typ = h >> 9, długość = h & 0x1FF.",
+      "solution": "0x0C1C = 0000110000011100 → typ 6 (System Description), długość 28 B."
+    },
+    {
+      "prompt": "LLDP wysyła ogłoszenia co 30 s z mnożnikiem 4. Jaki TTL znajdzie się w ramce i po jakim czasie od ostatniego ogłoszenia sąsiad zniknie z tabeli?",
+      "hint": "TTL = interwał × mnożnik.",
+      "solution": "TTL = 30 × 4 = 120 s; sąsiad zniknie po 120 s bez nowego ogłoszenia (np. po odłączeniu kabla bez utraty sygnału lub wyłączeniu LLDP po drugiej stronie). Przy utracie łącza (link down) wpis jest usuwany od razu."
+    },
+    {
+      "prompt": "LLDP wysyła ogłoszenia co 10 s z mnożnikiem 3. Jaki TTL znajdzie się w ramce i po jakim czasie od ostatniego ogłoszenia sąsiad zniknie z tabeli?",
+      "hint": "TTL = interwał × mnożnik.",
+      "solution": "TTL = 10 × 3 = 30 s; sąsiad zniknie po 30 s bez nowego ogłoszenia (np. po odłączeniu kabla bez utraty sygnału lub wyłączeniu LLDP po drugiej stronie). Przy utracie łącza (link down) wpis jest usuwany od razu."
+    },
+    {
+      "prompt": "LLDP wysyła ogłoszenia co 60 s z mnożnikiem 3. Jaki TTL znajdzie się w ramce i po jakim czasie od ostatniego ogłoszenia sąsiad zniknie z tabeli?",
+      "hint": "TTL = interwał × mnożnik.",
+      "solution": "TTL = 60 × 3 = 180 s; sąsiad zniknie po 180 s bez nowego ogłoszenia (np. po odłączeniu kabla bez utraty sygnału lub wyłączeniu LLDP po drugiej stronie). Przy utracie łącza (link down) wpis jest usuwany od razu."
+    },
+    {
+      "prompt": "Wykonaj zadanie z planu lekcji: zbierz sąsiedztwo LLDP w labie (Containerlab) i narysuj diagram fizyczny. Przedstaw tabelę połączeń i wnioski.",
+      "hint": "show lldp neighbors / lldpcli -f json; usuń duplikaty łączy.",
+      "solution": "Przykładowa tabela: sw1 eth1 ↔ sw2 eth1; sw1 eth2 ↔ pc1 eth1; sw1 eth3 ↔ pc2 eth1; sw2 eth2 ↔ pc3 eth1; sw2 eth3 ↔ pc4 eth1. Każde łącze widać z obu stron (np. sw1 widzi sw2:eth1, sw2 widzi sw1:eth1) — po normalizacji 5 unikatowych łączy. Diagram w Graphviz/Mermaid zgodny z containerlab graph. Wnioski: lista portów, na których LLDP ogłasza wersję systemu do hostów (do wyłączenia transmit), weryfikacja zgodności z plikiem topologii."
+    },
+    {
+      "prompt": "Na serwerze z bondem dwóch kart uruchom lldpcli show neighbors (lub opisz wynik). Jak sprawdzisz, czy bond zapewnia redundancję przełącznika?",
+      "hint": "Sąsiad każdej karty.",
+      "solution": "Wynik: eno1 → SysName LEAF-A, PortID Ethernet5; eno2 → SysName LEAF-B, PortID Ethernet5. Różne SysName (i Chassis ID) = łącza do dwóch różnych przełączników (para MLAG) → redundancja przełącznika. Jeśli obie karty widzą ten sam przełącznik, awaria tego przełącznika odetnie serwer — trzeba przepiąć kabel."
+    },
+    {
+      "prompt": "Przechwyć ramkę LLDP tcpdumpem (lub opisz) i wskaż w niej: adres docelowy, EtherType, TLV Chassis ID, Port ID, TTL i System Name.",
+      "hint": "tcpdump -i eth0 -nn -v -xx ether proto 0x88cc.",
+      "solution": "Nagłówek Ethernet: dst 01:80:c2:00:00:0e, src MAC portu, EtherType 0x88cc. TLV: 02 07 04 <6 B MAC> (Chassis ID, podtyp MAC), 04 0a 05 <„Gi1/0/12”> lub inny podtyp (Port ID), 06 02 00 78 (TTL 120), 0a 0d <„SW-WAW-ACC-01”> (System Name), …, 00 00 (End). tcpdump -v dekoduje te pola słownie."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego ramka LLDP nie jest przekazywana przez przełącznik dalej, i jakie ma to konsekwencje dla wirtualizacji.",
+      "hint": "Adres 01:80:c2:00:00:0e należy do zakresu „nie przekazuj” (Nearest Bridge).",
+      "solution": "Adresy 01:80:c2:00:00:00–0f są zarezerwowane dla protokołów sterujących mostów (STP, LACP, LLDP, 802.1X); zgodne z 802.1D przełączniki ich nie przekazują — LLDP z adresem Nearest Bridge dociera tylko do bezpośredniego sąsiada. Konsekwencja: maszyny wirtualne za vSwitchem (lub kontenery za bridge’em Linuksa) zwykle nie widzą fizycznego przełącznika — informację o sąsiedztwie zbiera się na hiperwizorze (vDS discovery, lldpd na hoście)."
+    },
+    {
+      "prompt": "Opisz, co LLDP-MED przekazuje telefonowi VoIP i dlaczego to ważne dla segmentacji.",
+      "hint": "Network Policy TLV: VLAN, priorytet L2, DSCP.",
+      "solution": "LLDP-MED (TIA-1057) przekazuje m.in. Network Policy (aplikacja Voice: VLAN ID, priorytet 802.1p np. 5, DSCP np. EF 46), informacje o PoE (pobór mocy), lokalizację (dla numerów alarmowych) i inwentarz. Telefon sam przełącza się do voice VLAN i oznacza ruch właściwym priorytetem — głos jest odseparowany od danych komputera i chroniony QoS. Ryzyko: urządzenie podszywające się pod telefon też może dostać voice VLAN — stąd 802.1X/MAB."
+    },
+    {
+      "prompt": "Zaproponuj politykę LLDP/CDP dla firmy z biurami, serwerownią i strefą gości. Wskaż, gdzie transmit, gdzie receive, gdzie nic.",
+      "hint": "Selektywność.",
+      "solution": "Serwerownia (uplinki, serwery, hiperwizory): LLDP transmit + receive; CDP wyłączony, jeśli niepotrzebny. Biura: porty z telefonami — LLDP-MED transmit + receive (lub CDP dla telefonów Cisco), porty komputerów bez telefonu — tylko receive (wiemy, co jest wpięte, nie ujawniamy siebie). Strefa gości, sale konferencyjne, DMZ z obcymi systemami, WAN/Internet: wyłączone całkowicie. Monitoring zmian sąsiadów na uplinkach i nieoczekiwanych urządzeń typu Bridge na portach dostępowych."
+    },
+    {
+      "prompt": "Analiza z perspektywy obrońcy: jakie informacje z przechwyconej ramki CDP są najbardziej wartościowe dla napastnika i co z nimi zrobi (koncepcyjnie)?",
+      "hint": "Platforma, wersja, adres zarządzania, VLAN-y.",
+      "solution": "Najcenniejsze: wersja oprogramowania i platforma (porównanie z bazą podatności, np. CISA KEV — wybór exploita), adres zarządzania (cel logowania/ataku na interfejs WWW/SSH), native VLAN i voice VLAN (próby przejścia do innych VLAN-ów, podszycie pod telefon), nazwy urządzeń i domena VTP (mapa sieci, socjotechnika). Wniosek obronny: wyłączyć CDP/LLDP na portach dostępowych niezaufanych, segmentować zarządzanie, aktualizować oprogramowanie."
+    },
+    {
+      "prompt": "Sąsiad LLDP na porcie użytkownika Gi1/0/22 zmienił się z „Station” (laptop) na „Bridge” (przełącznik). Co mogło się stać i jak zareagujesz?",
+      "hint": "Nieautoryzowany przełącznik lub punkt dostępowy.",
+      "solution": "Ktoś podłączył mały przełącznik lub punkt dostępowy (np. by podłączyć więcej urządzeń albo celowo, by rozszerzyć dostęp). Ryzyka: pętla L2, nieautoryzowane urządzenia za przełącznikiem, nieautoryzowane Wi-Fi. Reakcja: sprawdzić tablicę MAC na porcie (ile urządzeń), czy BPDU Guard zadziałał, zlokalizować i usunąć urządzenie, ewentualnie port security/802.1X. W SIEM: reguła alertu na zmianę capabilities sąsiada na porcie dostępowym."
+    },
+    {
+      "prompt": "Napisz w Javie parser nagłówków TLV, który z tablicy bajtów LLDPDU (bez nagłówka Ethernet) wypisze typ, długość i surową wartość każdego TLV, kończąc na TLV End.",
+      "hint": "Czytaj 2 bajty, wylicz typ i długość, przesuń wskaźnik.",
+      "solution": "record Tlv(int type, byte[] value) {}\nstatic List<Tlv> parse(byte[] pdu) {\n  var out = new ArrayList<Tlv>(); int i = 0;\n  while (i + 2 <= pdu.length) {\n    int h = ((pdu[i] & 0xff) << 8) | (pdu[i + 1] & 0xff);\n    int type = h >>> 9, len = h & 0x1ff; i += 2;\n    if (type == 0) break;                       // End of LLDPDU\n    if (i + len > pdu.length) throw new IllegalArgumentException(\"uszkodzony TLV\");\n    out.add(new Tlv(type, Arrays.copyOfRange(pdu, i, i + len))); i += len;\n  }\n  return out;\n}\n// Walidacja długości chroni przed odczytem poza buforem — klasyczny błąd parserów protokołów."
+    },
+    {
+      "prompt": "Wyjaśnij, czym są podtypy Chassis ID i Port ID oraz dlaczego utrudniają porównywanie danych z różnych urządzeń.",
+      "hint": "Podtyp to pierwszy bajt wartości.",
+      "solution": "Pierwszy bajt wartości TLV Chassis ID/Port ID to podtyp: dla Chassis ID m.in. 4 = adres MAC, 5 = adres sieciowy, 7 = lokalnie przypisany; dla Port ID m.in. 3 = MAC, 5 = nazwa interfejsu, 7 = lokalny (np. indeks). Jedno urządzenie ogłasza port jako „Gi1/0/12”, inne jako „GigabitEthernet1/0/12”, „ge-0/0/12” albo MAC — skrypty budujące diagramy muszą normalizować nazwy (np. mapując indeks SNMP ifIndex lub rozwijając skróty)."
+    },
+    {
+      "prompt": "Porównaj, jak zebrać sąsiedztwo z 200 przełączników: SSH + parsowanie show lldp neighbors, SNMP (LLDP-MIB) i API (NETCONF/gNMI/eAPI). Zalety i wady.",
+      "hint": "Tekst vs dane ustrukturyzowane.",
+      "solution": "SSH + parsowanie: działa wszędzie, ale tekst różni się między wersjami i producentami — kruche (TextFSM/Genie pomagają). SNMP LLDP-MIB (lldpRemTable): ustrukturyzowane, wspierane przez większość urządzeń, wymaga SNMPv3 i znajomości OID/indeksów. API (NETCONF/YANG openconfig-lldp, gNMI, Arista eAPI JSON): najlepsza struktura i wydajność, wymaga nowszych urządzeń. W praktyce: narzędzia (Netdisco, LibreNMS, NetBox z wtyczkami, Nornir) łączą te metody."
+    },
+    {
+      "prompt": "Po przepięciu serwera do innego portu show lldp neighbors nadal pokazuje go na starym porcie. Dlaczego i co zrobisz?",
+      "hint": "TTL wpisu.",
+      "solution": "Jeśli stary port nie zgłosił link down (np. kabel wyjęty po stronie patch panelu z aktywnym urządzeniem pośrednim) lub wpis pochodzi z innego źródła, sąsiad pozostaje w tabeli do wygaśnięcia TTL (120 s LLDP, 180 s CDP). Rozwiązanie: odczekać, sprawdzić Hold-time malejący w show lldp neighbors, ewentualnie clear lldp table / clear cdp table; zweryfikować stan portu (show interfaces status)."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między LLDP a IPv6 Neighbor Discovery oraz między LLDP a ARP — trzy protokoły „o sąsiadach”.",
+      "hint": "Warstwa, cel, mechanizm.",
+      "solution": "LLDP (L2, 802.1AB): jednokierunkowe ogłoszenia o tożsamości urządzenia i portu do bezpośredniego sąsiada, do zarządzania i dokumentacji; nie służy do przesyłania danych. ARP (L2/L3 IPv4): zapytanie „kto ma ten adres IP” → odpowiedź z MAC, potrzebne do wysłania każdego pakietu IPv4 w segmencie. IPv6 ND (ICMPv6): odpowiednik ARP dla IPv6 plus wykrywanie routerów, SLAAC, DAD. LLDP nie zastępuje ani nie wpływa na rozwiązywanie adresów."
+    },
+    {
+      "prompt": "Jak włączyć wysyłanie LLDP z serwera Linux bez instalowania lldpd (systemd-networkd)? Kiedy to wystarczy?",
+      "hint": "Plik .network z LLDP= i EmitLLDP=.",
+      "solution": "W pliku /etc/systemd/network/10-eno1.network w sekcji [Network]: LLDP=yes (odbiór) i EmitLLDP=nearest-bridge (lub yes) — wysyłanie. Odczyt sąsiadów: networkctl lldp. Wystarcza do podstawowej identyfikacji serwera i odczytu sąsiada; lldpd daje więcej (CDP, LLDP-MED, JSON, konfiguracja TLV, SNMP subagent)."
+    },
+    {
+      "prompt": "Opisz, jak provisioning serwerów bare metal (np. MAAS, OpenStack Ironic) wykorzystuje LLDP.",
+      "hint": "Introspekcja nowego serwera.",
+      "solution": "Nowy serwer startuje z obrazu introspekcyjnego (PXE), który zbiera dane o sprzęcie i odbiera ramki LLDP na każdej karcie — wie, do którego przełącznika i portu podłączona jest każda karta. System provisioningu automatycznie konfiguruje port przełącznika (VLAN, kanał LACP) i przypisuje serwer do właściwej sieci bez ręcznego mapowania kabli. Błąd okablowania wychodzi od razu (LLDP pokaże inny port niż w projekcie)."
+    },
+    {
+      "prompt": "Podaj trzy reguły detekcji (SIEM/NAC) oparte na danych LLDP/CDP, które pomogą wykryć nieautoryzowane urządzenia lub zmiany.",
+      "hint": "Zmiana sąsiada, typ urządzenia, porty bez LLDP.",
+      "solution": "1) Zmiana Chassis ID/System Name sąsiada na łączu między przełącznikami (uplink) bez zgłoszenia zmiany → alert wysokiego priorytetu (możliwe przepięcie lub urządzenie pośredniczące). 2) Sąsiad z capability Bridge/Router/WLAN AP na porcie dostępowym użytkownika → nieautoryzowany przełącznik/AP. 3) Pojawienie się sąsiada z nieznaną wersją systemu lub nazwą spoza konwencji nazewniczej w sieci zarządzania → weryfikacja inwentarza. Dodatkowo: ramki CDP/LLDP odebrane na portach, gdzie protokoły powinny być wyłączone (konfiguracja niezgodna z polityką)."
+    },
+    {
+      "prompt": "Policz rozmiar LLDPDU (bez nagłówka Ethernet) zawierającego: Chassis ID (podtyp MAC), Port ID „Gi1/0/12” (podtyp nazwa), TTL, System Name „SW-WAW-ACC-01” i End. Czy ramka zmieści się w minimalnej ramce Ethernet?",
+      "hint": "Każde TLV = 2 B nagłówka + wartość; Chassis ID = 1 + 6 B, Port ID = 1 + 8 B.",
+      "solution": "Chassis ID: 2 + 7 = 9 B; Port ID: 2 + 9 = 11 B; TTL: 2 + 2 = 4 B; System Name: 2 + 13 = 15 B; End: 2 B. Razem 41 B. To mniej niż minimalny ładunek ramki (46 B), więc karta dopełni ramkę do 64 B (z nagłówkiem i FCS) — zgodnie z lekcją 01 o ramce Ethernet."
+    },
+    {
+      "prompt": "Skonfiguruj na przełączniku Cisco interwał LLDP 10 s i holdtime 40 s, a następnie wyjaśnij, kiedy krótszy interwał ma sens i jaki ma koszt.",
+      "hint": "lldp timer, lldp holdtime.",
+      "solution": "lldp timer 10; lldp holdtime 40 (TTL = 40 s). Sens: środowiska z częstymi zmianami okablowania (lab, provisioning bare metal), gdzie szybciej chcesz widzieć nowego sąsiada i usuwać nieaktualnych. Koszt: więcej ramek (na każdym porcie co 10 s — pomijalne pasmo, ale więcej przetwarzania CPU na dużych przełącznikach) i częstsze zmiany w systemach monitorujących. W produkcji zwykle zostawia się 30/120."
+    },
+    {
+      "prompt": "Przygotuj listę kontrolną audytu LLDP/CDP (minimum 6 punktów).",
+      "hint": "Globalnie, per port, VoIP, granica, monitoring, dokumentacja.",
+      "solution": "1) Jednolity wybór protokołu (LLDP jako standard, CDP tylko gdy potrzebny). 2) Wyłączone na interfejsach WAN/Internet i do operatorów. 3) Wyłączone w strefach gości, salach konferencyjnych, DMZ. 4) Porty dostępowe bez telefonów — co najwyżej receive. 5) VoIP: LLDP-MED/CDP tylko na portach z telefonami, z 802.1X/MAB. 6) Uplinki i serwery: transmit + receive, dane zbierane do NetBox/CMDB. 7) Alerty na zmianę sąsiada na uplinkach i nieoczekiwane typy urządzeń. 8) Aktualne oprogramowanie (historyczne podatności w obsłudze CDP/LLDP)."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Który typ TLV LLDP przenosi: koniec listy TLV?",
+      "options": {
+        "A": "2 — Port ID",
+        "B": "1 — Chassis ID",
+        "C": "0 — End of LLDPDU",
+        "D": "3 — Time To Live"
+      },
+      "correct": "C",
+      "explanation": "TLV 0: End of LLDPDU."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: identyfikator urządzenia (zwykle MAC)?",
+      "options": {
+        "A": "2 — Port ID",
+        "B": "1 — Chassis ID",
+        "C": "0 — End of LLDPDU",
+        "D": "3 — Time To Live"
+      },
+      "correct": "B",
+      "explanation": "TLV 1: Chassis ID."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: identyfikator portu nadawcy?",
+      "options": {
+        "A": "0 — End of LLDPDU",
+        "B": "1 — Chassis ID",
+        "C": "3 — Time To Live",
+        "D": "2 — Port ID"
+      },
+      "correct": "D",
+      "explanation": "TLV 2: Port ID."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: ile sekund przechowywać informację?",
+      "options": {
+        "A": "3 — Time To Live",
+        "B": "2 — Port ID",
+        "C": "1 — Chassis ID",
+        "D": "0 — End of LLDPDU"
+      },
+      "correct": "A",
+      "explanation": "TLV 3: Time To Live."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: opis portu (description)?",
+      "options": {
+        "A": "2 — Port ID",
+        "B": "4 — Port Description",
+        "C": "1 — Chassis ID",
+        "D": "0 — End of LLDPDU"
+      },
+      "correct": "B",
+      "explanation": "TLV 4: Port Description."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: nazwa hosta urządzenia?",
+      "options": {
+        "A": "2 — Port ID",
+        "B": "0 — End of LLDPDU",
+        "C": "5 — System Name",
+        "D": "1 — Chassis ID"
+      },
+      "correct": "C",
+      "explanation": "TLV 5: System Name."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: system i wersja oprogramowania?",
+      "options": {
+        "A": "2 — Port ID",
+        "B": "1 — Chassis ID",
+        "C": "0 — End of LLDPDU",
+        "D": "6 — System Description"
+      },
+      "correct": "D",
+      "explanation": "TLV 6: System Description."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: rola: bridge, router, telefon, stacja, WLAN AP?",
+      "options": {
+        "A": "7 — System Capabilities",
+        "B": "2 — Port ID",
+        "C": "1 — Chassis ID",
+        "D": "0 — End of LLDPDU"
+      },
+      "correct": "A",
+      "explanation": "TLV 7: System Capabilities."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: adres IP do zarządzania?",
+      "options": {
+        "A": "2 — Port ID",
+        "B": "0 — End of LLDPDU",
+        "C": "1 — Chassis ID",
+        "D": "8 — Management Address"
+      },
+      "correct": "D",
+      "explanation": "TLV 8: Management Address."
+    },
+    {
+      "question": "Który typ TLV LLDP przenosi: rozszerzenia z OUI (802.1, 802.3, LLDP-MED)?",
+      "options": {
+        "A": "0 — End of LLDPDU",
+        "B": "127 — Organizationally Specific",
+        "C": "2 — Port ID",
+        "D": "1 — Chassis ID"
+      },
+      "correct": "B",
+      "explanation": "TLV 127: Organizationally Specific."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 1 i długości 7 B?",
+      "options": {
+        "A": "0x0207",
+        "B": "0x0007",
+        "C": "0x0E01",
+        "D": "0x0107"
+      },
+      "correct": "A",
+      "explanation": "(1 << 9) | 7 = 519 = 0x0207."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 2 i długości 9 B?",
+      "options": {
+        "A": "0x0209",
+        "B": "0x1202",
+        "C": "0x0409",
+        "D": "0x0609"
+      },
+      "correct": "C",
+      "explanation": "(2 << 9) | 9 = 1033 = 0x0409."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 3 i długości 2 B?",
+      "options": {
+        "A": "0x0302",
+        "B": "0x0403",
+        "C": "0x0402",
+        "D": "0x0602"
+      },
+      "correct": "D",
+      "explanation": "(3 << 9) | 2 = 1538 = 0x0602."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 4 i długości 10 B?",
+      "options": {
+        "A": "0x080A",
+        "B": "0x0A0A",
+        "C": "0x1404",
+        "D": "0x040A"
+      },
+      "correct": "A",
+      "explanation": "(4 << 9) | 10 = 2058 = 0x080A."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 5 i długości 13 B?",
+      "options": {
+        "A": "0x1A05",
+        "B": "0x0A0D",
+        "C": "0x050D",
+        "D": "0x080D"
+      },
+      "correct": "B",
+      "explanation": "(5 << 9) | 13 = 2573 = 0x0A0D."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 6 i długości 60 B?",
+      "options": {
+        "A": "0x0E3C",
+        "B": "0x7806",
+        "C": "0x0C3C",
+        "D": "0x063C"
+      },
+      "correct": "C",
+      "explanation": "(6 << 9) | 60 = 3132 = 0x0C3C."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 7 i długości 4 B?",
+      "options": {
+        "A": "0x0807",
+        "B": "0x0704",
+        "C": "0x0E04",
+        "D": "0x0C04"
+      },
+      "correct": "C",
+      "explanation": "(7 << 9) | 4 = 3588 = 0x0E04."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 8 i długości 12 B?",
+      "options": {
+        "A": "0x120C",
+        "B": "0x100C",
+        "C": "0x1808",
+        "D": "0x080C"
+      },
+      "correct": "B",
+      "explanation": "(8 << 9) | 12 = 4108 = 0x100C."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 127 i długości 6 B?",
+      "options": {
+        "A": "0xFE06",
+        "B": "0x0C7F",
+        "C": "0xFC06",
+        "D": "0x7F06"
+      },
+      "correct": "A",
+      "explanation": "(127 << 9) | 6 = 65030 = 0xFE06."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 5 i długości 20 B?",
+      "options": {
+        "A": "0x0814",
+        "B": "0x2805",
+        "C": "0x0514",
+        "D": "0x0A14"
+      },
+      "correct": "D",
+      "explanation": "(5 << 9) | 20 = 2580 = 0x0A14."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 4 i długości 25 B?",
+      "options": {
+        "A": "0x0419",
+        "B": "0x0A19",
+        "C": "0x0819",
+        "D": "0x3204"
+      },
+      "correct": "C",
+      "explanation": "(4 << 9) | 25 = 2073 = 0x0819."
+    },
+    {
+      "question": "Jaki jest nagłówek TLV (16 bitów) dla typu 6 i długości 255 B?",
+      "options": {
+        "A": "0x0EFF",
+        "B": "0x1FE06",
+        "C": "0x06FF",
+        "D": "0x0CFF"
+      },
+      "correct": "D",
+      "explanation": "(6 << 9) | 255 = 3327 = 0x0CFF."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0207?",
+      "options": {
+        "A": "typ 1, 7 B",
+        "B": "typ 2, 7 B",
+        "C": "typ 1, 263 B",
+        "D": "typ 7, 1 B"
+      },
+      "correct": "A",
+      "explanation": "typ = h >> 9 = 1 (Chassis ID), długość = h & 0x1FF = 7."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0409?",
+      "options": {
+        "A": "typ 4, 9 B",
+        "B": "typ 2, 9 B",
+        "C": "typ 9, 2 B",
+        "D": "typ 3, 9 B"
+      },
+      "correct": "B",
+      "explanation": "typ = h >> 9 = 2 (Port ID), długość = h & 0x1FF = 9."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0602?",
+      "options": {
+        "A": "typ 6, 2 B",
+        "B": "typ 2, 3 B",
+        "C": "typ 3, 2 B",
+        "D": "typ 4, 2 B"
+      },
+      "correct": "C",
+      "explanation": "typ = h >> 9 = 3 (Time To Live), długość = h & 0x1FF = 2."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0A0D?",
+      "options": {
+        "A": "typ 10, 13 B",
+        "B": "typ 13, 5 B",
+        "C": "typ 6, 13 B",
+        "D": "typ 5, 13 B"
+      },
+      "correct": "D",
+      "explanation": "typ = h >> 9 = 5 (System Name), długość = h & 0x1FF = 13."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0C3C?",
+      "options": {
+        "A": "typ 7, 60 B",
+        "B": "typ 6, 60 B",
+        "C": "typ 60, 6 B",
+        "D": "typ 12, 60 B"
+      },
+      "correct": "B",
+      "explanation": "typ = h >> 9 = 6 (System Description), długość = h & 0x1FF = 60."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0E04?",
+      "options": {
+        "A": "typ 7, 4 B",
+        "B": "typ 4, 7 B",
+        "C": "typ 14, 4 B",
+        "D": "typ 8, 4 B"
+      },
+      "correct": "A",
+      "explanation": "typ = h >> 9 = 7 (System Capabilities), długość = h & 0x1FF = 4."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x100C?",
+      "options": {
+        "A": "typ 12, 8 B",
+        "B": "typ 8, 12 B",
+        "C": "typ 16, 12 B",
+        "D": "typ 9, 12 B"
+      },
+      "correct": "B",
+      "explanation": "typ = h >> 9 = 8 (Management Address), długość = h & 0x1FF = 12."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0xFE06?",
+      "options": {
+        "A": "typ 254, 6 B",
+        "B": "typ 6, 127 B",
+        "C": "typ 127, 6 B",
+        "D": "typ 128, 6 B"
+      },
+      "correct": "C",
+      "explanation": "typ = h >> 9 = 127 (Organizationally Specific), długość = h & 0x1FF = 6."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0x0814?",
+      "options": {
+        "A": "typ 4, 20 B",
+        "B": "typ 8, 20 B",
+        "C": "typ 5, 20 B",
+        "D": "typ 20, 4 B"
+      },
+      "correct": "A",
+      "explanation": "typ = h >> 9 = 4 (Port Description), długość = h & 0x1FF = 20."
+    },
+    {
+      "question": "Jaki typ i długość koduje nagłówek TLV 0xFE09?",
+      "options": {
+        "A": "typ 9, 127 B",
+        "B": "typ 128, 9 B",
+        "C": "typ 254, 9 B",
+        "D": "typ 127, 9 B"
+      },
+      "correct": "D",
+      "explanation": "typ = h >> 9 = 127 (Organizationally Specific), długość = h & 0x1FF = 9."
+    },
+    {
+      "question": "Jaki TTL ogłasza LLDP przy interwale 30 s i mnożniku 4?",
+      "options": {
+        "A": "30 s",
+        "B": "240 s",
+        "C": "34 s",
+        "D": "120 s"
+      },
+      "correct": "D",
+      "explanation": "TTL = 30 × 4 = 120 s."
+    },
+    {
+      "question": "Jaki TTL ogłasza LLDP przy interwale 10 s i mnożniku 4?",
+      "options": {
+        "A": "10 s",
+        "B": "14 s",
+        "C": "40 s",
+        "D": "80 s"
+      },
+      "correct": "C",
+      "explanation": "TTL = 10 × 4 = 40 s."
+    },
+    {
+      "question": "Jaki TTL ogłasza LLDP przy interwale 20 s i mnożniku 3?",
+      "options": {
+        "A": "23 s",
+        "B": "60 s",
+        "C": "20 s",
+        "D": "120 s"
+      },
+      "correct": "B",
+      "explanation": "TTL = 20 × 3 = 60 s."
+    },
+    {
+      "question": "Jaki TTL ogłasza LLDP przy interwale 60 s i mnożniku 2?",
+      "options": {
+        "A": "120 s",
+        "B": "240 s",
+        "C": "60 s",
+        "D": "62 s"
+      },
+      "correct": "A",
+      "explanation": "TTL = 60 × 2 = 120 s."
+    },
+    {
+      "question": "Jaki TTL ogłasza LLDP przy interwale 5 s i mnożniku 4?",
+      "options": {
+        "A": "20 s",
+        "B": "9 s",
+        "C": "40 s",
+        "D": "5 s"
+      },
+      "correct": "A",
+      "explanation": "TTL = 5 × 4 = 20 s."
+    },
+    {
+      "question": "Jaki TTL ogłasza LLDP przy interwale 30 s i mnożniku 3?",
+      "options": {
+        "A": "33 s",
+        "B": "90 s",
+        "C": "180 s",
+        "D": "30 s"
+      },
+      "correct": "B",
+      "explanation": "TTL = 30 × 3 = 90 s."
+    },
+    {
+      "question": "Jakim standardem IEEE jest LLDP?",
+      "options": {
+        "A": "802.1Q",
+        "B": "802.3ad",
+        "C": "802.1AB",
+        "D": "802.1X"
+      },
+      "correct": "C",
+      "explanation": "LLDP = Link Layer Discovery Protocol."
+    },
+    {
+      "question": "Na jaki adres MAC wysyłane są ramki LLDP (Nearest Bridge)?",
+      "options": {
+        "A": "01:80:c2:00:00:00",
+        "B": "ff:ff:ff:ff:ff:ff",
+        "C": "01:00:0c:cc:cc:cc",
+        "D": "01:80:c2:00:00:0e"
+      },
+      "correct": "D",
+      "explanation": "01:80:c2:00:00:00 to STP."
+    },
+    {
+      "question": "Na jaki adres MAC wysyłane są ramki CDP?",
+      "options": {
+        "A": "01:00:5e:00:00:01",
+        "B": "01:00:0c:cc:cc:cd",
+        "C": "01:00:0c:cc:cc:cc",
+        "D": "01:80:c2:00:00:0e"
+      },
+      "correct": "C",
+      "explanation": "...cd to PVST+."
+    },
+    {
+      "question": "Jaki EtherType mają ramki LLDP?",
+      "options": {
+        "A": "0x88CC",
+        "B": "0x0800",
+        "C": "0x8809",
+        "D": "0x8100"
+      },
+      "correct": "A",
+      "explanation": "0x8809 to LACP."
+    },
+    {
+      "question": "Jak często domyślnie wysyłane są ogłoszenia LLDP?",
+      "options": {
+        "A": "Co 2 s",
+        "B": "Co 5 minut",
+        "C": "Co 60 s",
+        "D": "Co 30 s"
+      },
+      "correct": "D",
+      "explanation": "TTL 120 s."
+    },
+    {
+      "question": "Jak często domyślnie wysyłane są ogłoszenia CDP?",
+      "options": {
+        "A": "Co 10 minut",
+        "B": "Co 60 s",
+        "C": "Co 30 s",
+        "D": "Co 2 s"
+      },
+      "correct": "B",
+      "explanation": "Holdtime 180 s."
+    },
+    {
+      "question": "Jaki jest domyślny holdtime CDP?",
+      "options": {
+        "A": "180 s",
+        "B": "120 s",
+        "C": "60 s",
+        "D": "30 s"
+      },
+      "correct": "A",
+      "explanation": "Trzy interwały."
+    },
+    {
+      "question": "Czy LLDP przekazuje informacje o sąsiadach dalej przez sieć?",
+      "options": {
+        "A": "Tak, do roota STP",
+        "B": "Nie — widzisz tylko bezpośrednich sąsiadów",
+        "C": "Tak, do całej domeny L2",
+        "D": "Tylko przez trunki"
+      },
+      "correct": "B",
+      "explanation": "Pełna mapa wymaga zebrania danych ze wszystkich urządzeń."
+    },
+    {
+      "question": "Które TLV są w LLDPDU obowiązkowe?",
+      "options": {
+        "A": "Management Address i VLAN",
+        "B": "System Name i System Description",
+        "C": "Chassis ID, Port ID, TTL i End",
+        "D": "Tylko Chassis ID"
+      },
+      "correct": "C",
+      "explanation": "Pozostałe są opcjonalne."
+    },
+    {
+      "question": "Ile bitów ma pole typu w nagłówku TLV LLDP?",
+      "options": {
+        "A": "9",
+        "B": "16",
+        "C": "8",
+        "D": "7"
+      },
+      "correct": "D",
+      "explanation": "Długość ma 9 bitów."
+    },
+    {
+      "question": "Jaka jest maksymalna długość wartości TLV LLDP?",
+      "options": {
+        "A": "1500 bajtów",
+        "B": "255 bajtów",
+        "C": "511 bajtów",
+        "D": "65 535 bajtów"
+      },
+      "correct": "C",
+      "explanation": "9 bitów długości."
+    },
+    {
+      "question": "Do czego służy TLV typu 127?",
+      "options": {
+        "A": "Do rozszerzeń organizacji (802.1, 802.3, LLDP-MED) identyfikowanych przez OUI",
+        "B": "Do szyfrowania",
+        "C": "Do zakończenia ramki",
+        "D": "Do przenoszenia danych użytkownika"
+      },
+      "correct": "A",
+      "explanation": "Np. Port VLAN ID, PoE, voice policy."
+    },
+    {
+      "question": "Co przekazuje LLDP-MED telefonom VoIP?",
+      "options": {
+        "A": "Klucze szyfrowania rozmów",
+        "B": "Politykę sieci dla głosu (VLAN, priorytet), informacje PoE i lokalizację",
+        "C": "Numery telefonów",
+        "D": "Adres serwera SIP i hasło"
+      },
+      "correct": "B",
+      "explanation": "TIA-1057."
+    },
+    {
+      "question": "Czy LLDP ma uwierzytelnianie?",
+      "options": {
+        "A": "Tak, oparte na certyfikatach",
+        "B": "Tak, kluczem współdzielonym",
+        "C": "Tylko w wersji MED",
+        "D": "Nie — ogłoszenia można podrobić"
+      },
+      "correct": "D",
+      "explanation": "Nie używaj go do decyzji dostępowych."
+    },
+    {
+      "question": "Dlaczego wyłącza się LLDP/CDP na interfejsach do Internetu?",
+      "options": {
+        "A": "Bo blokuje BGP",
+        "B": "Aby przyspieszyć łącze",
+        "C": "Bo LLDP nie działa przez światłowód",
+        "D": "Aby nie ujawniać modelu, wersji oprogramowania i adresu zarządzania"
+      },
+      "correct": "D",
+      "explanation": "Rozpoznanie dla napastnika."
+    },
+    {
+      "question": "Które polecenie Cisco globalnie włącza LLDP?",
+      "options": {
+        "A": "cdp run",
+        "B": "lldp enable",
+        "C": "lldp run",
+        "D": "spanning-tree lldp"
+      },
+      "correct": "C",
+      "explanation": "cdp run włącza CDP."
+    },
+    {
+      "question": "Które polecenie Cisco wyłącza CDP na interfejsie?",
+      "options": {
+        "A": "no cdp run",
+        "B": "no cdp enable",
+        "C": "cdp disable",
+        "D": "shutdown cdp"
+      },
+      "correct": "B",
+      "explanation": "no cdp run wyłącza globalnie."
+    },
+    {
+      "question": "Jak wyłączyć tylko wysyłanie LLDP na porcie Cisco, zostawiając odbiór?",
+      "options": {
+        "A": "no lldp transmit",
+        "B": "no lldp receive",
+        "C": "lldp passive",
+        "D": "no lldp run"
+      },
+      "correct": "A",
+      "explanation": "Tryb „tylko słucham”."
+    },
+    {
+      "question": "Którym poleceniem Linuksa (lldpd) wyświetlisz sąsiadów w formacie JSON?",
+      "options": {
+        "A": "lldpcli show neighbors -f json",
+        "B": "lldp --json",
+        "C": "ip neigh show",
+        "D": "arp -a"
+      },
+      "correct": "A",
+      "explanation": "Do skryptów i CMDB."
+    },
+    {
+      "question": "Który filtr tcpdump przechwyci ramki LLDP?",
+      "options": {
+        "A": "udp port 88",
+        "B": "ether proto 0x88cc",
+        "C": "arp",
+        "D": "ether proto 0x8100"
+      },
+      "correct": "B",
+      "explanation": "CDP: ether host 01:00:0c:cc:cc:cc."
+    },
+    {
+      "question": "Co pokazuje kolumna „Capability” w show lldp neighbors?",
+      "options": {
+        "A": "Pojemność bufora",
+        "B": "Liczbę VLAN-ów",
+        "C": "Rolę sąsiada (np. B — bridge, R — router, T — telefon, S — station)",
+        "D": "Prędkość łącza"
+      },
+      "correct": "C",
+      "explanation": "Przydatne do wykrywania nieautoryzowanych przełączników."
+    },
+    {
+      "question": "Jak LLDP pomaga sprawdzić redundancję bondu serwera?",
+      "options": {
+        "A": "Konfiguruje LACP",
+        "B": "Blokuje jedno z łączy",
+        "C": "Mierzy przepustowość bondu",
+        "D": "Pokazuje, do których przełączników i portów prowadzi każda karta"
+      },
+      "correct": "D",
+      "explanation": "Dwa różne przełączniki = redundancja."
+    },
+    {
+      "question": "Dlaczego maszyny wirtualne zwykle nie widzą sąsiada LLDP fizycznego przełącznika?",
+      "options": {
+        "A": "Bo vSwitch/bridge nie przekazuje ramek na adres 01:80:c2:00:00:0e",
+        "B": "Bo VM nie mają kart sieciowych",
+        "C": "Bo LLDP działa tylko w IPv6",
+        "D": "Bo hiperwizor szyfruje ramki"
+      },
+      "correct": "A",
+      "explanation": "Dane zbiera się na hoście."
+    },
+    {
+      "question": "Czym LLDP różni się od IPv6 Neighbor Discovery?",
+      "options": {
+        "A": "LLDP zastępuje ARP",
+        "B": "ND działa tylko na przełącznikach",
+        "C": "LLDP ogłasza tożsamość urządzenia L2, a ND rozwiązuje adresy i wykrywa routery w IPv6",
+        "D": "To ten sam protokół"
+      },
+      "correct": "C",
+      "explanation": "Nie mylić nazw."
+    },
+    {
+      "question": "Jakie zagrożenie wiąże się z podszyciem się pod telefon IP przez CDP/LLDP-MED?",
+      "options": {
+        "A": "Wyłączenie DHCP",
+        "B": "Uzyskanie dostępu do voice VLAN",
+        "C": "Zmiana MTU",
+        "D": "Przejęcie roli root bridge"
+      },
+      "correct": "B",
+      "explanation": "Obrona: 802.1X/MAB."
+    },
+    {
+      "question": "Które narzędzie automatycznie buduje inwentarz i diagramy z danych LLDP?",
+      "options": {
+        "A": "Wireshark",
+        "B": "curl",
+        "C": "JUnit",
+        "D": "Netdisco / LibreNMS / NetBox (z importem)"
+      },
+      "correct": "D",
+      "explanation": "Dokumentacja jako kod."
+    },
+    {
+      "question": "Jakie polecenie Cisco czyści tabelę sąsiadów LLDP?",
+      "options": {
+        "A": "no lldp neighbors",
+        "B": "clear lldp table",
+        "C": "clear mac address-table",
+        "D": "reset lldp"
+      },
+      "correct": "B",
+      "explanation": "Przydatne po przepięciach."
+    },
+    {
+      "question": "Co oznacza podtyp 4 w TLV Chassis ID?",
+      "options": {
+        "A": "Brak identyfikatora",
+        "B": "Identyfikator jest nazwą portu",
+        "C": "Identyfikator jest adresem IPv4",
+        "D": "Identyfikator jest adresem MAC"
+      },
+      "correct": "D",
+      "explanation": "Pierwszy bajt wartości."
+    },
+    {
+      "question": "Jaki MIB pozwala odczytać sąsiadów LLDP przez SNMP?",
+      "options": {
+        "A": "IF-MIB",
+        "B": "HOST-RESOURCES-MIB",
+        "C": "LLDP-MIB (lldpRemTable)",
+        "D": "BRIDGE-MIB"
+      },
+      "correct": "C",
+      "explanation": "Ustrukturyzowane dane do automatyzacji."
+    },
+    {
+      "question": "Które urządzenie w capability LLDP na porcie użytkownika powinno wzbudzić alarm?",
+      "options": {
+        "A": "Bridge (przełącznik) lub WLAN AP",
+        "B": "Station",
+        "C": "Telephone na porcie z voice VLAN",
+        "D": "Brak sąsiada"
+      },
+      "correct": "A",
+      "explanation": "Możliwy nieautoryzowany przełącznik lub AP."
+    },
+    {
+      "question": "W jakim celu provisioning bare metal używa LLDP?",
+      "options": {
+        "A": "Aby zaszyfrować dysk",
+        "B": "Aby przydzielić licencje",
+        "C": "Aby zainstalować system",
+        "D": "Aby automatycznie ustalić, do którego portu przełącznika podłączono kartę serwera"
+      },
+      "correct": "D",
+      "explanation": "MAAS, Ironic, Metal3."
+    },
+    {
+      "question": "Jak systemd-networkd włącza wysyłanie LLDP?",
+      "options": {
+        "A": "EmitLLDP= w pliku .network",
+        "B": "lldp on w sysctl",
+        "C": "LLDP=send w /etc/hosts",
+        "D": "Nie da się"
+      },
+      "correct": "A",
+      "explanation": "Odczyt: networkctl lldp."
+    },
+    {
+      "question": "Który protokół odkrywania sąsiadów jest standardem wielu producentów?",
+      "options": {
+        "A": "CDP",
+        "B": "PAgP",
+        "C": "LLDP",
+        "D": "VTP"
+      },
+      "correct": "C",
+      "explanation": "CDP i PAgP to protokoły Cisco."
+    },
+    {
+      "question": "Co jest bezpieczniejszą alternatywą dla całkowitego wyłączenia LLDP na portach dostępowych z komputerami?",
+      "options": {
+        "A": "Włączenie CDP zamiast LLDP",
+        "B": "Tryb tylko odbioru (bez transmit)",
+        "C": "Zmiana adresu docelowego",
+        "D": "Wydłużenie interwału do 300 s"
+      },
+      "correct": "B",
+      "explanation": "Wiesz, co jest wpięte, nie ujawniasz siebie."
+    },
+    {
+      "question": "Jakie informacje typowo zawiera CDP, których nie ma w podstawowym LLDP?",
+      "options": {
+        "A": "Hasło enable",
+        "B": "Klucze SSH",
+        "C": "Tablicę routingu",
+        "D": "Natywny VLAN, domena VTP, platforma i wersja IOS w polach natywnych"
+      },
+      "correct": "D",
+      "explanation": "W LLDP podobne dane w TLV opcjonalnych/127."
+    },
+    {
+      "question": "Dlaczego parser TLV musi sprawdzać długość względem rozmiaru bufora?",
+      "options": {
+        "A": "Bo LLDP jest szyfrowany",
+        "B": "Bo długość jest zawsze 0",
+        "C": "Aby uniknąć odczytu poza buforem przy uszkodzonej lub złośliwej ramce",
+        "D": "Aby przyspieszyć parsowanie"
+      },
+      "correct": "C",
+      "explanation": "Klasyczna podatność parserów protokołów."
+    },
+    {
+      "question": "Ile czasu po odłączeniu sąsiada (bez link down) jego wpis LLDP pozostanie w tabeli przy domyślnych ustawieniach?",
+      "options": {
+        "A": "Do 180 s",
+        "B": "Do 120 s",
+        "C": "Do 30 s",
+        "D": "Na zawsze"
+      },
+      "correct": "B",
+      "explanation": "Dla CDP do 180 s."
+    },
+    {
+      "question": "Który protokół zbierze z przełącznika informację o PoE i prędkości portu dla hosta?",
+      "options": {
+        "A": "LLDP z TLV 802.3 (MAC/PHY, Power via MDI)",
+        "B": "ICMP",
+        "C": "DHCP",
+        "D": "ARP"
+      },
+      "correct": "A",
+      "explanation": "TLV 127, OUI 00-12-0F."
+    },
+    {
+      "question": "Która z informacji ogłaszanych przez LLDP jest najcenniejsza dla audytu podatności?",
+      "options": {
+        "A": "Port Description",
+        "B": "TTL",
+        "C": "End of LLDPDU",
+        "D": "System Description (platforma i wersja oprogramowania)"
+      },
+      "correct": "D",
+      "explanation": "Porównanie z biuletynami bezpieczeństwa."
+    },
+    {
+      "question": "Czy LLDP działa na łączach trunk z wieloma VLAN-ami?",
+      "options": {
+        "A": "Tylko w native VLAN z tagiem",
+        "B": "Tak — ramki LLDP są wysyłane bez znacznika VLAN na łączu fizycznym",
+        "C": "Tylko w VLAN 1",
+        "D": "Nie, tylko na portach access"
+      },
+      "correct": "B",
+      "explanation": "To protokół łącza fizycznego."
+    },
+    {
+      "question": "Co zrobić, gdy lldpd na serwerze nie widzi żadnego sąsiada, choć przełącznik ma LLDP włączony?",
+      "options": {
+        "A": "Zrestartować DNS",
+        "B": "Zmienić MTU",
+        "C": "Sprawdzić, czy karta (firmware/DCB) nie przechwytuje LLDP i czy port ma lldp transmit",
+        "D": "Wyłączyć IPv6"
+      },
+      "correct": "C",
+      "explanation": "Niektóre karty obsługują LLDP sprzętowo."
+    },
+    {
+      "question": "Jaką korzyść daje LLDP przy zgłoszeniu „serwer w złym VLAN-ie”?",
+      "options": {
+        "A": "TLV 802.1 Port VLAN ID pokazuje VLAN portu przełącznika",
+        "B": "Wyłącza port",
+        "C": "Generuje adres IP",
+        "D": "Automatycznie zmienia VLAN"
+      },
+      "correct": "A",
+      "explanation": "Szybka diagnoza bez dostępu do przełącznika."
+    },
+    {
+      "question": "Które polecenie Cisco pokazuje liczniki ramek LLDP?",
+      "options": {
+        "A": "debug lldp",
+        "B": "show lldp counters all",
+        "C": "show lldp traffic",
+        "D": "show interfaces lldp"
+      },
+      "correct": "C",
+      "explanation": "Wysłane, odebrane, błędne."
+    },
+    {
+      "question": "Na czym polega ryzyko DoS związane z CDP na starszych urządzeniach?",
+      "options": {
+        "A": "CDP zmieniało root bridge",
+        "B": "Zalewanie fałszywymi ogłoszeniami wyczerpywało pamięć i CPU",
+        "C": "CDP kasowało konfigurację",
+        "D": "CDP wyłączało porty"
+      },
+      "correct": "B",
+      "explanation": "Obrona: aktualizacje, wyłączanie tam, gdzie zbędny."
+    },
+    {
+      "question": "Jak należy traktować dane z LLDP w kontekście bezpieczeństwa?",
+      "options": {
+        "A": "Jako bezużyteczne",
+        "B": "Jako w pełni zaufane",
+        "C": "Jako szyfrowane i podpisane",
+        "D": "Jako przydatne, ale nieuwierzytelnione — wymagające weryfikacji przed decyzjami"
+      },
+      "correct": "D",
+      "explanation": "Dobre do dokumentacji i detekcji anomalii."
+    },
+    {
+      "question": "Jaki podtyp Port ID oznacza nazwę interfejsu (np. Gi1/0/12)?",
+      "options": {
+        "A": "5 (interface name)",
+        "B": "1 (alias)",
+        "C": "3 (MAC)",
+        "D": "4 (adres sieciowy)"
+      },
+      "correct": "A",
+      "explanation": "Różne urządzenia stosują różne podtypy."
+    },
+    {
+      "question": "Jaki skutek ma wyłączenie LLDP/CDP na wszystkich portach biura z telefonami IP?",
+      "options": {
+        "A": "Telefony mogą nie dostać voice VLAN i właściwej polityki QoS",
+        "B": "Telefony zaczną szyfrować",
+        "C": "Nic się nie stanie",
+        "D": "Wyłączy się STP"
+      },
+      "correct": "A",
+      "explanation": "Wyłączaj selektywnie."
+    },
+    {
+      "question": "Jak nazywa się protokół odkrywania sąsiadów MikroTik?",
+      "options": {
+        "A": "CDP",
+        "B": "EDP",
+        "C": "FDP",
+        "D": "MNDP"
+      },
+      "correct": "D",
+      "explanation": "EDP to Extreme, FDP Foundry/Brocade."
+    },
+    {
+      "question": "Które narzędzie Containerlab rysuje topologię labu?",
+      "options": {
+        "A": "clab-diagram",
+        "B": "containerlab draw",
+        "C": "containerlab graph",
+        "D": "lldpcli graph"
+      },
+      "correct": "C",
+      "explanation": "Porównaj z diagramem z LLDP."
+    },
+    {
+      "question": "Który element ramki LLDP zawiera adres IP do zarządzania urządzeniem?",
+      "options": {
+        "A": "TLV 2 Port ID",
+        "B": "TLV 8 Management Address",
+        "C": "Nagłówek Ethernet",
+        "D": "TLV 3 TTL"
+      },
+      "correct": "B",
+      "explanation": "Cel dla napastnika — ogranicz ujawnianie."
+    },
+    {
+      "question": "Czy LLDP jest dwukierunkową wymianą z potwierdzeniami?",
+      "options": {
+        "A": "Tylko między przełącznikami",
+        "B": "Tak, z potwierdzeniem ACK",
+        "C": "Nie — każda strona niezależnie wysyła ogłoszenia, bez potwierdzeń",
+        "D": "Tak, jak TCP"
+      },
+      "correct": "C",
+      "explanation": "Jednokierunkowe ogłoszenia."
+    },
+    {
+      "question": "Jakie polecenie Cisco pokaże wersję IOS sąsiada przez CDP?",
+      "options": {
+        "A": "show cdp neighbors detail",
+        "B": "show lldp interface",
+        "C": "show cdp traffic",
+        "D": "show version"
+      },
+      "correct": "A",
+      "explanation": "Pole Version."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „SW1” i jaki ma nagłówek?",
+      "options": {
+        "A": "3 B, nagłówek 0x0A03",
+        "B": "7 B, nagłówek 0x0A03",
+        "C": "5 B, nagłówek 0x0605",
+        "D": "5 B, nagłówek 0x0A03"
+      },
+      "correct": "D",
+      "explanation": "Wartość 3 B + 2 B nagłówka = 5 B; nagłówek (5 << 9) | 3 = 0x0A03."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „core-sw-01” i jaki ma nagłówek?",
+      "options": {
+        "A": "10 B, nagłówek 0x0A0A",
+        "B": "12 B, nagłówek 0x0A0A",
+        "C": "12 B, nagłówek 0x1405",
+        "D": "14 B, nagłówek 0x0A0A"
+      },
+      "correct": "B",
+      "explanation": "Wartość 10 B + 2 B nagłówka = 12 B; nagłówek (5 << 9) | 10 = 0x0A0A."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „SW-WAW-ACC-01” i jaki ma nagłówek?",
+      "options": {
+        "A": "17 B, nagłówek 0x0A0D",
+        "B": "15 B, nagłówek 0x1A05",
+        "C": "13 B, nagłówek 0x0A0D",
+        "D": "15 B, nagłówek 0x0A0D"
+      },
+      "correct": "D",
+      "explanation": "Wartość 13 B + 2 B nagłówka = 15 B; nagłówek (5 << 9) | 13 = 0x0A0D."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „srv-app-07” i jaki ma nagłówek?",
+      "options": {
+        "A": "12 B, nagłówek 0x1405",
+        "B": "14 B, nagłówek 0x0A0A",
+        "C": "12 B, nagłówek 0x0A0A",
+        "D": "10 B, nagłówek 0x0A0A"
+      },
+      "correct": "C",
+      "explanation": "Wartość 10 B + 2 B nagłówka = 12 B; nagłówek (5 << 9) | 10 = 0x0A0A."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „leaf-a.dc1.example” i jaki ma nagłówek?",
+      "options": {
+        "A": "20 B, nagłówek 0x0A12",
+        "B": "18 B, nagłówek 0x0A12",
+        "C": "22 B, nagłówek 0x0A12",
+        "D": "20 B, nagłówek 0x2405"
+      },
+      "correct": "A",
+      "explanation": "Wartość 18 B + 2 B nagłówka = 20 B; nagłówek (5 << 9) | 18 = 0x0A12."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „R1” i jaki ma nagłówek?",
+      "options": {
+        "A": "4 B, nagłówek 0x0405",
+        "B": "4 B, nagłówek 0x0A02",
+        "C": "2 B, nagłówek 0x0A02",
+        "D": "6 B, nagłówek 0x0A02"
+      },
+      "correct": "B",
+      "explanation": "Wartość 2 B + 2 B nagłówka = 4 B; nagłówek (5 << 9) | 2 = 0x0A02."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „ap-2p-03” i jaki ma nagłówek?",
+      "options": {
+        "A": "10 B, nagłówek 0x0A08",
+        "B": "8 B, nagłówek 0x0A08",
+        "C": "12 B, nagłówek 0x0A08",
+        "D": "10 B, nagłówek 0x1005"
+      },
+      "correct": "A",
+      "explanation": "Wartość 8 B + 2 B nagłówka = 10 B; nagłówek (5 << 9) | 8 = 0x0A08."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „phone-1043” i jaki ma nagłówek?",
+      "options": {
+        "A": "10 B, nagłówek 0x0A0A",
+        "B": "12 B, nagłówek 0x1405",
+        "C": "12 B, nagłówek 0x0A0A",
+        "D": "14 B, nagłówek 0x0A0A"
+      },
+      "correct": "C",
+      "explanation": "Wartość 10 B + 2 B nagłówka = 12 B; nagłówek (5 << 9) | 10 = 0x0A0A."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „fw-edge-01” i jaki ma nagłówek?",
+      "options": {
+        "A": "10 B, nagłówek 0x0A0A",
+        "B": "14 B, nagłówek 0x0A0A",
+        "C": "12 B, nagłówek 0x1405",
+        "D": "12 B, nagłówek 0x0A0A"
+      },
+      "correct": "D",
+      "explanation": "Wartość 10 B + 2 B nagłówka = 12 B; nagłówek (5 << 9) | 10 = 0x0A0A."
+    },
+    {
+      "question": "Ile bajtów zajmie w LLDPDU całe TLV System Name z wartością „k8s-node-12” i jaki ma nagłówek?",
+      "options": {
+        "A": "15 B, nagłówek 0x0A0B",
+        "B": "13 B, nagłówek 0x0A0B",
+        "C": "13 B, nagłówek 0x1605",
+        "D": "11 B, nagłówek 0x0A0B"
+      },
+      "correct": "B",
+      "explanation": "Wartość 11 B + 2 B nagłówka = 13 B; nagłówek (5 << 9) | 11 = 0x0A0B."
+    }
+  ]
 }
