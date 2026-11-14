@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Routery, które same rysują mapę sieci",
+      "image": "netsec/ns03-14-lsa.svg",
+      "imageAlt": "Przepływ w OSPF: LSA typu 1 (router) i typu 2 (network, od DR) tworzą identyczną bazę LSDB w obszarze, każdy router liczy SPF algorytmem Dijkstry i instaluje trasy O z AD 110.",
+      "body": "Trasy statyczne (lekcja 08) wystarczają w małej sieci. W sieci z kilkudziesięcioma routerami i łączami zapasowymi ręczne utrzymywanie tras jest niemożliwe — i nie reaguje na awarie. Tu wchodzi **routing dynamiczny**, a w sieciach firmowych i centrach danych najczęściej **OSPF (Open Shortest Path First)**.\n\nOSPF to protokół **link-state**: każdy router opisuje swoje łącza i ich **koszt** w komunikatach **LSA**, rozsyła je do wszystkich routerów w **obszarze**, dzięki czemu każdy ma tę samą **mapę sieci (LSDB)** i sam liczy z niej najkrótsze ścieżki algorytmem **Dijkstry (SPF)**. Gdy łącze padnie, zmienia się mapa, wszyscy przeliczają trasy — w sekundy, bez pętli.\n\nPo co to Java developerowi? Bo czas zbieżności OSPF to czas, przez który Twoja aplikacja widzi timeouty po awarii łącza w serwerowni; bo w Kubernetes i centrach danych spotkasz routing dynamiczny (Calico, MetalLB, Cilium z BGP — następne lekcje); bo błędy typu „po zmianie MTU zniknęła połowa tras” lub „ruch idzie wolnym łączem” to konfiguracja OSPF; a przede wszystkim — bo CCNA v2 wymaga OSPFv2 w jednym obszarze.\n\nW tej lekcji: link-state vs distance-vector, pakiety Hello/DBD/LSR/LSU/LSAck, **stany sąsiedztwa** (Down → Full), Router ID, **DR/BDR**, **koszt i referencyjna przepustowość** (z klasyczną pułapką), OSPFv2 vs OSPFv3, typowe problemy (timery, MTU, maski, obszary), uwierzytelnianie oraz **Guided Lab z planu** na FRR: 4 routery, odczyt LSDB, zmiana kosztu i nowej ścieżki, zepsute MTU i stan EXSTART.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik OSPF",
+      "body": "- **OSPF** — protokół routingu link-state (IGP) działający bezpośrednio nad IP (**protokół 89**); OSPFv2 dla IPv4 (RFC 2328), OSPFv3 dla IPv6 (RFC 5340).\n- **Router ID (RID)** — 32-bitowy identyfikator routera w zapisie IPv4: ustawiony ręcznie (`router-id`), inaczej najwyższy adres loopback, inaczej najwyższy adres aktywnego interfejsu; musi być unikalny.\n- **Obszar (area)** — grupa routerów z tą samą LSDB; obszar 0 (**backbone**) — w tej lekcji jedyny.\n- **LSA (Link-State Advertisement)** — opis fragmentu sieci: **typ 1 (Router LSA)** — łącza i koszty routera, **typ 2 (Network LSA)** — segment broadcast opisany przez DR; (3, 4, 5, 7 — przy wielu obszarach i redystrybucji).\n- **LSDB** — baza wszystkich LSA obszaru, identyczna na każdym routerze.\n- **SPF (Dijkstra)** — algorytm liczący drzewo najkrótszych ścieżek od siebie do wszystkich celów; wynik trafia do RIB jako trasy **O** z AD **110**.\n- **Koszt** — metryka interfejsu: **referencyjna przepustowość / przepustowość interfejsu** (min. 1); domyślna referencja **100 Mb/s** — dziś za mała. Można też ustawić koszt ręcznie (`ip ospf cost`).\n- **Pakiety OSPF**: 1 **Hello** (sąsiedztwo, keepalive), 2 **DBD** (opis bazy), 3 **LSR** (żądanie LSA), 4 **LSU** (aktualizacja), 5 **LSAck** (potwierdzenie).\n- **Stany sąsiedztwa**: Down → Init → 2-Way → ExStart → Exchange → Loading → Full.\n- **DR/BDR** — Designated Router i zapasowy na segmencie broadcast (Ethernet z wieloma routerami): reszta (DROTHER) ma pełne sąsiedztwo tylko z DR i BDR. Wybór: najwyższy priorytet interfejsu (0 = nigdy), potem najwyższy RID; bez wywłaszczania.\n- **Typy sieci**: broadcast (DR/BDR), point-to-point (bez DR — zalecane dla łączy między dwoma routerami), NBMA, point-to-multipoint.\n- **Timery**: Hello 10 s / Dead 40 s (broadcast, P2P) — muszą być zgodne u sąsiadów; szybsze wykrywanie awarii: **BFD**.\n- **Interfejs pasywny** — sieć jest ogłaszana, ale na interfejsie nie są wysyłane Hello (sieci użytkowników, serwerów) — ochrona przed obcymi routerami.\n- **Multicast**: 224.0.0.5 AllSPFRouters, 224.0.0.6 AllDRouters (OSPFv3: ff02::5, ff02::6).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Mapa miasta zamiast drogowskazów od sąsiadów",
+      "body": "**Distance-vector (RIP)** to podróżowanie według rad sąsiadów: pytasz na skrzyżowaniu „jak daleko do dworca?” — „5 przecznic w lewo”, i ufasz. Nikt nie ma całej mapy; jeśli most się zawali, wieść rozchodzi się powoli, a rady mogą się zapętlić („idź do niego”, „nie, do niego”).\n\n**Link-state (OSPF)** to sytuacja, w której każdy kierowca ma **tę samą, aktualną mapę miasta**. Każde skrzyżowanie (router) rozsyła wszystkim ogłoszenie: „ode mnie wychodzą takie ulice, o takiej przepustowości” (**LSA**). Wszyscy składają z tego identyczną mapę (**LSDB**), a każdy sam wyznacza najkrótszą drogę nawigacją (**Dijkstra**). Zamknięcie ulicy = nowe ogłoszenie, wszyscy przeliczają trasy.\n\n**Koszt** to „czas przejazdu” ulicy: autostrada tania, osiedlowa droga droga. Pułapka referencji 100 Mb/s to mapa, na której każda droga szybsza niż „100 km/h” dostaje ten sam czas przejazdu — więc nawigacja uznaje autostradę i drogę lokalną za równoważne i wysyła połowę aut lokalną.\n\n**DR** na rondzie z wieloma wjazdami to dyżurny: zamiast żeby każdy wjazd ustalał wszystko z każdym (n(n−1)/2 rozmów), wszyscy rozmawiają tylko z dyżurnym i jego zastępcą (**BDR**).\n\n**Stan EXSTART** to dwóch kierowców, którzy próbują wymienić się mapami, ale jeden ma za mały bagażnik (MTU) na paczkę drugiego — wiecznie zaczynają od nowa i nigdy nie kończą.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Koszt i ścieżka: pułapka referencji 100 Mb/s",
+      "image": "netsec/ns03-14-cost.svg",
+      "imageAlt": "Topologia R1–R4 z łączami 1 Gb/s, 100 Mb/s i 10 Mb/s. Przy domyślnej referencji 100 Mb/s łącza 1 Gb/s i 100 Mb/s mają koszt 1, więc R1 rozkłada ruch do R4 na dwie ścieżki (także wolną). Przy referencji 10 000 Mb/s koszty to 10 i 100, wybierana jest tylko ścieżka przez R2.",
+      "body": "Topologia labu: R1–R2 i R2–R4 po 1 Gb/s, R1–R3 i R3–R4 po 100 Mb/s, R2–R3 10 Mb/s. SPF policzony modelem lekcji (i tym samym algorytmem w Javie niżej):",
+      "code": "koszt = max(1, referencja / przepustowość)\nreferencja 100 Mb/s:    10 Mb/s → 10   100 Mb/s → 1   1 Gb/s → 1   10 Gb/s → 1\nreferencja 10 000 Mb/s: 10 Mb/s → 1000  100 Mb/s → 100  1 Gb/s → 10  10 Gb/s → 1\nreferencja 100 000 Mb/s: 25 Gb/s → 4  100 Gb/s → 1\n\nref 100:     koszty od R1 {\"R1\":0,\"R2\":1,\"R4\":2,\"R3\":1}  →  R1→R4: R1→R2→R4 oraz R1→R3→R4 (ECMP — także przez 100 Mb/s!)\nref 10 000:  koszty od R1 {\"R1\":0,\"R2\":10,\"R4\":20,\"R3\":100}  →  R1→R4: R1→R2→R4\nref 10 000 + ip ospf cost 500 na R1–R2: {\"R1\":0,\"R2\":210,\"R4\":200,\"R3\":100}  →  R1→R4: R1→R3→R4\n   (R2 osiągany teraz przez R3 i R4: 100 + 100 + 10 = 210)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Konfiguracja OSPFv2: FRR i Cisco IOS",
+      "image": "netsec/ns03-14-dr.svg",
+      "imageAlt": "Pięć routerów w jednym VLAN-ie: R3 z priorytetem 100 zostaje DR, R2 z najwyższym Router ID wśród pozostałych BDR, R1 i R4 DROTHER, R5 z priorytetem 0 nigdy nie zostanie DR.",
+      "body": "Konfiguracja jednego routera w obszarze 0. Dwa style włączania OSPF na interfejsach: polecenie `network` z wildcardem (klasyczne CCNA) albo `ip ospf area 0` na interfejsie (czytelniejsze). FRR celowo przypomina IOS.",
+      "code": "! FRR (vtysh → configure) — R1\nrouter ospf\n ospf router-id 1.1.1.1\n auto-cost reference-bandwidth 10000          ! ta sama wartość na WSZYSTKICH routerach\n passive-interface default                    ! domyślnie bez Hello…\n no passive-interface eth1                    ! …poza łączami do routerów\n no passive-interface eth2\n network 10.0.12.0/30 area 0\n network 10.0.13.0/30 area 0\n network 192.168.10.0/24 area 0               ! sieć użytkowników — ogłaszana, ale pasywna\ninterface eth1\n ip ospf network point-to-point               ! łącze między dwoma routerami: bez DR/BDR\n ip ospf cost 10                              ! ręczny koszt (nadpisuje auto-cost)\n ip ospf hello-interval 10\n ip ospf dead-interval 40\n\n! Cisco IOS — to samo (network z wildcardem albo na interfejsie)\nrouter ospf 1\n router-id 1.1.1.1\n auto-cost reference-bandwidth 10000\n passive-interface default\n no passive-interface GigabitEthernet0/1\n network 10.0.12.0 0.0.0.3 area 0\ninterface GigabitEthernet0/1\n ip ospf network point-to-point\n ip ospf 1 area 0\ninterface GigabitEthernet0/2\n ip ospf priority 100                         ! kandydat na DR w segmencie broadcast\n\n! Weryfikacja (IOS i FRR)\nshow ip ospf neighbor ; show ip ospf interface brief ; show ip ospf database ; show ip route ospf"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Guided Lab z planu: OSPF na FRR w 4 routerach",
+      "body": "Cztery kontenery FRR (każdy to osobny network namespace) połączone sieciami Dockera jak na rysunku kosztów. Wymaga Dockera (Linux/WSL2).\n1. **compose.yaml**: usługi r1–r4, obraz `quay.io/frrouting/frr:10.1.1`, `cap_add: [NET_ADMIN, SYS_ADMIN]`, `sysctls: { net.ipv4.ip_forward: 1 }`, wolumen z plikiem `daemons` (`ospfd=yes`) i `frr.conf`. Sieci (z `ipam.subnet`): n12 10.0.12.0/24, n24 10.0.24.0/24, n13 10.0.13.0/24, n34 10.0.34.0/24, n23 10.0.23.0/24; adresy routerów .1x (Docker zajmuje .1 na bramę mostu). Za R4 sieć serwerów: interfejs dummy `ip link add srv0 type dummy; ip addr add 192.168.40.1/24 dev srv0`.\n2. **Konfiguracja**: w każdym `frr.conf` — `router ospf`, unikalny `ospf router-id`, `network … area 0` dla wszystkich jego sieci, na R4 także 192.168.40.0/24 (pasywnie), `ip ospf network point-to-point` na łączach. Na tym etapie zostaw **domyślną referencję 100**.\n3. **Sąsiedztwa**: `docker compose exec r1 vtysh -c \"show ip ospf neighbor\"` → dwóch sąsiadów w stanie **Full**. `show ip ospf database` → po jednym Router LSA (typ 1) od każdego z 4 routerów (na łączach P2P nie ma Network LSA).\n4. **Ścieżka**: `show ip route 192.168.40.0/24` na R1 → **dwie** ścieżki równego kosztu (przez R2 i przez R3) — pułapka referencji. Potwierdź `ip route get 192.168.40.10` (Linux wybierze jedną z tras ECMP per przepływ).\n5. **Napraw koszt**: `auto-cost reference-bandwidth 10000` na **wszystkich** routerach (Docker nie raportuje rzeczywistej prędkości veth — ustaw koszty ręcznie: `ip ospf cost 10` na łączach „1G”, `100` na „100M”, `1000` na „10M”). Teraz jedna trasa przez R2.\n6. **Zmień koszt i obserwuj**: na R1 `interface <do R2>` → `ip ospf cost 500`; po kilku sekundach trasa do 192.168.40.0/24 idzie przez R3 (koszt 200). W `show ip ospf database router 1.1.1.1` widać nowy koszt łącza w Router LSA R1.\n7. **Zepsuj MTU**: na R2 `ip link set <iface do R4> mtu 1400` (R4 zostaje 1500). Zrestartuj sąsiedztwo (`clear ip ospf process` lub `ip link set … down/up`). `show ip ospf neighbor` na R4 → sąsiad R2 utknął w **ExStart/Exchange**, w logach FRR: komunikaty o odrzuceniu DBD z niezgodnym MTU. Trasy przez łącze R2–R4 znikają.\n8. **Napraw**: wyrównaj MTU po obu stronach (właściwa naprawa) albo — jeśli różnica jest celowa i znana — `ip ospf mtu-ignore` po obu stronach (ryzyko: zbyt duże LSU zostaną odrzucone). Sąsiedztwo wraca do **Full**.\n9. **Sprzątanie i notatka**: `docker compose down`; zapisz LSDB, tabele tras przed/po zmianie kosztu, wynik `show ip ospf neighbor` z EXSTART i wniosek.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Stany sąsiedztwa i typowe problemy",
+      "image": "netsec/ns03-14-states.svg",
+      "imageAlt": "Stany sąsiedztwa OSPF: Down, Init, 2-Way (wybór DR/BDR), ExStart (ustalanie master/slave, tu zatrzymuje się przy niezgodnym MTU), Exchange (DBD), Loading (LSR i LSU), Full. Typy pakietów i parametry Hello.",
+      "body": "Większość problemów z OSPF widać w **stanie sąsiedztwa** i w tym, na którym kroku utknął:\n- **Brak sąsiada w ogóle (Down)** — Hello nie dochodzi: interfejs pasywny, ACL/firewall blokuje protokół 89 lub multicast 224.0.0.5, różne podsieci na łączu, zły VLAN.\n- **Init** — widzę Hello sąsiada, ale on nie widzi moich: problem jednokierunkowy (ACL w jedną stronę, filtr multicastu).\n- **Hello się nie zgadza → brak sąsiedztwa** — różne **obszary**, **maski** (na sieciach broadcast), **timery Hello/Dead**, **uwierzytelnianie**, typ obszaru (stub), **duplikat Router ID**.\n- **2-Way między DROTHER** — to normalne, nie błąd (pełne sąsiedztwo tylko z DR/BDR).\n- **ExStart/Exchange** — klasycznie **niezgodne MTU** (DBD większe niż MTU sąsiada są odrzucane), także duplikat RID.\n- **Full, ale brak tras** — sieć nie jest ogłaszana (brak `network`/`ip ospf area`), zła maska w `network`, trasa przegrywa z lepszym AD (statyczna), filtr dystrybucji.\n- **Trasy jest, ale ruch idzie „dziwnie”** — koszty (referencja!), ECMP, asymetria.\n- **Wolna reakcja na awarię** — Dead interval 40 s (gdy łącze nie traci nośnika, np. przez przełącznik): dla aplikacji 40 s timeoutów. Rozwiązanie: **BFD** (wykrycie w setki ms) lub krótsze timery.\n\n**OSPFv3 (IPv6)** działa na adresach link-local, LSA nie zawierają prefiksów w Router LSA (osobne Intra-Area-Prefix LSA), a jeden proces może obsługiwać IPv4 i IPv6 (address families). Koncepcje — sąsiedztwa, DR, koszty, SPF — te same.",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "SPF w Javie: ten sam algorytm, który liczy OSPF",
+      "body": "Dijkstra z zachowaniem ścieżek równego kosztu (ECMP) na topologii z labu. Program przyjmuje referencyjną przepustowość jako argument — uruchom go z 100 i 10000 i porównaj wynik z tablicą tras FRR. Algorytm przyda się też w zadaniach rekrutacyjnych i w narzędziach (np. symulacja „co się stanie z ruchem po awarii łącza X”).",
+      "code": "import java.util.*;\n\npublic class OspfSpf {\n    record Edge(String to, int cost) {}\n\n    // Dijkstra ze ścieżkami równego kosztu (ECMP) — dokładnie to, co OSPF liczy na LSDB\n    static Map<String, Integer> spf(Map<String, List<Edge>> g, String src, Map<String, Set<String>> prev) {\n        Map<String, Integer> dist = new HashMap<>();\n        g.keySet().forEach(n -> { dist.put(n, Integer.MAX_VALUE); prev.put(n, new TreeSet<>()); });\n        dist.put(src, 0);\n        PriorityQueue<Map.Entry<String, Integer>> pq = new PriorityQueue<>(Map.Entry.comparingByValue());\n        pq.add(Map.entry(src, 0));\n        while (!pq.isEmpty()) {\n            var cur = pq.poll();\n            if (cur.getValue() > dist.get(cur.getKey())) continue;\n            for (Edge e : g.get(cur.getKey())) {\n                int nd = cur.getValue() + e.cost();\n                if (nd < dist.get(e.to())) { dist.put(e.to(), nd); prev.get(e.to()).clear(); prev.get(e.to()).add(cur.getKey()); pq.add(Map.entry(e.to(), nd)); }\n                else if (nd == dist.get(e.to())) prev.get(e.to()).add(cur.getKey());   // ECMP\n            }\n        }\n        return dist;\n    }\n\n    static List<String> paths(Map<String, Set<String>> prev, String src, String dst) {\n        if (dst.equals(src)) return List.of(src);\n        List<String> out = new ArrayList<>();\n        for (String p : prev.get(dst)) for (String head : paths(prev, src, p)) out.add(head + \">\" + dst);\n        return out;\n    }\n\n    static int cost(int bwMbps, int refMbps) { return Math.max(1, refMbps / bwMbps); }\n\n    public static void main(String[] args) {\n        int ref = args.length > 0 ? Integer.parseInt(args[0]) : 100;\n        String[][] links = {{\"R1\", \"R2\", \"1000\"}, {\"R2\", \"R4\", \"1000\"}, {\"R1\", \"R3\", \"100\"}, {\"R3\", \"R4\", \"100\"}, {\"R2\", \"R3\", \"10\"}};\n        Map<String, List<Edge>> g = new TreeMap<>();\n        for (String[] l : links) {\n            int c = cost(Integer.parseInt(l[2]), ref);\n            g.computeIfAbsent(l[0], k -> new ArrayList<>()).add(new Edge(l[1], c));\n            g.computeIfAbsent(l[1], k -> new ArrayList<>()).add(new Edge(l[0], c));\n        }\n        Map<String, Set<String>> prev = new HashMap<>();\n        Map<String, Integer> dist = spf(g, \"R1\", prev);\n        System.out.println(\"ref=\" + ref + \" Mb/s, koszty od R1: \" + new TreeMap<>(dist));\n        System.out.println(\"R1 -> R4: \" + paths(prev, \"R1\", \"R4\"));\n    }\n}\n// java OspfSpf.java 100    → R1 -> R4: [R1>R2>R4, R1>R3>R4]   (ECMP — także przez 100 Mb/s)\n// java OspfSpf.java 10000  → R1 -> R4: [R1>R2>R4]"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **Czas zbieżności = czas niedostępności**: po awarii łącza bez utraty nośnika OSPF czeka Dead interval (40 s) — w tym czasie Twoje połączenia mogą wisieć. Ustaw w aplikacji rozsądne timeouty i retry; po stronie sieci — BFD.\n- **Centra danych**: OSPF (lub IS-IS) w underlay sieci spine-leaf, BGP do serwerów i Kubernetesa; w laboratoriach i małych środowiskach FRR na Linuksie robi to samo co routery sprzętowe.\n- **Chmura**: OSPF zwykle nie jest dostępny w VPC (tam trasy statyczne i BGP z VPN/Direct Connect), ale spotkasz go po stronie on-premises w połączeniach hybrydowych.\n- **MTU w overlay/VPN** (lekcja 11) potrafi zerwać sąsiedztwa OSPF w tunelach — objaw EXSTART.\n\n**Blue team:**\n- **Wstrzyknięcie tras**: atakujący w sieci użytkowników uruchamia FRR/Quaggę, nawiązuje sąsiedztwo i ogłasza trasy (np. bardziej szczegółowe prefiksy lub trasę domyślną) — przejmuje ruch (MITM) lub tworzy czarną dziurę. Obrona: **interfejsy pasywne** wszędzie poza łączami do routerów, **uwierzytelnianie** OSPF (HMAC-SHA wg RFC 5709 / key chain; MD5 tylko jako starsza opcja), ACL dla protokołu 89, segmentacja.\n- **Monitoring**: zdarzenia zmiany sąsiedztwa (syslog `%OSPF-5-ADJCHG`, logi FRR `ospfd`), nowe RID w LSDB, nagły wzrost liczby LSA — reguły w SIEM.\n- **DoS**: flood LSA / częste zmiany (flapping) obciążają CPU; ochrona: CoPP, tłumienie (throttling) SPF i LSA.\n- Mapowanie: CCNA v2 domena 3 (OSPFv2 single-area: sąsiedztwa, DR/BDR, Router ID, P2P, koszt), Network+ (protokoły routingu dynamicznego), Security+ (ataki na routing).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy",
+      "body": "- **Domyślna referencja 100 Mb/s** — łącza 100M, 1G, 10G mają ten sam koszt; ruch idzie wolnymi łączami (ECMP). Ustaw np. 10 000 lub 100 000 — **na wszystkich** routerach.\n- **Różne referencje na routerach** — niespójne koszty, nieoptymalne lub asymetryczne ścieżki.\n- **Niezgodne MTU** po obu stronach łącza → EXSTART/EXCHANGE.\n- **Niezgodne timery Hello/Dead, obszary, maski, uwierzytelnianie** → brak sąsiedztwa.\n- **Duplikat Router ID** (np. sklonowane VM/kontenery z tym samym loopbackiem) — dziwne, flapping LSA.\n- **Brak `passive-interface` w sieciach użytkowników** — ktokolwiek z FRR może zostać sąsiadem i ogłaszać trasy.\n- **Oczekiwanie wywłaszczania DR** — router z wyższym priorytetem nie przejmie roli, dopóki obecny DR działa.\n- **Typ sieci broadcast na łączu dwóch routerów** — zbędny wybór DR i wolniejsza zbieżność; ustaw point-to-point (po obu stronach!).\n- **Zła maska wildcard w `network`** — sieć nieogłoszona lub ogłoszona zbyt szeroko.\n- **Zmiana Router ID bez restartu procesu** — nie zadziała do `clear ip ospf process`.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: OSPF „na wszystkich interfejsach” bez ochrony",
+      "body": "Konfiguracja, która działa w laboratorium, a w firmie pozwala dowolnemu komputerowi w sieci użytkowników zostać routerem i przejąć ruch.",
+      "code": "router ospf 1\n network 0.0.0.0 255.255.255.255 area 0      ! OSPF na KAŻDYM interfejsie, także w VLAN-ach użytkowników\n ! brak router-id → RID z adresu interfejsu, zmienia się po zmianie adresacji\n ! brak auto-cost reference-bandwidth → 1G i 100M z tym samym kosztem\n ! brak passive-interface → Hello wysyłane do laptopów; FRR na laptopie = nowy sąsiad\n ! brak uwierzytelniania → sąsiad z dowolnymi LSA (np. 0.0.0.0/0 lub /32 serwera płatności)"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: jawny RID, referencja, pasywne interfejsy, uwierzytelnianie, BFD",
+      "body": "Minimalny „hardening” OSPF i ustawienia, które sprawiają, że koszty odpowiadają przepustowości, a awarie są wykrywane szybko.",
+      "code": "key chain OSPF-KEYS\n key 1\n  key-string <sekret z sejfu>\n  cryptographic-algorithm hmac-sha-256\nrouter ospf 1\n router-id 10.255.0.1\n auto-cost reference-bandwidth 100000          ! 100 Gb/s — spójnie na wszystkich routerach\n passive-interface default\n no passive-interface GigabitEthernet0/1\n bfd all-interfaces                             ! wykrycie awarii w setki ms\ninterface GigabitEthernet0/1\n ip ospf network point-to-point\n ip ospf authentication key-chain OSPF-KEYS\n ip ospf 1 area 0\n! sieci użytkowników: ip ospf 1 area 0 na interfejsie, ale pasywnie (tylko ogłaszane)\n! monitoring: syslog %OSPF-5-ADJCHG → SIEM, alarm na nowy RID i nieoczekiwane prefiksy"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Objaw → co sprawdzić w OSPF",
+      "body": "Ściąga diagnostyczna:",
+      "code": "OBJAW                                         SPRAWDŹ                                          POLECENIE\nbrak sąsiada                                   pasywny interfejs, ACL proto 89, podsieć, VLAN   show ip ospf interface ; tcpdump proto 89\nsąsiad w INIT                                  Hello tylko w jedną stronę                       debug/log Hello, ACL\nbrak sąsiedztwa mimo Hello                     obszar, maska, timery, auth, duplikat RID        show ip ospf interface (Hello/Dead)\nEXSTART / EXCHANGE                             MTU po obu stronach                              show interface ; ip link\n2-WAY między DROTHER                           normalne                                          show ip ospf neighbor\nFull, ale brak trasy                           network/area, AD (statyczna wygrywa), filtr      show ip ospf database ; show ip route\nruch idzie wolnym łączem                       referencja, koszty, ECMP                         show ip ospf interface (Cost) ; show ip route\nwolne przełączanie po awarii                   Dead interval, brak BFD                          show bfd peers\nczęste przeliczenia SPF / flapping             niestabilne łącze, duplikat RID                  show ip ospf statistics ; logi"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- OSPF: link-state, protokół IP 89, AD 110; każdy router ma tę samą LSDB z LSA (typ 1 router, typ 2 network) i liczy SPF (Dijkstra).\n- Sąsiedztwo: Down → Init → 2-Way → ExStart → Exchange → Loading → Full; Hello musi się zgadzać (obszar, maska, timery 10/40, auth, unikalny RID); MTU sprawdzany w DBD (EXSTART).\n- DR/BDR na segmentach broadcast (priorytet, potem RID, bez wywłaszczania); na łączach dwóch routerów — point-to-point.\n- Koszt = referencja / przepustowość (min. 1); domyślne 100 Mb/s zrównuje 100M/1G/10G — ustaw większą referencję wszędzie lub koszty ręcznie.\n- Bezpieczeństwo: pasywne interfejsy, uwierzytelnianie HMAC-SHA, monitoring sąsiedztw; szybkość: BFD.\n- OSPFv3 dla IPv6 (link-local, ff02::5/6) — te same koncepcje.\n- Następna lekcja: **redundancja bramy: HSRP, VRRP i GLBP** — z keepalived przed parą reverse proxy.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 10 Mb/s przy referencji 100 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "10."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 100 Mb/s przy referencji 100 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "1."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 1 Gb/s przy referencji 100 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "1."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 10 Gb/s przy referencji 100 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "1."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 100 Mb/s przy referencji 10 000 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "100."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 1 Gb/s przy referencji 10 000 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "10."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 25 Gb/s przy referencji 100 000 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "4."
+    },
+    {
+      "prompt": "Jaki koszt OSPF ma interfejs 40 Gb/s przy referencji 100 000 Mb/s?",
+      "hint": "koszt = max(1, floor(ref / bw)).",
+      "solution": "2."
+    },
+    {
+      "prompt": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M), domyślna referencja 100. Policz SPF z R1: koszty do wszystkich routerów i ścieżkę(i) do R4.",
+      "hint": "Dijkstra; przy równym koszcie — ECMP.",
+      "solution": "Koszty: {\"R1\":0,\"R2\":1,\"R4\":2,\"R3\":1}; R1→R4: R1→R2→R4 oraz R1→R3→R4."
+    },
+    {
+      "prompt": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M), referencja 10 000. Policz SPF z R1: koszty do wszystkich routerów i ścieżkę(i) do R4.",
+      "hint": "Dijkstra; przy równym koszcie — ECMP.",
+      "solution": "Koszty: {\"R1\":0,\"R2\":10,\"R4\":20,\"R3\":100}; R1→R4: R1→R2→R4."
+    },
+    {
+      "prompt": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M), referencja 10 000 i koszt 500 na łączu R1–R2. Policz SPF z R1: koszty do wszystkich routerów i ścieżkę(i) do R4.",
+      "hint": "Dijkstra; przy równym koszcie — ECMP.",
+      "solution": "Koszty: {\"R1\":0,\"R2\":210,\"R4\":200,\"R3\":100}; R1→R4: R1→R3→R4."
+    },
+    {
+      "prompt": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M), referencja 10 000 i koszt 300 na łączu R2–R4. Policz SPF z R1: koszty do wszystkich routerów i ścieżkę(i) do R4.",
+      "hint": "Dijkstra; przy równym koszcie — ECMP.",
+      "solution": "Koszty: {\"R1\":0,\"R2\":10,\"R4\":200,\"R3\":100}; R1→R4: R1→R3→R4."
+    },
+    {
+      "prompt": "Routery na jednym segmencie broadcast startują jednocześnie: R1 (priorytet 1, RID 1.1.1.1), R2 (priorytet 1, RID 2.2.2.2), R3 (priorytet 1, RID 3.3.3.3). Który zostanie DR, a który BDR?",
+      "hint": "Najwyższy priorytet (0 = nie kandyduje), przy remisie najwyższy RID.",
+      "solution": "DR: R3, BDR: R2."
+    },
+    {
+      "prompt": "Routery na jednym segmencie broadcast startują jednocześnie: R1 (priorytet 200, RID 1.1.1.1), R2 (priorytet 1, RID 9.9.9.9), R3 (priorytet 0, RID 10.0.0.1). Który zostanie DR, a który BDR?",
+      "hint": "Najwyższy priorytet (0 = nie kandyduje), przy remisie najwyższy RID.",
+      "solution": "DR: R1, BDR: R2."
+    },
+    {
+      "prompt": "Routery na jednym segmencie broadcast startują jednocześnie: R1 (priorytet 0, RID 1.1.1.1), R2 (priorytet 0, RID 2.2.2.2), R3 (priorytet 5, RID 3.3.3.3), R4 (priorytet 5, RID 4.4.4.4). Który zostanie DR, a który BDR?",
+      "hint": "Najwyższy priorytet (0 = nie kandyduje), przy remisie najwyższy RID.",
+      "solution": "DR: R4, BDR: R3."
+    },
+    {
+      "prompt": "Wykonaj Guided Lab z planu: OSPF na FRR w 4 routerach — odczytaj LSDB, zmień koszt i obserwuj nową ścieżkę; zepsuj MTU i zdiagnozuj stan EXSTART.",
+      "hint": "show ip ospf neighbor/database, ip ospf cost, ip link mtu.",
+      "solution": "LSDB: 4 Router LSA (typ 1), brak Network LSA na łączach P2P. Przy domyślnej referencji trasa do 192.168.40.0/24 ma dwie ścieżki (ECMP przez R2 i R3); po ustawieniu kosztów zgodnych z przepustowością — tylko przez R2 (koszt 20 przy ref 10 000). ip ospf cost 500 na R1–R2 → trasa przez R3 (koszt 200), nowy koszt widoczny w Router LSA R1. MTU 1400 na R2 vs 1500 na R4 → sąsiad w ExStart/Exchange, trasy przez łącze znikają; naprawa: wyrównanie MTU (ewentualnie ip ospf mtu-ignore po obu stronach)."
+    },
+    {
+      "prompt": "Dlaczego dwóch DROTHER-ów na tym samym segmencie pozostaje w stanie 2-Way i czy to błąd?",
+      "hint": "Pełne sąsiedztwo tylko z DR i BDR.",
+      "solution": "Na segmencie broadcast routery DROTHER synchronizują bazę wyłącznie z DR i BDR (wysyłają LSU na 224.0.0.6, DR rozsyła na 224.0.0.5). Między sobą zatrzymują się w 2-Way — to zamierzone zachowanie zmniejszające liczbę sąsiedztw i floodingu, nie błąd."
+    },
+    {
+      "prompt": "Policz liczbę pełnych sąsiedztw (Full) dla 6 routerów w jednym VLAN-ie bez DR/BDR i z DR/BDR.",
+      "hint": "n(n−1)/2 vs 2(n−2)+1.",
+      "solution": "Bez DR (każdy z każdym): 6·5/2 = 15. Z DR i BDR: DR–BDR 1 + każdy z 4 DROTHER z DR i z BDR 4·2 = 8 → 9."
+    },
+    {
+      "prompt": "Wymień pięć parametrów, które muszą się zgadzać w pakietach Hello, aby powstało sąsiedztwo OSPF, i jeden, który sprawdzany jest dopiero w DBD.",
+      "hint": "Hello vs DBD.",
+      "solution": "Hello: identyfikator obszaru (i jego typ, np. stub), maska podsieci (na sieciach broadcast/NBMA), Hello interval, Dead interval, uwierzytelnianie (typ i klucz); dodatkowo unikalny Router ID i ta sama podsieć. MTU jest porównywany dopiero w pakietach DBD (stan ExStart/Exchange)."
+    },
+    {
+      "prompt": "Na routerze R1 ustawiono router-id 1.1.1.1, ale show ip ospf nadal pokazuje 10.0.12.11. Dlaczego i co zrobić?",
+      "hint": "Zmiana RID wymaga restartu procesu.",
+      "solution": "Router ID jest ustalany przy starcie procesu OSPF; zmiana w konfiguracji zacznie obowiązywać dopiero po restarcie procesu: clear ip ospf process (Cisco/FRR) — co zrywa sąsiedztwa, więc robi się to w oknie serwisowym."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między poleceniem network 10.0.12.0 0.0.0.3 area 0 a ip ospf area 0 na interfejsie.",
+      "hint": "Dopasowanie adresów interfejsów.",
+      "solution": "network z wildcardem włącza OSPF na wszystkich interfejsach, których adres pasuje do zakresu (tu 10.0.12.0–10.0.12.3), i ogłasza ich sieci; nie oznacza „ogłoś tę sieć” w sensie trasy statycznej. ip ospf area 0 (Cisco: ip ospf <proces> area 0) włącza OSPF bezpośrednio na konkretnym interfejsie — czytelniejsze i bez ryzyka złego wildcardu."
+    },
+    {
+      "prompt": "Atakujący w sieci użytkowników uruchamia FRR i ogłasza trasę 10.50.1.10/32. Jakie warunki muszą być spełnione, by atak się udał, i jak mu zapobiec?",
+      "hint": "Sąsiedztwo, LPM, ochrona.",
+      "solution": "Interfejs routera w VLAN-ie użytkowników musi wysyłać Hello (nie być pasywny), parametry Hello muszą się zgadzać (obszar, timery, maska), brak uwierzytelniania (lub znany klucz). Wtedy sąsiedztwo dochodzi do Full, a /32 jako dłuższy prefiks przejmie ruch do 10.50.1.10 (MITM lub czarna dziura). Zapobieganie: passive-interface w sieciach użytkowników, uwierzytelnianie HMAC-SHA, ACL blokujące protokół 89 z sieci użytkowników, monitoring nowych sąsiadów i nowych RID w LSDB."
+    },
+    {
+      "prompt": "Dlaczego po awarii przełącznika między dwoma routerami (łącze routerów nie traci nośnika) ruch przestaje płynąć na ok. 40 s i jak to skrócić?",
+      "hint": "Dead interval, BFD.",
+      "solution": "Interfejsy routerów są UP (połączone z przełącznikiem), więc OSPF nie widzi awarii od razu — dopiero po braku Hello przez Dead interval (domyślnie 40 s) sąsiedztwo spada i SPF wyznacza nowe trasy. Skrócenie: BFD (wykrycie w setki ms, np. 3 × 100 ms) zintegrowane z OSPF, ewentualnie krótsze timery Hello/Dead (np. 1/4 s; większe obciążenie), łącza bezpośrednie bez przełącznika pośrodku."
+    },
+    {
+      "prompt": "Porównaj OSPFv2 i OSPFv3.",
+      "hint": "Adresy, LSA, uwierzytelnianie.",
+      "solution": "OSPFv2 — IPv4, pakiety z adresów interfejsów, multicast 224.0.0.5/6, uwierzytelnianie w nagłówku OSPF (MD5/HMAC-SHA). OSPFv3 — zaprojektowany dla IPv6: działa na adresach link-local (ff02::5/6), prefiksy przeniesione do osobnych LSA (Link LSA typ 8, Intra-Area-Prefix LSA typ 9), Router LSA opisuje tylko topologię; uwierzytelnianie przez IPsec lub trailer (RFC 7166); może obsługiwać IPv4 i IPv6 przez address families. Koncepcje sąsiedztw, DR/BDR, kosztów i SPF — takie same."
+    },
+    {
+      "prompt": "W show ip route widzisz „O 192.168.40.0/24 [110/20] via 10.0.12.12”. Rozszyfruj wpis.",
+      "hint": "Kod, AD, metryka.",
+      "solution": "O — trasa wewnątrzobszarowa OSPF; [110/20] — dystans administracyjny 110 / koszt OSPF 20 (suma kosztów interfejsów wyjściowych na ścieżce); via 10.0.12.12 — następny skok (adres sąsiada na łączu). Gdyby była trasa statyczna do tej samej sieci (AD 1), wygrałaby z OSPF."
+    },
+    {
+      "prompt": "Dlaczego na łączu między dwoma routerami warto ustawić ip ospf network point-to-point po obu stronach?",
+      "hint": "Brak DR/BDR, szybsza zbieżność.",
+      "solution": "Na Ethernecie domyślnym typem jest broadcast — routery wybierają DR/BDR (czekając Wait timer = Dead interval przy starcie), DR generuje Network LSA (więcej LSA w bazie). Przy point-to-point nie ma wyboru DR, sąsiedztwo powstaje szybciej, LSDB jest prostsza. Typ musi być zgodny po obu stronach — inaczej problemy z sąsiedztwem i trasami (np. niezgodne timery lub brak tras)."
+    },
+    {
+      "prompt": "Jak w FRR szybko sprawdzić koszt każdego interfejsu OSPF i kto jest DR na segmencie?",
+      "hint": "show ip ospf interface.",
+      "solution": "vtysh -c \"show ip ospf interface\" — dla każdego interfejsu: obszar, typ sieci, Cost, stan (DR, BDR, DROther, Point-To-Point), priorytet, adresy DR i BDR, timery Hello/Dead, liczba sąsiadów. Skrócona wersja na Cisco: show ip ospf interface brief."
+    },
+    {
+      "prompt": "Jakie zdarzenia OSPF warto przesyłać do SIEM i jakie reguły na nich zbudować?",
+      "hint": "Sąsiedztwa, RID, prefiksy.",
+      "solution": "Zmiany stanów sąsiedztwa (Cisco %OSPF-5-ADJCHG, FRR logi ospfd „Neighbor … Full/Down”), błędy uwierzytelniania (niezgodny klucz), nowe Router ID w LSDB, zmiany konfiguracji routerów. Reguły: nowe sąsiedztwo na interfejsie, który powinien być pasywny lub z nieznanego RID; częste flapowanie sąsiada (niestabilne łącze lub atak); pojawienie się nieoczekiwanych prefiksów (np. /32 dla serwerów krytycznych lub 0.0.0.0/0 spoza routerów brzegowych)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego referencyjna przepustowość musi być taka sama na wszystkich routerach obszaru.",
+      "hint": "Spójność kosztów w SPF.",
+      "solution": "Każdy router liczy koszt swoich interfejsów z własnej referencji i ogłasza go w Router LSA; SPF na każdym routerze sumuje koszty ogłoszone przez innych. Przy różnych referencjach to samo łącze 1 Gb/s ma koszt 1 u jednego routera i 10 u drugiego — ścieżki stają się nieoptymalne i asymetryczne (ruch tam inną drogą niż z powrotem), co psuje stanowe firewalle i utrudnia diagnozę."
+    },
+    {
+      "prompt": "Uruchom program OspfSpf z lekcji dla referencji 100 i 10000, a potem zmodyfikuj go tak, by wypisywał trasy do wszystkich routerów oraz pierwszy skok (next hop) z R1 — jak w tablicy routingu.",
+      "hint": "Pierwszy skok = drugi element ścieżki.",
+      "solution": "Dla każdego celu d ≠ R1: List<String> ps = paths(prev, \"R1\", d); zbiór pierwszych skoków = ps.stream().map(p -> p.split(\">\")[1]).collect(toCollection(TreeSet::new)); wypisz \"d koszt=dist.get(d) via \" + nextHops. Dla ref 100: R4 przez {R2, R3} (ECMP), R2 przez {R2}, R3 przez {R3}; dla ref 10000: R4 przez {R2}, R3 przez {R3} (koszt 100). To dokładnie odpowiada wpisom „O … via …” w show ip route."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki koszt OSPF ma łącze 10 Mb/s przy referencji 100 Mb/s?",
+      "options": {
+        "A": "10",
+        "B": "11",
+        "C": "100",
+        "D": "1"
+      },
+      "correct": "A",
+      "explanation": "max(1, 100/10)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 100 Mb/s przy referencji 100 Mb/s?",
+      "options": {
+        "A": "100",
+        "B": "0.1",
+        "C": "10",
+        "D": "1"
+      },
+      "correct": "D",
+      "explanation": "max(1, 100/100)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 1 Gb/s przy referencji 100 Mb/s?",
+      "options": {
+        "A": "0.1",
+        "B": "1",
+        "C": "10",
+        "D": "1000"
+      },
+      "correct": "B",
+      "explanation": "max(1, 100/1000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 10 Gb/s przy referencji 100 Mb/s?",
+      "options": {
+        "A": "10000",
+        "B": "10",
+        "C": "1",
+        "D": "0.1"
+      },
+      "correct": "C",
+      "explanation": "max(1, 100/10000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 10 Mb/s przy referencji 10 000 Mb/s?",
+      "options": {
+        "A": "10",
+        "B": "100",
+        "C": "10000",
+        "D": "1000"
+      },
+      "correct": "D",
+      "explanation": "max(1, 10000/10)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 100 Mb/s przy referencji 10 000 Mb/s?",
+      "options": {
+        "A": "100",
+        "B": "101",
+        "C": "10",
+        "D": "1000"
+      },
+      "correct": "A",
+      "explanation": "max(1, 10000/100)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 1 Gb/s przy referencji 10 000 Mb/s?",
+      "options": {
+        "A": "1000",
+        "B": "10",
+        "C": "100",
+        "D": "1"
+      },
+      "correct": "B",
+      "explanation": "max(1, 10000/1000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 10 Gb/s przy referencji 10 000 Mb/s?",
+      "options": {
+        "A": "10",
+        "B": "10000",
+        "C": "1",
+        "D": "0.1"
+      },
+      "correct": "C",
+      "explanation": "max(1, 10000/10000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 1 Gb/s przy referencji 100 000 Mb/s?",
+      "options": {
+        "A": "10",
+        "B": "100",
+        "C": "101",
+        "D": "1000"
+      },
+      "correct": "B",
+      "explanation": "max(1, 100000/1000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 25 Gb/s przy referencji 100 000 Mb/s?",
+      "options": {
+        "A": "25000",
+        "B": "0.4",
+        "C": "40",
+        "D": "4"
+      },
+      "correct": "D",
+      "explanation": "max(1, 100000/25000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 40 Gb/s przy referencji 100 000 Mb/s?",
+      "options": {
+        "A": "20",
+        "B": "40000",
+        "C": "2",
+        "D": "0.2"
+      },
+      "correct": "C",
+      "explanation": "max(1, 100000/40000)."
+    },
+    {
+      "question": "Jaki koszt OSPF ma łącze 100 Gb/s przy referencji 100 000 Mb/s?",
+      "options": {
+        "A": "1",
+        "B": "0.1",
+        "C": "100000",
+        "D": "10"
+      },
+      "correct": "A",
+      "explanation": "max(1, 100000/100000)."
+    },
+    {
+      "question": "Łącza i koszty: A–D 10, A–E 10, B–C 20, B–D 100, C–E 5. Jaki jest najmniejszy koszt z A do B (i ścieżka)?",
+      "options": {
+        "A": "35 (A→E→C→B)",
+        "B": "40 (A→E→C→B)",
+        "C": "10 (A→E→C→B)",
+        "D": "30 (A→E→C→B)"
+      },
+      "correct": "A",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 20, A–D 5, B–C 20, B–D 50, C–D 20, C–E 1. Jaki jest najmniejszy koszt z A do C (i ścieżka)?",
+      "options": {
+        "A": "30 (A→D→C)",
+        "B": "50 (A→D→C)",
+        "C": "20 (A→D→C)",
+        "D": "25 (A→D→C)"
+      },
+      "correct": "D",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 10, B–C 5, B–D 20, C–D 5, D–E 10. Jaki jest najmniejszy koszt z A do D (i ścieżka)?",
+      "options": {
+        "A": "10 (A→B→C→D)",
+        "B": "15 (A→B→C→D)",
+        "C": "20 (A→B→C→D)",
+        "D": "25 (A→B→C→D)"
+      },
+      "correct": "C",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 5, A–D 10, B–E 5, C–D 5. Jaki jest najmniejszy koszt z A do E (i ścieżka)?",
+      "options": {
+        "A": "5 (A→B→E)",
+        "B": "10 (A→B→E)",
+        "C": "20 (A→B→E)",
+        "D": "15 (A→B→E)"
+      },
+      "correct": "B",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 1, A–D 10, A–E 10, B–C 50, C–D 10, C–E 20, D–E 20. Jaki jest najmniejszy koszt z A do B (i ścieżka)?",
+      "options": {
+        "A": "1 (A→B)",
+        "B": "2 (A→B)",
+        "C": "6 (A→B)",
+        "D": "11 (A→B)"
+      },
+      "correct": "A",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–C 1, A–D 1, B–D 100, B–E 50, C–D 10, C–E 5. Jaki jest najmniejszy koszt z A do C (i ścieżka)?",
+      "options": {
+        "A": "2 (A→C)",
+        "B": "6 (A→C)",
+        "C": "1 (A→C)",
+        "D": "11 (A→C)"
+      },
+      "correct": "C",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–C 5, B–C 100, B–D 100, D–E 50. Jaki jest najmniejszy koszt z A do D (i ścieżka)?",
+      "options": {
+        "A": "210 (A→C→B→D)",
+        "B": "205 (A→C→B→D)",
+        "C": "200 (A→C→B→D)",
+        "D": "5 (A→C→B→D)"
+      },
+      "correct": "B",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 20, A–C 100, A–E 1, B–C 1, B–D 5, C–D 10, C–E 10, D–E 10. Jaki jest najmniejszy koszt z A do E (i ścieżka)?",
+      "options": {
+        "A": "20 (A→E)",
+        "B": "6 (A→E)",
+        "C": "2 (A→E)",
+        "D": "1 (A→E)"
+      },
+      "correct": "D",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 1, A–C 100, A–D 100, B–C 100, B–E 50, C–E 50. Jaki jest najmniejszy koszt z A do B (i ścieżka)?",
+      "options": {
+        "A": "6 (A→B)",
+        "B": "2 (A→B)",
+        "C": "1 (A→B)",
+        "D": "11 (A→B)"
+      },
+      "correct": "C",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 100, A–E 100, B–C 50, B–D 5, B–E 100, C–E 10, D–E 5. Jaki jest najmniejszy koszt z A do C (i ścieżka)?",
+      "options": {
+        "A": "100 (A→E→C)",
+        "B": "110 (A→E→C)",
+        "C": "115 (A→E→C)",
+        "D": "105 (A→E→C)"
+      },
+      "correct": "B",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 20, A–C 100, A–D 1, A–E 20, B–C 50, B–D 20, B–E 100, C–D 10, D–E 100. Jaki jest najmniejszy koszt z A do D (i ścieżka)?",
+      "options": {
+        "A": "1 (A→D)",
+        "B": "20 (A→D)",
+        "C": "2 (A→D)",
+        "D": "6 (A→D)"
+      },
+      "correct": "A",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 1, A–C 100, B–C 1, B–D 20, B–E 50, C–E 10, D–E 1. Jaki jest najmniejszy koszt z A do E (i ścieżka)?",
+      "options": {
+        "A": "7 (A→B→C→E)",
+        "B": "1 (A→B→C→E)",
+        "C": "17 (A→B→C→E)",
+        "D": "12 (A→B→C→E)"
+      },
+      "correct": "D",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 50, A–D 50, A–E 20, B–C 50, B–D 50, B–E 100, C–D 1, C–E 5. Jaki jest najmniejszy koszt z A do B (i ścieżka)?",
+      "options": {
+        "A": "50 (A→B)",
+        "B": "45 (A→B)",
+        "C": "100 (A→B)",
+        "D": "55 (A→B)"
+      },
+      "correct": "A",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 5, A–C 10, A–E 50, C–E 50, D–E 50. Jaki jest najmniejszy koszt z A do C (i ścieżka)?",
+      "options": {
+        "A": "15 (A→C)",
+        "B": "10 (A→C)",
+        "C": "20 (A→C)",
+        "D": "5 (A→C)"
+      },
+      "correct": "B",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–C 20, A–D 10, A–E 100, B–D 5, B–E 1. Jaki jest najmniejszy koszt z A do D (i ścieżka)?",
+      "options": {
+        "A": "20 (A→D)",
+        "B": "5 (A→D)",
+        "C": "15 (A→D)",
+        "D": "10 (A→D)"
+      },
+      "correct": "D",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Łącza i koszty: A–B 5, A–C 1, A–E 1, B–C 20, B–D 50, B–E 100, C–D 1, C–E 20, D–E 1. Jaki jest najmniejszy koszt z A do E (i ścieżka)?",
+      "options": {
+        "A": "5 (A→E)",
+        "B": "2 (A→E)",
+        "C": "1 (A→E)",
+        "D": "6 (A→E)"
+      },
+      "correct": "C",
+      "explanation": "Dijkstra od A."
+    },
+    {
+      "question": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M). Którędy R1 wyśle ruch do R4 przy domyślnej referencji 100?",
+      "options": {
+        "A": "R1→R2→R3→R4",
+        "B": "R1→R3→R4",
+        "C": "R1→R2→R4 oraz R1→R3→R4",
+        "D": "R1→R2→R4"
+      },
+      "correct": "C",
+      "explanation": "Koszt 2."
+    },
+    {
+      "question": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M). Którędy R1 wyśle ruch do R4 przy referencji 10 000?",
+      "options": {
+        "A": "R1→R2→R3→R4",
+        "B": "R1→R2→R4 oraz R1→R3→R4",
+        "C": "R1→R3→R4",
+        "D": "R1→R2→R4"
+      },
+      "correct": "D",
+      "explanation": "Koszt 20."
+    },
+    {
+      "question": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M). Którędy R1 wyśle ruch do R4 przy referencji 10 000 i koszcie 500 na R1–R2?",
+      "options": {
+        "A": "R1→R2→R3→R4",
+        "B": "R1→R3→R4",
+        "C": "R1→R2→R4",
+        "D": "R1→R2→R4 oraz R1→R3→R4"
+      },
+      "correct": "B",
+      "explanation": "Koszt 200."
+    },
+    {
+      "question": "Topologia z lekcji (R1–R2 1G, R2–R4 1G, R1–R3 100M, R3–R4 100M, R2–R3 10M). Którędy R1 wyśle ruch do R4 przy referencji 10 000 i koszcie 300 na R2–R4?",
+      "options": {
+        "A": "R1→R3→R4",
+        "B": "R1→R2→R4 oraz R1→R3→R4",
+        "C": "R1→R2→R3→R4",
+        "D": "R1→R2→R4"
+      },
+      "correct": "A",
+      "explanation": "Koszt 200."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 1 RID 1.1.1.1; R2 prio 1 RID 2.2.2.2; R3 prio 1 RID 3.3.3.3. Wynik wyboru?",
+      "options": {
+        "A": "DR R3, BDR R1",
+        "B": "DR R2, BDR R3",
+        "C": "DR R3, BDR R2",
+        "D": "DR R2, BDR R1"
+      },
+      "correct": "C",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 100 RID 1.1.1.1; R2 prio 1 RID 9.9.9.9; R3 prio 1 RID 5.5.5.5. Wynik wyboru?",
+      "options": {
+        "A": "DR R1, BDR R2",
+        "B": "DR R3, BDR R1",
+        "C": "DR R3, BDR R2",
+        "D": "DR R3, BDR brak"
+      },
+      "correct": "A",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 0 RID 9.9.9.9; R2 prio 1 RID 2.2.2.2; R3 prio 1 RID 3.3.3.3. Wynik wyboru?",
+      "options": {
+        "A": "DR R2, BDR R3",
+        "B": "DR R3, BDR R2",
+        "C": "DR R2, BDR R1",
+        "D": "DR R3, BDR R1"
+      },
+      "correct": "B",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 5 RID 10.0.0.1; R2 prio 5 RID 10.0.0.2; R3 prio 10 RID 1.1.1.1. Wynik wyboru?",
+      "options": {
+        "A": "DR R3, BDR R1",
+        "B": "DR R2, BDR R1",
+        "C": "DR R2, BDR R3",
+        "D": "DR R3, BDR R2"
+      },
+      "correct": "D",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 1 RID 192.168.1.1; R2 prio 1 RID 10.255.255.255; R3 prio 1 RID 172.16.0.1. Wynik wyboru?",
+      "options": {
+        "A": "DR R3, BDR R2",
+        "B": "DR R3, BDR R1",
+        "C": "DR R3, BDR brak",
+        "D": "DR R1, BDR R3"
+      },
+      "correct": "D",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 0 RID 1.1.1.1; R2 prio 0 RID 2.2.2.2; R3 prio 1 RID 3.3.3.3. Wynik wyboru?",
+      "options": {
+        "A": "DR R2, BDR R3",
+        "B": "DR R3, BDR brak",
+        "C": "DR R3, BDR R2",
+        "D": "DR R3, BDR R1"
+      },
+      "correct": "B",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 255 RID 1.1.1.1; R2 prio 254 RID 2.2.2.2; R3 prio 1 RID 3.3.3.3. Wynik wyboru?",
+      "options": {
+        "A": "DR R3, BDR R1",
+        "B": "DR R3, BDR R2",
+        "C": "DR R1, BDR R2",
+        "D": "DR R3, BDR brak"
+      },
+      "correct": "C",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Segment broadcast, routery startują jednocześnie: R1 prio 1 RID 4.4.4.4; R2 prio 2 RID 3.3.3.3; R3 prio 2 RID 2.2.2.2. Wynik wyboru?",
+      "options": {
+        "A": "DR R2, BDR R3",
+        "B": "DR R2, BDR R1",
+        "C": "DR R3, BDR R2",
+        "D": "DR R3, BDR R1"
+      },
+      "correct": "A",
+      "explanation": "Najwyższy priorytet (0 nie kandyduje), potem najwyższy RID."
+    },
+    {
+      "question": "Jaki numer protokołu IP używa OSPF?",
+      "options": {
+        "A": "89",
+        "B": "88",
+        "C": "6",
+        "D": "17"
+      },
+      "correct": "A",
+      "explanation": "Działa bezpośrednio nad IP."
+    },
+    {
+      "question": "Jaki jest dystans administracyjny OSPF?",
+      "options": {
+        "A": "120",
+        "B": "110",
+        "C": "1",
+        "D": "90"
+      },
+      "correct": "B",
+      "explanation": "Cisco."
+    },
+    {
+      "question": "Do jakiej rodziny protokołów należy OSPF?",
+      "options": {
+        "A": "Path-vector",
+        "B": "Hybrid",
+        "C": "Link-state",
+        "D": "Distance-vector"
+      },
+      "correct": "C",
+      "explanation": "Mapa sieci."
+    },
+    {
+      "question": "Jakiego algorytmu używa OSPF do liczenia tras?",
+      "options": {
+        "A": "Kruskala",
+        "B": "DUAL",
+        "C": "Bellmana-Forda",
+        "D": "Dijkstry (SPF)"
+      },
+      "correct": "D",
+      "explanation": "Shortest Path First."
+    },
+    {
+      "question": "Na jaki adres multicast wysyłane są Hello OSPFv2?",
+      "options": {
+        "A": "224.0.0.9",
+        "B": "255.255.255.255",
+        "C": "224.0.0.5",
+        "D": "224.0.0.6"
+      },
+      "correct": "C",
+      "explanation": "AllSPFRouters."
+    },
+    {
+      "question": "Na jaki adres wysyłają aktualizacje DROTHER-y do DR/BDR?",
+      "options": {
+        "A": "224.0.0.6",
+        "B": "224.0.0.1",
+        "C": "224.0.0.10",
+        "D": "224.0.0.5"
+      },
+      "correct": "A",
+      "explanation": "AllDRouters."
+    },
+    {
+      "question": "Jakie są domyślne timery Hello/Dead OSPF na Ethernecie?",
+      "options": {
+        "A": "30 s / 120 s",
+        "B": "1 s / 3 s",
+        "C": "5 s / 15 s",
+        "D": "10 s / 40 s"
+      },
+      "correct": "D",
+      "explanation": "Muszą się zgadzać."
+    },
+    {
+      "question": "Jaki pakiet OSPF służy do wykrywania sąsiadów?",
+      "options": {
+        "A": "DBD",
+        "B": "Hello",
+        "C": "LSR",
+        "D": "LSU"
+      },
+      "correct": "B",
+      "explanation": "Typ 1."
+    },
+    {
+      "question": "Jaki pakiet zawiera spis (nagłówki) LSA w bazie?",
+      "options": {
+        "A": "LSU",
+        "B": "DBD",
+        "C": "LSAck",
+        "D": "Hello"
+      },
+      "correct": "B",
+      "explanation": "Database Description."
+    },
+    {
+      "question": "Jaki pakiet przenosi pełne LSA?",
+      "options": {
+        "A": "LSR",
+        "B": "DBD",
+        "C": "Hello",
+        "D": "LSU"
+      },
+      "correct": "D",
+      "explanation": "Link-State Update."
+    },
+    {
+      "question": "Jaki pakiet służy do żądania konkretnych LSA?",
+      "options": {
+        "A": "LSU",
+        "B": "LSAck",
+        "C": "LSR",
+        "D": "DBD"
+      },
+      "correct": "C",
+      "explanation": "Link-State Request."
+    },
+    {
+      "question": "W jakim stanie sąsiedztwo utknie przy niezgodnym MTU?",
+      "options": {
+        "A": "ExStart/Exchange",
+        "B": "Init",
+        "C": "2-Way",
+        "D": "Loading"
+      },
+      "correct": "A",
+      "explanation": "MTU w DBD."
+    },
+    {
+      "question": "Jaki stan oznacza pełną synchronizację LSDB?",
+      "options": {
+        "A": "2-Way",
+        "B": "Exchange",
+        "C": "Full",
+        "D": "Loading"
+      },
+      "correct": "C",
+      "explanation": "Koniec procesu."
+    },
+    {
+      "question": "Co oznacza stan Init?",
+      "options": {
+        "A": "Otrzymałem Hello sąsiada, ale nie ma w nim mojego Router ID",
+        "B": "Pełne sąsiedztwo",
+        "C": "Wymiana DBD",
+        "D": "Wybór DR"
+      },
+      "correct": "A",
+      "explanation": "Komunikacja jednokierunkowa."
+    },
+    {
+      "question": "Co oznacza stan 2-Way między dwoma DROTHER?",
+      "options": {
+        "A": "Brak uwierzytelniania",
+        "B": "Błąd MTU",
+        "C": "Awarię łącza",
+        "D": "Normalny stan — pełne sąsiedztwo mają tylko z DR i BDR"
+      },
+      "correct": "D",
+      "explanation": "Zamierzone."
+    },
+    {
+      "question": "W którym stanie odbywa się wybór DR/BDR?",
+      "options": {
+        "A": "Loading",
+        "B": "2-Way",
+        "C": "Full",
+        "D": "Init"
+      },
+      "correct": "B",
+      "explanation": "Po dwukierunkowym Hello."
+    },
+    {
+      "question": "Które parametry muszą się zgadzać w Hello?",
+      "options": {
+        "A": "Priorytet i koszt",
+        "B": "MTU i koszt",
+        "C": "Obszar, timery Hello/Dead, uwierzytelnianie, maska (broadcast)",
+        "D": "Tylko Router ID"
+      },
+      "correct": "C",
+      "explanation": "Plus typ obszaru."
+    },
+    {
+      "question": "Czy koszt musi być taki sam po obu stronach łącza do sąsiedztwa?",
+      "options": {
+        "A": "Nie — koszt nie wpływa na sąsiedztwo",
+        "B": "Tylko w obszarze 0",
+        "C": "Tylko na P2P",
+        "D": "Tak, zawsze"
+      },
+      "correct": "A",
+      "explanation": "Wpływa na trasy."
+    },
+    {
+      "question": "Jak wybierany jest Router ID, gdy nie ustawiono go ręcznie?",
+      "options": {
+        "A": "Najniższy adres interfejsu",
+        "B": "Adres MAC",
+        "C": "Losowo",
+        "D": "Najwyższy adres loopback, potem najwyższy adres aktywnego interfejsu"
+      },
+      "correct": "D",
+      "explanation": "Najlepiej ręcznie."
+    },
+    {
+      "question": "Kiedy zmiana router-id zaczyna obowiązywać?",
+      "options": {
+        "A": "Natychmiast",
+        "B": "Po restarcie procesu OSPF",
+        "C": "Po zapisaniu konfiguracji",
+        "D": "Po 40 s"
+      },
+      "correct": "B",
+      "explanation": "clear ip ospf process."
+    },
+    {
+      "question": "Co się stanie przy duplikacie Router ID w obszarze?",
+      "options": {
+        "A": "Szybsza zbieżność",
+        "B": "Niestabilność LSDB i problemy z trasami",
+        "C": "Nic",
+        "D": "Automatyczna zmiana RID"
+      },
+      "correct": "B",
+      "explanation": "Unikaj klonowania konfiguracji."
+    },
+    {
+      "question": "Jak wybierany jest DR?",
+      "options": {
+        "A": "Najniższy Router ID",
+        "B": "Najszybsze łącze",
+        "C": "Najwyższy priorytet interfejsu, przy remisie najwyższy Router ID",
+        "D": "Pierwszy uruchomiony zawsze"
+      },
+      "correct": "C",
+      "explanation": "Priorytet 0 = nigdy."
+    },
+    {
+      "question": "Czy OSPF wywłaszcza DR, gdy pojawi się router z wyższym priorytetem?",
+      "options": {
+        "A": "Tak, po 40 s",
+        "B": "Tylko w IPv6",
+        "C": "Tak, natychmiast",
+        "D": "Nie"
+      },
+      "correct": "D",
+      "explanation": "Brak preempt."
+    },
+    {
+      "question": "Co oznacza priorytet OSPF 0 na interfejsie?",
+      "options": {
+        "A": "Router nigdy nie zostanie DR ani BDR",
+        "B": "Brak Hello",
+        "C": "Wyłączenie OSPF",
+        "D": "Najwyższy priorytet"
+      },
+      "correct": "A",
+      "explanation": "Na tym segmencie."
+    },
+    {
+      "question": "Po co istnieje DR na segmencie broadcast?",
+      "options": {
+        "A": "Aby zmniejszyć liczbę sąsiedztw i LSA w segmencie",
+        "B": "Aby nadawać adresy IP",
+        "C": "Aby szyfrować ruch",
+        "D": "Aby wybierać trasę domyślną"
+      },
+      "correct": "A",
+      "explanation": "n(n−1)/2 → mniej."
+    },
+    {
+      "question": "Jaki typ LSA generuje DR?",
+      "options": {
+        "A": "Typ 1",
+        "B": "Typ 5",
+        "C": "Typ 2 (Network LSA)",
+        "D": "Typ 3"
+      },
+      "correct": "C",
+      "explanation": "Opis segmentu."
+    },
+    {
+      "question": "Jaki typ LSA generuje każdy router w obszarze?",
+      "options": {
+        "A": "Typ 2",
+        "B": "Typ 1 (Router LSA)",
+        "C": "Typ 7",
+        "D": "Typ 5"
+      },
+      "correct": "B",
+      "explanation": "Łącza i koszty."
+    },
+    {
+      "question": "Jaki typ LSA opisuje trasy zewnętrzne (redystrybucja)?",
+      "options": {
+        "A": "Typ 3",
+        "B": "Typ 1",
+        "C": "Typ 2",
+        "D": "Typ 5"
+      },
+      "correct": "D",
+      "explanation": "ASBR."
+    },
+    {
+      "question": "Jak liczony jest domyślny koszt interfejsu OSPF?",
+      "options": {
+        "A": "Referencyjna przepustowość / przepustowość interfejsu",
+        "B": "Liczba skoków",
+        "C": "Opóźnienie",
+        "D": "Obciążenie"
+      },
+      "correct": "A",
+      "explanation": "Min. 1."
+    },
+    {
+      "question": "Jaka jest domyślna referencyjna przepustowość OSPF?",
+      "options": {
+        "A": "1 Gb/s",
+        "B": "10 Mb/s",
+        "C": "10 Gb/s",
+        "D": "100 Mb/s"
+      },
+      "correct": "D",
+      "explanation": "Dziś za mała."
+    },
+    {
+      "question": "Jaki problem powoduje domyślna referencja 100 Mb/s?",
+      "options": {
+        "A": "OSPF nie startuje",
+        "B": "Łącza 100M, 1G i 10G mają ten sam koszt 1",
+        "C": "Koszty ujemne",
+        "D": "Brak sąsiedztw"
+      },
+      "correct": "B",
+      "explanation": "ECMP przez wolne łącza."
+    },
+    {
+      "question": "Jakim poleceniem zmienia się referencyjną przepustowość?",
+      "options": {
+        "A": "bandwidth reference",
+        "B": "ip ospf bandwidth",
+        "C": "auto-cost reference-bandwidth",
+        "D": "ospf ref-bw"
+      },
+      "correct": "C",
+      "explanation": "Na wszystkich routerach."
+    },
+    {
+      "question": "Jak ręcznie ustawić koszt interfejsu?",
+      "options": {
+        "A": "ospf metric",
+        "B": "ip ospf cost <wartość>",
+        "C": "bandwidth cost",
+        "D": "ip route cost"
+      },
+      "correct": "B",
+      "explanation": "Nadpisuje auto-cost."
+    },
+    {
+      "question": "Co zawiera trasa „O … [110/20]”?",
+      "options": {
+        "A": "AD 110 i koszt OSPF 20",
+        "B": "20 skoków",
+        "C": "AD 20",
+        "D": "Priorytet 110"
+      },
+      "correct": "A",
+      "explanation": "Kod O = intra-area."
+    },
+    {
+      "question": "Dlaczego na łączu dwóch routerów stosuje się typ point-to-point?",
+      "options": {
+        "A": "Bo broadcast nie działa na Ethernecie",
+        "B": "Bo zwiększa koszt",
+        "C": "Brak wyboru DR/BDR, szybsze sąsiedztwo, prostsza LSDB",
+        "D": "Bo wymaga go uwierzytelnianie"
+      },
+      "correct": "C",
+      "explanation": "Po obu stronach."
+    },
+    {
+      "question": "Co robi passive-interface w OSPF?",
+      "options": {
+        "A": "Blokuje cały ruch",
+        "B": "Wyłącza interfejs",
+        "C": "Zmienia koszt na 0",
+        "D": "Ogłasza sieć interfejsu, ale nie wysyła na nim Hello"
+      },
+      "correct": "D",
+      "explanation": "Ochrona przed obcymi sąsiadami."
+    },
+    {
+      "question": "Dlaczego sieci użytkowników powinny być pasywne w OSPF?",
+      "options": {
+        "A": "Aby przyspieszyć Wi-Fi",
+        "B": "Aby zmniejszyć MTU",
+        "C": "Aby nikt w tej sieci nie mógł nawiązać sąsiedztwa i wstrzyknąć tras",
+        "D": "Aby włączyć DHCP"
+      },
+      "correct": "C",
+      "explanation": "Hardening."
+    },
+    {
+      "question": "Jaki rodzaj uwierzytelniania OSPF jest zalecany?",
+      "options": {
+        "A": "HMAC-SHA (np. przez key chain)",
+        "B": "Brak uwierzytelniania",
+        "C": "MD5 bez kluczy",
+        "D": "Hasło w postaci jawnej"
+      },
+      "correct": "A",
+      "explanation": "RFC 5709."
+    },
+    {
+      "question": "Jak skrócić czas wykrycia awarii sąsiada OSPF poniżej Dead interval?",
+      "options": {
+        "A": "Wyższy priorytet",
+        "B": "Większy koszt",
+        "C": "Mniejsze MTU",
+        "D": "BFD"
+      },
+      "correct": "D",
+      "explanation": "Setki milisekund."
+    },
+    {
+      "question": "Jaki obszar jest backbone w OSPF?",
+      "options": {
+        "A": "Obszar 255",
+        "B": "Obszar 0",
+        "C": "Obszar 100",
+        "D": "Obszar 1"
+      },
+      "correct": "B",
+      "explanation": "Wszystkie inne łączą się z 0."
+    },
+    {
+      "question": "Czym różni się OSPFv3 od OSPFv2?",
+      "options": {
+        "A": "Działa dla IPv6 na adresach link-local, prefiksy w osobnych LSA",
+        "B": "Nie ma DR",
+        "C": "Działa po TCP",
+        "D": "Nie używa SPF"
+      },
+      "correct": "A",
+      "explanation": "ff02::5/6."
+    },
+    {
+      "question": "Na jaki adres multicast wysyła Hello OSPFv3?",
+      "options": {
+        "A": "ff02::2",
+        "B": "ff02::5",
+        "C": "ff02::fb",
+        "D": "ff02::1"
+      },
+      "correct": "B",
+      "explanation": "AllSPFRouters IPv6."
+    },
+    {
+      "question": "Które polecenie pokazuje sąsiadów OSPF?",
+      "options": {
+        "A": "show ip route",
+        "B": "show arp",
+        "C": "show ip ospf neighbor",
+        "D": "show interfaces trunk"
+      },
+      "correct": "C",
+      "explanation": "Stan, priorytet, Dead time."
+    },
+    {
+      "question": "Które polecenie pokazuje LSDB?",
+      "options": {
+        "A": "show ip ospf neighbor",
+        "B": "show running-config",
+        "C": "show ip bgp",
+        "D": "show ip ospf database"
+      },
+      "correct": "D",
+      "explanation": "LSA wg typów."
+    },
+    {
+      "question": "Co pokazuje show ip ospf interface?",
+      "options": {
+        "A": "Tablicę MAC",
+        "B": "Koszt, typ sieci, rolę DR/BDR, timery i sąsiadów interfejsu",
+        "C": "Tylko adres IP",
+        "D": "Logi"
+      },
+      "correct": "B",
+      "explanation": "Diagnoza interfejsu."
+    },
+    {
+      "question": "Co ogłasza polecenie network 10.0.12.0 0.0.0.3 area 0?",
+      "options": {
+        "A": "Tworzy trasę statyczną",
+        "B": "Ogłasza trasę domyślną",
+        "C": "Wyłącza OSPF",
+        "D": "Włącza OSPF na interfejsach o adresach w 10.0.12.0–10.0.12.3"
+      },
+      "correct": "D",
+      "explanation": "Wildcard."
+    },
+    {
+      "question": "Czym różni się distance-vector od link-state?",
+      "options": {
+        "A": "LS nie używa metryk",
+        "B": "Nie różnią się",
+        "C": "DV zna tylko odległości od sąsiadów, LS ma pełną mapę obszaru",
+        "D": "DV jest szybszy"
+      },
+      "correct": "C",
+      "explanation": "RIP vs OSPF."
+    },
+    {
+      "question": "Jaki jest maksymalny dystans w RIP?",
+      "options": {
+        "A": "15 skoków",
+        "B": "Bez limitu",
+        "C": "100 skoków",
+        "D": "255 skoków"
+      },
+      "correct": "A",
+      "explanation": "16 = nieosiągalny."
+    },
+    {
+      "question": "Jak zachowa się OSPF, gdy dwie ścieżki mają ten sam koszt?",
+      "options": {
+        "A": "Wybierze krótszą w skokach",
+        "B": "Wybierze losowo jedną",
+        "C": "Odrzuci obie",
+        "D": "Zainstaluje obie (ECMP)"
+      },
+      "correct": "D",
+      "explanation": "Load sharing."
+    },
+    {
+      "question": "Dlaczego różne referencje na routerach to problem?",
+      "options": {
+        "A": "Nie jest problemem",
+        "B": "Bo OSPF się nie uruchomi",
+        "C": "Koszty są niespójne, ścieżki nieoptymalne i asymetryczne",
+        "D": "Bo DR nie zostanie wybrany"
+      },
+      "correct": "C",
+      "explanation": "Ta sama wartość wszędzie."
+    },
+    {
+      "question": "Co powoduje ip ospf mtu-ignore?",
+      "options": {
+        "A": "Wyłącza fragmentację",
+        "B": "Pomija sprawdzanie MTU w DBD",
+        "C": "Zwiększa koszt",
+        "D": "Zmienia MTU interfejsu"
+      },
+      "correct": "B",
+      "explanation": "Obejście z ryzykiem."
+    },
+    {
+      "question": "Jak zablokować OSPF z sieci użytkowników na poziomie ACL?",
+      "options": {
+        "A": "Odrzucać protokół IP 89 z tych sieci",
+        "B": "Blokować TCP 89",
+        "C": "Blokować ICMP",
+        "D": "Blokować UDP 520"
+      },
+      "correct": "A",
+      "explanation": "Plus pasywne interfejsy."
+    },
+    {
+      "question": "Jaki komunikat syslog Cisco informuje o zmianie sąsiedztwa OSPF?",
+      "options": {
+        "A": "%OSPF-5-ADJCHG",
+        "B": "%LINK-3-UPDOWN",
+        "C": "%SYS-5-CONFIG_I",
+        "D": "%BGP-5-ADJCHANGE"
+      },
+      "correct": "A",
+      "explanation": "Do SIEM."
+    },
+    {
+      "question": "Jakie oprogramowanie routingu na Linuksie obsługuje OSPF?",
+      "options": {
+        "A": "nginx",
+        "B": "FRR (ospfd)",
+        "C": "keepalived",
+        "D": "dnsmasq"
+      },
+      "correct": "B",
+      "explanation": "Także BIRD."
+    },
+    {
+      "question": "Którą trasę wybierze router: statyczną 10.9.0.0/16 (AD 1) czy OSPF 10.9.0.0/16 (AD 110)?",
+      "options": {
+        "A": "Żadną",
+        "B": "Obie",
+        "C": "Statyczną",
+        "D": "OSPF"
+      },
+      "correct": "C",
+      "explanation": "Niższy AD."
+    },
+    {
+      "question": "Co oznacza „Dead time” w show ip ospf neighbor?",
+      "options": {
+        "A": "Czas od restartu",
+        "B": "Czas życia LSA",
+        "C": "Czas od awarii",
+        "D": "Czas, po którym sąsiad zostanie uznany za martwy bez kolejnego Hello"
+      },
+      "correct": "D",
+      "explanation": "Odliczanie od 40 s."
+    },
+    {
+      "question": "Co to jest flooding w OSPF?",
+      "options": {
+        "A": "Przepełnienie tablicy",
+        "B": "Rozsyłanie LSA do wszystkich routerów obszaru",
+        "C": "Broadcast ARP",
+        "D": "Atak DDoS"
+      },
+      "correct": "B",
+      "explanation": "Synchronizacja LSDB."
+    },
+    {
+      "question": "Jak często OSPF odświeża własne LSA, nawet bez zmian?",
+      "options": {
+        "A": "Nigdy",
+        "B": "Co 24 h",
+        "C": "Co 10 s",
+        "D": "Co 30 minut (LSRefreshTime)"
+      },
+      "correct": "D",
+      "explanation": "MaxAge 60 min."
+    },
+    {
+      "question": "Jaki wpływ ma czas zbieżności OSPF na aplikacje?",
+      "options": {
+        "A": "Przez ten czas ruch może ginąć — aplikacje widzą timeouty",
+        "B": "Aplikacje działają szybciej",
+        "C": "Zmienia się DNS",
+        "D": "Żaden"
+      },
+      "correct": "A",
+      "explanation": "Timeouty i retry w kodzie."
+    },
+    {
+      "question": "Gdzie OSPF zwykle NIE jest dostępny do konfiguracji?",
+      "options": {
+        "A": "W sieci kampusowej",
+        "B": "Na routerach Cisco",
+        "C": "Wewnątrz VPC w chmurze publicznej",
+        "D": "Na Linuksie z FRR"
+      },
+      "correct": "C",
+      "explanation": "Tam trasy statyczne i BGP."
+    }
+  ]
 }
