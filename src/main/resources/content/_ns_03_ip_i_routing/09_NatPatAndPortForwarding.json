@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "NAT: dlaczego serwer nie widzi adresu Twojego laptopa",
+      "image": "netsec/ns03-09-snat-dnat.svg",
+      "imageAlt": "SNAT: pakiet 192.168.1.20:51000 do 93.184.216.34:443 po przejściu przez router ma źródło 203.0.113.5:51000, a odpowiedź jest tłumaczona z powrotem dzięki conntrack. DNAT: pakiet z 198.51.100.9 do 203.0.113.5:8443 jest przekierowany na 192.168.1.30:443. Masquerade to SNAT na adres interfejsu.",
+      "body": "Adresy prywatne (lekcja 06) nie są routowane w Internecie, a publicznych adresów IPv4 od dawna brakuje. Rozwiązaniem, które „uratowało” IPv4, jest **NAT (Network Address Translation)**: router podmienia adresy (i porty) w nagłówkach pakietów, zapamiętując każdą translację, żeby odpowiedzi trafiły z powrotem do właściwego hosta.\n\nNAT jest wszędzie, gdzie pracuje Java developer:\n- **router domowy i firmowy** — setki urządzeń wychodzi do Internetu z jednego adresu (PAT),\n- **Docker** — kontenery wychodzą przez MASQUERADE hosta, a `-p 8080:8080` to **DNAT** (port forwarding),\n- **Kubernetes** — Service (ClusterIP/NodePort) to DNAT robiony przez kube-proxy (iptables/IPVS) lub eBPF,\n- **chmura** — NAT Gateway dla podsieci prywatnych, a „Elastic IP” to statyczny NAT 1:1,\n- **operator** — CGNAT (lekcja 06), czyli NAT za NAT-em.\n\nSkutki uboczne, które warto rozumieć: aplikacja widzi **adres NAT/proxy zamiast klienta**, liczba jednoczesnych połączeń do jednego celu jest **ograniczona liczbą portów** (wyczerpanie portów SNAT to klasyczna przyczyna sporadycznych timeoutów mikroserwisów w chmurze), połączenia przychodzące wymagają **port forwardingu**, a ruch „do własnego publicznego adresu z wnętrza” wymaga **hairpin NAT**.\n\nW tej lekcji: SNAT, DNAT, masquerade, PAT, tablica **conntrack**, wyczerpanie portów i jak mu zapobiegać w kodzie, hairpin NAT, CGNAT, port forwarding w routerze, Dockerze i `kubectl`, oraz **Packet Lab z planu**: przechwyć ten sam przepływ przed i za NAT i odczytaj wpis `conntrack -L`. Cele: Network+ N10-009 (NAT/PAT, port forwarding), CCNA v2 (konfiguracja i weryfikacja inside source NAT: statyczny, pula, PAT), Security+ (NAT to nie firewall).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik NAT",
+      "body": "- **SNAT (source NAT)** — zmiana adresu (i ewentualnie portu) **źródłowego**; ruch wychodzący z sieci prywatnej.\n- **Masquerade** — SNAT na bieżący adres interfejsu wyjściowego (dla dynamicznych adresów, np. z DHCP operatora).\n- **DNAT (destination NAT)** — zmiana adresu/portu **docelowego**; ruch przychodzący do usługi wewnątrz (**port forwarding**, Docker `-p`, Kubernetes Service).\n- **NAT statyczny (1:1)** — jeden adres prywatny ↔ jeden publiczny (np. Elastic IP); działa w obie strony.\n- **NAT dynamiczny (pula)** — adresy prywatne dostają adresy z puli publicznych na czas sesji.\n- **PAT / NAPT / NAT overload** — wiele adresów prywatnych → jeden (lub kilka) publiczny, rozróżnianych **numerami portów**.\n- **Terminologia Cisco**: *inside local* (prywatny adres hosta), *inside global* (adres hosta widziany z zewnątrz), *outside global* (adres serwera w Internecie), *outside local* (adres serwera widziany od środka — zwykle ten sam).\n- **conntrack (connection tracking)** — tablica jądra Linuksa z każdym śledzonym przepływem (5-tuple przed i po NAT, stan: NEW/ESTABLISHED, TCP: SYN_SENT/ESTABLISHED/TIME_WAIT, licznik czasu). Bez niej odpowiedzi nie dałoby się „odwrócić”.\n- **Krotka (5-tuple)** — protokół, adres i port źródłowy, adres i port docelowy; identyfikuje przepływ.\n- **Wyczerpanie portów SNAT** — brak wolnego portu zewnętrznego dla nowego przepływu do **tego samego celu** (adres:port); w AWS NAT Gateway limit to 55 000 jednoczesnych połączeń do jednego celu na adres IP.\n- **Hairpin NAT (NAT loopback, NAT reflection)** — obsługa ruchu z LAN do publicznego adresu własnej usługi w tym samym LAN.\n- **CGNAT** — NAT operatora (100.64.0.0/10), klienci za podwójnym NAT-em.\n- **Port forwarding** — reguła DNAT „publiczny port X → host:port wewnątrz”; w `kubectl port-forward` to coś innego: tunel przez API Kubernetesa, nie NAT.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Recepcja hotelu i numery pokoi",
+      "body": "Hotel ma **jeden numer telefonu** (publiczny adres), a w środku setki pokoi (adresy prywatne).\n- **SNAT/PAT**: gość z pokoju 214 dzwoni na zewnątrz. Recepcja łączy rozmowę ze swojej linii zewnętrznej numer 7 i zapisuje w zeszycie: „linia 7 = pokój 214, rozmowa z numerem X”. Gdy X oddzwania na linię 7, recepcja wie, do którego pokoju przełączyć. Zeszyt to **conntrack**, numer linii to **port** zewnętrzny.\n- **Wyczerpanie portów**: recepcja ma 64 tysiące linii, ale jeśli wszyscy goście dzwonią **do tej samej pizzerii**, każda rozmowa musi iść inną linią — gdy linie się skończą, kolejny gość usłyszy sygnał zajętości. Rozmowy do różnych pizzerii mogą używać tych samych linii.\n- **DNAT / port forwarding**: kurier dzwoni na numer hotelu z „wewnętrznym 8443” — recepcja wie, że to oznacza pokój 30, i przełącza.\n- **Hairpin**: gość z pokoju 20 dzwoni na **publiczny** numer hotelu, prosząc o pokój 30. Recepcja przełącza — ale jeśli pokój 30 oddzwoni do pokoju 20 **bezpośrednio przez ścianę**, gość 20 nie rozpozna rozmówcy (czekał na telefon z recepcji). Trzeba, by odpowiedź też szła przez recepcję.\n- **NAT to nie ochrona**: recepcja nie przełącza nieznanych telefonów do pokoi (efekt uboczny), ale nie sprawdza, co mówią goście, którzy sami zadzwonili na zewnątrz — od tego jest firewall.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Tablica translacji PAT i liczenie limitów",
+      "image": "netsec/ns03-09-pat.svg",
+      "imageAlt": "Tablica translacji PAT dla adresu 203.0.113.5: trzy hosty łączą się z 93.184.216.34:443; host .20 zachowuje port 51000, host .21 z tym samym portem dostaje inny port zewnętrzny, host .22 zachowuje 40000; zapytanie UDP do 1.1.1.1:53 i połączenie do innego celu mogą ponownie użyć portu 51000.",
+      "body": "Translacje policzone modelem lekcji (router stara się zachować port źródłowy; przy kolizji wybiera inny — Linux zwykle losowy z dozwolonego zakresu). Pod spodem — rachunek, który warto umieć zrobić przy projektowaniu ruchu wychodzącego z chmury.",
+      "code": "TCP 192.168.1.20:51000 → 93.184.216.34:443  ⇒  203.0.113.5:51000 → 93.184.216.34:443\nTCP 192.168.1.21:51000 → 93.184.216.34:443  ⇒  203.0.113.5:1024 → 93.184.216.34:443\nTCP 192.168.1.22:40000 → 93.184.216.34:443  ⇒  203.0.113.5:40000 → 93.184.216.34:443\nUDP 192.168.1.20:53000 → 1.1.1.1:53  ⇒  203.0.113.5:53000 → 1.1.1.1:53\nTCP 192.168.1.20:51000 → 140.82.121.4:443  ⇒  203.0.113.5:51000 → 140.82.121.4:443\n\nLimit: unikalna musi być krotka (proto, adres:port po NAT, cel:port) → do JEDNEGO celu\n  1 adres × ~64 512 portów (1024–65535)         = 64 512 jednoczesnych przepływów\n  AWS NAT Gateway: 55 000 połączeń / cel / adres IP (do 8 adresów → 440 000)\nZajętość = tempo nowych połączeń × czas trzymania wpisu (TIME_WAIT / timeout conntrack):\n  500/s × 60 s   = 30 000 portów     → 1 adres wystarczy\n  2000/s × 60 s  = 120 000 portów    → potrzeba 3 adresów NAT GW\n  2000/s z pulą połączeń (np. 50 stałych połączeń keep-alive) → 50 portów"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "NAT w Linuksie (iptables/nftables) i na Cisco",
+      "body": "Ten sam NAT w trzech składniach. W Linuksie NAT robi Netfilter: SNAT/MASQUERADE w łańcuchu **POSTROUTING** (po decyzji o trasie), DNAT w **PREROUTING** (przed decyzją o trasie). Wszystko opiera się na conntrack — reguła NAT dotyczy tylko **pierwszego** pakietu przepływu, kolejne są tłumaczone automatycznie.",
+      "code": "# Linux — router z wan0 (Internet) i lan0 (192.168.1.0/24)\nsysctl -w net.ipv4.ip_forward=1\niptables -t nat -A POSTROUTING -s 192.168.1.0/24 -o wan0 -j MASQUERADE           # PAT na adres wan0\niptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o wan0 -j SNAT --to-source 203.0.113.5-203.0.113.6   # pula\niptables -t nat -A PREROUTING -i wan0 -p tcp --dport 8443 -j DNAT --to-destination 192.168.1.30:443 # port forward\niptables -A FORWARD -i wan0 -o lan0 -p tcp -d 192.168.1.30 --dport 443 -m conntrack --ctstate NEW -j ACCEPT\niptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT          # odpowiedzi\niptables -t nat -L -n -v                                                          # reguły i liczniki\n\n# nftables (nowocześnie)\ntable ip nat {\n  chain prerouting  { type nat hook prerouting priority dstnat; iifname \"wan0\" tcp dport 8443 dnat to 192.168.1.30:443 }\n  chain postrouting { type nat hook postrouting priority srcnat; oifname \"wan0\" ip saddr 192.168.1.0/24 masquerade }\n}\n\n! Cisco IOS — PAT (overload) i statyczny port forwarding\ninterface Gi0/0\n ip nat outside\ninterface Gi0/1\n ip nat inside\naccess-list 1 permit 192.168.1.0 0.0.0.255\nip nat inside source list 1 interface Gi0/0 overload\nip nat inside source static tcp 192.168.1.30 443 interface Gi0/0 8443\nshow ip nat translations ; show ip nat statistics ; clear ip nat translation *"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Packet Lab z planu: ten sam przepływ przed i za NAT + conntrack",
+      "body": "Lab na trzech network namespace’ach (jak w lekcji 02/13): **inside** (192.168.1.20), **router** (lan 192.168.1.1, wan 203.0.113.5) i **outside** (serwer 203.0.113.10). Wymaga roota, `iproute2`, `iptables`, `conntrack` (pakiet conntrack), `tcpdump`, `python3`.\n1. **Budowa**: `ip netns add inside; ip netns add router; ip netns add outside`; pary veth: `ip link add i0 netns inside type veth peer name lan0 netns router` i `ip link add wan0 netns router type veth peer name o0 netns outside`; adresy: inside `192.168.1.20/24` na i0 + `ip route add default via 192.168.1.1`; router `192.168.1.1/24` na lan0 i `203.0.113.5/24` na wan0; outside `203.0.113.10/24` na o0 (**bez** trasy do 192.168.1.0/24 — jak prawdziwy Internet). Podnieś interfejsy (`ip -n … link set … up`, także `lo`).\n2. **Bez NAT**: `ip netns exec router sysctl -w net.ipv4.ip_forward=1`; serwer: `ip netns exec outside python3 -m http.server 80 &`; klient: `ip netns exec inside curl -m 3 http://203.0.113.10/` → **timeout**. W `tcpdump -ni o0` (outside) widać SYN od 192.168.1.20, ale odpowiedź nie ma trasy powrotnej.\n3. **Włącz NAT**: `ip netns exec router iptables -t nat -A POSTROUTING -o wan0 -j MASQUERADE`. `curl` działa.\n4. **Dwa capture’y jednocześnie**: `ip netns exec router tcpdump -ni lan0 -w lan.pcap tcp port 80` i `… -ni wan0 -w wan.pcap tcp port 80`, potem `curl` raz. W Wiresharku: po stronie LAN `192.168.1.20:<port> → 203.0.113.10:80`, po stronie WAN `203.0.113.5:<port> → 203.0.113.10:80`. Porównaj: adres źródłowy zmieniony, port zwykle zachowany, **suma kontrolna IP i TCP inna** (przeliczona), TTL mniejszy o 1, numery sekwencyjne bez zmian.\n5. **conntrack**: w trakcie (np. `curl --limit-rate 1k` dużego pliku lub zaraz po) — `ip netns exec router conntrack -L -p tcp`:\n   `tcp 6 118 TIME_WAIT src=192.168.1.20 dst=203.0.113.10 sport=45678 dport=80 src=203.0.113.10 dst=203.0.113.5 sport=80 dport=45678 [ASSURED]` — pierwsza krotka to **kierunek oryginalny**, druga — **oczekiwana odpowiedź** (po translacji). Liczba 118 to sekundy do wygaśnięcia.\n6. **Port forwarding**: `ip netns exec inside python3 -m http.server 8080 &` i na routerze `iptables -t nat -A PREROUTING -i wan0 -p tcp --dport 8443 -j DNAT --to-destination 192.168.1.20:8080`; z outside `curl http://203.0.113.5:8443/` działa; `conntrack -L` pokazuje translację docelową.\n7. **Sprzątanie**: `ip netns del inside router outside` (kolejno). **Notatka**: tabela „pole nagłówka — przed NAT — za NAT” dla jednego pakietu SYN.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Wyczerpanie portów SNAT: przyczyna i lekarstwo po stronie aplikacji",
+      "image": "netsec/ns03-09-exhaustion.svg",
+      "imageAlt": "Wykres zajętych portów SNAT w funkcji tempa nowych połączeń do jednego celu przy czasie trzymania 60 s: limit 55 000 połączeń na adres AWS NAT Gateway osiągany przy około 917 połączeniach na sekundę, dwa adresy dają 110 000. Rozwiązanie: pule połączeń i keep-alive.",
+      "body": "Każde **nowe** połączenie TCP do tego samego celu zajmuje osobny port zewnętrzny na NAT — i trzyma go jeszcze długo po zamknięciu (TIME_WAIT po stronie inicjatora, timeout wpisu conntrack / NAT GW: w AWS 350 s bezczynności). Mikroserwis, który dla każdego żądania otwiera nowe połączenie do zewnętrznego API lub bazy (np. `new HttpClient` przy każdym wywołaniu, brak puli JDBC, `Connection: close`), przy kilkuset żądaniach na sekundę **wyczerpie porty** — objaw: sporadyczne timeouty połączeń wychodzących, w AWS metryka `ErrorPortAllocation` NAT Gateway, w Azure „SNAT port exhaustion” (Load Balancer outbound), w Linuksie `nf_conntrack: table full, dropping packet` w dmesg.\n\nLekarstwo (od najważniejszego):\n1. **Pule połączeń i keep-alive** — jeden `HttpClient` (lub `RestClient`/`WebClient`) na aplikację, pula JDBC (HikariCP), HTTP/2 (wiele żądań w jednym połączeniu). 2000 żądań/s może iść przez kilkadziesiąt stałych połączeń.\n2. **Prywatne endpointy** zamiast NAT (VPC endpoints do S3/DynamoDB/ECR, Private Link) — ruch w ogóle nie przechodzi przez NAT.\n3. **Więcej adresów NAT** (AWS NAT GW do 8 adresów, Azure NAT Gateway do 16 adresów/prefiksów) lub kilka bramek per strefa.\n4. **Rozpraszanie celów** — limit dotyczy jednego celu ip:port; DNS z wieloma adresami pomaga.\n5. Na własnych routerach Linux: większy `nf_conntrack_max`, krótsze timeouty dla UDP i TIME_WAIT (ostrożnie), szerszy zakres portów.\n\n**NAT to nie firewall.** Brak przychodzących połączeń do hostów za PAT to efekt uboczny braku wpisu w tablicy translacji, a nie polityka bezpieczeństwa: port forwarding, UPnP, IPv6 (bez NAT), hairpin i połączenia inicjowane od środka (malware C2) całkowicie go omijają. Politykę zapewnia stanowy firewall (reguły FORWARD/INPUT, security groups).",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Java: jedna pula połączeń zamiast wyczerpania portów, i prawdziwy adres klienta",
+      "body": "Dwa problemy NAT, które rozwiązuje się w kodzie aplikacji: (1) nie otwieraj nowego połączenia na każde żądanie — reużywaj klienta HTTP i puli JDBC; (2) za NAT/proxy adres z gniazda to adres pośrednika — prawdziwy adres klienta czytaj z nagłówków **tylko od zaufanych proxy**.",
+      "code": "// ŹLE: nowy klient (i nowe połączenia TCP → nowe porty SNAT) przy każdym wywołaniu\nString callBad(String url) throws Exception {\n    HttpClient c = HttpClient.newHttpClient();                 // brak współdzielenia puli\n    return c.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofString()).body();\n}\n\n// DOBRZE: jeden klient na aplikację — połączenia keep-alive i HTTP/2 są reużywane\nstatic final HttpClient HTTP = HttpClient.newBuilder()\n        .version(HttpClient.Version.HTTP_2)\n        .connectTimeout(Duration.ofSeconds(3))\n        .build();\nString call(String url) throws Exception {\n    return HTTP.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(5)).build(),\n                     HttpResponse.BodyHandlers.ofString()).body();\n}\n// Spring: jeden bean RestClient/WebClient; JDBC: HikariCP (maximumPoolSize dopasowany do bazy), nie DriverManager.getConnection()\n// Właściwości JDK: -Djdk.httpclient.keepalive.timeout=60 (czas trzymania bezczynnych połączeń)\n\n// Prawdziwy adres klienta za NAT/proxy (Spring Boot)\n// application.properties:  server.forward-headers-strategy=native   (Tomcat RemoteIpValve, zaufane proxy: server.tomcat.remoteip.internal-proxies)\n@GetMapping(\"/whoami\")\nString whoami(HttpServletRequest req) {\n    return \"remoteAddr=\" + req.getRemoteAddr();   // po konfiguracji: adres z X-Forwarded-For od zaufanego proxy\n}\n// Za CGNAT/PAT różni klienci mają ten sam adres — loguj też port: req.getRemotePort() (port po stronie NAT)"
+    },
+    {
+      "type": "USAGE",
+      "heading": "NAT w Dockerze, Kubernetesie i chmurze; hairpin",
+      "image": "netsec/ns03-09-hairpin.svg",
+      "imageAlt": "Hairpin NAT: laptop 192.168.1.20 łączy się z publicznym adresem 203.0.113.5, router robi DNAT na serwer 192.168.1.30 w tym samym LAN, a serwer odpowiada bezpośrednio z adresu prywatnego, więc laptop odrzuca odpowiedź. Rozwiązania: dodatkowy SNAT (hairpin), split-horizon DNS, wewnętrzne endpointy w chmurze.",
+      "body": "**Docker**: ruch wychodzący kontenerów — `MASQUERADE` w łańcuchu `POSTROUTING` dla `172.17.0.0/16 ! -o docker0`; `docker run -p 8080:80` — reguła **DNAT** w łańcuchu `DOCKER` (plus docker-proxy w przestrzeni użytkownika dla ruchu z localhosta). Podejrzyj: `iptables -t nat -L DOCKER -n`. Dlatego porty Dockera omijają UFW (DNAT dzieje się przed filtrem INPUT, ruch idzie przez FORWARD) — filtruj w łańcuchu `DOCKER-USER`.\n\n**Kubernetes**: Service ClusterIP to wirtualny adres bez interfejsu — kube-proxy (iptables/IPVS) lub Cilium (eBPF) robi **DNAT** na adres jednego z podów; NodePort/LoadBalancer — DNAT z portu węzła; `externalTrafficPolicy: Cluster` dodatkowo robi SNAT (pod widzi adres węzła, nie klienta), `Local` zachowuje adres klienta. **`kubectl port-forward`** to **nie NAT**, tylko tunel strumieniowy przez API serwer (HTTP/2/WebSocket) do poda — działa bez reguł sieciowych, ale wolno i tylko dla jednego użytkownika.\n\n**Chmura**: NAT Gateway (prywatne podsieci → Internet, tylko wychodzące), Elastic IP (statyczny NAT 1:1 dla instancji), load balancery (SNAT/proxy — adres klienta w X-Forwarded-For lub Proxy Protocol v2).\n\n**Hairpin**: aplikacja w biurze/VPC woła własną domenę, która rozwiązuje się na publiczny adres — bez hairpin NAT połączenie się nie uda, a przez publiczny load balancer ruch „wychodzi i wraca” (koszty transferu, opóźnienie). Najlepiej: **split-horizon DNS** (w środku domena wskazuje adres prywatny) lub wewnętrzny load balancer/Private Link.\n\n**Blue team**: logi NAT (translacje z czasem) są potrzebne do ustalenia, który host wewnętrzny stał za adresem publicznym w incydencie — przechowuj je (syslog `ip nat log translations`, logi NAT GW/VPC Flow Logs z polami pkt-srcaddr). Port forwarding na routerach domowych/UPnP to częsty wektor wystawienia RDP, baz i paneli na Internet.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy",
+      "body": "- **Traktowanie NAT jako firewalla** — port forwarding, UPnP, IPv6 i połączenia inicjowane od środka go omijają.\n- **Nowe połączenie na każde żądanie** — wyczerpanie portów SNAT i conntrack przy ruchu do jednego celu.\n- **Zapominanie o regule FORWARD** przy DNAT — translacja jest, ale firewall odrzuca przekazany pakiet.\n- **DNAT bez trasy powrotnej przez router** — serwer wewnętrzny odpowiada inną bramą (np. przez inne łącze) → asymetria, odpowiedzi bez translacji, klient je odrzuca.\n- **Hairpin** — „z zewnątrz działa, z biura po domenie nie”.\n- **Logowanie adresu z gniazda za proxy/NAT** jako adresu klienta; albo odwrotnie — ufanie `X-Forwarded-For` od każdego (klient sfałszuje nagłówek).\n- **Protokoły z adresami w treści** (FTP aktywny, SIP, starsze VPN-y bez NAT-T) wymagają helperów ALG lub specjalnej konfiguracji (IPsec NAT-T: UDP 4500).\n- **Zbyt mała tablica conntrack** na obciążonym routerze/węźle Kubernetes (`nf_conntrack: table full`) — spadki pakietów przy dużym ruchu (w tym przy ataku SYN flood).\n- **NAT między sieciami o nakładających się zakresach bez planu** — twice NAT jest skomplikowany; lepiej uniknąć kolizji adresów (lekcja 04).",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: port forwarding „na szybko” i liczenie na NAT jako ochronę",
+      "body": "Wystawienie bazy i panelu na świat przez przekierowanie portów, bez filtrowania źródeł, z przekonaniem, że „NAT chroni resztę sieci”.",
+      "code": "# router firmy / domowy\niptables -t nat -A PREROUTING -i wan0 -p tcp --dport 5432 -j DNAT --to 192.168.1.40:5432   # PostgreSQL dla „zdalnego developera”\niptables -t nat -A PREROUTING -i wan0 -p tcp --dport 3389 -j DNAT --to 192.168.1.50:3389   # RDP\niptables -P FORWARD ACCEPT                                                               # „bo nie działało”\n# UPnP włączony — każda aplikacja w LAN może sama otworzyć port na świat\n# brak logów translacji → po incydencie nie wiadomo, który host był za adresem publicznym"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: dostęp przez VPN/ZTNA, minimalny DNAT z filtrem i logowaniem",
+      "body": "Usługi administracyjne i bazy tylko przez VPN lub bastion/ZTNA; jeśli port forwarding jest konieczny — ograniczony do konkretnych źródeł, z domyślnym DROP w FORWARD i logowaniem.",
+      "code": "iptables -P FORWARD DROP\niptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n# publiczna usługa HTTPS przez reverse proxy w DMZ\niptables -t nat -A PREROUTING -i wan0 -p tcp --dport 443 -j DNAT --to-destination 10.10.0.10:443\niptables -A FORWARD -i wan0 -o dmz0 -p tcp -d 10.10.0.10 --dport 443 -m conntrack --ctstate NEW -j ACCEPT\n# panel partnera: tylko z jego adresów, z logowaniem\niptables -A FORWARD -i wan0 -p tcp -d 10.10.0.20 --dport 8443 -s 198.51.100.0/24 -m conntrack --ctstate NEW -j LOG --log-prefix \"DNAT-partner \"\niptables -A FORWARD -i wan0 -p tcp -d 10.10.0.20 --dport 8443 -s 198.51.100.0/24 -m conntrack --ctstate NEW -j ACCEPT\n# bazy, RDP, SSH: wyłącznie przez VPN (WireGuard) lub bastion z MFA; UPnP wyłączony\n# logi translacji: conntrackd / ulogd lub syslog z routera → SIEM (czas, krotka przed i po NAT)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Który rodzaj NAT i kiedy",
+      "body": "Ściąga decyzji:",
+      "code": "SYTUACJA                                              ROZWIĄZANIE\nLAN/podsieć prywatna → Internet                         PAT/masquerade (router, NAT Gateway)\nserwer potrzebuje stałego publicznego adresu            NAT statyczny 1:1 (Elastic IP) lub publiczny adres + firewall\nusługa w LAN dostępna z Internetu                       DNAT/port forwarding przez reverse proxy w DMZ (lepiej: hosting/LB)\ndostęp administracyjny z zewnątrz                       VPN / ZTNA / bastion — NIE port forwarding\ndużo połączeń do jednego zewnętrznego celu              pule połączeń, HTTP/2, więcej adresów NAT, prywatne endpointy\nkontener → Internet / port na hoście                    Docker MASQUERADE / -p (z bindem na 127.0.0.1, jeśli lokalnie)\ndostęp do poda na chwilę (debug)                        kubectl port-forward (tunel, nie NAT)\nLAN → publiczny adres własnej usługi                    split-horizon DNS (lepiej) lub hairpin NAT\ndwie sieci z tym samym zakresem muszą rozmawiać          twice NAT / NETMAP (tymczasowo) → docelowo renumeracja\nIPv6                                                    bez NAT: globalne adresy + stanowy firewall (NPTv6 tylko w szczególnych przypadkach)"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- SNAT/masquerade zmienia źródło (wyjście, POSTROUTING), DNAT — cel (port forwarding, PREROUTING); PAT rozróżnia wiele hostów po portach.\n- conntrack pamięta każdy przepływ (krotka oryginalna i odpowiedzi) — reguła NAT działa na pierwszy pakiet, reszta jest tłumaczona automatycznie; `conntrack -L`, `show ip nat translations`.\n- Router przelicza sumy kontrolne IP/TCP, zmniejsza TTL; serwer widzi adres NAT, nie klienta (X-Forwarded-For tylko od zaufanych proxy).\n- Wyczerpanie portów SNAT: limit na cel (AWS 55 000/adres); zajętość = tempo × czas trzymania; lekarstwo — pule połączeń, keep-alive, HTTP/2, prywatne endpointy.\n- Hairpin NAT: ruch LAN → własny publiczny adres; split-horizon DNS jako lepsze rozwiązanie.\n- Docker: MASQUERADE i DNAT (`-p`), filtruj w DOCKER-USER; Kubernetes Service = DNAT; `kubectl port-forward` = tunel przez API.\n- NAT to nie firewall — polityka bezpieczeństwa należy do stanowego firewalla; loguj translacje na potrzeby incydentów.\n- Następna lekcja: **ICMP, ping, traceroute i mtr** — jak czytać wyniki i dlaczego blokowanie całego ICMP psuje sieć.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Aplikacja otwiera 300 nowych połączeń na sekundę do jednego celu, wpis trzymany jest 60 s, na jeden adres NAT przypada 55 000 portów do tego celu. Ile portów jest zajętych w stanie ustalonym i ile adresów NAT potrzeba?",
+      "hint": "Zajętość = tempo × czas trzymania; adresy = ceil(zajętość / porty na adres).",
+      "solution": "300 × 60 = 18 000 portów → 1 adres(y). Lepsze rozwiązanie: reużywanie połączeń (pula/keep-alive) — wtedy liczba portów = liczba stałych połączeń."
+    },
+    {
+      "prompt": "Aplikacja otwiera 1500 nowych połączeń na sekundę do jednego celu, wpis trzymany jest 60 s, na jeden adres NAT przypada 55 000 portów do tego celu. Ile portów jest zajętych w stanie ustalonym i ile adresów NAT potrzeba?",
+      "hint": "Zajętość = tempo × czas trzymania; adresy = ceil(zajętość / porty na adres).",
+      "solution": "1500 × 60 = 90 000 portów → 2 adres(y). Lepsze rozwiązanie: reużywanie połączeń (pula/keep-alive) — wtedy liczba portów = liczba stałych połączeń."
+    },
+    {
+      "prompt": "Aplikacja otwiera 5000 nowych połączeń na sekundę do jednego celu, wpis trzymany jest 120 s, na jeden adres NAT przypada 55 000 portów do tego celu. Ile portów jest zajętych w stanie ustalonym i ile adresów NAT potrzeba?",
+      "hint": "Zajętość = tempo × czas trzymania; adresy = ceil(zajętość / porty na adres).",
+      "solution": "5000 × 120 = 600 000 portów → 11 adres(y). Lepsze rozwiązanie: reużywanie połączeń (pula/keep-alive) — wtedy liczba portów = liczba stałych połączeń."
+    },
+    {
+      "prompt": "Aplikacja otwiera 800 nowych połączeń na sekundę do jednego celu, wpis trzymany jest 240 s, na jeden adres NAT przypada 64 512 portów do tego celu. Ile portów jest zajętych w stanie ustalonym i ile adresów NAT potrzeba?",
+      "hint": "Zajętość = tempo × czas trzymania; adresy = ceil(zajętość / porty na adres).",
+      "solution": "800 × 240 = 192 000 portów → 3 adres(y). Lepsze rozwiązanie: reużywanie połączeń (pula/keep-alive) — wtedy liczba portów = liczba stałych połączeń."
+    },
+    {
+      "prompt": "Aplikacja otwiera 3000 nowych połączeń na sekundę do jednego celu, wpis trzymany jest 30 s, na jeden adres NAT przypada 28 232 portów do tego celu. Ile portów jest zajętych w stanie ustalonym i ile adresów NAT potrzeba?",
+      "hint": "Zajętość = tempo × czas trzymania; adresy = ceil(zajętość / porty na adres).",
+      "solution": "3000 × 30 = 90 000 portów → 4 adres(y). Lepsze rozwiązanie: reużywanie połączeń (pula/keep-alive) — wtedy liczba portów = liczba stałych połączeń."
+    },
+    {
+      "prompt": "Router PAT ma jeden adres 203.0.113.5 i (dla ćwiczenia) zakres portów 50000–50002. Pięć hostów 10.0.0.2–.6 łączy się z portu 50000 z 198.51.100.7:5432. Pokaż tablicę translacji.",
+      "hint": "Unikalna krotka (proto, IP:port po NAT, cel:port).",
+      "solution": "TCP 10.0.0.2:50000 → 198.51.100.7:5432  ⇒  203.0.113.5:50000 → 198.51.100.7:5432; TCP 10.0.0.3:50000 → 198.51.100.7:5432  ⇒  203.0.113.5:50001 → 198.51.100.7:5432; TCP 10.0.0.4:50000 → 198.51.100.7:5432  ⇒  203.0.113.5:50002 → 198.51.100.7:5432; TCP 10.0.0.5:50000 → 198.51.100.7:5432  ⇒  BRAK PORTU (odrzucone) → 198.51.100.7:5432; TCP 10.0.0.6:50000 → 198.51.100.7:5432  ⇒  BRAK PORTU (odrzucone) → 198.51.100.7:5432. Trzy pierwsze przepływy dostają porty 50000–50002, pozostałe nie mają wolnego portu do tego celu."
+    },
+    {
+      "prompt": "Ten sam router (zakres 50000–50002), ale hosty łączą się z różnymi celami: 198.51.100.7:5432, 198.51.100.8:5432, 198.51.100.7:443, 198.51.100.9:5432 i 198.51.100.7:5432. Czy któryś przepływ zostanie odrzucony?",
+      "hint": "Porty można reużywać do różnych celów.",
+      "solution": "TCP 10.0.0.2:50000 → 198.51.100.7:5432  ⇒  203.0.113.5:50000 → 198.51.100.7:5432; TCP 10.0.0.3:50000 → 198.51.100.8:5432  ⇒  203.0.113.5:50000 → 198.51.100.8:5432; TCP 10.0.0.4:50000 → 198.51.100.7:443  ⇒  203.0.113.5:50000 → 198.51.100.7:443; TCP 10.0.0.5:50000 → 198.51.100.9:5432  ⇒  203.0.113.5:50000 → 198.51.100.9:5432; TCP 10.0.0.6:50000 → 198.51.100.7:5432  ⇒  203.0.113.5:50001 → 198.51.100.7:5432. Żaden — kolizja jest tylko między 1. i 5. przepływem (ten sam cel), który dostaje kolejny port."
+    },
+    {
+      "prompt": "Wykonaj Packet Lab z planu: w labie inside/router/outside przechwyć ten sam przepływ HTTP przed NAT (lan0) i za NAT (wan0), porównaj pola nagłówków i odczytaj wpis conntrack -L.",
+      "hint": "Dwa tcpdumpy równolegle; conntrack -L -p tcp.",
+      "solution": "Po stronie LAN: src 192.168.1.20:P → dst 203.0.113.10:80, TTL 64. Po stronie WAN: src 203.0.113.5:P (port zwykle zachowany) → 203.0.113.10:80, TTL 63, inne sumy kontrolne IP i TCP, numery sekwencyjne i dane bez zmian. conntrack: tcp 6 <sekundy> ESTABLISHED/TIME_WAIT src=192.168.1.20 dst=203.0.113.10 sport=P dport=80 src=203.0.113.10 dst=203.0.113.5 sport=80 dport=P [ASSURED] — pierwsza krotka oryginalna, druga oczekiwana odpowiedź po translacji."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego bez NAT w kroku 2 labu curl kończy się timeoutem, choć SYN dociera do serwera.",
+      "hint": "Trasa powrotna.",
+      "solution": "Serwer outside dostaje SYN ze źródłem 192.168.1.20, ale nie ma trasy do 192.168.1.0/24 (jak prawdziwy Internet nie routuje adresów prywatnych), więc SYN-ACK nie może wrócić (lub idzie trasą domyślną donikąd). Klient nie dostaje odpowiedzi → timeout. MASQUERADE podmienia źródło na 203.0.113.5, do którego serwer ma trasę (sieć connected)."
+    },
+    {
+      "prompt": "Skonfiguruj na Cisco PAT dla 192.168.10.0/24 na interfejsie Gi0/0 i statyczne przekierowanie TCP 2222 z adresu interfejsu na 192.168.10.5:22. Jak sprawdzisz działanie?",
+      "hint": "ip nat inside/outside, overload, static tcp.",
+      "solution": "interface Gi0/1 / ip nat inside; interface Gi0/0 / ip nat outside; access-list 10 permit 192.168.10.0 0.0.0.255; ip nat inside source list 10 interface Gi0/0 overload; ip nat inside source static tcp 192.168.10.5 22 interface Gi0/0 2222. Weryfikacja: show ip nat translations (wpisy inside local/global), show ip nat statistics (trafienia, interfejsy), debug ip nat (ostrożnie). Lepiej niż SSH przez port forwarding: VPN."
+    },
+    {
+      "prompt": "Mikroserwis w prywatnej podsieci AWS ma sporadyczne timeouty przy wywołaniach zewnętrznego API (ok. 1500 żądań/s). Metryka ErrorPortAllocation NAT Gateway rośnie. Zaproponuj diagnozę i naprawę po stronie kodu i infrastruktury.",
+      "hint": "Pula połączeń, keep-alive, adresy NAT.",
+      "solution": "Diagnoza: liczba nowych połączeń vs żądań (logi klienta HTTP, ss -tan state time-wait | wc -l w podach, metryki NAT GW ActiveConnectionCount i ErrorPortAllocation). Zapewne każde żądanie otwiera nowe połączenie. Kod: jeden współdzielony HttpClient/RestClient z pulą i keep-alive, HTTP/2, rozsądne timeouty, brak Connection: close. Infrastruktura: dodatkowe adresy na NAT GW (do 8), NAT GW per strefa, jeśli API ma prywatny endpoint — PrivateLink. Weryfikacja: spadek ErrorPortAllocation i nowych połączeń/s."
+    },
+    {
+      "prompt": "Na węźle Kubernetes w dmesg pojawia się „nf_conntrack: table full, dropping packet”. Wyjaśnij przyczynę i działania.",
+      "hint": "conntrack_max, krótkie połączenia, UDP DNS.",
+      "solution": "Tablica conntrack (używana przez kube-proxy/iptables i NAT) osiągnęła nf_conntrack_max — nowe przepływy są odrzucane. Typowe przyczyny: bardzo dużo krótkich połączeń (brak keep-alive), ruch UDP DNS (każde zapytanie = wpis), atak SYN flood. Działania: sprawdź conntrack -C / sysctl net.netfilter.nf_conntrack_count i _max, zwiększ max (kube-proxy ustawia go wg rdzeni — parametr conntrack.maxPerCore), skróć timeouty UDP, NodeLocal DNSCache, keep-alive w aplikacjach, rozważ eBPF (Cilium) zamiast iptables."
+    },
+    {
+      "prompt": "Opisz, jak Docker realizuje docker run -p 8080:80 i dlaczego taki port omija UFW. Jak to poprawnie ograniczyć?",
+      "hint": "Łańcuchy DOCKER, DOCKER-USER, FORWARD.",
+      "solution": "Docker dodaje w tabeli nat regułę DNAT w łańcuchu DOCKER (PREROUTING): tcp dport 8080 → <IP kontenera>:80, oraz reguły akceptacji w filtrze FORWARD (łańcuch DOCKER). Ruch do kontenera nie przechodzi przez INPUT (gdzie działa UFW), tylko przez FORWARD — więc reguły UFW go nie dotyczą. Ograniczenia: publikacja na 127.0.0.1 (-p 127.0.0.1:8080:80), reguły w łańcuchu DOCKER-USER (np. tylko z określonej sieci), brak publikacji i dostęp przez reverse proxy."
+    },
+    {
+      "prompt": "W Kubernetes Service typu LoadBalancer aplikacja loguje adresy węzłów zamiast adresów klientów. Wyjaśnij i podaj dwa rozwiązania.",
+      "hint": "externalTrafficPolicy, Proxy Protocol.",
+      "solution": "Przy externalTrafficPolicy: Cluster kube-proxy robi SNAT (ruch może trafić do poda na innym węźle, więc odpowiedź musi wrócić przez węzeł wejściowy) — pod widzi adres węzła. Rozwiązania: externalTrafficPolicy: Local (zachowuje adres klienta, ruch tylko do podów na węźle, nierówne rozłożenie), albo load balancer z Proxy Protocol v2 / X-Forwarded-For (L7 ingress) i konfiguracja aplikacji/ingressu do odczytu prawdziwego adresu od zaufanego proxy."
+    },
+    {
+      "prompt": "Czym różni się kubectl port-forward od NodePort i port forwardingu na routerze?",
+      "hint": "Tunel przez API vs DNAT.",
+      "solution": "kubectl port-forward otwiera lokalny port na Twoim komputerze i tuneluje strumień przez API serwer Kubernetesa (uwierzytelnienie RBAC, HTTP/2/WebSocket) do poda — nie zmienia reguł sieciowych klastra, działa tylko dla Ciebie, nadaje się do debugowania, nie do produkcji. NodePort i port forwarding na routerze to DNAT w warstwie sieciowej: ruch z dowolnego klienta do portu węzła/routera jest przekierowywany do poda/hosta, dostępny dla wszystkich, którzy dotrą do portu."
+    },
+    {
+      "prompt": "Pracownicy w biurze nie mogą otworzyć firmowej aplikacji pod https://app.firma.pl, a z telefonu na LTE działa. Serwer stoi w tym samym biurze za NAT. Zdiagnozuj i zaproponuj dwa rozwiązania.",
+      "hint": "Hairpin, split DNS.",
+      "solution": "app.firma.pl rozwiązuje się na publiczny adres routera; router robi DNAT na serwer w LAN, serwer odpowiada bezpośrednio do pracownika (ten sam LAN) z adresu prywatnego, a klient oczekuje odpowiedzi od adresu publicznego — połączenie się nie zestawia. Diagnoza: tcpdump na serwerze (SYN z adresu pracownika, SYN-ACK bezpośrednio), dig app.firma.pl. Rozwiązania: split-horizon DNS (w LAN domena → adres prywatny) — preferowane; hairpin NAT (dodatkowy SNAT dla ruchu LAN→serwer przez adres publiczny)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego NAT nie jest mechanizmem bezpieczeństwa, podając cztery sposoby, w jakie ruch omija „ochronę” NAT.",
+      "hint": "Port forwarding, UPnP, ruch inicjowany od środka, IPv6.",
+      "solution": "1) Port forwarding/DNAT świadomie wystawia usługi. 2) UPnP/NAT-PMP pozwala aplikacjom (i malware) samodzielnie otwierać porty. 3) Połączenia inicjowane od środka (malware, phishing, reverse shell, C2 przez HTTPS) przechodzą normalnie, a odpowiedzi są wpuszczane. 4) IPv6 zwykle bez NAT — hosty mają globalne adresy osiągalne z Internetu, jeśli firewall na to pozwala. Do tego hairpin i błędy konfiguracji. Ochronę daje stanowy firewall z domyślnym DROP i filtrowanie ruchu wychodzącego."
+    },
+    {
+      "prompt": "Jakie dane z NAT należy przechowywać, by po incydencie ustalić, który komputer w firmie połączył się z adresem C2 o 14:03:27, i gdzie je zbierać?",
+      "hint": "Logi translacji z czasem.",
+      "solution": "Potrzebne: czas (zsynchronizowany NTP), krotka wewnętrzna (adres i port źródłowy hosta) oraz zewnętrzna (adres i port po NAT), adres i port celu, protokół, czas trwania. Źródła: logi NAT routera/firewalla (Cisco ip nat log translations syslog, firewall session logs), conntrackd/ulogd w Linuksie, logi proxy, w chmurze VPC Flow Logs z polami pkt-srcaddr/pkt-dstaddr (ruch przez NAT GW). Dopasowanie po adresie i porcie zewnętrznym oraz czasie; samo IP publiczne nie wystarczy (PAT)."
+    },
+    {
+      "prompt": "Dlaczego IPsec VPN z urządzenia za NAT wymaga NAT-T i jakiego portu używa?",
+      "hint": "ESP nie ma portów.",
+      "solution": "ESP (protokół IP 50) nie ma numerów portów, więc PAT nie potrafi rozróżnić wielu klientów i często w ogóle go nie tłumaczy; dodatkowo AH chroni nagłówek IP, więc zmiana adresu przez NAT psuje integralność. NAT Traversal (RFC 3947/3948) wykrywa NAT podczas IKE i kapsułkuje ESP w UDP 4500, które PAT obsługuje normalnie. Firewall musi przepuszczać UDP 500 (IKE) i UDP 4500."
+    },
+    {
+      "prompt": "Zaprojektuj wyjście do Internetu dla 3 podsieci prywatnych w 3 strefach AWS tak, by awaria strefy nie odcięła pozostałych i by uniknąć opłat międzystrefowych.",
+      "hint": "NAT GW per AZ, route table per AZ.",
+      "solution": "Po jednym NAT Gateway w podsieci publicznej każdej strefy; osobna route table dla każdej podsieci prywatnej z 0.0.0.0/0 → NAT GW w tej samej strefie. Awaria strefy wyłącza tylko jej NAT; ruch nie przekracza granic stref (brak opłat cross-AZ). Do usług AWS — VPC endpoints (S3/DynamoDB gateway, interface endpoints dla ECR, STS, Secrets Manager), żeby ograniczyć ruch przez NAT i koszty przetwarzania danych. Monitorowanie ErrorPortAllocation i PacketsDropCount."
+    },
+    {
+      "prompt": "Wyjaśnij znaczenie pól w wyniku conntrack: „udp 17 28 src=10.244.1.5 dst=10.96.0.10 sport=40213 dport=53 src=10.244.2.7 dst=10.244.1.5 sport=53 dport=40213 mark=0 use=1”.",
+      "hint": "Kierunek oryginalny vs odpowiedź; DNAT Service.",
+      "solution": "UDP (17), wpis wygaśnie za 28 s. Kierunek oryginalny: pod 10.244.1.5 wysłał zapytanie DNS do 10.96.0.10:53 (ClusterIP Service kube-dns). Oczekiwana odpowiedź: od 10.244.2.7:53 (konkretny pod CoreDNS) do 10.244.1.5:40213 — czyli kube-proxy zrobił DNAT z adresu Service na adres poda; odpowiedź zostanie przetłumaczona z powrotem tak, by pod widział ją jako przychodzącą od 10.96.0.10."
+    },
+    {
+      "prompt": "Kiedy NAT jest uzasadniony w IPv6 i dlaczego zwykle się go nie stosuje?",
+      "hint": "Dużo adresów, end-to-end, NPTv6.",
+      "solution": "IPv6 ma wystarczająco adresów, by każdy host miał globalny adres, więc NAT nie jest potrzebny do oszczędzania adresów; zachowanie end-to-end upraszcza protokoły (VoIP, P2P, IPsec). Bezpieczeństwo zapewnia stanowy firewall (domyślnie blokujący ruch przychodzący). Wyjątki: NPTv6 (RFC 6296, bezstanowa translacja prefiksów) przy multihomingu bez własnej adresacji PI lub do ukrycia zmian prefiksu operatora; NAT64 do komunikacji z IPv4."
+    },
+    {
+      "prompt": "Twoja aplikacja Spring Boot za reverse proxy i NAT loguje 127.0.0.1 albo adres proxy jako adres klienta. Skonfiguruj poprawne odczytywanie adresu i zabezpiecz przed fałszowaniem.",
+      "hint": "forward-headers-strategy, internal-proxies.",
+      "solution": "server.forward-headers-strategy=native (Tomcat RemoteIpValve) lub framework (ForwardedHeaderFilter); server.tomcat.remoteip.internal-proxies ustawione na adresy/zakres proxy (regex) — tylko od nich akceptowany jest X-Forwarded-For; proxy (Nginx/ALB) nadpisuje lub dopisuje nagłówek ($proxy_add_x_forwarded_for) i usuwa wartości od klienta na brzegu. Wtedy request.getRemoteAddr() zwraca adres klienta. Bez listy zaufanych proxy klient może podać dowolny X-Forwarded-For i ominąć limity/allow-listy po IP."
+    },
+    {
+      "prompt": "Policz: biuro ma 600 pracowników za jednym adresem PAT; każdy ma średnio 40 jednoczesnych połączeń do różnych celów, ale wszyscy jednocześnie łączą się z firmowym Office 365 (jeden adres:443, po 8 połączeń). Czy grozi wyczerpanie portów?",
+      "hint": "Limit dotyczy jednego celu.",
+      "solution": "Do różnych celów porty mogą się powtarzać, więc 600 × 40 = 24 000 przepływów to nie problem. Do jednego celu (ten sam adres:443): 600 × 8 = 4800 portów — poniżej ~64 tys., więc 1 adres wystarczy, ale z zapasem tylko ~13×. Przy wzroście lub krótkich połączeniach — więcej adresów w puli PAT lub rozdzielenie ruchu (bezpośrednie wyjście dla Microsoft 365 wg zaleceń, wiele adresów docelowych w DNS)."
+    },
+    {
+      "prompt": "Wymień, które pola nagłówków IP i TCP zmienia router przy SNAT, a które pozostają bez zmian.",
+      "hint": "Adres, port, sumy kontrolne, TTL.",
+      "solution": "Zmieniane: adres źródłowy IP, (często) port źródłowy TCP/UDP, suma kontrolna nagłówka IP, suma kontrolna TCP/UDP (obejmuje pseudo-nagłówek z adresami), TTL (−1 jak przy każdym routingu). Bez zmian: adres i port docelowy, numery sekwencyjne i potwierdzeń TCP, flagi, okno, dane. Przy DNAT analogicznie zmienia się adres/port docelowy."
+    },
+    {
+      "prompt": "Co to jest NAT statyczny 1:1 i kiedy go użyć zamiast PAT? Podaj przykład z chmury.",
+      "hint": "Elastic IP, serwer z publicznym adresem.",
+      "solution": "NAT 1:1 trwale wiąże jeden adres prywatny z jednym publicznym, w obu kierunkach (możliwe połączenia przychodzące na wszystkie porty, o ile firewall pozwala). Używany dla serwerów, które muszą mieć stały publiczny adres (allow-listy partnerów, poczta, VPN). W AWS: Elastic IP przypisany do instancji — instancja ma prywatny adres w systemie, a IGW tłumaczy go 1:1 na publiczny. PAT — dla wielu klientów wychodzących przez jeden adres."
+    },
+    {
+      "prompt": "Napisz regułę nftables, która robi masquerade dla 10.200.0.0/16 wychodzącego przez wan0 oraz przekierowuje TCP 2222 z wan0 na 10.200.0.5:22, i dodaj filtr dopuszczający SSH tylko z 198.51.100.0/24.",
+      "hint": "Hook prerouting/postrouting, chain forward.",
+      "solution": "table ip nat { chain prerouting { type nat hook prerouting priority dstnat; iifname \"wan0\" tcp dport 2222 dnat to 10.200.0.5:22 } chain postrouting { type nat hook postrouting priority srcnat; oifname \"wan0\" ip saddr 10.200.0.0/16 masquerade } } table inet filter { chain forward { type filter hook forward priority 0; policy drop; ct state established,related accept; iifname \"wan0\" ip saddr 198.51.100.0/24 ip daddr 10.200.0.5 tcp dport 22 ct state new accept } }. Uwaga: w łańcuchu forward port docelowy jest już po DNAT (22)."
+    },
+    {
+      "prompt": "Dlaczego gry, VoIP i aplikacje P2P mają problemy z NAT i jak je rozwiązują (STUN, TURN, ICE)?",
+      "hint": "Połączenia przychodzące, typy NAT.",
+      "solution": "Za NAT host nie ma publicznego adresu ani otwartego portu, więc druga strona nie może zainicjować połączenia. STUN pozwala klientowi poznać swój publiczny adres i port (mapowanie NAT) i próbować „przebicia” (UDP hole punching), gdy NAT zachowuje mapowanie niezależnie od celu. Przy NAT symetrycznym (inne mapowanie dla każdego celu) i CGNAT trzeba przekaźnika TURN, przez który idzie ruch. ICE testuje kandydatów (lokalny, STUN, TURN) i wybiera działającą ścieżkę — używa tego WebRTC."
+    },
+    {
+      "prompt": "Na routerze Linux skrócono timeout TCP TIME_WAIT w conntrack, by „oszczędzać porty”. Jakie mogą być skutki uboczne?",
+      "hint": "Ponowne użycie krotki, opóźnione pakiety.",
+      "solution": "Wpis conntrack zniknie szybciej, więc ta sama krotka (port po NAT do tego samego celu) może zostać przydzielona nowemu połączeniu, zanim do serwera dotrą opóźnione pakiety starego — możliwe odrzucenie nowego SYN przez serwer (który jeszcze trzyma stare połączenie w TIME_WAIT) lub pomieszanie segmentów. Problemy sporadyczne i trudne do zdiagnozowania. Lepiej rozwiązać przyczynę: keep-alive, pule połączeń, więcej adresów."
+    },
+    {
+      "prompt": "Jak sprawdzić na Linuksie bieżące zużycie i limit tablicy conntrack oraz zobaczyć wpisy tylko dla danego celu?",
+      "hint": "sysctl, conntrack -C, -L z filtrami.",
+      "solution": "sysctl net.netfilter.nf_conntrack_count i net.netfilter.nf_conntrack_max (lub cat /proc/sys/net/netfilter/...); conntrack -C (liczba wpisów); conntrack -S (statystyki: drop, insert_failed); conntrack -L -p tcp --dst 198.51.100.7 --dport 5432 (wpisy do konkretnego celu); conntrack -L -p tcp --state TIME_WAIT | wc -l. Na węzłach Kubernetes także metryki node_exporter (node_nf_conntrack_entries)."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 200 nowych połączeniach/s do jednego celu i czasie trzymania 60 s?",
+      "options": {
+        "A": "6000",
+        "B": "200",
+        "C": "12 000",
+        "D": "24 000"
+      },
+      "correct": "C",
+      "explanation": "200 × 60."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 500 połączeń/s do jednego celu przy 60 s trzymania?",
+      "options": {
+        "A": "0",
+        "B": "1",
+        "C": "3",
+        "D": "2"
+      },
+      "correct": "B",
+      "explanation": "30 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 900 nowych połączeniach/s do jednego celu i czasie trzymania 60 s?",
+      "options": {
+        "A": "54 000",
+        "B": "900",
+        "C": "27 000",
+        "D": "108 000"
+      },
+      "correct": "A",
+      "explanation": "900 × 60."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 1000 połączeń/s do jednego celu przy 60 s trzymania?",
+      "options": {
+        "A": "5",
+        "B": "3",
+        "C": "1",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "60 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 1200 nowych połączeniach/s do jednego celu i czasie trzymania 60 s?",
+      "options": {
+        "A": "36 000",
+        "B": "144 000",
+        "C": "1200",
+        "D": "72 000"
+      },
+      "correct": "D",
+      "explanation": "1200 × 60."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 2000 połączeń/s do jednego celu przy 60 s trzymania?",
+      "options": {
+        "A": "7",
+        "B": "4",
+        "C": "3",
+        "D": "2"
+      },
+      "correct": "C",
+      "explanation": "120 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 3000 nowych połączeniach/s do jednego celu i czasie trzymania 60 s?",
+      "options": {
+        "A": "360 000",
+        "B": "180 000",
+        "C": "3000",
+        "D": "90 000"
+      },
+      "correct": "B",
+      "explanation": "3000 × 60."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 100 połączeń/s do jednego celu przy 350 s trzymania?",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "0"
+      },
+      "correct": "A",
+      "explanation": "35 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 400 nowych połączeniach/s do jednego celu i czasie trzymania 120 s?",
+      "options": {
+        "A": "24 000",
+        "B": "48 000",
+        "C": "96 000",
+        "D": "400"
+      },
+      "correct": "B",
+      "explanation": "400 × 120."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 5000 połączeń/s do jednego celu przy 30 s trzymania?",
+      "options": {
+        "A": "4",
+        "B": "7",
+        "C": "3",
+        "D": "2"
+      },
+      "correct": "C",
+      "explanation": "150 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 250 nowych połączeniach/s do jednego celu i czasie trzymania 240 s?",
+      "options": {
+        "A": "60 000",
+        "B": "250",
+        "C": "30 000",
+        "D": "120 000"
+      },
+      "correct": "A",
+      "explanation": "250 × 240."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 1500 połączeń/s do jednego celu przy 90 s trzymania?",
+      "options": {
+        "A": "2",
+        "B": "4",
+        "C": "7",
+        "D": "3"
+      },
+      "correct": "D",
+      "explanation": "135 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 700 nowych połączeniach/s do jednego celu i czasie trzymania 100 s?",
+      "options": {
+        "A": "700",
+        "B": "35 000",
+        "C": "70 000",
+        "D": "140 000"
+      },
+      "correct": "C",
+      "explanation": "700 × 100."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 6000 połączeń/s do jednego celu przy 60 s trzymania?",
+      "options": {
+        "A": "15",
+        "B": "7",
+        "C": "8",
+        "D": "6"
+      },
+      "correct": "B",
+      "explanation": "360 000 / 55 000 w górę."
+    },
+    {
+      "question": "Ile portów SNAT jest zajętych w stanie ustalonym przy 50 nowych połączeniach/s do jednego celu i czasie trzymania 350 s?",
+      "options": {
+        "A": "17 500",
+        "B": "35 000",
+        "C": "50",
+        "D": "8750"
+      },
+      "correct": "A",
+      "explanation": "50 × 350."
+    },
+    {
+      "question": "Ile adresów AWS NAT Gateway (55 000 połączeń/cel/adres) potrzeba dla 10000 połączeń/s do jednego celu przy 10 s trzymania?",
+      "options": {
+        "A": "5",
+        "B": "1",
+        "C": "3",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "100 000 / 55 000 w górę."
+    },
+    {
+      "question": "PAT na 203.0.113.5 (porty 40000–40001). Pierwszy przepływ: TCP 192.168.1.20:40000 → 198.51.100.7:443 dostał 203.0.113.5:40000. Jaki port zewnętrzny dostanie TCP 192.168.1.21:40000 → 198.51.100.7:443?",
+      "options": {
+        "A": "brak — zostanie odrzucony",
+        "B": "40000",
+        "C": "40001",
+        "D": "1024"
+      },
+      "correct": "C",
+      "explanation": "Ten sam protokół i cel — potrzebny inny port."
+    },
+    {
+      "question": "PAT na 203.0.113.5 (porty 40000–40001). Pierwszy przepływ: TCP 192.168.1.20:40000 → 198.51.100.7:443 dostał 203.0.113.5:40000. Jaki port zewnętrzny dostanie TCP 192.168.1.21:40000 → 198.51.100.8:443?",
+      "options": {
+        "A": "brak — zostanie odrzucony",
+        "B": "1024",
+        "C": "40001",
+        "D": "40000"
+      },
+      "correct": "D",
+      "explanation": "Krotka różni się protokołem lub celem — port można użyć ponownie."
+    },
+    {
+      "question": "PAT na 203.0.113.5 (porty 40000–40001). Pierwszy przepływ: TCP 192.168.1.20:40000 → 198.51.100.7:443 dostał 203.0.113.5:40000. Jaki port zewnętrzny dostanie UDP 192.168.1.21:40000 → 198.51.100.7:443?",
+      "options": {
+        "A": "40000",
+        "B": "40001",
+        "C": "1024",
+        "D": "brak — zostanie odrzucony"
+      },
+      "correct": "A",
+      "explanation": "Krotka różni się protokołem lub celem — port można użyć ponownie."
+    },
+    {
+      "question": "PAT na 203.0.113.5 (porty 40000–40001). Pierwszy przepływ: TCP 192.168.1.20:40000 → 198.51.100.7:443 dostał 203.0.113.5:40000. Jaki port zewnętrzny dostanie TCP 192.168.1.21:40000 → 198.51.100.7:80?",
+      "options": {
+        "A": "1024",
+        "B": "40000",
+        "C": "brak — zostanie odrzucony",
+        "D": "40001"
+      },
+      "correct": "B",
+      "explanation": "Krotka różni się protokołem lub celem — port można użyć ponownie."
+    },
+    {
+      "question": "Pula portów PAT ma rozmiar 2, a liczba hostów łączących się jednocześnie z tym samym celem 198.51.100.7:5432 wynosi 3. Ile połączeń się uda?",
+      "options": {
+        "A": "3",
+        "B": "2",
+        "C": "1",
+        "D": "6"
+      },
+      "correct": "B",
+      "explanation": "Do jednego celu: tyle połączeń, ile portów."
+    },
+    {
+      "question": "Pula portów PAT ma rozmiar 3, a liczba hostów łączących się jednocześnie z tym samym celem 198.51.100.7:5432 wynosi 3. Ile połączeń się uda?",
+      "options": {
+        "A": "4",
+        "B": "2",
+        "C": "3",
+        "D": "9"
+      },
+      "correct": "C",
+      "explanation": "Do jednego celu: tyle połączeń, ile portów."
+    },
+    {
+      "question": "Pula portów PAT ma rozmiar 4, a liczba hostów łączących się jednocześnie z tym samym celem 198.51.100.7:5432 wynosi 6. Ile połączeń się uda?",
+      "options": {
+        "A": "4",
+        "B": "3",
+        "C": "5",
+        "D": "6"
+      },
+      "correct": "A",
+      "explanation": "Do jednego celu: tyle połączeń, ile portów."
+    },
+    {
+      "question": "Pula portów PAT ma rozmiar 10, a liczba hostów łączących się jednocześnie z tym samym celem 198.51.100.7:5432 wynosi 8. Ile połączeń się uda?",
+      "options": {
+        "A": "80",
+        "B": "11",
+        "C": "7",
+        "D": "8"
+      },
+      "correct": "D",
+      "explanation": "Do jednego celu: tyle połączeń, ile portów."
+    },
+    {
+      "question": "Co zmienia SNAT?",
+      "options": {
+        "A": "Adres (i ewentualnie port) źródłowy",
+        "B": "Adres MAC celu",
+        "C": "Adres docelowy",
+        "D": "TTL na 64"
+      },
+      "correct": "A",
+      "explanation": "Ruch wychodzący."
+    },
+    {
+      "question": "Co zmienia DNAT?",
+      "options": {
+        "A": "Protokół",
+        "B": "Numer sekwencyjny TCP",
+        "C": "Adres (i ewentualnie port) docelowy",
+        "D": "Adres źródłowy"
+      },
+      "correct": "C",
+      "explanation": "Port forwarding."
+    },
+    {
+      "question": "Czym jest masquerade?",
+      "options": {
+        "A": "Szyfrowanie nagłówka",
+        "B": "SNAT na bieżący adres interfejsu wyjściowego",
+        "C": "NAT statyczny 1:1",
+        "D": "DNAT na serwer w DMZ"
+      },
+      "correct": "B",
+      "explanation": "Dla dynamicznych adresów."
+    },
+    {
+      "question": "W którym łańcuchu Netfilter wykonuje się SNAT/MASQUERADE?",
+      "options": {
+        "A": "OUTPUT filter",
+        "B": "PREROUTING",
+        "C": "INPUT",
+        "D": "POSTROUTING"
+      },
+      "correct": "D",
+      "explanation": "Po decyzji o trasie."
+    },
+    {
+      "question": "W którym łańcuchu Netfilter wykonuje się DNAT dla ruchu przychodzącego?",
+      "options": {
+        "A": "POSTROUTING",
+        "B": "FORWARD",
+        "C": "PREROUTING",
+        "D": "INPUT"
+      },
+      "correct": "C",
+      "explanation": "Przed decyzją o trasie."
+    },
+    {
+      "question": "Czym jest PAT?",
+      "options": {
+        "A": "Translacją 1:1",
+        "B": "Translacją tylko UDP",
+        "C": "Protokołem routingu",
+        "D": "Translacją wielu adresów na jeden, rozróżnianych portami"
+      },
+      "correct": "D",
+      "explanation": "NAT overload."
+    },
+    {
+      "question": "Jak Cisco nazywa PAT w konfiguracji?",
+      "options": {
+        "A": "hairpin",
+        "B": "overload",
+        "C": "pool static",
+        "D": "masquerade"
+      },
+      "correct": "B",
+      "explanation": "ip nat inside source list X interface Y overload."
+    },
+    {
+      "question": "Co oznacza „inside local” w terminologii Cisco?",
+      "options": {
+        "A": "Prywatny adres hosta wewnątrz",
+        "B": "Adres serwera w Internecie",
+        "C": "Publiczny adres hosta",
+        "D": "Adres bramy"
+      },
+      "correct": "A",
+      "explanation": "Przed translacją."
+    },
+    {
+      "question": "Co oznacza „inside global”?",
+      "options": {
+        "A": "Prywatny adres hosta",
+        "B": "Adres hosta wewnętrznego widziany z zewnątrz (po NAT)",
+        "C": "Adres loopback",
+        "D": "Adres serwera DNS"
+      },
+      "correct": "B",
+      "explanation": "Po translacji."
+    },
+    {
+      "question": "Które polecenie Cisco pokazuje aktywne translacje?",
+      "options": {
+        "A": "show conntrack",
+        "B": "show nat table",
+        "C": "show ip nat translations",
+        "D": "show ip route nat"
+      },
+      "correct": "C",
+      "explanation": "Plus show ip nat statistics."
+    },
+    {
+      "question": "Do czego służy conntrack w Linuksie?",
+      "options": {
+        "A": "Do śledzenia przepływów i odwracania translacji dla odpowiedzi",
+        "B": "Do DNS",
+        "C": "Do szyfrowania",
+        "D": "Do routingu dynamicznego"
+      },
+      "correct": "A",
+      "explanation": "Stanowy NAT i firewall."
+    },
+    {
+      "question": "Na który pakiet przepływu działa reguła NAT w iptables?",
+      "options": {
+        "A": "Na każdy osobno",
+        "B": "Na ostatni",
+        "C": "Tylko na pakiety SYN-ACK",
+        "D": "Na pierwszy — kolejne tłumaczy conntrack"
+      },
+      "correct": "D",
+      "explanation": "Dlatego zmiana reguły nie wpływa na istniejące połączenia."
+    },
+    {
+      "question": "Co pokazuje druga krotka we wpisie conntrack -L?",
+      "options": {
+        "A": "Kopię pierwszej krotki",
+        "B": "Oczekiwany kierunek odpowiedzi (po translacji)",
+        "C": "Poprzednie połączenie",
+        "D": "Adres serwera DNS"
+      },
+      "correct": "B",
+      "explanation": "Reply tuple."
+    },
+    {
+      "question": "Co oznacza [ASSURED] we wpisie conntrack?",
+      "options": {
+        "A": "Błąd translacji",
+        "B": "Połączenie szyfrowane",
+        "C": "Wpis statyczny",
+        "D": "Ruch był widziany w obu kierunkach — wpis nie zostanie usunięty w pierwszej kolejności"
+      },
+      "correct": "D",
+      "explanation": "Chroni przed usunięciem przy zapełnieniu."
+    },
+    {
+      "question": "Co oznacza komunikat „nf_conntrack: table full, dropping packet”?",
+      "options": {
+        "A": "Tablica conntrack jest pełna i nowe przepływy są odrzucane",
+        "B": "Brak pamięci dyskowej",
+        "C": "Błąd DNS",
+        "D": "Wyłączony routing"
+      },
+      "correct": "A",
+      "explanation": "Zwiększ limit, usuń przyczynę."
+    },
+    {
+      "question": "Które pola zmienia router przy SNAT poza adresem źródłowym?",
+      "options": {
+        "A": "Dane aplikacji",
+        "B": "Numery sekwencyjne TCP",
+        "C": "Sumy kontrolne IP i TCP/UDP (i zwykle TTL o 1)",
+        "D": "Port docelowy"
+      },
+      "correct": "C",
+      "explanation": "Przeliczenie sum."
+    },
+    {
+      "question": "Dlaczego suma kontrolna TCP zmienia się przy NAT, choć NAT zmienia nagłówek IP?",
+      "options": {
+        "A": "Bo suma TCP obejmuje pseudo-nagłówek z adresami IP",
+        "B": "Bo NAT szyfruje TCP",
+        "C": "Bo zmienia się okno TCP",
+        "D": "Nie zmienia się"
+      },
+      "correct": "A",
+      "explanation": "Pseudo-header."
+    },
+    {
+      "question": "Do jakiej krotki odnosi się limit portów SNAT?",
+      "options": {
+        "A": "Do jednego protokołu",
+        "B": "Do jednego celu (adres i port docelowy) dla danego adresu NAT",
+        "C": "Do jednego hosta wewnątrz",
+        "D": "Do wszystkich celów łącznie"
+      },
+      "correct": "B",
+      "explanation": "Porty można reużywać dla różnych celów."
+    },
+    {
+      "question": "Ile jednoczesnych połączeń do jednego celu obsługuje AWS NAT Gateway na adres IP?",
+      "options": {
+        "A": "1 024",
+        "B": "Bez limitu",
+        "C": "55 000",
+        "D": "65 535 na całą bramę"
+      },
+      "correct": "C",
+      "explanation": "Do 8 adresów na bramę."
+    },
+    {
+      "question": "Jaka metryka AWS wskazuje wyczerpanie portów NAT Gateway?",
+      "options": {
+        "A": "CPUUtilization",
+        "B": "BurstBalance",
+        "C": "HealthyHostCount",
+        "D": "ErrorPortAllocation"
+      },
+      "correct": "D",
+      "explanation": "CloudWatch."
+    },
+    {
+      "question": "Co najskuteczniej zapobiega wyczerpaniu portów SNAT w aplikacji?",
+      "options": {
+        "A": "Wyłączenie DNS",
+        "B": "Krótsze hasła",
+        "C": "Zwiększenie timeoutów",
+        "D": "Reużywanie połączeń (pule, keep-alive, HTTP/2)"
+      },
+      "correct": "D",
+      "explanation": "Mniej nowych połączeń."
+    },
+    {
+      "question": "Dlaczego tworzenie nowego HttpClient przy każdym żądaniu jest złe w kontekście NAT?",
+      "options": {
+        "A": "Każde żądanie otwiera nowe połączenie i zajmuje nowy port SNAT",
+        "B": "Bo wyłącza DNS",
+        "C": "Bo HttpClient nie obsługuje HTTPS",
+        "D": "Bo zmienia adres IP aplikacji"
+      },
+      "correct": "A",
+      "explanation": "Współdziel klienta."
+    },
+    {
+      "question": "Co zajmuje port SNAT jeszcze po zamknięciu połączenia?",
+      "options": {
+        "A": "Tablica ARP",
+        "B": "Sesja TLS",
+        "C": "Stan TIME_WAIT / czas życia wpisu conntrack lub NAT",
+        "D": "Cache DNS"
+      },
+      "correct": "C",
+      "explanation": "Czas trzymania."
+    },
+    {
+      "question": "Jak zmniejszyć ruch przez NAT Gateway do usług AWS (np. S3)?",
+      "options": {
+        "A": "Większy MTU",
+        "B": "VPC endpoints (gateway/interface)",
+        "C": "Więcej security groups",
+        "D": "Krótszy TTL DNS"
+      },
+      "correct": "B",
+      "explanation": "Ruch zostaje w sieci AWS."
+    },
+    {
+      "question": "Czym jest hairpin NAT?",
+      "options": {
+        "A": "NAT dla IPv6",
+        "B": "Obsługą ruchu z LAN do publicznego adresu usługi w tym samym LAN",
+        "C": "NAT w CGNAT",
+        "D": "Szyfrowanym NAT"
+      },
+      "correct": "B",
+      "explanation": "NAT loopback."
+    },
+    {
+      "question": "Jaki objaw daje brak hairpin NAT?",
+      "options": {
+        "A": "Błędy CRC",
+        "B": "Brak Internetu w LAN",
+        "C": "Usługa działa z Internetu, a z LAN po domenie nie",
+        "D": "Brak DHCP"
+      },
+      "correct": "C",
+      "explanation": "Odpowiedź omija router."
+    },
+    {
+      "question": "Jakie jest zwykle lepsze rozwiązanie problemu hairpin niż dodatkowy SNAT?",
+      "options": {
+        "A": "Większy MTU",
+        "B": "Wyłączenie DNS",
+        "C": "Statyczny ARP",
+        "D": "Split-horizon DNS (w LAN domena wskazuje adres prywatny)"
+      },
+      "correct": "D",
+      "explanation": "Krótsza droga."
+    },
+    {
+      "question": "Czy NAT jest mechanizmem bezpieczeństwa?",
+      "options": {
+        "A": "Nie — to translacja adresów; politykę zapewnia firewall",
+        "B": "Tak, szyfruje ruch",
+        "C": "Tak, ale tylko PAT",
+        "D": "Tak, zastępuje firewall"
+      },
+      "correct": "A",
+      "explanation": "Efekt uboczny to nie polityka."
+    },
+    {
+      "question": "Co pozwala aplikacjom w LAN samodzielnie otwierać porty na routerze?",
+      "options": {
+        "A": "UPnP (IGD) lub NAT-PMP/PCP",
+        "B": "LLDP",
+        "C": "ARP",
+        "D": "DHCP"
+      },
+      "correct": "A",
+      "explanation": "Zwykle warto wyłączyć."
+    },
+    {
+      "question": "Jak Docker realizuje -p 8080:80?",
+      "options": {
+        "A": "Regułą SNAT",
+        "B": "Trasą statyczną",
+        "C": "Wpisem w /etc/hosts",
+        "D": "Regułą DNAT w łańcuchu DOCKER (oraz docker-proxy)"
+      },
+      "correct": "D",
+      "explanation": "iptables -t nat -L DOCKER."
+    },
+    {
+      "question": "W którym łańcuchu filtrować dostęp do portów opublikowanych przez Dockera?",
+      "options": {
+        "A": "PREROUTING",
+        "B": "INPUT",
+        "C": "DOCKER-USER",
+        "D": "OUTPUT"
+      },
+      "correct": "C",
+      "explanation": "Przetwarzany przed regułami Dockera."
+    },
+    {
+      "question": "Jak kontenery Dockera wychodzą do Internetu?",
+      "options": {
+        "A": "Przez proxy ARP",
+        "B": "Przez MASQUERADE hosta w POSTROUTING",
+        "C": "Przez własne publiczne adresy",
+        "D": "Przez DNAT"
+      },
+      "correct": "B",
+      "explanation": "NAT na adres hosta."
+    },
+    {
+      "question": "Czym w Kubernetes jest Service ClusterIP z perspektywy sieci?",
+      "options": {
+        "A": "Wirtualnym adresem, na który kube-proxy/eBPF robi DNAT do podów",
+        "B": "Adresem DNS",
+        "C": "Adresem węzła",
+        "D": "Adresem fizycznego interfejsu"
+      },
+      "correct": "A",
+      "explanation": "Bez interfejsu."
+    },
+    {
+      "question": "Co robi externalTrafficPolicy: Local?",
+      "options": {
+        "A": "Włącza SNAT",
+        "B": "Wyłącza Service",
+        "C": "Zachowuje adres klienta, kierując ruch tylko do podów na węźle wejściowym",
+        "D": "Szyfruje ruch"
+      },
+      "correct": "C",
+      "explanation": "Cluster = SNAT."
+    },
+    {
+      "question": "Czym jest kubectl port-forward?",
+      "options": {
+        "A": "Regułą DNAT na węźle",
+        "B": "NodePortem",
+        "C": "Load balancerem",
+        "D": "Tunelem przez API serwer do poda (nie NAT)"
+      },
+      "correct": "D",
+      "explanation": "Do debugowania."
+    },
+    {
+      "question": "Czym jest Elastic IP w AWS z perspektywy NAT?",
+      "options": {
+        "A": "PAT dla podsieci",
+        "B": "Statycznym NAT 1:1 adresu prywatnego instancji na publiczny",
+        "C": "Adresem prywatnym",
+        "D": "Adresem IPv6"
+      },
+      "correct": "B",
+      "explanation": "Przez Internet Gateway."
+    },
+    {
+      "question": "Dlaczego aplikacja za load balancerem widzi adres balansera?",
+      "options": {
+        "A": "Bo DNS zwraca adres balansera klientowi",
+        "B": "Bo balanser kończy połączenie lub robi SNAT — klient jest w X-Forwarded-For / Proxy Protocol",
+        "C": "Bo klient nie ma adresu",
+        "D": "Bo TLS ukrywa adres"
+      },
+      "correct": "B",
+      "explanation": "Czytaj od zaufanego proxy."
+    },
+    {
+      "question": "Jak w Spring Boot włączyć obsługę nagłówków X-Forwarded-*?",
+      "options": {
+        "A": "spring.http.proxy=true",
+        "B": "server.nat=enabled",
+        "C": "server.forward-headers-strategy=native lub framework",
+        "D": "management.forwarded=true"
+      },
+      "correct": "C",
+      "explanation": "Plus lista zaufanych proxy."
+    },
+    {
+      "question": "Dlaczego nie wolno ufać X-Forwarded-For od każdego?",
+      "options": {
+        "A": "Bo nagłówek jest szyfrowany",
+        "B": "Bo zawiera hasło",
+        "C": "Bo zmienia port",
+        "D": "Klient może podać dowolną wartość nagłówka"
+      },
+      "correct": "D",
+      "explanation": "Tylko od znanych proxy."
+    },
+    {
+      "question": "Czego potrzebuje IPsec za NAT?",
+      "options": {
+        "A": "NAT Traversal (ESP w UDP 4500)",
+        "B": "TCP 443",
+        "C": "Wyłączenia NAT",
+        "D": "Statycznego ARP"
+      },
+      "correct": "A",
+      "explanation": "ESP nie ma portów."
+    },
+    {
+      "question": "Jakie porty musi przepuścić firewall dla IPsec z NAT-T?",
+      "options": {
+        "A": "UDP 500 i UDP 4500",
+        "B": "TCP 22 i 23",
+        "C": "UDP 67 i 68",
+        "D": "TCP 1723"
+      },
+      "correct": "A",
+      "explanation": "IKE i NAT-T."
+    },
+    {
+      "question": "Co robi STUN?",
+      "options": {
+        "A": "Szyfruje ruch",
+        "B": "Konfiguruje DHCP",
+        "C": "Pozwala klientowi poznać swój publiczny adres i port widziany za NAT",
+        "D": "Przekazuje cały ruch"
+      },
+      "correct": "C",
+      "explanation": "WebRTC, VoIP."
+    },
+    {
+      "question": "Kiedy WebRTC musi użyć TURN?",
+      "options": {
+        "A": "Zawsze",
+        "B": "Gdy bezpośrednie połączenie przez NAT (np. symetryczny, CGNAT) się nie udaje",
+        "C": "Nigdy",
+        "D": "Tylko w IPv6"
+      },
+      "correct": "B",
+      "explanation": "Przekaźnik ruchu."
+    },
+    {
+      "question": "Który typ NAT utrudnia hole punching najbardziej?",
+      "options": {
+        "A": "Brak NAT",
+        "B": "NAT 1:1",
+        "C": "Full-cone NAT",
+        "D": "NAT symetryczny (inne mapowanie dla każdego celu)"
+      },
+      "correct": "D",
+      "explanation": "Wymaga TURN."
+    },
+    {
+      "question": "Czym jest CGNAT z perspektywy klienta?",
+      "options": {
+        "A": "NAT w Dockerze",
+        "B": "Drugim poziomem NAT po stronie operatora",
+        "C": "Brakiem NAT",
+        "D": "NAT w routerze domowym"
+      },
+      "correct": "B",
+      "explanation": "100.64.0.0/10."
+    },
+    {
+      "question": "Dlaczego logi NAT są ważne w reagowaniu na incydenty?",
+      "options": {
+        "A": "Bo zawierają hasła",
+        "B": "Bo zastępują EDR",
+        "C": "Pozwalają ustalić, który host wewnętrzny stał za adresem i portem publicznym w danym czasie",
+        "D": "Bo przyspieszają ruch"
+      },
+      "correct": "C",
+      "explanation": "Czas + krotka."
+    },
+    {
+      "question": "Co trzeba znać, by zidentyfikować hosta za PAT na podstawie logu serwera?",
+      "options": {
+        "A": "Tylko User-Agent",
+        "B": "Tylko adres MAC",
+        "C": "Tylko adres publiczny",
+        "D": "Adres i port publiczny oraz dokładny czas"
+      },
+      "correct": "D",
+      "explanation": "Synchronizacja NTP."
+    },
+    {
+      "question": "Czym jest NAT 1:1 w odróżnieniu od PAT?",
+      "options": {
+        "A": "Stałym powiązaniem jednego adresu prywatnego z jednym publicznym",
+        "B": "Translacją IPv6 na IPv4",
+        "C": "Translacją portów",
+        "D": "Translacją wielu na jeden"
+      },
+      "correct": "A",
+      "explanation": "Działa w obie strony."
+    },
+    {
+      "question": "Jak zobaczyć liczbę wpisów conntrack?",
+      "options": {
+        "A": "ss -s",
+        "B": "ip route",
+        "C": "conntrack -C lub sysctl net.netfilter.nf_conntrack_count",
+        "D": "arp -n"
+      },
+      "correct": "C",
+      "explanation": "I limit nf_conntrack_max."
+    },
+    {
+      "question": "Dlaczego zapytania DNS (UDP) mocno obciążają conntrack w Kubernetes?",
+      "options": {
+        "A": "Bo DNS nie przechodzi przez NAT",
+        "B": "Każde zapytanie tworzy osobny wpis UDP",
+        "C": "Bo DNS jest szyfrowany",
+        "D": "Bo DNS używa TCP"
+      },
+      "correct": "B",
+      "explanation": "NodeLocal DNSCache pomaga."
+    },
+    {
+      "question": "Czym jest NAT64?",
+      "options": {
+        "A": "Translacją między IPv6 a IPv4 dla sieci IPv6-only",
+        "B": "Szyfrowanym NAT",
+        "C": "NAT dla 64 hostów",
+        "D": "NAT na porcie 64"
+      },
+      "correct": "A",
+      "explanation": "Z DNS64."
+    },
+    {
+      "question": "Czy w IPv6 zwykle stosuje się NAT?",
+      "options": {
+        "A": "Tak, wymagany przez RFC",
+        "B": "Tak, tylko PAT",
+        "C": "Tak, zawsze",
+        "D": "Nie — hosty mają globalne adresy, a ochronę daje firewall"
+      },
+      "correct": "D",
+      "explanation": "NPTv6 w szczególnych przypadkach."
+    },
+    {
+      "question": "Czym jest NPTv6?",
+      "options": {
+        "A": "PAT dla IPv6",
+        "B": "Protokołem routingu",
+        "C": "Bezstanową translacją prefiksów IPv6 (RFC 6296)",
+        "D": "Typem adresu link-local"
+      },
+      "correct": "C",
+      "explanation": "Bez portów."
+    },
+    {
+      "question": "Dlaczego reguła DNAT bez reguły FORWARD może nie działać?",
+      "options": {
+        "A": "Bo DNAT wymaga SNAT",
+        "B": "Bo brak trasy domyślnej",
+        "C": "Bo DNAT działa tylko w OUTPUT",
+        "D": "Bo filtr FORWARD z polityką DROP odrzuci przekierowany ruch"
+      },
+      "correct": "D",
+      "explanation": "Translacja ≠ zezwolenie."
+    },
+    {
+      "question": "Jaki port docelowy widzi łańcuch FORWARD po DNAT 8443 → 443?",
+      "options": {
+        "A": "8443",
+        "B": "443 (już po translacji)",
+        "C": "Losowy",
+        "D": "0"
+      },
+      "correct": "B",
+      "explanation": "DNAT w PREROUTING jest wcześniej."
+    },
+    {
+      "question": "Co się stanie, gdy serwer za DNAT odpowiada inną bramą niż router robiący DNAT?",
+      "options": {
+        "A": "Odpowiedź nie zostanie przetłumaczona i klient ją odrzuci",
+        "B": "Router zrobi hairpin",
+        "C": "Nic",
+        "D": "Połączenie przyspieszy"
+      },
+      "correct": "A",
+      "explanation": "Asymetria."
+    },
+    {
+      "question": "Które protokoły wymagają helperów ALG przy NAT?",
+      "options": {
+        "A": "DNS przez TCP",
+        "B": "Takie, które przenoszą adresy w treści (np. FTP aktywny, SIP)",
+        "C": "HTTPS",
+        "D": "SSH"
+      },
+      "correct": "B",
+      "explanation": "nf_conntrack_ftp, sip."
+    },
+    {
+      "question": "Dlaczego wystawianie RDP przez port forwarding jest ryzykowne?",
+      "options": {
+        "A": "Bo wymaga IPv6",
+        "B": "Bo RDP używa UDP",
+        "C": "Usługa staje się celem skanów i ataków brute force/exploitów z Internetu",
+        "D": "Bo RDP nie działa przez NAT"
+      },
+      "correct": "C",
+      "explanation": "Użyj VPN/ZTNA."
+    },
+    {
+      "question": "Jaki jest bezpieczniejszy sposób zdalnego dostępu do bazy niż port forwarding?",
+      "options": {
+        "A": "VPN lub bastion/ZTNA z MFA",
+        "B": "UPnP",
+        "C": "Wyłączenie hasła",
+        "D": "Zmiana portu na niestandardowy"
+      },
+      "correct": "A",
+      "explanation": "Brak ekspozycji."
+    },
+    {
+      "question": "Co oznacza wpis „tcp 6 118 TIME_WAIT” w conntrack?",
+      "options": {
+        "A": "Błąd 118",
+        "B": "118 aktywnych połączeń",
+        "C": "Port 118",
+        "D": "Połączenie TCP w stanie TIME_WAIT, wpis wygaśnie za 118 s"
+      },
+      "correct": "D",
+      "explanation": "Czas do wygaśnięcia."
+    },
+    {
+      "question": "Dlaczego port źródłowy często jest zachowywany przez NAT?",
+      "options": {
+        "A": "Implementacje próbują go zachować, gdy nie koliduje z istniejącą translacją",
+        "B": "Bo jest szyfrowany",
+        "C": "Bo RFC tego zabrania zmieniać",
+        "D": "Bo NAT nie zna portów"
+      },
+      "correct": "A",
+      "explanation": "Przy kolizji — inny port."
+    },
+    {
+      "question": "Jaki zakres portów jest typowo używany przez PAT?",
+      "options": {
+        "A": "Tylko 80 i 443",
+        "B": "Tylko 0–1023",
+        "C": "Tylko 49152–49200",
+        "D": "Porty nieuprzywilejowane (np. 1024–65535)"
+      },
+      "correct": "D",
+      "explanation": "Konfigurowalny."
+    },
+    {
+      "question": "Gdzie w AWS widać adresy przed i za NAT w logach przepływów?",
+      "options": {
+        "A": "CloudTrail",
+        "B": "VPC Flow Logs z polami pkt-srcaddr/pkt-dstaddr",
+        "C": "Route 53 logs",
+        "D": "S3 access logs"
+      },
+      "correct": "B",
+      "explanation": "Wersja z dodatkowymi polami."
+    },
+    {
+      "question": "Co to jest twice NAT?",
+      "options": {
+        "A": "CGNAT",
+        "B": "NAT wykonany dwa razy przez pomyłkę",
+        "C": "Jednoczesna translacja adresu źródłowego i docelowego",
+        "D": "NAT dla IPv6"
+      },
+      "correct": "C",
+      "explanation": "Przy nakładających się sieciach."
+    },
+    {
+      "question": "Kiedy NAT jest nieuniknionym obejściem nakładających się zakresów adresów?",
+      "options": {
+        "A": "Nigdy",
+        "B": "Gdy dwie sieci z tym samym zakresem muszą się komunikować, a renumeracja nie jest możliwa od razu",
+        "C": "Zawsze przy VPN",
+        "D": "Tylko w IPv6"
+      },
+      "correct": "B",
+      "explanation": "Docelowo renumeracja."
+    },
+    {
+      "question": "Jaki sysctl włącza przekazywanie pakietów potrzebne dla NAT na routerze Linux?",
+      "options": {
+        "A": "net.ipv4.ip_forward=1",
+        "B": "net.core.nat=on",
+        "C": "kernel.nat_enable=1",
+        "D": "net.ipv4.nat=1"
+      },
+      "correct": "A",
+      "explanation": "Bez tego brak routingu."
+    },
+    {
+      "question": "Które polecenie nftables tworzy masquerade?",
+      "options": {
+        "A": "masq on wan0",
+        "B": "nat enable wan0",
+        "C": "iifname \"wan0\" dnat",
+        "D": "oifname \"wan0\" masquerade w łańcuchu typu nat z hookiem postrouting"
+      },
+      "correct": "D",
+      "explanation": "priority srcnat."
+    },
+    {
+      "question": "Dlaczego w AWS umieszcza się NAT Gateway w każdej strefie?",
+      "options": {
+        "A": "Bo wymaga tego IAM",
+        "B": "Bo inaczej nie działa DNS",
+        "C": "Dla odporności na awarię strefy i uniknięcia ruchu międzystrefowego",
+        "D": "Bo jeden NAT GW nie obsługuje TCP"
+      },
+      "correct": "C",
+      "explanation": "Route table per AZ."
+    },
+    {
+      "question": "Co to jest Proxy Protocol v2?",
+      "options": {
+        "A": "Typ NAT",
+        "B": "Binarny nagłówek na początku połączenia TCP przekazujący oryginalny adres klienta",
+        "C": "Wersja HTTP",
+        "D": "Protokół routingu"
+      },
+      "correct": "B",
+      "explanation": "Dla balanserów L4."
+    },
+    {
+      "question": "Dlaczego limit „połączeń na cel” nie dotyczy ruchu do wielu różnych celów?",
+      "options": {
+        "A": "Bo NAT pomija takie połączenia",
+        "B": "Bo różne cele używają IPv6",
+        "C": "Bo wtedy NAT jest wyłączony",
+        "D": "Bo krotki do różnych celów są różne, więc porty mogą się powtarzać"
+      },
+      "correct": "D",
+      "explanation": "Unikalna krotka."
+    },
+    {
+      "question": "Co się dzieje z istniejącymi połączeniami po zmianie reguły NAT?",
+      "options": {
+        "A": "Zwykle działają dalej według starej translacji z conntrack",
+        "B": "Przechodzą na IPv6",
+        "C": "Są zrywane zawsze",
+        "D": "Natychmiast zmieniają adres"
+      },
+      "correct": "A",
+      "explanation": "conntrack -F czyści wpisy."
+    },
+    {
+      "question": "Jak wyczyścić wpisy conntrack po zmianie reguł NAT?",
+      "options": {
+        "A": "ip route flush",
+        "B": "sysctl -p",
+        "C": "conntrack -F (lub -D z filtrem)",
+        "D": "iptables -Z"
+      },
+      "correct": "C",
+      "explanation": "Ostrożnie na produkcji."
+    },
+    {
+      "question": "Czym różni się DNAT od reverse proxy?",
+      "options": {
+        "A": "Proxy działa tylko w UDP",
+        "B": "DNAT zmienia adres w pakietach (L3/L4), proxy kończy połączenie i otwiera nowe (L7)",
+        "C": "Niczym",
+        "D": "DNAT szyfruje ruch"
+      },
+      "correct": "B",
+      "explanation": "Proxy widzi HTTP."
+    },
+    {
+      "question": "Dlaczego serwer w Internecie nie może zainicjować połączenia do laptopa za PAT?",
+      "options": {
+        "A": "Bo TCP nie pozwala",
+        "B": "Bo blokuje to DNS",
+        "C": "Bo bez wpisu translacji router nie wie, do którego hosta skierować ruch",
+        "D": "Bo laptop nie ma karty sieciowej"
+      },
+      "correct": "C",
+      "explanation": "Brak mapowania."
+    },
+    {
+      "question": "Co oznacza adres 203.0.113.5:51000 w logu serwera, gdy klient stoi za PAT?",
+      "options": {
+        "A": "Adres i port po translacji — wiele hostów może dzielić ten adres",
+        "B": "Adres serwera DNS",
+        "C": "Adres bramy klienta w LAN",
+        "D": "Prywatny adres klienta"
+      },
+      "correct": "A",
+      "explanation": "Inside global."
+    },
+    {
+      "question": "Jaki zakres adresów współdzielonych stosuje CGNAT?",
+      "options": {
+        "A": "169.254.0.0/16",
+        "B": "192.0.2.0/24",
+        "C": "10.0.0.0/8",
+        "D": "100.64.0.0/10"
+      },
+      "correct": "D",
+      "explanation": "RFC 6598."
+    }
+  ]
 }
