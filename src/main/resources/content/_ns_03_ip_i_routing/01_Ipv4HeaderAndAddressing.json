@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Każdy pakiet ma kopertę — naucz się ją czytać",
+      "image": "netsec/ns03-01-header.svg",
+      "imageAlt": "Układ nagłówka IPv4 w pięciu 32-bitowych wierszach: Version i IHL po 4 bity, DSCP 6 bitów, ECN 2 bity, Total Length 16 bitów; Identification 16, Flags 3, Fragment Offset 13; TTL 8, Protocol 8, Header Checksum 16; adres źródłowy 32 bity; adres docelowy 32 bity; opcjonalne opcje do 40 bajtów.",
+      "body": "Gdy Twoja aplikacja Spring Boot wysyła odpowiedź JSON, dane trafiają do TCP, a TCP oddaje segment warstwie sieciowej. Ta dokleja z przodu **20 bajtów nagłówka IPv4** — kopertę z adresem nadawcy, adresem odbiorcy i kilkoma polami, które decydują o losie pakietu w drodze przez kilkanaście routerów: ile skoków może jeszcze przeżyć (TTL), czy wolno go pociąć (DF), jak pilny jest (DSCP), co jest w środku (Protocol) i czy koperta nie została uszkodzona (Header Checksum).\n\nRozdział 03 to serce sieci: **adresacja IP i routing**. Zaczynamy od nagłówka, bo każda kolejna lekcja — maski, podsieci, routing, NAT, fragmentacja, ICMP, traceroute — to po prostu „co router robi z którym polem”. W tej lekcji:\n- wszystkie pola nagłówka IPv4 (RFC 791) i ich praktyczne znaczenie,\n- **Packet Lab**: ręczne dekodowanie nagłówka z hexdumpu i sprawdzenie w Wiresharku,\n- suma kontrolna nagłówka policzona krok po kroku,\n- adres jako dwie części — **sieć i host** — oraz historia klas A/B/C i dlaczego zastąpił je CIDR,\n- parsowanie nagłówka w Javie (`ByteBuffer`) i co z nagłówka wynika dla bezpieczeństwa (spoofing, TTL, fragmentacja).\n\nCele egzaminacyjne: **Network+ N10-009** domena 1 (koncepcje sieciowe: model OSI, adresacja IPv4, enkapsulacja) i **CCNA 200-301 v2** (adresacja IPv4, weryfikacja parametrów IP). Dla blue teamu nagłówek to pierwsze, co widzisz w alertach IDS i w logach firewalla — TTL, flagi i długości często zdradzają skaner, tunel albo próbę obejścia filtrów.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Pola nagłówka IPv4 — słownik",
+      "body": "- **Version (4 bity)** — 4 dla IPv4 (6 dla IPv6). Pierwsza cyfra hex nagłówka: `4x`.\n- **IHL — Internet Header Length (4 bity)** — długość nagłówka w **słowach 32-bitowych**; 5 = 20 B (bez opcji), maksimum 15 = 60 B. Druga cyfra hex: `45` to „IPv4, 20 B”.\n- **DSCP (6 bitów)** — klasa usługi dla QoS (dawniej ToS): 0 = best effort, **46 = EF** (głos), 34 = AF41 (wideo), 48 = CS6 (sterowanie siecią).\n- **ECN (2 bity)** — Explicit Congestion Notification: router zamiast wyrzucić pakiet oznacza go (11 = CE, „zatłoczenie”); 00 = nieużywane, 01/10 = nadawca obsługuje ECN.\n- **Total Length (16 bitów)** — długość całego pakietu (nagłówek + dane) w bajtach; maksimum 65 535.\n- **Identification (16 bitów)** — numer pakietu; wspólny dla wszystkich fragmentów jednego datagramu.\n- **Flags (3 bity)** — bit zarezerwowany (0), **DF** (Don’t Fragment — nie wolno ciąć; podstawa PMTUD), **MF** (More Fragments — po mnie są kolejne fragmenty).\n- **Fragment Offset (13 bitów)** — pozycja fragmentu w oryginale, w **jednostkach 8 bajtów**.\n- **TTL — Time To Live (8 bitów)** — licznik skoków; każdy router zmniejsza o 1, przy 0 pakiet jest odrzucany i wraca ICMP Time Exceeded (na tym działa traceroute). Typowe wartości startowe: 64 (Linux, macOS, Android), 128 (Windows), 255 (urządzenia sieciowe).\n- **Protocol (8 bitów)** — co jest w środku: 1 ICMP, 2 IGMP, 6 TCP, 17 UDP, 41 IPv6 (enkapsulacja), 47 GRE, 50 ESP (IPsec), 51 AH (IPsec), 89 OSPF, 112 VRRP, 132 SCTP.\n- **Header Checksum (16 bitów)** — suma kontrolna samego nagłówka (dopełnienie do jedności sumy słów 16-bitowych).\n- **Source / Destination Address (po 32 bity)** — adresy nadawcy i odbiorcy.\n- **Options** — rzadkie (np. Record Route, Router Alert); zwykle blokowane lub ignorowane.\n- **Adres = sieć + host** — początkowe bity wskazują sieć (o tym decyduje maska/prefiks), końcowe — konkretny interfejs w tej sieci.\n- **Klasy A/B/C/D/E** — historyczny (do 1993) podział, w którym długość części sieciowej wynikała z pierwszych bitów adresu.\n- **CIDR** — Classless Inter-Domain Routing: prefiks dowolnej długości zapisywany jawnie (`10.20.0.0/16`).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Koperta listu poleconego",
+      "body": "Nagłówek IPv4 to **koperta**, a segment TCP z danymi to list w środku:\n- **adresy** — nadawca i odbiorca; poczta (routery) patrzy tylko na adres odbiorcy, a adres nadawcy… każdy może wpisać dowolny (to jest **IP spoofing** — dlatego nie wolno ufać adresowi źródłowemu jako dowodowi tożsamości).\n- **TTL** — pieczątka „ważne przez 64 sortownie”; każda sortownia odlicza jedną, a list, który krąży w kółko (pętla routingu), w końcu zostaje zniszczony zamiast blokować pocztę na zawsze.\n- **Protocol** — naklejka „w środku: dokumenty / paczka / list do działu reklamacji” — mówi odbiorcy, któremu działowi (TCP, UDP, ICMP) oddać zawartość.\n- **DSCP** — „priorytet” albo „ekspres”; poczta firmowa (sieć z QoS) obsługuje go szybciej, poczta publiczna (Internet) zwykle ignoruje.\n- **DF + Fragment Offset** — „nie przepakowywać” albo numeracja paczek „część 2 z 3, zaczyna się od strony 185”.\n- **Header Checksum** — suma kontrolna kodu pocztowego: sortownia sprawdza, czy adres na kopercie nie został zamazany. Nie sprawdza zawartości listu — od tego jest TCP.\n- **Klasy adresów** to stary system, w którym kod pocztowy miał tylko trzy rozmiary: „miasto”, „dzielnica” i „ulica”. Firma potrzebująca dwóch ulic musiała dostać całą dzielnicę. CIDR pozwolił przydzielać „tyle ulic, ile trzeba”.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Packet Lab: zdekoduj nagłówek z hexdumpu",
+      "image": "netsec/ns03-01-decode.svg",
+      "imageAlt": "Hexdump 20 bajtów nagłówka IPv4: 45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22 zdekodowany na pola: wersja 4, IHL 5, DSCP 0, długość całkowita 60, identyfikator 0x1c46, flaga DF, TTL 64, protokół 6 TCP, suma kontrolna 0x26e9, źródło 192.168.1.10, cel 93.184.216.34.",
+      "body": "Oto pierwsze 20 bajtów pakietu (po nagłówku Ethernet) — tak wygląda okno „Packet Bytes” w Wiresharku. Dekoduj po kolei: najpierw bajt z wersją i IHL, potem idź według rysunku nagłówka. Bajty wielobajtowych pól czytamy w kolejności **big-endian** („network byte order” — najstarszy bajt pierwszy).",
+      "code": "45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22\n\nbajt 0      45           → Version 4, IHL 5 → nagłówek 20 B\nbajt 1      00           → DSCP 0, ECN 0\nbajty 2–3   00 3c        → Total Length 0x003c = 60 B → dane: 60 − 20 = 40 B\nbajty 4–5   1c 46        → Identification 0x1c46 = 7238\nbajty 6–7   40 00        → 0100 0000 0000 0000: DF=1, MF=0, Fragment Offset 0\nbajt 8      40           → TTL 0x40 = 64\nbajt 9      06           → Protocol 6 = TCP\nbajty 10–11 26 e9        → Header Checksum 0x26e9 (poprawna: suma słów = 0xffff)\nbajty 12–15 c0 a8 01 0a  → 192.168.1.10\nbajty 16–19 5d b8 d8 22  → 93.184.216.34\n\nSprawdzenie w Wiresharku: zapisz bajty do pliku i zaimportuj (File → Import from Hex Dump, typ „Raw IPv4”)\nalbo przechwyć własny ruch:  sudo tcpdump -ni any -c 1 -XX 'tcp port 443'"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Nagłówek w Javie: parsowanie z ByteBuffer",
+      "body": "Ten sam dekoder w Javie. Kluczowe szczegóły: `ByteBuffer` domyślnie jest **big-endian** (zgodny z siecią), bajty w Javie są ze znakiem, więc maskujemy `& 0xFF` / `& 0xFFFF`, a pola bitowe wyciągamy przesunięciami i maskami. Takiego kodu użyjesz w parserze pcap, w teście protokołu albo w narzędziu, które analizuje ruch z `tcpdump -w`.",
+      "code": "import java.net.InetAddress;\nimport java.nio.ByteBuffer;\nimport java.util.HexFormat;\n\nrecord Ipv4Header(int version, int ihl, int dscp, int ecn, int totalLength, int id, boolean df, boolean mf,\n                  int fragmentOffset, int ttl, int protocol, int checksum, InetAddress src, InetAddress dst) {\n\n    static Ipv4Header parse(byte[] packet) throws Exception {\n        ByteBuffer b = ByteBuffer.wrap(packet);                  // big-endian = network byte order\n        int vihl = b.get() & 0xFF;\n        int tos = b.get() & 0xFF;\n        int total = b.getShort() & 0xFFFF;\n        int id = b.getShort() & 0xFFFF;\n        int flagsFrag = b.getShort() & 0xFFFF;\n        int ttl = b.get() & 0xFF, proto = b.get() & 0xFF, csum = b.getShort() & 0xFFFF;\n        byte[] s = new byte[4], d = new byte[4];\n        b.get(s).get(d);\n        return new Ipv4Header(vihl >>> 4, vihl & 0x0F, tos >>> 2, tos & 0x03, total, id,\n                (flagsFrag & 0x4000) != 0, (flagsFrag & 0x2000) != 0, flagsFrag & 0x1FFF,\n                ttl, proto, csum, InetAddress.getByAddress(s), InetAddress.getByAddress(d));\n    }\n\n    static boolean checksumOk(byte[] packet, int headerLen) {\n        long sum = 0;\n        for (int i = 0; i < headerLen; i += 2) sum += ((packet[i] & 0xFF) << 8) | (packet[i + 1] & 0xFF);\n        while ((sum >>> 16) != 0) sum = (sum & 0xFFFF) + (sum >>> 16);\n        return sum == 0xFFFF;\n    }\n\n    public static void main(String[] args) throws Exception {\n        byte[] p = HexFormat.ofDelimiter(\" \").parseHex(\"45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22\");\n        Ipv4Header h = parse(p);\n        System.out.println(h);                                   // ... ttl=64, protocol=6, src=/192.168.1.10, dst=/93.184.216.34\n        System.out.println(\"checksum OK: \" + checksumOk(p, h.ihl() * 4));   // true\n    }\n}"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Suma kontrolna nagłówka krok po kroku",
+      "image": "netsec/ns03-01-checksum.svg",
+      "imageAlt": "Obliczenie sumy kontrolnej nagłówka IPv4: pole sumy wyzerowane, 10 słów 16-bitowych zsumowanych, przeniesienie dodane do wyniku, negacja daje 0x26e9. Odbiorca sumuje słowa razem z polem sumy i oczekuje 0xffff. Router przelicza sumę po zmianie TTL; IPv6 nie ma sumy nagłówka.",
+      "body": "Algorytm z RFC 791/1071 — „suma w arytmetyce dopełnienia do jedności”:\n1. Wpisz **0000** w pole Header Checksum.\n2. Podziel nagłówek na **słowa 16-bitowe** (20 B → 10 słów): 4500 003c 1c46 4000 4006 0000 c0a8 010a 5db8 d822.\n3. Dodaj je zwykle: suma = **0x2d914**.\n4. Bity powyżej 16 (**przeniesienie** = 2) dodaj z powrotem do dolnych 16 bitów: 0xd914 + 2 = **0xd916** (powtarzaj, dopóki jest przeniesienie).\n5. **Zaneguj** bity: ~0xd916 = **0x26e9** — to wpisujesz do nagłówka.\n6. **Weryfikacja**: odbiorca sumuje wszystkie słowa łącznie z sumą kontrolną; wynik 0xffff (po zawinięciu przeniesień) = nagłówek nieuszkodzony.\n7. Każdy router zmniejsza TTL, więc **musi przeliczyć sumę** na każdym skoku (w praktyce przyrostowo, RFC 1624).\n\nDlaczego to ważne w praktyce: Wireshark na **wychodzących** pakietach często pokazuje „Header checksum: 0x0000 [incorrect]” — to nie błąd sieci, tylko **checksum offload**: system zostawia liczenie karcie sieciowej, a capture łapie pakiet, zanim karta go policzy. Uszkodzony nagłówek w ruchu **przychodzącym** to już sygnał problemu (wadliwy sprzęt, błędny „middlebox”, ręcznie skrojony pakiet).",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Adres to sieć + host; klasy to historia, ale wciąż wracają w pytaniach",
+      "image": "netsec/ns03-01-classes.svg",
+      "imageAlt": "Podział pierwszego oktetu na klasy: A 0–127 z maską /8, B 128–191 z /16, C 192–223 z /24, D 224–239 multicast, E 240–255 zarezerwowane. Klasy marnowały adresy i powiększały tablice routingu; w 1993 zastąpił je CIDR z prefiksem dowolnej długości i agregacją tras.",
+      "body": "Każdy adres IPv4 ma dwie części: **część sieciową** (wspólną dla wszystkich hostów w podsieci — według niej routery wybierają trasę) i **część hosta** (unikalną w obrębie podsieci). Granicę wyznacza **maska / prefiks** — o niej cała lekcja 03 i 04. Przykład: w `192.168.1.10/24` część sieciowa to `192.168.1`, host to `.10`.\n\n**Klasy (RFC 791, 1981)**: długość części sieciowej wynikała z pierwszych bitów adresu:\n- **klasa A**: pierwsze bity 0, pierwszy oktet 0–127, maska domyślna /8 — 128 sieci po 16 777 214 hostów\n- **klasa B**: pierwsze bity 10, pierwszy oktet 128–191, maska domyślna /16 — 16 384 sieci po 65 534 hosty\n- **klasa C**: pierwsze bity 110, pierwszy oktet 192–223, maska domyślna /24 — 2 097 152 sieci po 254 hosty\n- **klasa D**: pierwsze bity 1110, pierwszy oktet 224–239, maska domyślna — — multicast\n- **klasa E**: pierwsze bity 1111, pierwszy oktet 240–255, maska domyślna — — zarezerwowane (eksperymentalne)\n\n**Dlaczego umarły:** firma z 2000 hostami nie mieściła się w klasie C (254), więc dostawała klasę B (65 534 adresy — ponad 96% zmarnowanych); pula klas B wyczerpywała się na początku lat 90., a rozdawanie wielu klas C zamiast jednej B rozdymało tablice routingu w Internecie. W 1993 r. wprowadzono **CIDR** (RFC 1519, dziś RFC 4632): prefiks dowolnej długości (/22, /27…) i **agregacja tras** (cztery sieci /24 ogłaszane jako jedna /22).\n\n**Co z klas zostało:** nazwy w mowie potocznej („klasa C” = /24), zakres D = **multicast** (224.0.0.0/4), zakres E = zarezerwowany (240.0.0.0/4), prywatne pule z RFC 1918 pokrywające się z dawnymi granicami (10/8, 172.16/12, 192.168/16 — lekcja 06) i… pytania egzaminacyjne (Network+ wciąż pyta o klasy). Pamiętaj: **dziś maska zawsze jest podawana jawnie**, a urządzenie nie „zgaduje” jej z klasy (wyjątek: niektóre stare protokoły jak RIPv1 — classful).",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Nagłówek na żywo: tcpdump, Wireshark, ip i ping",
+      "body": "Zobacz pola nagłówka we własnym ruchu i sprawdź, jak zmieniają je polecenia. Każde polecenie poniżej ustawia lub odczytuje konkretne pole:",
+      "code": "# pełny nagłówek z dekodowaniem (-v pokazuje TTL, ID, flagi, długość, protokół, DSCP jako tos)\nsudo tcpdump -ni any -v -c 3 icmp\n#  IP (tos 0x0, ttl 64, id 47123, offset 0, flags [DF], proto ICMP (1), length 84)\n#      10.0.2.15 > 8.8.8.8: ICMP echo request ...\n\n# TTL: ustaw ręcznie i zobacz, kto odpowiada Time Exceeded (zasada działania traceroute)\nping -c1 -t 1 8.8.8.8          # Linux: -t TTL;   Windows: ping -i 1 8.8.8.8\nping -c1 -t 3 8.8.8.8          # odpowie 3. router na ścieżce\n\n# DF i rozmiar pakietu (Total Length = 1472 + 8 + 20 = 1500)\nping -c1 -M do -s 1472 8.8.8.8\n\n# DSCP: oznacz ruch jako EF (46 << 2 = 184 = 0xb8)\nping -c1 -Q 0xb8 10.0.0.1      # tcpdump pokaże \"tos 0xb8\"\n\n# filtry Wiresharka na pola nagłówka\nip.ttl < 5                      # pakiety bliskie wygaśnięcia (traceroute, pętle)\nip.flags.df == 0 && ip.len > 1400\nip.dsfield.dscp == 46           # ruch głosowy\nip.flags.mf == 1 || ip.frag_offset > 0      # fragmenty\nip.checksum_bad.expert          # błędna suma (pamiętaj o offloadzie)\nip.src == 192.168.1.10 && ip.proto == 17    # UDP z danego hosta\n\n# Java: TTL i DSCP gniazda\n#   socket.setOption(StandardSocketOptions.IP_TOS, 0xb8);        // DSCP EF (system może zignorować)\n#   multicastSocket.setTimeToLive(1);                             // multicast tylko w lokalnej sieci"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie nagłówek IPv4 spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **Diagnoza „wolnej sieci”** — Total Length i DF w capture pokazują, czy pakiety mieszczą się w MTU (lekcja 11); ID i Fragment Offset — czy ktoś je tnie.\n- **QoS i DSCP** — wideokonferencje, VoIP, ruch sterujący w Kubernetes; aplikacja może oznaczać ruch (`IP_TOS`), ale chmura i Internet zwykle zerują DSCP.\n- **Kontenery i tunele** — overlay (VXLAN, IPsec, WireGuard) dokleja kolejny nagłówek IP: Protocol 50 (ESP), 17 (VXLAN po UDP), 4 (IP-in-IP) — w capture widzisz „pakiet w pakiecie”.\n- **Logi load balancerów** — adres źródłowy po NAT/proxy to adres balansera; prawdziwy adres klienta jest w nagłówku HTTP `X-Forwarded-For` lub w protokole PROXY — a nie w nagłówku IP.\n- **Parsowanie ruchu w Javie** — biblioteki pcap4j, Netty (`EpollDatagramChannel` z surowymi pakietami), testy protokołów.\n\n**Blue team:**\n- **Spoofing** — adres źródłowy nie jest uwierzytelniony; ataki odbite/wzmocnione (DNS, NTP, memcached) podszywają się pod adres ofiary. Obrona: **BCP 38 / RFC 2827** (filtrowanie ruchu wychodzącego z nieswoich adresów), uRPF na routerach.\n- **TTL jako odcisk palca** — ruch z „Windowsa” z TTL 64 albo nagłe zmiany TTL od tego samego źródła mogą zdradzać NAT, proxy lub spreparowane pakiety; narzędzia pasywnego fingerprintingu (p0f) i reguły IDS korzystają z TTL.\n- **Fragmentacja** — nakładające się fragmenty i bardzo małe pierwsze fragmenty to klasyczna próba ominięcia IDS/firewalla; nowoczesne urządzenia składają fragmenty przed inspekcją (reguły Suricata `fragbits`, `fragoffset`).\n- **Pola nietypowe** — opcje IP (np. Source Route), zarezerwowany bit flag ustawiony, Total Length niezgodne z rozmiarem ramki — to anomalie warte alertu.\n- **Mapowanie na certyfikaty:** Security+ (ataki sieciowe, spoofing), CySA+ (analiza ruchu i alertów IDS), BTL1 (analiza pcap).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy przy czytaniu nagłówka",
+      "body": "- **IHL to nie bajty.** Wartość 5 oznacza 5 słów × 4 B = 20 B. Pomyłka przesuwa cały dalszy parsing.\n- **Total Length obejmuje nagłówek.** Dane = Total Length − IHL×4, a nie Total Length.\n- **Fragment Offset jest w jednostkach 8 bajtów.** Offset 185 oznacza 1480. bajt oryginału, nie 185.\n- **Kolejność bajtów.** Sieć używa big-endian; w C na x86 trzeba `ntohs()`, w Javie `ByteBuffer` robi to domyślnie — chyba że ktoś ustawi `ByteOrder.LITTLE_ENDIAN`.\n- **Bajty w Javie są ze znakiem.** `(byte) 0xc0` to −64; bez `& 0xFF` adres 192.168… wyjdzie z liczbami ujemnymi.\n- **„Checksum incorrect” w Wiresharku** na ruchu wychodzącym to prawie zawsze checksum offload, nie uszkodzenie.\n- **TTL nie jest czasem.** Mimo nazwy to licznik skoków (każdy router −1); TTL w DNS to zupełnie inna rzecz (sekundy w cache).\n- **Adres źródłowy nie jest dowodem tożsamości.** Allow-listy po IP to tylko jedna warstwa — za NAT-em, proxy i przy spoofingu UDP adres kłamie.\n- **Klasa nie wyznacza maski.** `10.1.2.3/24` to poprawna podsieć /24 z dawnej klasy A; „adres z klasy A” nie oznacza maski /8.\n- **DSCP to nie gwarancja.** Oznaczenie pakietu nic nie daje, jeśli urządzenia po drodze nie mają polityk QoS — a w Internecie DSCP bywa zerowane.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: parser nagłówka z typowymi błędami",
+      "body": "Ten kod „prawie działa” na testowym pakiecie, ale psuje się na prawdziwym ruchu: ignoruje IHL (opcje), myli jednostki i znak bajtów.",
+      "code": "int version = packet[0] >> 4;                    // -64 >> 4 dla bajtu 0xC0? tu akurat 0x45, ale znak bajtu to pułapka\nint headerLen = packet[0] & 0x0F;                 // BŁĄD: to słowa, nie bajty (5 zamiast 20)\nint totalLength = packet[2] + packet[3];          // BŁĄD: to nie suma bajtów, tylko liczba 16-bitowa (i znak!)\nint payloadLen = totalLength;                     // BŁĄD: Total Length zawiera nagłówek\nint fragOffset = ((packet[6] & 0x1F) << 8) | packet[7];   // BŁĄD: brak & 0xFF i brak ×8\nString src = packet[12] + \".\" + packet[13] + \".\" + packet[14] + \".\" + packet[15];   // \"-64.-88.1.10\"\nbyte[] tcp = Arrays.copyOfRange(packet, 20, packet.length);  // BŁĄD: zakłada brak opcji IP\nboolean trusted = src.startsWith(\"10.\");          // BŁĄD: adres źródłowy jako uwierzytelnienie"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: maski, jednostki i granice z nagłówka",
+      "body": "Każde pole czytane jako liczba bez znaku, długości w poprawnych jednostkach, dane wycinane według IHL i Total Length (a nie według długości bufora — ramka Ethernet może mieć padding), walidacja przed użyciem.",
+      "code": "int vihl = packet[0] & 0xFF;\nif ((vihl >>> 4) != 4) throw new IllegalArgumentException(\"to nie IPv4\");\nint headerLen = (vihl & 0x0F) * 4;                                    // słowa → bajty\nif (headerLen < 20) throw new IllegalArgumentException(\"IHL < 5\");\nint totalLength = ((packet[2] & 0xFF) << 8) | (packet[3] & 0xFF);\nif (totalLength < headerLen || totalLength > packet.length) throw new IllegalArgumentException(\"zła długość\");\nint flagsFrag = ((packet[6] & 0xFF) << 8) | (packet[7] & 0xFF);\nint fragOffsetBytes = (flagsFrag & 0x1FFF) * 8;                       // jednostki 8 B\nInetAddress src = InetAddress.getByAddress(Arrays.copyOfRange(packet, 12, 16));\nbyte[] payload = Arrays.copyOfRange(packet, headerLen, totalLength);  // bez opcji i bez paddingu ramki\n// tożsamość klienta: mTLS / token / podpis — adres IP najwyżej jako dodatkowy sygnał"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Które pole sprawdzić przy jakim problemie",
+      "body": "Ściąga: objaw → pole nagłówka → narzędzie.",
+      "code": "OBJAW / PYTANIE                                   POLE                         JAK SPRAWDZIĆ\ntraceroute, „TTL exceeded in transit”, pętla       TTL                          tcpdump -v ; ip.ttl < 5\nduże pakiety giną, małe przechodzą                 Total Length, DF             ping -M do -s ; ip.flags.df\npakiety pocięte na kawałki                         ID, MF, Fragment Offset      ip.flags.mf == 1 || ip.frag_offset > 0\nQoS nie działa dla VoIP                            DSCP                         ip.dsfield.dscp == 46 po obu stronach łącza\nco niesie pakiet (TCP/UDP/ESP/GRE)?                Protocol                     ip.proto ; tcpdump \"proto 50\"\n„checksum incorrect” w capture                     Header Checksum              sprawdź offload: ethtool -k eth0 | grep checksum\nskąd naprawdę przyszedł ruch?                      Source Address (+ NAT!)      logi NAT/proxy, X-Forwarded-For, protokół PROXY\npodejrzenie skanowania / spoofingu                 TTL, ID, opcje, flagi        p0f, reguły IDS, porównanie TTL z typem systemu\nodpowiedzi ECN-CE, mniejsza przepustowość          ECN                          ip.dsfield.ecn == 3"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Nagłówek IPv4 bez opcji ma **20 B** w 5 wierszach po 32 bity; `45` na początku = IPv4 + IHL 5.\n- Pola: Version, IHL (słowa 32-bit), DSCP/ECN, Total Length (z nagłówkiem), ID, flagi DF/MF, Fragment Offset (×8 B), TTL (skoki), Protocol (1/6/17…), Header Checksum, adresy.\n- Suma kontrolna: suma słów 16-bit z przeniesieniem i negacja; weryfikacja daje 0xffff; router przelicza ją po zmianie TTL; IPv6 jej nie ma.\n- Dekodowanie: bajty w kolejności big-endian; w Javie `ByteBuffer` i maski `& 0xFF`/`& 0xFFFF`.\n- Adres = część sieci + część hosta; granicę wyznacza maska. Klasy A/B/C (do 1993) zastąpił **CIDR** (RFC 1519/4632) — maska zawsze jawna.\n- Bezpieczeństwo: adres źródłowy można sfałszować (BCP 38, uRPF), TTL i flagi pomagają wykrywać anomalie, fragmentacja bywa użyta do omijania IDS.\n- Następna lekcja: **system dwójkowy dla sieciowca** — bity, oktety i AND, bez których nie da się policzyć maski.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Packet Lab: zdekoduj nagłówek IPv4 z hexdumpu: 45 00 00 4c 8f 2a 40 00 80 11 57 3d 0a 00 00 05 0a 00 00 35. Podaj wersję, długość nagłówka, DSCP/ECN, długość całkowitą i danych, ID, flagi, offset, TTL, protokół, adresy.",
+      "hint": "Bajt 0: wersja i IHL; bajty 2–3 długość; 6–7 flagi i offset; 8 TTL; 9 protokół; 12–19 adresy.",
+      "solution": "Version 4, IHL 5 (20 B), DSCP 0, ECN 0, Total Length 76 B (dane 56 B), ID 0x8f2a = 36650, DF=1, MF=0, offset 0 (= 0 B), TTL 128, Protocol 17 (UDP), checksum 0x573d (poprawna), 10.0.0.5 → 10.0.0.53."
+    },
+    {
+      "prompt": "Packet Lab: zdekoduj nagłówek IPv4 z hexdumpu: 45 00 00 54 00 01 40 00 01 01 bd 81 ac 10 00 07 08 08 08 08. Podaj wersję, długość nagłówka, DSCP/ECN, długość całkowitą i danych, ID, flagi, offset, TTL, protokół, adresy.",
+      "hint": "Bajt 0: wersja i IHL; bajty 2–3 długość; 6–7 flagi i offset; 8 TTL; 9 protokół; 12–19 adresy.",
+      "solution": "Version 4, IHL 5 (20 B), DSCP 0, ECN 0, Total Length 84 B (dane 64 B), ID 0x0001 = 1, DF=1, MF=0, offset 0 (= 0 B), TTL 1, Protocol 1 (ICMP), checksum 0xbd81 (poprawna), 172.16.0.7 → 8.8.8.8."
+    },
+    {
+      "prompt": "Packet Lab: zdekoduj nagłówek IPv4 z hexdumpu: 45 b8 00 c8 33 44 40 00 3f 11 e8 ca 0a 14 01 0f 0a 14 09 28. Podaj wersję, długość nagłówka, DSCP/ECN, długość całkowitą i danych, ID, flagi, offset, TTL, protokół, adresy.",
+      "hint": "Bajt 0: wersja i IHL; bajty 2–3 długość; 6–7 flagi i offset; 8 TTL; 9 protokół; 12–19 adresy.",
+      "solution": "Version 4, IHL 5 (20 B), DSCP 46, ECN 0, Total Length 200 B (dane 180 B), ID 0x3344 = 13124, DF=1, MF=0, offset 0 (= 0 B), TTL 63, Protocol 17 (UDP), checksum 0xe8ca (poprawna), 10.20.1.15 → 10.20.9.40."
+    },
+    {
+      "prompt": "Packet Lab: zdekoduj nagłówek IPv4 z hexdumpu: 45 00 05 dc be ef 20 b9 3b 11 34 17 cb 00 71 09 c6 33 64 14. Podaj wersję, długość nagłówka, DSCP/ECN, długość całkowitą i danych, ID, flagi, offset, TTL, protokół, adresy.",
+      "hint": "Bajt 0: wersja i IHL; bajty 2–3 długość; 6–7 flagi i offset; 8 TTL; 9 protokół; 12–19 adresy.",
+      "solution": "Version 4, IHL 5 (20 B), DSCP 0, ECN 0, Total Length 1500 B (dane 1480 B), ID 0xbeef = 48879, DF=0, MF=1, offset 185 (= 1480 B), TTL 59, Protocol 17 (UDP), checksum 0x3417 (poprawna), 203.0.113.9 → 198.51.100.20."
+    },
+    {
+      "prompt": "Packet Lab: zdekoduj nagłówek IPv4 z hexdumpu: 45 02 00 34 0a 0b 40 00 2f 06 e8 4d 97 65 01 45 c0 a8 00 17. Podaj wersję, długość nagłówka, DSCP/ECN, długość całkowitą i danych, ID, flagi, offset, TTL, protokół, adresy.",
+      "hint": "Bajt 0: wersja i IHL; bajty 2–3 długość; 6–7 flagi i offset; 8 TTL; 9 protokół; 12–19 adresy.",
+      "solution": "Version 4, IHL 5 (20 B), DSCP 0, ECN 2, Total Length 52 B (dane 32 B), ID 0x0a0b = 2571, DF=1, MF=0, offset 0 (= 0 B), TTL 47, Protocol 6 (TCP), checksum 0xe84d (poprawna), 151.101.1.69 → 192.168.0.23."
+    },
+    {
+      "prompt": "Policz ręcznie sumę kontrolną nagłówka 45 00 00 4c 8f 2a 40 00 80 11 xx xx 0a 00 00 05 0a 00 00 35 (pole sumy zastąpione „xx xx”).",
+      "hint": "Wyzeruj sumę, dodaj 10 słów 16-bit, dodaj przeniesienie, zaneguj.",
+      "solution": "Słowa: 4500 + 004c + 8f2a + 4000 + 8011 + 0000 + 0a00 + 0005 + 0a00 + 0035 = 0x1a8c1; przeniesienie 1 → 0xa8c2; negacja → 0x573d."
+    },
+    {
+      "prompt": "Policz ręcznie sumę kontrolną nagłówka 45 00 00 54 00 01 40 00 01 01 xx xx ac 10 00 07 08 08 08 08 (pole sumy zastąpione „xx xx”).",
+      "hint": "Wyzeruj sumę, dodaj 10 słów 16-bit, dodaj przeniesienie, zaneguj.",
+      "solution": "Słowa: 4500 + 0054 + 0001 + 4000 + 0101 + 0000 + ac10 + 0007 + 0808 + 0808 = 0x1427d; przeniesienie 1 → 0x427e; negacja → 0xbd81."
+    },
+    {
+      "prompt": "Policz ręcznie sumę kontrolną nagłówka 45 b8 00 c8 33 44 40 00 3f 11 xx xx 0a 14 01 0f 0a 14 09 28 (pole sumy zastąpione „xx xx”).",
+      "hint": "Wyzeruj sumę, dodaj 10 słów 16-bit, dodaj przeniesienie, zaneguj.",
+      "solution": "Słowa: 45b8 + 00c8 + 3344 + 4000 + 3f11 + 0000 + 0a14 + 010f + 0a14 + 0928 = 0x11734; przeniesienie 1 → 0x1735; negacja → 0xe8ca."
+    },
+    {
+      "prompt": "Do której historycznej klasy należy adres 10.20.30.40 i jaką maskę domyślną przypisałby mu system klasowy? Czy dziś ta maska obowiązuje?",
+      "hint": "Pierwszy oktet: 0–127 A, 128–191 B, 192–223 C, 224–239 D, 240–255 E.",
+      "solution": "Klasa A (pierwszy oktet 10, zakres 0–127), maska klasowa /8. Dziś maska jest podawana jawnie (CIDR) i nie wynika z klasy."
+    },
+    {
+      "prompt": "Do której historycznej klasy należy adres 172.31.0.1 i jaką maskę domyślną przypisałby mu system klasowy? Czy dziś ta maska obowiązuje?",
+      "hint": "Pierwszy oktet: 0–127 A, 128–191 B, 192–223 C, 224–239 D, 240–255 E.",
+      "solution": "Klasa B (pierwszy oktet 172, zakres 128–191), maska klasowa /16. Dziś maska jest podawana jawnie (CIDR) i nie wynika z klasy."
+    },
+    {
+      "prompt": "Do której historycznej klasy należy adres 192.168.100.7 i jaką maskę domyślną przypisałby mu system klasowy? Czy dziś ta maska obowiązuje?",
+      "hint": "Pierwszy oktet: 0–127 A, 128–191 B, 192–223 C, 224–239 D, 240–255 E.",
+      "solution": "Klasa C (pierwszy oktet 192, zakres 192–223), maska klasowa /24. Dziś maska jest podawana jawnie (CIDR) i nie wynika z klasy."
+    },
+    {
+      "prompt": "Do której historycznej klasy należy adres 224.0.0.251 i jaką maskę domyślną przypisałby mu system klasowy? Czy dziś ta maska obowiązuje?",
+      "hint": "Pierwszy oktet: 0–127 A, 128–191 B, 192–223 C, 224–239 D, 240–255 E.",
+      "solution": "Klasa D (pierwszy oktet 224, zakres 224–239), maska klasowa — — to adres multicast. Dziś maska jest podawana jawnie (CIDR) i nie wynika z klasy."
+    },
+    {
+      "prompt": "Do której historycznej klasy należy adres 127.0.0.1 i jaką maskę domyślną przypisałby mu system klasowy? Czy dziś ta maska obowiązuje?",
+      "hint": "Pierwszy oktet: 0–127 A, 128–191 B, 192–223 C, 224–239 D, 240–255 E.",
+      "solution": "Klasa A (pierwszy oktet 127, zakres 0–127), maska klasowa /8. Dziś maska jest podawana jawnie (CIDR) i nie wynika z klasy; 127.0.0.0/8 to pętla zwrotna."
+    },
+    {
+      "prompt": "Do której historycznej klasy należy adres 240.1.1.1 i jaką maskę domyślną przypisałby mu system klasowy? Czy dziś ta maska obowiązuje?",
+      "hint": "Pierwszy oktet: 0–127 A, 128–191 B, 192–223 C, 224–239 D, 240–255 E.",
+      "solution": "Klasa E (pierwszy oktet 240, zakres 240–255), maska klasowa — — zakres zarezerwowany. Dziś maska jest podawana jawnie (CIDR) i nie wynika z klasy."
+    },
+    {
+      "prompt": "Przechwyć tcpdumpem jeden pakiet HTTPS ze swojego komputera (tcpdump -ni any -c1 -XX \"tcp port 443\"), zdekoduj ręcznie nagłówek IP z hexdumpu, a potem porównaj z dekodowaniem Wiresharka.",
+      "hint": "Pamiętaj o nagłówku Ethernet/SLL przed IP.",
+      "solution": "Na interfejsie fizycznym IP zaczyna się po 14 B Ethernetu (EtherType 0x0800); na „any” — po 16 B nagłówka Linux cooked (SLL). Dekodujesz: 45 → IPv4/20 B, długość, ID, DF zwykle ustawione dla TCP, TTL 64 (Linux) lub 128 (Windows), protokół 6, adresy. Suma kontrolna wychodzącego pakietu może być „incorrect” przez offload — to normalne."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego router po zmniejszeniu TTL musi przeliczyć sumę kontrolną i dlaczego IPv6 zrezygnował z tej sumy.",
+      "hint": "Suma obejmuje TTL; koszt na każdym skoku.",
+      "solution": "Suma kontrolna obejmuje cały nagłówek, w tym TTL, więc każda zmiana TTL unieważnia sumę — router aktualizuje ją (przyrostowo, RFC 1624) na każdym skoku. IPv6 usunął sumę nagłówka, bo warstwy L2 (CRC ramki) i L4 (sumy TCP/UDP obowiązkowe w IPv6) wykrywają błędy, a brak przeliczania przyspiesza przekazywanie pakietów."
+    },
+    {
+      "prompt": "Napisz w Javie metodę, która przyjmuje 20-bajtowy nagłówek z wyzerowaną sumą kontrolną, wylicza sumę i wpisuje ją do bajtów 10–11. Przetestuj na przykładzie z lekcji.",
+      "hint": "Pętla po słowach, zawijanie przeniesień, ~ i maska 0xFFFF.",
+      "solution": "static void fillChecksum(byte[] h) { h[10] = 0; h[11] = 0; long s = 0; for (int i = 0; i < 20; i += 2) s += ((h[i] & 0xFF) << 8) | (h[i + 1] & 0xFF); while ((s >>> 16) != 0) s = (s & 0xFFFF) + (s >>> 16); int c = (int) (~s & 0xFFFF); h[10] = (byte) (c >>> 8); h[11] = (byte) c; } — dla nagłówka z lekcji wynik to 0x26e9 (bajty 26 e9)."
+    },
+    {
+      "prompt": "Na podstawie TTL w odpowiedziach oszacuj system i liczbę skoków: odpowiedzi przychodzą z TTL 116, 57 i 249.",
+      "hint": "Najbliższa typowa wartość startowa powyżej odczytu: 64, 128, 255.",
+      "solution": "TTL 116 → start 128 (Windows), 12 skoków; TTL 57 → start 64 (Linux/macOS/Android), 7 skoków; TTL 249 → start 255 (router/urządzenie sieciowe, np. Cisco), 6 skoków. To heurystyka — TTL można zmienić, a NAT i tunele zakłócają odczyt."
+    },
+    {
+      "prompt": "Firma potrzebuje adresów dla 2000 hostów. Porównaj przydział klasowy z przydziałem CIDR i policz marnotrawstwo.",
+      "hint": "Klasa C = 254, klasa B = 65 534; CIDR: najmniejszy prefiks ≥ 2000 hostów.",
+      "solution": "Klasowo: C za mała (254), więc klasa B — 65 534 adresy, wykorzystane 2000 (ok. 3%), zmarnowane ok. 63 500 (ok. 97%). CIDR: /21 = 2046 hostów (2^11 − 2) — marnotrawstwo 46 adresów. Alternatywnie klasowo 8 sieci C, ale to 8 wpisów w tablicach routingu zamiast jednego /21."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest IP spoofing, dlaczego jest łatwy dla UDP, a trudny dla pełnego połączenia TCP, oraz jak mu przeciwdziałać.",
+      "hint": "Brak uwierzytelnienia źródła; handshake TCP; BCP 38.",
+      "solution": "Nadawca może wpisać dowolny adres źródłowy — sieć go nie weryfikuje. Dla UDP wystarczy jeden pakiet (np. zapytanie DNS/NTP z adresem ofiary → atak odbity i wzmocniony). Dla TCP fałszywy nadawca nie dostaje SYN-ACK (idzie do prawdziwego właściciela adresu), więc nie zestawi połączenia (poza zgadywaniem numerów sekwencyjnych — dziś losowych). Obrona: BCP 38/RFC 2827 (ISP i firmy odrzucają ruch wychodzący z obcych adresów), uRPF, wyłączanie otwartych resolverów/wzmacniaczy, rate limiting, a w aplikacjach — nieufanie adresowi IP jako tożsamości."
+    },
+    {
+      "prompt": "Zaprojektuj trzy reguły IDS/SIEM wykorzystujące pola nagłówka IPv4 do wykrywania anomalii i opisz fałszywe alarmy.",
+      "hint": "TTL, fragmenty, opcje, niezgodność długości.",
+      "solution": "1) Pakiety z opcjami IP (IHL > 5) z Internetu — rzadkie, często skanery lub próby source routing; FP: niektóre protokoły multicast (Router Alert w IGMP). 2) Fragmenty o małym pierwszym fragmencie lub nakładające się offsety — próba ominięcia inspekcji; FP: rzadko, czasem źle skonfigurowane tunele. 3) Nagła zmiana TTL dla tego samego źródła w trakcie sesji — możliwe wstrzykiwanie pakietów lub zmiana trasy; FP: zmiany routingu, load balancery. Wszystkie korelować z innymi sygnałami, nie blokować w ciemno."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między DSCP a ECN i podaj po jednym przykładzie wykorzystania każdego w środowisku aplikacji Java.",
+      "hint": "QoS vs sygnalizacja zatłoczenia.",
+      "solution": "DSCP (6 bitów) to klasa ruchu dla polityk QoS — np. ruch WebRTC/VoIP oznaczony EF (46) dostaje priorytet w sieci firmowej; aplikacja może ustawić IP_TOS na gnieździe, ale sieć decyduje, czy go uszanuje. ECN (2 bity) to sygnał od routerów, że kolejka się zapełnia — zamiast gubić pakiety oznaczają je CE, a TCP odbiorcy informuje nadawcę, który zwalnia; włączany w systemie (net.ipv4.tcp_ecn), zwiększa płynność np. przy dużych transferach między mikroserwisami w centrum danych."
+    },
+    {
+      "prompt": "Pakiet ma Total Length 1500, MF=1 i Fragment Offset 185. Którą część oryginalnego datagramu niesie i czy jest ostatni?",
+      "hint": "Offset × 8; dane = Total Length − 20.",
+      "solution": "Dane fragmentu: 1500 − 20 = 1480 B, zaczynają się od bajtu 1480 oryginalnych danych (185 × 8), więc obejmują bajty 1480–2959. MF=1 oznacza, że nie jest ostatni — po nim przychodzą kolejne fragmenty z tym samym ID."
+    },
+    {
+      "prompt": "Dlaczego w capture z interfejsu „any” na Linuksie nagłówek IP zaczyna się w innym miejscu niż przy przechwytywaniu z eth0?",
+      "hint": "Linux cooked capture (SLL).",
+      "solution": "Na konkretnym interfejsie Ethernet przed IP jest nagłówek Ethernet II (14 B: MAC docelowy, źródłowy, EtherType). Pseudo-interfejs „any” nie ma jednej warstwy L2, więc libpcap stosuje nagłówek Linux cooked capture SLL (16 B, w SLL2 — 20 B). Parser musi brać pod uwagę typ łącza (DLT/LINKTYPE) z nagłówka pliku pcap."
+    },
+    {
+      "prompt": "Oblicz wartość bajtu DSCP/ECN (drugi bajt nagłówka) dla: a) DSCP 46, ECN 0; b) DSCP 34, ECN 2; c) DSCP 0, ECN 3. Podaj wynik hex i co oznacza.",
+      "hint": "Bajt = DSCP × 4 + ECN (DSCP zajmuje 6 starszych bitów).",
+      "solution": "a) 46 × 4 = 184 = 0xb8 — EF, głos (tcpdump: tos 0xb8). b) 34 × 4 + 2 = 138 = 0x8a — AF41 (wideo), nadawca obsługuje ECN (ECT(0)). c) 0 + 3 = 0x03 — best effort, CE: router zasygnalizował zatłoczenie."
+    },
+    {
+      "prompt": "Jaka jest maksymalna liczba bajtów danych w pakiecie IPv4 i maksymalna długość nagłówka? Skąd te limity?",
+      "hint": "Total Length 16 bitów; IHL 4 bity.",
+      "solution": "Total Length ma 16 bitów → maks. 65 535 B całego pakietu; przy nagłówku 20 B danych może być 65 515 B. IHL ma 4 bity → maks. 15 słów × 4 B = 60 B nagłówka (40 B opcji). W praktyce pakiet ogranicza MTU łącza (zwykle 1500 B), więc większe datagramy są fragmentowane lub — przy DF — odrzucane."
+    },
+    {
+      "prompt": "Dlaczego allow-lista adresów IP w aplikacji za load balancerem często „nie działa” i jak to poprawnie rozwiązać?",
+      "hint": "Adres źródłowy po proxy; X-Forwarded-For; zaufane proxy.",
+      "solution": "Za reverse proxy/load balancerem nagłówek IP zawiera adres balansera, więc aplikacja widzi zawsze ten sam adres. Prawdziwy adres klienta jest w X-Forwarded-For/Forwarded lub w protokole PROXY. W Spring Boot: server.forward-headers-strategy=native/framework i ufanie nagłówkom tylko od znanych proxy (inaczej klient sfałszuje X-Forwarded-For). Allow-lista po IP to i tak dodatek do uwierzytelnienia, nie jego zamiennik."
+    },
+    {
+      "prompt": "Podaj numery protokołów i znaczenie: ICMP, TCP, UDP, GRE, ESP, OSPF, VRRP. Do czego przyda Ci się ta wiedza przy regułach firewalla?",
+      "hint": "Pole Protocol.",
+      "solution": "ICMP 1, TCP 6, UDP 17, GRE 47, ESP 50, OSPF 89, VRRP 112. Firewall filtruje po numerze protokołu — tunel IPsec wymaga przepuszczenia ESP (50) i UDP 500/4500, GRE wymaga protokołu 47 (nie portu!), OSPF między routerami 89. Reguły „tylko TCP i UDP” po cichu psują VPN-y i protokoły routingu."
+    },
+    {
+      "prompt": "Wireshark pokazuje na pakietach wysyłanych z Twojego laptopa „Header checksum: 0x0000 incorrect”, a serwer odpowiada normalnie. Wyjaśnij i potwierdź hipotezę.",
+      "hint": "Checksum offload; ethtool -k.",
+      "solution": "To checksum offload: system przekazuje karcie nagłówek z wyzerowaną sumą, a karta liczy ją sprzętowo tuż przed wysłaniem — capture widzi pakiet wcześniej. Potwierdzenie: ethtool -k eth0 | grep checksum → tx-checksumming: on; capture po drugiej stronie (na serwerze) pokazuje poprawną sumę. W Wiresharku można wyłączyć walidację sumy w ustawieniach protokołu IPv4."
+    },
+    {
+      "prompt": "Wyjaśnij, czym różni się adres sieci od adresu hosta na przykładzie 192.168.1.10/24 i 10.20.30.40/16 oraz dlaczego routery patrzą tylko na część sieciową.",
+      "hint": "Maska jako granica; tablica routingu zawiera sieci.",
+      "solution": "192.168.1.10/24: sieć 192.168.1.0 (pierwsze 24 bity), host .10 (ostatnie 8 bitów). 10.20.30.40/16: sieć 10.20.0.0, część hosta 30.40. Routery przechowują trasy do sieci (prefiksów), a nie do każdego hosta — dzięki temu tablica Internetu ma ok. miliona prefiksów zamiast miliardów adresów; dopiero ostatni router (w sieci docelowej) używa ARP, by znaleźć konkretny host."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Nagłówek: 45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22. Jaki jest TTL?",
+      "options": {
+        "A": "65",
+        "B": "128",
+        "C": "64",
+        "D": "6"
+      },
+      "correct": "C",
+      "explanation": "Bajt 8 = 0x40 = 64."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22. Jaki protokół niesie pakiet?",
+      "options": {
+        "A": "50 — ESP (IPsec)",
+        "B": "6 — TCP",
+        "C": "17 — UDP",
+        "D": "1 — ICMP"
+      },
+      "correct": "B",
+      "explanation": "Bajt 9 = 6."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22. Ile bajtów danych (bez nagłówka IP) zawiera pakiet?",
+      "options": {
+        "A": "60",
+        "B": "32",
+        "C": "80",
+        "D": "40"
+      },
+      "correct": "D",
+      "explanation": "Total Length 60 − 20 B nagłówka = 40."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 3c 1c 46 40 00 40 06 26 e9 c0 a8 01 0a 5d b8 d8 22. Jaki jest adres docelowy?",
+      "options": {
+        "A": "93.184.216.34",
+        "B": "c0.a8.1.a",
+        "C": "34.216.184.93",
+        "D": "192.168.1.10"
+      },
+      "correct": "A",
+      "explanation": "Bajty 16–19 → 93.184.216.34."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 4c 8f 2a 40 00 80 11 57 3d 0a 00 00 05 0a 00 00 35. Jaki jest TTL?",
+      "options": {
+        "A": "17",
+        "B": "129",
+        "C": "256",
+        "D": "128"
+      },
+      "correct": "D",
+      "explanation": "Bajt 8 = 0x80 = 128."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 4c 8f 2a 40 00 80 11 57 3d 0a 00 00 05 0a 00 00 35. Jaki protokół niesie pakiet?",
+      "options": {
+        "A": "6 — TCP",
+        "B": "1 — ICMP",
+        "C": "17 — UDP",
+        "D": "50 — ESP (IPsec)"
+      },
+      "correct": "C",
+      "explanation": "Bajt 9 = 17."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 4c 8f 2a 40 00 80 11 57 3d 0a 00 00 05 0a 00 00 35. Ile bajtów danych (bez nagłówka IP) zawiera pakiet?",
+      "options": {
+        "A": "56",
+        "B": "76",
+        "C": "48",
+        "D": "96"
+      },
+      "correct": "A",
+      "explanation": "Total Length 76 − 20 B nagłówka = 56."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 4c 8f 2a 40 00 80 11 57 3d 0a 00 00 05 0a 00 00 35. Jaki jest adres docelowy?",
+      "options": {
+        "A": "10.0.0.5",
+        "B": "10.0.0.53",
+        "C": "53.0.0.10",
+        "D": "a.0.0.5"
+      },
+      "correct": "B",
+      "explanation": "Bajty 16–19 → 10.0.0.53."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 54 00 01 40 00 01 01 bd 81 ac 10 00 07 08 08 08 08. Jaki jest TTL?",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "65",
+        "D": "0001"
+      },
+      "correct": "A",
+      "explanation": "Bajt 8 = 0x1 = 1."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 54 00 01 40 00 01 01 bd 81 ac 10 00 07 08 08 08 08. Jaki protokół niesie pakiet?",
+      "options": {
+        "A": "50 — ESP (IPsec)",
+        "B": "6 — TCP",
+        "C": "1 — ICMP",
+        "D": "17 — UDP"
+      },
+      "correct": "C",
+      "explanation": "Bajt 9 = 1."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 54 00 01 40 00 01 01 bd 81 ac 10 00 07 08 08 08 08. Ile bajtów danych (bez nagłówka IP) zawiera pakiet?",
+      "options": {
+        "A": "84",
+        "B": "104",
+        "C": "56",
+        "D": "64"
+      },
+      "correct": "D",
+      "explanation": "Total Length 84 − 20 B nagłówka = 64."
+    },
+    {
+      "question": "Nagłówek: 45 00 00 54 00 01 40 00 01 01 bd 81 ac 10 00 07 08 08 08 08. Jaki jest adres docelowy?",
+      "options": {
+        "A": "8.8.8.9",
+        "B": "8.8.8.8",
+        "C": "172.16.0.7",
+        "D": "ac.10.0.7"
+      },
+      "correct": "B",
+      "explanation": "Bajty 16–19 → 8.8.8.8."
+    },
+    {
+      "question": "Nagłówek: 45 b8 00 c8 33 44 40 00 3f 11 e8 ca 0a 14 01 0f 0a 14 09 28. Jaki jest TTL?",
+      "options": {
+        "A": "126",
+        "B": "64",
+        "C": "17",
+        "D": "63"
+      },
+      "correct": "D",
+      "explanation": "Bajt 8 = 0x3f = 63."
+    },
+    {
+      "question": "Nagłówek: 45 b8 00 c8 33 44 40 00 3f 11 e8 ca 0a 14 01 0f 0a 14 09 28. Jaki protokół niesie pakiet?",
+      "options": {
+        "A": "6 — TCP",
+        "B": "1 — ICMP",
+        "C": "17 — UDP",
+        "D": "50 — ESP (IPsec)"
+      },
+      "correct": "C",
+      "explanation": "Bajt 9 = 17."
+    },
+    {
+      "question": "Nagłówek: 45 b8 00 c8 33 44 40 00 3f 11 e8 ca 0a 14 01 0f 0a 14 09 28. Ile bajtów danych (bez nagłówka IP) zawiera pakiet?",
+      "options": {
+        "A": "220",
+        "B": "180",
+        "C": "200",
+        "D": "172"
+      },
+      "correct": "B",
+      "explanation": "Total Length 200 − 20 B nagłówka = 180."
+    },
+    {
+      "question": "Nagłówek: 45 b8 00 c8 33 44 40 00 3f 11 e8 ca 0a 14 01 0f 0a 14 09 28. Jaki jest adres docelowy?",
+      "options": {
+        "A": "10.20.9.40",
+        "B": "a.14.1.f",
+        "C": "40.9.20.10",
+        "D": "10.20.1.15"
+      },
+      "correct": "A",
+      "explanation": "Bajty 16–19 → 10.20.9.40."
+    },
+    {
+      "question": "Nagłówek: 45 00 05 dc be ef 20 b9 3b 11 34 17 cb 00 71 09 c6 33 64 14. Jaki jest TTL?",
+      "options": {
+        "A": "118",
+        "B": "60",
+        "C": "17",
+        "D": "59"
+      },
+      "correct": "D",
+      "explanation": "Bajt 8 = 0x3b = 59."
+    },
+    {
+      "question": "Nagłówek: 45 00 05 dc be ef 20 b9 3b 11 34 17 cb 00 71 09 c6 33 64 14. Jaki protokół niesie pakiet?",
+      "options": {
+        "A": "6 — TCP",
+        "B": "50 — ESP (IPsec)",
+        "C": "17 — UDP",
+        "D": "1 — ICMP"
+      },
+      "correct": "C",
+      "explanation": "Bajt 9 = 17."
+    },
+    {
+      "question": "Nagłówek: 45 00 05 dc be ef 20 b9 3b 11 34 17 cb 00 71 09 c6 33 64 14. Ile bajtów danych (bez nagłówka IP) zawiera pakiet?",
+      "options": {
+        "A": "1472",
+        "B": "1480",
+        "C": "1520",
+        "D": "1500"
+      },
+      "correct": "B",
+      "explanation": "Total Length 1500 − 20 B nagłówka = 1480."
+    },
+    {
+      "question": "Nagłówek: 45 00 05 dc be ef 20 b9 3b 11 34 17 cb 00 71 09 c6 33 64 14. Jaki jest adres docelowy?",
+      "options": {
+        "A": "198.51.100.20",
+        "B": "20.100.51.198",
+        "C": "cb.0.71.9",
+        "D": "203.0.113.9"
+      },
+      "correct": "A",
+      "explanation": "Bajty 16–19 → 198.51.100.20."
+    },
+    {
+      "question": "Nagłówek: 45 02 00 34 0a 0b 40 00 2f 06 e8 4d 97 65 01 45 c0 a8 00 17. Jaki jest TTL?",
+      "options": {
+        "A": "6",
+        "B": "94",
+        "C": "47",
+        "D": "48"
+      },
+      "correct": "C",
+      "explanation": "Bajt 8 = 0x2f = 47."
+    },
+    {
+      "question": "Nagłówek: 45 02 00 34 0a 0b 40 00 2f 06 e8 4d 97 65 01 45 c0 a8 00 17. Jaki protokół niesie pakiet?",
+      "options": {
+        "A": "1 — ICMP",
+        "B": "50 — ESP (IPsec)",
+        "C": "17 — UDP",
+        "D": "6 — TCP"
+      },
+      "correct": "D",
+      "explanation": "Bajt 9 = 6."
+    },
+    {
+      "question": "Nagłówek: 45 02 00 34 0a 0b 40 00 2f 06 e8 4d 97 65 01 45 c0 a8 00 17. Ile bajtów danych (bez nagłówka IP) zawiera pakiet?",
+      "options": {
+        "A": "72",
+        "B": "32",
+        "C": "24",
+        "D": "52"
+      },
+      "correct": "B",
+      "explanation": "Total Length 52 − 20 B nagłówka = 32."
+    },
+    {
+      "question": "Nagłówek: 45 02 00 34 0a 0b 40 00 2f 06 e8 4d 97 65 01 45 c0 a8 00 17. Jaki jest adres docelowy?",
+      "options": {
+        "A": "192.168.0.23",
+        "B": "23.0.168.192",
+        "C": "97.65.1.45",
+        "D": "151.101.1.69"
+      },
+      "correct": "A",
+      "explanation": "Bajty 16–19 → 192.168.0.23."
+    },
+    {
+      "question": "Bajty 6–7 nagłówka to 40 00. Co oznaczają?",
+      "options": {
+        "A": "DF=1, MF=0, offset 0 (0 B)",
+        "B": "DF=0, MF=0, offset 0 (0 B)",
+        "C": "DF=1, MF=0, offset 8 (64 B)",
+        "D": "DF=1, MF=1, offset 0 (0 B)"
+      },
+      "correct": "A",
+      "explanation": "Bit 0x4000 = DF, 0x2000 = MF, dolne 13 bitów = offset w jednostkach 8 B."
+    },
+    {
+      "question": "Bajty 6–7 nagłówka to 00 00. Co oznaczają?",
+      "options": {
+        "A": "DF=1, MF=0, offset 0 (0 B)",
+        "B": "DF=0, MF=1, offset 0 (0 B)",
+        "C": "DF=0, MF=0, offset 8 (64 B)",
+        "D": "DF=0, MF=0, offset 0 (0 B)"
+      },
+      "correct": "D",
+      "explanation": "Bit 0x4000 = DF, 0x2000 = MF, dolne 13 bitów = offset w jednostkach 8 B."
+    },
+    {
+      "question": "Bajty 6–7 nagłówka to 20 00. Co oznaczają?",
+      "options": {
+        "A": "DF=0, MF=0, offset 0 (0 B)",
+        "B": "DF=1, MF=1, offset 0 (0 B)",
+        "C": "DF=0, MF=1, offset 0 (0 B)",
+        "D": "DF=0, MF=1, offset 8 (64 B)"
+      },
+      "correct": "C",
+      "explanation": "Bit 0x4000 = DF, 0x2000 = MF, dolne 13 bitów = offset w jednostkach 8 B."
+    },
+    {
+      "question": "Bajty 6–7 nagłówka to 20 b9. Co oznaczają?",
+      "options": {
+        "A": "DF=0, MF=0, offset 185 (1480 B)",
+        "B": "DF=0, MF=1, offset 185 (1480 B)",
+        "C": "DF=0, MF=1, offset 1480 (11840 B)",
+        "D": "DF=1, MF=1, offset 185 (1480 B)"
+      },
+      "correct": "B",
+      "explanation": "Bit 0x4000 = DF, 0x2000 = MF, dolne 13 bitów = offset w jednostkach 8 B."
+    },
+    {
+      "question": "Bajty 6–7 nagłówka to 00 b9. Co oznaczają?",
+      "options": {
+        "A": "DF=0, MF=1, offset 185 (1480 B)",
+        "B": "DF=0, MF=0, offset 185 (1480 B)",
+        "C": "DF=1, MF=0, offset 185 (1480 B)",
+        "D": "DF=0, MF=0, offset 1480 (11840 B)"
+      },
+      "correct": "B",
+      "explanation": "Bit 0x4000 = DF, 0x2000 = MF, dolne 13 bitów = offset w jednostkach 8 B."
+    },
+    {
+      "question": "Bajty 6–7 nagłówka to 21 72. Co oznaczają?",
+      "options": {
+        "A": "DF=0, MF=1, offset 2960 (23680 B)",
+        "B": "DF=0, MF=0, offset 370 (2960 B)",
+        "C": "DF=0, MF=1, offset 370 (2960 B)",
+        "D": "DF=1, MF=1, offset 370 (2960 B)"
+      },
+      "correct": "C",
+      "explanation": "Bit 0x4000 = DF, 0x2000 = MF, dolne 13 bitów = offset w jednostkach 8 B."
+    },
+    {
+      "question": "Słowa 16-bitowe nagłówka (z sumą wyzerowaną) dają sumę 0x2d914. Jaka jest suma kontrolna?",
+      "options": {
+        "A": "0x26e9",
+        "B": "0xd916",
+        "C": "0xd914",
+        "D": "0x26eb"
+      },
+      "correct": "A",
+      "explanation": "Przeniesienie: 0xd914 + 2 = 0xd916; negacja → 0x26e9."
+    },
+    {
+      "question": "Słowa 16-bitowe nagłówka (z sumą wyzerowaną) dają sumę 0x1a8c1. Jaka jest suma kontrolna?",
+      "options": {
+        "A": "0xa8c1",
+        "B": "0x573e",
+        "C": "0xa8c2",
+        "D": "0x573d"
+      },
+      "correct": "D",
+      "explanation": "Przeniesienie: 0xa8c1 + 1 = 0xa8c2; negacja → 0x573d."
+    },
+    {
+      "question": "Słowa 16-bitowe nagłówka (z sumą wyzerowaną) dają sumę 0x1427d. Jaka jest suma kontrolna?",
+      "options": {
+        "A": "0x427e",
+        "B": "0x427d",
+        "C": "0xbd81",
+        "D": "0xbd82"
+      },
+      "correct": "C",
+      "explanation": "Przeniesienie: 0x427d + 1 = 0x427e; negacja → 0xbd81."
+    },
+    {
+      "question": "Słowa 16-bitowe nagłówka (z sumą wyzerowaną) dają sumę 0x11734. Jaka jest suma kontrolna?",
+      "options": {
+        "A": "0x1734",
+        "B": "0xe8cb",
+        "C": "0x1735",
+        "D": "0xe8ca"
+      },
+      "correct": "D",
+      "explanation": "Przeniesienie: 0x1734 + 1 = 0x1735; negacja → 0xe8ca."
+    },
+    {
+      "question": "Słowa 16-bitowe nagłówka (z sumą wyzerowaną) dają sumę 0x3cbe5. Jaka jest suma kontrolna?",
+      "options": {
+        "A": "0x3417",
+        "B": "0x341a",
+        "C": "0xcbe5",
+        "D": "0xcbe8"
+      },
+      "correct": "A",
+      "explanation": "Przeniesienie: 0xcbe5 + 3 = 0xcbe8; negacja → 0x3417."
+    },
+    {
+      "question": "Słowa 16-bitowe nagłówka (z sumą wyzerowaną) dają sumę 0x217b0. Jaka jest suma kontrolna?",
+      "options": {
+        "A": "0xe84f",
+        "B": "0xe84d",
+        "C": "0x17b2",
+        "D": "0x17b0"
+      },
+      "correct": "B",
+      "explanation": "Przeniesienie: 0x17b0 + 2 = 0x17b2; negacja → 0xe84d."
+    },
+    {
+      "question": "Jaką wartość ma drugi bajt nagłówka dla DSCP 46 (EF) i ECN 0?",
+      "options": {
+        "A": "0x2e",
+        "B": "0x38",
+        "C": "0x5c",
+        "D": "0xb8"
+      },
+      "correct": "D",
+      "explanation": "DSCP zajmuje 6 starszych bitów: 46 × 4 + 0 = 184."
+    },
+    {
+      "question": "Jaką wartość ma drugi bajt nagłówka dla DSCP 34 (AF41) i ECN 0?",
+      "options": {
+        "A": "0x08",
+        "B": "0x88",
+        "C": "0x44",
+        "D": "0x22"
+      },
+      "correct": "B",
+      "explanation": "DSCP zajmuje 6 starszych bitów: 34 × 4 + 0 = 136."
+    },
+    {
+      "question": "Jaką wartość ma drugi bajt nagłówka dla DSCP 0 (best effort + CE) i ECN 3?",
+      "options": {
+        "A": "0x03",
+        "B": "0x83",
+        "C": "0x07",
+        "D": "0xc0"
+      },
+      "correct": "A",
+      "explanation": "DSCP zajmuje 6 starszych bitów: 0 × 4 + 3 = 3."
+    },
+    {
+      "question": "Jaką wartość ma drugi bajt nagłówka dla DSCP 48 (CS6) i ECN 0?",
+      "options": {
+        "A": "0x40",
+        "B": "0x60",
+        "C": "0xc0",
+        "D": "0x30"
+      },
+      "correct": "C",
+      "explanation": "DSCP zajmuje 6 starszych bitów: 48 × 4 + 0 = 192."
+    },
+    {
+      "question": "Jaką wartość ma drugi bajt nagłówka dla DSCP 26 (AF31 + ECT(0)) i ECN 2?",
+      "options": {
+        "A": "0x36",
+        "B": "0x6a",
+        "C": "0x9a",
+        "D": "0x1c"
+      },
+      "correct": "B",
+      "explanation": "DSCP zajmuje 6 starszych bitów: 26 × 4 + 2 = 106."
+    },
+    {
+      "question": "Jaką wartość ma drugi bajt nagłówka dla DSCP 8 (CS1 + ECT(1)) i ECN 1?",
+      "options": {
+        "A": "0x21",
+        "B": "0x09",
+        "C": "0x11",
+        "D": "0x48"
+      },
+      "correct": "A",
+      "explanation": "DSCP zajmuje 6 starszych bitów: 8 × 4 + 1 = 33."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 10.1.1.1?",
+      "options": {
+        "A": "Klasa D",
+        "B": "Klasa B",
+        "C": "Klasa A",
+        "D": "Klasa C"
+      },
+      "correct": "C",
+      "explanation": "Pierwszy oktet 10 → 0–127."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 126.0.0.1?",
+      "options": {
+        "A": "Klasa C",
+        "B": "Klasa B",
+        "C": "Klasa D",
+        "D": "Klasa A"
+      },
+      "correct": "D",
+      "explanation": "Pierwszy oktet 126 → 0–127."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 128.0.0.1?",
+      "options": {
+        "A": "Klasa C",
+        "B": "Klasa A",
+        "C": "Klasa B",
+        "D": "Klasa D"
+      },
+      "correct": "C",
+      "explanation": "Pierwszy oktet 128 → 128–191."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 191.255.0.1?",
+      "options": {
+        "A": "Klasa B",
+        "B": "Klasa C",
+        "C": "Klasa A",
+        "D": "Klasa D"
+      },
+      "correct": "A",
+      "explanation": "Pierwszy oktet 191 → 128–191."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 192.0.2.1?",
+      "options": {
+        "A": "Klasa D",
+        "B": "Klasa C",
+        "C": "Klasa B",
+        "D": "Klasa A"
+      },
+      "correct": "B",
+      "explanation": "Pierwszy oktet 192 → 192–223."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 223.1.1.1?",
+      "options": {
+        "A": "Klasa B",
+        "B": "Klasa A",
+        "C": "Klasa D",
+        "D": "Klasa C"
+      },
+      "correct": "D",
+      "explanation": "Pierwszy oktet 223 → 192–223."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 224.0.0.5?",
+      "options": {
+        "A": "Klasa D",
+        "B": "Klasa A",
+        "C": "Klasa B",
+        "D": "Klasa C"
+      },
+      "correct": "A",
+      "explanation": "Pierwszy oktet 224 → 224–239."
+    },
+    {
+      "question": "Do której historycznej klasy należy adres 239.255.255.250?",
+      "options": {
+        "A": "Klasa C",
+        "B": "Klasa D",
+        "C": "Klasa A",
+        "D": "Klasa B"
+      },
+      "correct": "B",
+      "explanation": "Pierwszy oktet 239 → 224–239."
+    },
+    {
+      "question": "IHL = 5, Total Length = 1500. Ile bajtów danych niesie pakiet?",
+      "options": {
+        "A": "1460",
+        "B": "1500",
+        "C": "1480",
+        "D": "1495"
+      },
+      "correct": "C",
+      "explanation": "Nagłówek = 5 × 4 = 20 B; dane = 1500 − 20."
+    },
+    {
+      "question": "IHL = 6, Total Length = 576. Ile bajtów danych niesie pakiet?",
+      "options": {
+        "A": "576",
+        "B": "570",
+        "C": "532",
+        "D": "552"
+      },
+      "correct": "D",
+      "explanation": "Nagłówek = 6 × 4 = 24 B; dane = 576 − 24."
+    },
+    {
+      "question": "IHL = 15, Total Length = 1500. Ile bajtów danych niesie pakiet?",
+      "options": {
+        "A": "1500",
+        "B": "1420",
+        "C": "1485",
+        "D": "1440"
+      },
+      "correct": "D",
+      "explanation": "Nagłówek = 15 × 4 = 60 B; dane = 1500 − 60."
+    },
+    {
+      "question": "IHL = 5, Total Length = 40. Ile bajtów danych niesie pakiet?",
+      "options": {
+        "A": "40",
+        "B": "0",
+        "C": "20",
+        "D": "35"
+      },
+      "correct": "C",
+      "explanation": "Nagłówek = 5 × 4 = 20 B; dane = 40 − 20."
+    },
+    {
+      "question": "IHL = 7, Total Length = 100. Ile bajtów danych niesie pakiet?",
+      "options": {
+        "A": "72",
+        "B": "52",
+        "C": "93",
+        "D": "100"
+      },
+      "correct": "A",
+      "explanation": "Nagłówek = 7 × 4 = 28 B; dane = 100 − 28."
+    },
+    {
+      "question": "IHL = 5, Total Length = 65535. Ile bajtów danych niesie pakiet?",
+      "options": {
+        "A": "65535",
+        "B": "65515",
+        "C": "65495",
+        "D": "65530"
+      },
+      "correct": "B",
+      "explanation": "Nagłówek = 5 × 4 = 20 B; dane = 65535 − 20."
+    },
+    {
+      "question": "Ile bajtów ma nagłówek IPv4 bez opcji?",
+      "options": {
+        "A": "60",
+        "B": "20",
+        "C": "8",
+        "D": "40"
+      },
+      "correct": "B",
+      "explanation": "IHL 5."
+    },
+    {
+      "question": "Jaka jest maksymalna długość nagłówka IPv4?",
+      "options": {
+        "A": "64 bajty",
+        "B": "40 bajtów",
+        "C": "60 bajtów",
+        "D": "20 bajtów"
+      },
+      "correct": "C",
+      "explanation": "IHL 15 × 4."
+    },
+    {
+      "question": "W jakich jednostkach podawane jest pole IHL?",
+      "options": {
+        "A": "W słowach 32-bitowych (4 B)",
+        "B": "W jednostkach 8 B",
+        "C": "W bajtach",
+        "D": "W bitach"
+      },
+      "correct": "A",
+      "explanation": "5 = 20 B."
+    },
+    {
+      "question": "W jakich jednostkach podawany jest Fragment Offset?",
+      "options": {
+        "A": "W bitach",
+        "B": "W słowach 32-bit",
+        "C": "W bajtach",
+        "D": "W jednostkach 8 bajtów"
+      },
+      "correct": "D",
+      "explanation": "13 bitów × 8 = do 65 528 B."
+    },
+    {
+      "question": "Co oznacza pierwsza cyfra hex nagłówka „45”?",
+      "options": {
+        "A": "Długość nagłówka",
+        "B": "DSCP",
+        "C": "Wersję protokołu: 4",
+        "D": "Klasę adresu"
+      },
+      "correct": "C",
+      "explanation": "Druga cyfra to IHL."
+    },
+    {
+      "question": "Co zawiera pole Total Length?",
+      "options": {
+        "A": "Tylko długość danych",
+        "B": "Długość całego pakietu: nagłówek plus dane",
+        "C": "Długość ramki Ethernet",
+        "D": "Tylko długość nagłówka"
+      },
+      "correct": "B",
+      "explanation": "Maks. 65 535."
+    },
+    {
+      "question": "Do czego służy pole Identification?",
+      "options": {
+        "A": "Łączy fragmenty jednego datagramu",
+        "B": "Identyfikuje użytkownika",
+        "C": "Numeruje porty",
+        "D": "Identyfikuje sesję TCP"
+      },
+      "correct": "A",
+      "explanation": "Fragmenty mają to samo ID."
+    },
+    {
+      "question": "Co oznacza flaga DF?",
+      "options": {
+        "A": "Pakiet ma priorytet",
+        "B": "Pakiet jest uszkodzony",
+        "C": "Pakiet jest ostatnim fragmentem",
+        "D": "Pakietu nie wolno fragmentować"
+      },
+      "correct": "D",
+      "explanation": "Podstawa PMTUD."
+    },
+    {
+      "question": "Co oznacza flaga MF?",
+      "options": {
+        "A": "Pakietu nie wolno ciąć",
+        "B": "Pakiet jest multicastem",
+        "C": "Po tym fragmencie są kolejne",
+        "D": "Brak opcji"
+      },
+      "correct": "C",
+      "explanation": "Ostatni fragment ma MF=0."
+    },
+    {
+      "question": "Co robi router, gdy TTL spadnie do 0?",
+      "options": {
+        "A": "Wysyła TCP RST",
+        "B": "Odrzuca pakiet i wysyła ICMP Time Exceeded",
+        "C": "Przekazuje pakiet dalej",
+        "D": "Ustawia TTL na 64"
+      },
+      "correct": "B",
+      "explanation": "Na tym opiera się traceroute."
+    },
+    {
+      "question": "Jaka jest typowa początkowa wartość TTL w Windows?",
+      "options": {
+        "A": "64",
+        "B": "32",
+        "C": "255",
+        "D": "128"
+      },
+      "correct": "D",
+      "explanation": "Linux/macOS 64, urządzenia sieciowe 255."
+    },
+    {
+      "question": "Jaka jest typowa początkowa wartość TTL w Linuksie?",
+      "options": {
+        "A": "64",
+        "B": "255",
+        "C": "128",
+        "D": "30"
+      },
+      "correct": "A",
+      "explanation": "sysctl net.ipv4.ip_default_ttl."
+    },
+    {
+      "question": "Po co istnieje TTL?",
+      "options": {
+        "A": "Aby szyfrować nagłówek",
+        "B": "Aby wybrać trasę",
+        "C": "Aby pakiet nie krążył w nieskończoność przy pętli routingu",
+        "D": "Aby mierzyć czas w sekundach"
+      },
+      "correct": "C",
+      "explanation": "Licznik skoków, nie czas."
+    },
+    {
+      "question": "Jaki numer protokołu ma UDP?",
+      "options": {
+        "A": "1",
+        "B": "17",
+        "C": "50",
+        "D": "6"
+      },
+      "correct": "B",
+      "explanation": "TCP 6, ICMP 1."
+    },
+    {
+      "question": "Jaki numer protokołu ma ESP (IPsec)?",
+      "options": {
+        "A": "47",
+        "B": "51",
+        "C": "89",
+        "D": "50"
+      },
+      "correct": "D",
+      "explanation": "AH 51, GRE 47, OSPF 89."
+    },
+    {
+      "question": "Jaki numer protokołu ma GRE?",
+      "options": {
+        "A": "47",
+        "B": "41",
+        "C": "50",
+        "D": "17"
+      },
+      "correct": "A",
+      "explanation": "Firewall musi przepuścić protokół 47."
+    },
+    {
+      "question": "Co oznacza DSCP 46?",
+      "options": {
+        "A": "Ruch do odrzucenia",
+        "B": "Ruch sterujący siecią",
+        "C": "Expedited Forwarding — ruch głosowy",
+        "D": "Best effort"
+      },
+      "correct": "C",
+      "explanation": "Bajt ToS 0xb8."
+    },
+    {
+      "question": "Do czego służy ECN?",
+      "options": {
+        "A": "Do sygnalizowania zatłoczenia bez gubienia pakietów",
+        "B": "Do szyfrowania",
+        "C": "Do wyboru trasy",
+        "D": "Do fragmentacji"
+      },
+      "correct": "A",
+      "explanation": "CE = 11."
+    },
+    {
+      "question": "Co chroni suma kontrolna nagłówka IPv4?",
+      "options": {
+        "A": "Ramkę Ethernet",
+        "B": "Tylko dane",
+        "C": "Cały pakiet z danymi",
+        "D": "Tylko nagłówek IP"
+      },
+      "correct": "D",
+      "explanation": "Dane chroni TCP/UDP."
+    },
+    {
+      "question": "Dlaczego router musi przeliczać sumę kontrolną nagłówka?",
+      "options": {
+        "A": "Bo zmienia adres docelowy",
+        "B": "Bo zmienia TTL, który jest objęty sumą",
+        "C": "Bo szyfruje nagłówek",
+        "D": "Bo dodaje opcje"
+      },
+      "correct": "B",
+      "explanation": "RFC 1624 — aktualizacja przyrostowa."
+    },
+    {
+      "question": "Jaki wynik daje weryfikacja poprawnej sumy kontrolnej u odbiorcy?",
+      "options": {
+        "A": "Dowolny wynik parzysty",
+        "B": "0xffff po zsumowaniu wszystkich słów z sumą",
+        "C": "0x4500",
+        "D": "0x0000 po zsumowaniu bez sumy"
+      },
+      "correct": "B",
+      "explanation": "Dopełnienie do jedności."
+    },
+    {
+      "question": "Czy nagłówek IPv6 ma sumę kontrolną?",
+      "options": {
+        "A": "Tak, 16-bitową",
+        "B": "Tak, 32-bitową CRC",
+        "C": "Nie — zrezygnowano z niej",
+        "D": "Tylko przy fragmentacji"
+      },
+      "correct": "C",
+      "explanation": "Szybsze przekazywanie."
+    },
+    {
+      "question": "Co zwykle oznacza „checksum incorrect” w Wiresharku na pakietach wychodzących?",
+      "options": {
+        "A": "Checksum offload — sumę liczy karta sieciowa po przechwyceniu",
+        "B": "Błąd DNS",
+        "C": "Uszkodzony kabel",
+        "D": "Atak spoofingu"
+      },
+      "correct": "A",
+      "explanation": "Sprawdź ethtool -k."
+    },
+    {
+      "question": "W jakiej kolejności bajtów przesyłane są pola nagłówka?",
+      "options": {
+        "A": "Losowo",
+        "B": "Little-endian",
+        "C": "Zależnie od systemu",
+        "D": "Big-endian (network byte order)"
+      },
+      "correct": "D",
+      "explanation": "Najstarszy bajt pierwszy."
+    },
+    {
+      "question": "Dlaczego w Javie przy czytaniu bajtów nagłówka stosuje się & 0xFF?",
+      "options": {
+        "A": "Bo byte w Javie jest ze znakiem i 0xC0 dałby −64",
+        "B": "Bo ByteBuffer jest little-endian",
+        "C": "Aby szyfrować",
+        "D": "Aby skrócić tablicę"
+      },
+      "correct": "A",
+      "explanation": "Konwersja na wartość bez znaku."
+    },
+    {
+      "question": "Jaka jest domyślna kolejność bajtów ByteBuffer w Javie?",
+      "options": {
+        "A": "nativeOrder()",
+        "B": "LITTLE_ENDIAN",
+        "C": "BIG_ENDIAN",
+        "D": "Brak domyślnej"
+      },
+      "correct": "C",
+      "explanation": "Zgodna z siecią."
+    },
+    {
+      "question": "Co oznacza IP spoofing?",
+      "options": {
+        "A": "Fragmentację pakietów",
+        "B": "Zmianę adresu MAC switcha",
+        "C": "Przechwytywanie haseł",
+        "D": "Podanie fałszywego adresu źródłowego w nagłówku"
+      },
+      "correct": "D",
+      "explanation": "Adres źródłowy nie jest uwierzytelniony."
+    },
+    {
+      "question": "Który dokument opisuje filtrowanie ruchu z fałszywym adresem źródłowym u dostawców?",
+      "options": {
+        "A": "RFC 1918",
+        "B": "BCP 38 (RFC 2827)",
+        "C": "RFC 791",
+        "D": "RFC 2131"
+      },
+      "correct": "B",
+      "explanation": "Ingress filtering."
+    },
+    {
+      "question": "Dlaczego atak odbity (reflection) używa zwykle UDP?",
+      "options": {
+        "A": "Bo UDP ma większy TTL",
+        "B": "Bo UDP jest szyfrowane",
+        "C": "Bo TCP nie ma adresów",
+        "D": "Bo UDP nie ma handshake, więc fałszywy adres źródłowy wystarczy"
+      },
+      "correct": "D",
+      "explanation": "Np. DNS, NTP, memcached."
+    },
+    {
+      "question": "Jaki zakres pierwszego oktetu miała klasa B?",
+      "options": {
+        "A": "192–223",
+        "B": "224–239",
+        "C": "128–191",
+        "D": "0–127"
+      },
+      "correct": "C",
+      "explanation": "Pierwsze bity 10."
+    },
+    {
+      "question": "Jaką maskę domyślną miała klasa C?",
+      "options": {
+        "A": "/24 (255.255.255.0)",
+        "B": "/32",
+        "C": "/16",
+        "D": "/8"
+      },
+      "correct": "A",
+      "explanation": "254 hosty."
+    },
+    {
+      "question": "Do czego służy dawna klasa D?",
+      "options": {
+        "A": "Do pętli zwrotnej",
+        "B": "Do multicastu",
+        "C": "Do adresów prywatnych",
+        "D": "Do eksperymentów"
+      },
+      "correct": "B",
+      "explanation": "224.0.0.0/4."
+    },
+    {
+      "question": "Kiedy wprowadzono CIDR?",
+      "options": {
+        "A": "W 2011 roku",
+        "B": "W 1981 roku (RFC 791)",
+        "C": "W 1998 roku z IPv6",
+        "D": "W 1993 roku (RFC 1519)"
+      },
+      "correct": "D",
+      "explanation": "Dziś RFC 4632."
+    },
+    {
+      "question": "Co umożliwia agregacja tras w CIDR?",
+      "options": {
+        "A": "Translację adresów",
+        "B": "Ogłoszenie wielu sąsiednich sieci jednym prefiksem",
+        "C": "Szyfrowanie tras",
+        "D": "Fragmentację"
+      },
+      "correct": "B",
+      "explanation": "Np. 4 × /24 → /22."
+    },
+    {
+      "question": "Dlaczego klasy adresów zostały porzucone?",
+      "options": {
+        "A": "Bo nie działały z TCP",
+        "B": "Bo były zbyt szybkie",
+        "C": "Marnowały adresy i powiększały tablice routingu",
+        "D": "Bo wymagały IPv6"
+      },
+      "correct": "C",
+      "explanation": "Tylko 3 rozmiary sieci."
+    },
+    {
+      "question": "Co wyznacza granicę między częścią sieciową a hosta?",
+      "options": {
+        "A": "Maska podsieci / długość prefiksu",
+        "B": "Klasa adresu",
+        "C": "TTL",
+        "D": "Pole Protocol"
+      },
+      "correct": "A",
+      "explanation": "Dziś zawsze jawnie."
+    },
+    {
+      "question": "Na podstawie której części adresu routery wybierają trasę?",
+      "options": {
+        "A": "Pola ID",
+        "B": "Części sieciowej (prefiksu)",
+        "C": "Adresu źródłowego",
+        "D": "Części hosta"
+      },
+      "correct": "B",
+      "explanation": "Tablica routingu zawiera prefiksy."
+    },
+    {
+      "question": "Który filtr Wiresharka pokaże fragmenty IP?",
+      "options": {
+        "A": "ip.dsfield.dscp == 46",
+        "B": "ip.ttl == 0",
+        "C": "ip.flags.mf == 1 || ip.frag_offset > 0",
+        "D": "tcp.flags.syn == 1"
+      },
+      "correct": "C",
+      "explanation": "Pierwszy fragment ma MF, kolejne offset > 0."
+    },
+    {
+      "question": "Który filtr pokaże pakiety z małym TTL?",
+      "options": {
+        "A": "ip.ttl < 5",
+        "B": "ip.len < 5",
+        "C": "ip.proto < 5",
+        "D": "ip.id < 5"
+      },
+      "correct": "A",
+      "explanation": "Traceroute, pętle."
+    },
+    {
+      "question": "Jak w Linuksie wysłać ping z TTL równym 1?",
+      "options": {
+        "A": "ping -c 1 <cel>",
+        "B": "ping -W 1 <cel>",
+        "C": "ping -s 1 <cel>",
+        "D": "ping -t 1 <cel>"
+      },
+      "correct": "D",
+      "explanation": "Windows: ping -i 1."
+    },
+    {
+      "question": "Gdzie jest prawdziwy adres klienta, gdy aplikacja stoi za reverse proxy?",
+      "options": {
+        "A": "W adresie źródłowym IP",
+        "B": "W polu Identification",
+        "C": "W nagłówku X-Forwarded-For/Forwarded lub protokole PROXY",
+        "D": "W polu TTL"
+      },
+      "correct": "C",
+      "explanation": "Ufaj tylko znanym proxy."
+    },
+    {
+      "question": "Co może sugerować pakiet z opcjami IP (IHL > 5) przychodzący z Internetu?",
+      "options": {
+        "A": "Nietypowy ruch — skaner lub próba source routing",
+        "B": "Normalny ruch HTTPS",
+        "C": "Ruch DNS",
+        "D": "Pakiet IPv6"
+      },
+      "correct": "A",
+      "explanation": "Warto alertować."
+    },
+    {
+      "question": "Dlaczego nakładające się fragmenty IP są podejrzane?",
+      "options": {
+        "A": "Bo są wymagane przez TLS",
+        "B": "Bo przyspieszają transmisję",
+        "C": "Bo zawierają hasła",
+        "D": "Mogą służyć do ominięcia inspekcji IDS/firewalla"
+      },
+      "correct": "D",
+      "explanation": "Urządzenia składają fragmenty przed inspekcją."
+    },
+    {
+      "question": "Jakie pole nagłówka wykorzystuje narzędzie p0f do pasywnego rozpoznawania systemu?",
+      "options": {
+        "A": "Pole Protocol",
+        "B": "Między innymi TTL (oraz cechy TCP)",
+        "C": "Tylko sumę kontrolną",
+        "D": "Tylko adres docelowy"
+      },
+      "correct": "B",
+      "explanation": "Fingerprinting pasywny."
+    }
+  ]
 }
