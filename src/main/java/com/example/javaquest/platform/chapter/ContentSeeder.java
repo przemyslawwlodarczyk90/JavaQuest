@@ -43,6 +43,7 @@ class ContentSeeder {
             lessons.put(java.util.List.of(lesson.getChapter().getSlug(), lesson.getSlug()), lesson);
         }
 
+        LessonTitles lessonTitles = LessonTitles.load();
         int chapterOrder = 0;
         for (ChapterSeedData.ChapterSeed seed : ChapterSeedData.CHAPTERS) {
             Chapter chapter = chapters.get(seed.slug());
@@ -52,7 +53,7 @@ class ContentSeeder {
 
             int lessonOrder = 0;
             for (String lessonSlug : seed.lessonSlugs()) {
-                String title = LessonSlugTitles.humanize(lessonSlug);
+                String title = lessonTitles.titleOf(seed.slug(), lessonSlug);
                 Lesson lesson = lessons.get(java.util.List.of(seed.slug(), lessonSlug));
                 if (lesson == null) lesson = new Lesson(chapter, lessonSlug, title, lessonOrder);
                 lesson.synchronize(title, lessonOrder++);
