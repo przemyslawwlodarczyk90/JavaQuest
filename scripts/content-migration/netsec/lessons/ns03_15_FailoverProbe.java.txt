@@ -1,0 +1,51 @@
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.*;
+import java.time.*;
+
+public class FailoverProbe {
+    // Sonda do labu: żądanie co 100 ms, krótki timeout, log każdej zmiany stanu i długości przerwy.
+    public static void probe(URI target, Duration runFor) throws Exception {
+        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build();
+        Instant end = Instant.now().plus(runFor), lastOk = null, downSince = null;
+        while (Instant.now().isBefore(end)) {
+            Instant t = Instant.now();
+            boolean ok;
+            String info;
+            try {
+                HttpResponse<String> r = http.send(HttpRequest.newBuilder(target).timeout(Duration.ofMillis(800)).build(),
+                        HttpResponse.BodyHandlers.ofString());
+                ok = r.statusCode() == 200; info = "HTTP " + r.statusCode() + " " + r.body().strip();
+            } catch (Exception e) { ok = false; info = e.getClass().getSimpleName(); }
+            if (!ok && downSince == null) { downSince = t; System.out.printf("%s DOWN (%s)%n", t, info); }
+            if (ok && downSince != null) {
+                System.out.printf("%s UP po przerwie %d ms (%s)%n", t, Duration.between(downSince, t).toMillis(), info);
+                downSince = null;
+            }
+            if (ok) lastOk = t;
+            Thread.sleep(Math.max(0, 100 - Duration.between(t, Instant.now()).toMillis()));
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        if (args.length > 0) { probe(URI.create(args[0]), Duration.ofSeconds(Long.parseLong(args.length > 1 ? args[1] : "60"))); return; }
+        // samodzielny test: serwer działa 1 s, znika na 2 s („awaria węzła”), wraca
+        Thread.ofVirtual().start(() -> {
+            try {
+                HttpServer s = start(); Thread.sleep(1000); s.stop(0);
+                Thread.sleep(2000); start();
+            } catch (Exception e) { throw new RuntimeException(e); }
+        });
+        Thread.sleep(200);
+        probe(URI.create("http://127.0.0.1:18080/"), Duration.ofSeconds(5));
+        System.exit(0);
+    }
+
+    static HttpServer start() throws Exception {
+        HttpServer s = HttpServer.create(new InetSocketAddress("127.0.0.1", 18080), 0);
+        s.createContext("/", ex -> { byte[] b = "lb".getBytes(); ex.sendResponseHeaders(200, b.length); ex.getResponseBody().write(b); ex.close(); });
+        s.start();
+        return s;
+    }
+}

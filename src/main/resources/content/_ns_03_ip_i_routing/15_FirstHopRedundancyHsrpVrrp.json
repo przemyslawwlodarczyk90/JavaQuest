@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Brama domyślna nie może być pojedynczym punktem awarii",
+      "image": "netsec/ns03-15-vip.svg",
+      "imageAlt": "Porównanie: bez FHRP awaria jedynej bramy R1 odcina hosty; z VRRP lub HSRP routery R1 (master) i R2 (backup) dzielą wirtualny adres 10.0.10.1 z wirtualnym MAC 00:00:5e:00:01:0a; po awarii R2 przejmuje adres i MAC oraz wysyła gratuitous ARP.",
+      "body": "Każdy host ma jedną bramę domyślną (lekcja 07). Jeśli ten router padnie — wszystkie hosty w podsieci tracą łączność ze światem, nawet gdy tuż obok stoi sprawny drugi router. Ręczna zmiana bramy na setkach serwerów nie wchodzi w grę, a DHCP nie pomoże istniejącym dzierżawom.\n\nRozwiązaniem są protokoły **FHRP (First Hop Redundancy Protocols)**: dwa (lub więcej) routery współdzielą **wirtualny adres IP i wirtualny MAC**, który hosty mają ustawiony jako bramę. W danej chwili jeden router jest aktywny (**active/master**) i odpowiada na ARP o wirtualny adres; gdy przestaje wysyłać komunikaty kontrolne, zapasowy przejmuje adres, ogłasza go **gratuitous ARP** i ruch płynie dalej — bez zmian po stronie hostów.\n\nTa sama idea działa poza routerami: **keepalived (VRRP)** utrzymuje **wirtualny IP przed parą reverse proxy** (Nginx, HAProxy), bramą VPN czy bazą danych. Dla Java developera to bardzo praktyczne: przełączenie trwa sekundy, a klient Java zobaczy w tym czasie timeouty i zerwane połączenia — od konfiguracji timeoutów i retry w kodzie zależy, czy użytkownik zauważy awarię.\n\nW tej lekcji: wirtualny IP i MAC, role i priorytety, **preempt**, timery i czas przełączenia (policzony z RFC 5798), **HSRP vs VRRP vs GLBP**, tracking (śledzenie łącza w górę), keepalived, ograniczenia w chmurze oraz **Failure Lab z planu**: para Nginx z keepalived — zatrzymaj węzeł główny i zmierz przerwę widzianą przez klienta Java. Cele: CCNA v2 domena 3 (cel i działanie FHRP), Network+ (redundancja, wysoka dostępność).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik FHRP",
+      "body": "- **FHRP** — rodzina protokołów redundancji pierwszego skoku: HSRP, VRRP, GLBP.\n- **Wirtualny adres IP (VIP)** — adres bramy ustawiony na hostach; nie należy na stałe do żadnego routera (wyjątek: VRRP „owner”).\n- **Wirtualny MAC** — MAC, którym aktywny router odpowiada na ARP o VIP: VRRP **00:00:5e:00:01:0a** (VRID 10; IPv6: 00:00:5e:00:02:0a), HSRPv1 **00:00:0c:07:ac:0a** (grupa 10), HSRPv2 **00:00:0c:9f:f0:0a**, GLBP 00:07:b4:0X:XX:YY.\n- **Grupa / VRID** — identyfikator instancji (HSRP group, VRRP Virtual Router ID 1–255); musi być zgodny na routerach.\n- **Role**: HSRP **active / standby** (pozostałe listen), VRRP **master / backup**, GLBP **AVG** (Active Virtual Gateway) + do 4 **AVF** (Active Virtual Forwarder).\n- **Priorytet** — 0–255 (domyślnie 100); wyższy wygrywa, przy remisie wyższy adres IP interfejsu. VRRP: 255 = **owner** (VIP to fizyczny adres routera).\n- **Preempt** — czy router o wyższym priorytecie odbierze rolę po powrocie; HSRP domyślnie **nie**, VRRP domyślnie **tak**.\n- **Timery** — HSRP hello 3 s / hold 10 s; VRRPv3 advertisement 1 s, **Master_Down_Interval = 3 × advert + skew**, skew = (256 − priorytet) × advert / 256.\n- **Tracking (śledzenie)** — obniżenie priorytetu, gdy padnie łącze w górę (uplink) lub sonda (IP SLA) — inaczej router bez dostępu do świata nadal jest aktywną bramą.\n- **Gratuitous ARP (GARP)** — nieproszona odpowiedź ARP ogłaszająca „VIP jest teraz pod tym MAC” (lekcja 02/03); aktualizuje tablice ARP hostów i MAC przełączników.\n- **keepalived** — demon Linuksa implementujący VRRP (plus health checki i LVS); typowo wirtualny IP przed reverse proxy. Domyślnie VIP odpowiada **fizycznym MAC węzła** (wtedy GARP aktualizuje tablice ARP hostów); opcja `use_vmac` włącza wirtualny MAC VRRP (wtedy GARP aktualizuje głównie tablice MAC przełączników).\n- **Split brain** — obie strony uważają się za mastera (np. zablokowany multicast VRRP między nimi) → konflikt adresu.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Numer alarmowy i dyżurny",
+      "body": "Hosty znają tylko jeden numer: **112** (wirtualny adres bramy). Nie obchodzi ich, kto odbierze — ważne, żeby ktoś odebrał.\n- **Dwóch dyżurnych** (routery) siedzi przy jednej centrali. Telefon dzwoni u tego, który ma dyżur (**active/master**). Co sekundę mówi przez radio „jestem na posterunku” (**hello/advertisement**).\n- Gdy przestaje się odzywać przez umówiony czas (**hold / Master_Down_Interval**), zastępca przejmuje numer i ogłasza wszystkim stacjom: „112 jest teraz u mnie” (**gratuitous ARP**). Dzwoniący nic nie zmieniają.\n- **Priorytet** to staż: na dyżur idzie najstarszy stażem. **Preempt** decyduje, czy wracający z urlopu starszy dyżurny od razu wyrzuca zastępcę z krzesła, czy czeka na kolejną zmianę.\n- **Tracking** to sytuacja, w której dyżurny ma telefon, ale zerwało mu się połączenie z karetkami (uplink) — powinien sam oddać dyżur, zamiast przyjmować zgłoszenia, których nie przekaże.\n- **GLBP** to centrala, w której kierownik (AVG) mówi każdemu dzwoniącemu inny numer wewnętrzny — połowa trafia do jednego dyżurnego, połowa do drugiego (równoważenie).\n- **Split brain** — obaj dyżurni nie słyszą się nawzajem (zepsute radio) i obaj odbierają ten sam numer.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Ile trwa przełączenie — policzone z RFC 5798",
+      "image": "netsec/ns03-15-failover.svg",
+      "imageAlt": "Oś czasu VRRP: master wysyła ogłoszenia co 1 sekundę; po ich ustaniu backup czeka Master_Down_Interval równy 3 sekundy plus skew i staje się masterem, wysyłając gratuitous ARP. Przy ogłoszeniach co 100 ms przełączenie trwa ok. 361 ms. HSRP domyślnie do 10 s.",
+      "body": "VRRPv3: backup uznaje mastera za martwego po **Master_Down_Interval = 3 × Advertisement_Interval + Skew_Time**, gdzie **Skew_Time = (256 − priorytet backupu) × Advertisement_Interval / 256**. Skew sprawia, że backup z wyższym priorytetem reaguje odrobinę szybciej (gdy jest kilka backupów). Przykłady:",
+      "code": "advert 1000 ms, priorytet backupu 100:  skew  609,4 ms  →  Master_Down  3609,4 ms\nadvert 1000 ms, priorytet backupu 200:  skew  218,8 ms  →  Master_Down  3218,8 ms\nadvert 1000 ms, priorytet backupu 254:  skew    7,8 ms  →  Master_Down  3007,8 ms\nadvert  500 ms, priorytet backupu 100:  skew  304,7 ms  →  Master_Down  1804,7 ms\nadvert  100 ms, priorytet backupu 100:  skew   60,9 ms  →  Master_Down   360,9 ms\nadvert  100 ms, priorytet backupu 200:  skew   21,9 ms  →  Master_Down   321,9 ms\n\nHSRP: active martwy po hold time (domyślnie 10 s; hello 3 s), można zejść do hello 200 ms / hold 750 ms (msec)\nPrzerwa widziana przez klienta ≈ czas wykrycia + przełączenie ARP (z GARP: natychmiast; bez GARP: do wygaśnięcia wpisu ARP)\n                                + ponowne zestawienie połączeń, które były zakończone na starym węźle (proxy, VIP keepalived)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Konfiguracja HSRP i VRRP (Cisco) oraz keepalived (Linux)",
+      "image": "netsec/ns03-15-compare.svg",
+      "imageAlt": "Tabela porównawcza HSRP, VRRP i GLBP: standard, role, wirtualny MAC, multicast, timery, preempt, własność adresu i równoważenie ruchu.",
+      "body": "Ta sama brama 10.0.10.1 dla VLAN 10 w trzech wariantach. W HSRP pamiętaj o `preempt` (domyślnie wyłączony) i trackingu uplinku.",
+      "code": "! Cisco HSRPv2 — R1 (aktywny), R2 identycznie z priority 100\ninterface Vlan10\n ip address 10.0.10.2 255.255.255.0\n standby version 2\n standby 10 ip 10.0.10.1\n standby 10 priority 110\n standby 10 preempt delay minimum 30           ! po powrocie poczekaj, aż routing się ustabilizuje\n standby 10 timers msec 200 msec 750           ! szybsze wykrycie\n standby 10 track 1 decrement 20               ! track 1 = stan uplinku / IP SLA\n standby 10 authentication md5 key-string <sekret>\ntrack 1 interface GigabitEthernet0/1 line-protocol\n\n! Cisco VRRPv3 (IPv4 i IPv6)\nfhrp version vrrp v3\ninterface Vlan10\n vrrp 10 address-family ipv4\n  address 10.0.10.1 primary\n  priority 110\n  track 1 decrement 20\nshow standby brief ; show vrrp brief\n\n# keepalived (Linux) — /etc/keepalived/keepalived.conf na lb1 (lb2: state BACKUP, priority 100)\nvrrp_script chk_nginx {\n  script \"/usr/bin/curl -fs -m 1 http://127.0.0.1/healthz\"\n  interval 1\n  fall 2\n  rise 2\n  weight -30                                     # nginx padł → priorytet 110 − 30 = 80 < 100 → backup przejmuje\n}\nvrrp_instance VI_51 {\n  state MASTER\n  interface eth0\n  virtual_router_id 51\n  priority 110\n  advert_int 1\n  authentication { auth_type PASS auth_pass s3kr3t }   # tylko VRRPv2; nie jest to prawdziwe zabezpieczenie\n  virtual_ipaddress { 10.0.10.100/24 }\n  track_script { chk_nginx }\n}"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Failure Lab z planu: para Nginx z keepalived — zmierz przerwę widzianą przez klienta Java",
+      "image": "netsec/ns03-15-keepalived.svg",
+      "imageAlt": "Topologia labu: klient Java wysyła żądania na wirtualny adres 10.0.10.100 utrzymywany przez keepalived na dwóch węzłach Nginx — lb1 master i lb2 backup — przed dwoma aplikacjami Spring Boot.",
+      "body": "Lab na Dockerze (Linux/WSL2) lub dwóch VM w jednej sieci L2. VRRP wymaga multicastu 224.0.0.18 i możliwości dodania adresu do interfejsu — w kontenerach potrzebne `cap_add: [NET_ADMIN]` i `network_mode`/sieć bridge, w której kontenery widzą się na L2.\n1. **Sieć i węzły**: sieć `lab` 10.0.10.0/24; kontenery **lb1** (10.0.10.11) i **lb2** (10.0.10.12) z Nginx + keepalived (obraz np. na bazie `nginx:1.27` z doinstalowanym `keepalived`), dwie aplikacje **app1/app2** (Spring Boot lub `hashicorp/http-echo`), Nginx na obu lb robi `proxy_pass` do obu aplikacji i wystawia `/healthz`.\n2. **keepalived**: konfiguracja z bloku obok (lb1 MASTER 110, lb2 BACKUP 100, VIP 10.0.10.100, `advert_int 1`, `chk_nginx`). Sprawdź: `docker exec lb1 ip -br addr` → VIP na eth0 lb1; `docker exec lb1 tcpdump -ni eth0 vrrp -c 3` → ogłoszenia co 1 s od lb1 (VRID 51, prio 110).\n3. **Sonda Java**: uruchom `FailoverProbe` (kod obok) z kontenera klienta w tej samej sieci: `java FailoverProbe.java http://10.0.10.100/ 60` — żądanie co 100 ms, timeout 800 ms.\n4. **Awaria węzła**: `docker stop lb1` (albo `docker exec lb1 pkill keepalived`). Sonda loguje `DOWN`, a po przełączeniu `UP po przerwie … ms`. Oczekiwanie: ~3,6 s (Master_Down) + do 100 ms (okres sondy) + nowe połączenie TCP. W lb2: `ip -br addr` → VIP; `tcpdump arp` → gratuitous ARP od lb2.\n5. **Awaria usługy, nie węzła**: przywróć lb1 (`docker start lb1` — preempt: VIP wraca do lb1, sonda zobaczy drugą, krótszą przerwę!), potem `docker exec lb1 nginx -s stop`. Bez `track_script` VIP zostałby na lb1 z martwym Nginx (przerwa „na zawsze”); z `chk_nginx` priorytet spada do 80 i lb2 przejmuje VIP.\n6. **Zmniejsz przerwę**: `advert_int 0.1` (keepalived obsługuje ułamki z VRRPv3) → przełączenie ~0,36 s; w kliencie: retry idempotentnych żądań, krótsze timeouty, pula połączeń z walidacją.\n7. **Wnioski do notatki**: tabela „scenariusz → zmierzona przerwa”: stop węzła, stop Nginx bez/z trackingiem, powrót z preempt i bez (`nopreempt` w keepalived), advert 1 s vs 0,1 s.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Preempt, tracking i ograniczenia w chmurze",
+      "body": "**Preempt — tak czy nie?** Z preempt router o wyższym priorytecie odbiera rolę po powrocie — to druga, niepotrzebna przerwa (a czasem powrót do węzła, który jeszcze nie ma tablic routingu czy rozgrzanego cache). Dobre praktyki: preempt z opóźnieniem (`preempt delay minimum 30`), albo bez preempt i ręczny powrót w oknie serwisowym. W keepalived: `nopreempt` (wymaga `state BACKUP` na obu węzłach).\n\n**Tracking jest obowiązkowy.** FHRP sprawdza tylko, czy router żyje w LAN. Jeśli aktywnemu padnie łącze do Internetu/rdzenia, nadal przyjmuje ruch hostów i… nie ma gdzie go wysłać (lub wysyła dłuższą drogą przez drugi router). Tracking interfejsu lub sondy IP SLA obniża priorytet poniżej zapasowego. W keepalived: `track_interface`, `track_script`.\n\n**Bezpieczeństwo:** komunikaty FHRP są multicastem w LAN — atakujący z wyższym priorytetem (255) może przejąć bramę (MITM). Obrona: uwierzytelnianie (HSRP MD5, w VRRPv3 brak — polegaj na izolacji), ACL blokujące HSRP (UDP 1985/2029) i VRRP (protokół 112) z portów użytkowników, port security i monitoring zmian ról (syslog `%HSRP-5-STATECHANGE`).\n\n**Chmura:** w VPC AWS/Azure/GCP zwykle **nie ma multicastu ani GARP**, a adresy przypisuje platforma — VRRP/keepalived w klasycznej formie nie działa. Rozwiązania: zarządzany load balancer (ALB/NLB, Azure LB), przenoszenie Elastic IP/secondary IP przez API przy failoverze (skrypt notify w keepalived), lub w on-prem/Kubernetes — **MetalLB/kube-vip** (tryb L2 z ARP/ND lub BGP). Kubernetes Service i Ingress Controller z kilkoma replikami pełnią rolę „wirtualnej bramy” dla aplikacji.",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Sonda failover w Javie (przetestowana)",
+      "body": "Program do labu: wysyła żądanie co 100 ms z krótkim timeoutem i loguje każdą zmianę stanu oraz długość przerwy. Bez argumentów uruchamia samodzielny test — wbudowany serwer HTTP znika na 2 s i wraca (zmierzona przerwa ok. 2000 ms). Z argumentami (`URL sekundy`) — sonduje Twój VIP w labie. Ten sam wzorzec przyda się do testów odporności (chaos testing) własnych usług.",
+      "code": "import com.sun.net.httpserver.HttpServer;\nimport java.net.InetSocketAddress;\nimport java.net.URI;\nimport java.net.http.*;\nimport java.time.*;\n\npublic class FailoverProbe {\n    // Sonda do labu: żądanie co 100 ms, krótki timeout, log każdej zmiany stanu i długości przerwy.\n    public static void probe(URI target, Duration runFor) throws Exception {\n        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build();\n        Instant end = Instant.now().plus(runFor), lastOk = null, downSince = null;\n        while (Instant.now().isBefore(end)) {\n            Instant t = Instant.now();\n            boolean ok;\n            String info;\n            try {\n                HttpResponse<String> r = http.send(HttpRequest.newBuilder(target).timeout(Duration.ofMillis(800)).build(),\n                        HttpResponse.BodyHandlers.ofString());\n                ok = r.statusCode() == 200; info = \"HTTP \" + r.statusCode() + \" \" + r.body().strip();\n            } catch (Exception e) { ok = false; info = e.getClass().getSimpleName(); }\n            if (!ok && downSince == null) { downSince = t; System.out.printf(\"%s DOWN (%s)%n\", t, info); }\n            if (ok && downSince != null) {\n                System.out.printf(\"%s UP po przerwie %d ms (%s)%n\", t, Duration.between(downSince, t).toMillis(), info);\n                downSince = null;\n            }\n            if (ok) lastOk = t;\n            Thread.sleep(Math.max(0, 100 - Duration.between(t, Instant.now()).toMillis()));\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n        if (args.length > 0) { probe(URI.create(args[0]), Duration.ofSeconds(Long.parseLong(args.length > 1 ? args[1] : \"60\"))); return; }\n        // samodzielny test: serwer działa 1 s, znika na 2 s („awaria węzła”), wraca\n        Thread.ofVirtual().start(() -> {\n            try {\n                HttpServer s = start(); Thread.sleep(1000); s.stop(0);\n                Thread.sleep(2000); start();\n            } catch (Exception e) { throw new RuntimeException(e); }\n        });\n        Thread.sleep(200);\n        probe(URI.create(\"http://127.0.0.1:18080/\"), Duration.ofSeconds(5));\n        System.exit(0);\n    }\n\n    static HttpServer start() throws Exception {\n        HttpServer s = HttpServer.create(new InetSocketAddress(\"127.0.0.1\", 18080), 0);\n        s.createContext(\"/\", ex -> { byte[] b = \"lb\".getBytes(); ex.sendResponseHeaders(200, b.length); ex.getResponseBody().write(b); ex.close(); });\n        s.start();\n        return s;\n    }\n}"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **Brama serwerowni / VLAN-u serwerów**: Twoje serwery aplikacyjne mają bramę na parze przełączników L3 z HSRP/VRRP — przełączenie trwa sekundy; aplikacja powinna to przetrwać (timeouty, retry, pule połączeń z walidacją).\n- **Wirtualny IP przed reverse proxy / bazą**: keepalived + HAProxy/Nginx, PostgreSQL z Patroni i VIP (vip-manager), bramy VPN. Połączenia zakończone na starym węźle są zrywane — klient musi się połączyć ponownie.\n- **Kubernetes on-prem**: kube-vip i MetalLB (tryb L2) robią to samo dla adresu API serwera i Service typu LoadBalancer — oparte na ARP/GARP i wyborze lidera.\n- **Projekt aplikacji**: idempotentne operacje (bezpieczny retry), circuit breaker, health checki, które naprawdę sprawdzają zależności (a nie tylko „proces żyje”) — keepalived `track_script` powinien sprawdzać to samo.\n\n**Blue team:**\n- **Przejęcie bramy** przez fałszywe komunikaty HSRP/VRRP z wyższym priorytetem — klasyczny atak MITM w LAN (narzędzia typu Yersinia). Obrona: ACL na portach dostępowych (protokół 112, UDP 1985/2029), uwierzytelnianie HSRP, segmentacja, monitoring zmian ról.\n- **Monitoring**: zdarzenia zmiany stanu (`%HSRP-5-STATECHANGE`, `%VRRP-6-STATECHANGE`, logi keepalived „Entering MASTER STATE”), nieoczekiwane źródła ogłoszeń w tcpdump/Zeek, alarm na częste przełączenia (flapping).\n- **Split brain** w keepalived (blokada multicastu przez firewall hosta) — dwa węzły z tym samym VIP; wykrywanie: duplikat IP (lekcja 02/13), alerty z obu węzłów „MASTER”.\n- Mapowanie: CCNA v2 (FHRP), Network+ (wysoka dostępność), Security+ (ataki L2, redundancja).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy",
+      "body": "- **Brak trackingu uplinku** — aktywny router bez dostępu do świata dalej „trzyma” bramę.\n- **HSRP bez `preempt`** — po naprawie router główny nie wraca do roli (czasem celowo, ale zwykle przez pomyłkę).\n- **Preempt bez opóźnienia** — powrót do węzła, zanim zbudował trasy/sąsiedztwa → druga przerwa lub czarna dziura.\n- **Niezgodny numer grupy/VRID lub wersji** (HSRPv1 vs v2) — obie strony zostają aktywne (split brain, duplikat IP).\n- **Zablokowany multicast** (firewall hosta z keepalived, IGMP snooping bez querier, sieć chmurowa) — split brain.\n- **Ten sam VRID w tym samym segmencie dla różnych par** — konflikt wirtualnego MAC.\n- **Oczekiwanie, że przełączenie zachowa połączenia** — stan TCP i TLS był na starym węźle proxy; klient musi się połączyć ponownie.\n- **Długie timeouty w kliencie** — przerwa 3 s zamienia się w 30–60 s zawieszonych wątków.\n- **Health check sprawdzający tylko proces** — Nginx działa, ale nie ma dostępu do aplikacji; VIP zostaje na „zombie”.\n- **VRRP w chmurze** bez przenoszenia adresu przez API — po przełączeniu ruch i tak trafia do starej instancji.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: keepalived bez health checku, klient bez timeoutów",
+      "body": "Konfiguracja, w której awaria Nginx (nie maszyny) powoduje trwałą niedostępność, a klient wisi przy każdym przełączeniu.",
+      "code": "vrrp_instance VI_51 {\n  state MASTER\n  interface eth0\n  virtual_router_id 51\n  priority 110\n  advert_int 1\n  virtual_ipaddress { 10.0.10.100/24 }\n  # brak track_script — nginx padł, VIP zostaje na lb1\n}\n# na lb2 ten sam virtual_router_id 51, ale ufw blokuje protokół 112 → oba węzły MASTER (split brain)\n\nHttpClient http = HttpClient.newHttpClient();                 // brak connectTimeout\nhttp.send(HttpRequest.newBuilder(URI.create(\"http://10.0.10.100/order\")).POST(body).build(), ofString());\n// brak timeoutu żądania, brak retry, nieidempotentny POST bez klucza idempotencji"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: tracking, przepuszczony VRRP, bezpieczny retry",
+      "body": "Health check sprawdza realną usługę, firewall przepuszcza VRRP między węzłami, a klient ma krótkie timeouty i ponawia tylko operacje idempotentne (lub z kluczem idempotencji).",
+      "code": "vrrp_script chk_nginx { script \"/usr/bin/curl -fs -m 1 http://127.0.0.1/healthz\"  interval 1  fall 2  rise 2  weight -30 }\nvrrp_instance VI_51 {\n  state BACKUP                       # oba BACKUP + nopreempt → brak „drugiej przerwy” przy powrocie\n  nopreempt\n  interface eth0\n  virtual_router_id 51\n  priority 110\n  advert_int 1\n  virtual_ipaddress { 10.0.10.100/24 }\n  track_script { chk_nginx }\n  notify_master \"/usr/local/bin/alert.sh MASTER\"\n}\n# ufw allow in on eth0 from 10.0.10.12 proto vrrp     (VRRP = protokół IP 112)\n\nHttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(500)).build();\nHttpRequest req = HttpRequest.newBuilder(URI.create(\"http://10.0.10.100/order\")).timeout(Duration.ofSeconds(2))\n        .header(\"Idempotency-Key\", orderId).POST(body).build();\n// retry z backoffem (np. Resilience4j Retry: 3 próby, 200 ms → 400 ms → 800 ms) — serwer deduplikuje po kluczu"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Który mechanizm wybrać",
+      "body": "Ściąga decyzji:",
+      "code": "SYTUACJA                                              WYBÓR\ndwa routery Cisco jako brama VLAN-u                  HSRPv2 (lub VRRPv3 przy mieszanym sprzęcie)\nsprzęt różnych producentów                            VRRPv3 (standard IETF, IPv4 i IPv6)\nrównoważenie ruchu hostów między bramami              GLBP (Cisco) albo kilka grup HSRP/VRRP z różnymi bramami\npara reverse proxy / brama VPN na Linuksie            keepalived (VRRP) + track_script\nklaster PostgreSQL z wirtualnym adresem               Patroni + vip-manager (lub keepalived)\nKubernetes on-prem: adres API / Service LB            kube-vip lub MetalLB (L2 lub BGP)\nchmura publiczna                                      zarządzany load balancer; przenoszenie EIP/secondary IP przez API\nszybkie wykrycie awarii                               krótkie timery (ms) lub BFD + tracking\nuniknięcie drugiej przerwy po naprawie                preempt z opóźnieniem albo nopreempt"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- FHRP: routery współdzielą wirtualny IP i MAC bramy; aktywny odpowiada na ARP, po awarii zapasowy przejmuje adres i wysyła gratuitous ARP — hosty nic nie zmieniają.\n- HSRP (Cisco, active/standby, hello 3/hold 10, preempt domyślnie wyłączony), VRRP (IETF RFC 5798, master/backup, advert 1 s, preempt włączony, owner 255), GLBP (Cisco, równoważenie ruchu).\n- Wirtualne MAC: VRRP 00:00:5e:00:01:VRID, HSRPv1 00:00:0c:07:ac:GG, HSRPv2 00:00:0c:9f:fG:GG.\n- Czas przełączenia VRRPv3: 3 × advert + skew (≈ 3,6 s przy 1 s; ≈ 0,36 s przy 100 ms); przerwa klienta = wykrycie + ARP + ponowne połączenia.\n- Tracking uplinku/usługi jest obowiązkowy; preempt z opóźnieniem lub nopreempt; ochrona przed fałszywymi ogłoszeniami (ACL, uwierzytelnianie, monitoring).\n- keepalived przed reverse proxy; w chmurze — LB zarządzany lub przenoszenie adresu przez API; w Kubernetes — kube-vip/MetalLB.\n- Klient Java: krótkie timeouty, retry idempotentnych operacji, pule z walidacją — wtedy przełączenie bramy jest niewidoczne dla użytkownika.\n- Następna lekcja: **routing dynamiczny i BGP** — jak działa Internet.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "VRRPv3: Advertisement_Interval 1000 ms, priorytet backupu 100. Policz Skew_Time i Master_Down_Interval.",
+      "hint": "Skew = (256 − prio) × adv / 256; Master_Down = 3 × adv + skew.",
+      "solution": "Skew = (256 − 100) × 1000 / 256 = 609,4 ms; Master_Down = 3 × 1000 + 609,4 = 3609,4 ms."
+    },
+    {
+      "prompt": "VRRPv3: Advertisement_Interval 1000 ms, priorytet backupu 200. Policz Skew_Time i Master_Down_Interval.",
+      "hint": "Skew = (256 − prio) × adv / 256; Master_Down = 3 × adv + skew.",
+      "solution": "Skew = (256 − 200) × 1000 / 256 = 218,8 ms; Master_Down = 3 × 1000 + 218,8 = 3218,8 ms."
+    },
+    {
+      "prompt": "VRRPv3: Advertisement_Interval 1000 ms, priorytet backupu 254. Policz Skew_Time i Master_Down_Interval.",
+      "hint": "Skew = (256 − prio) × adv / 256; Master_Down = 3 × adv + skew.",
+      "solution": "Skew = (256 − 254) × 1000 / 256 = 7,8 ms; Master_Down = 3 × 1000 + 7,8 = 3007,8 ms."
+    },
+    {
+      "prompt": "VRRPv3: Advertisement_Interval 100 ms, priorytet backupu 100. Policz Skew_Time i Master_Down_Interval.",
+      "hint": "Skew = (256 − prio) × adv / 256; Master_Down = 3 × adv + skew.",
+      "solution": "Skew = (256 − 100) × 100 / 256 = 60,9 ms; Master_Down = 3 × 100 + 60,9 = 360,9 ms."
+    },
+    {
+      "prompt": "VRRPv3: Advertisement_Interval 500 ms, priorytet backupu 150. Policz Skew_Time i Master_Down_Interval.",
+      "hint": "Skew = (256 − prio) × adv / 256; Master_Down = 3 × adv + skew.",
+      "solution": "Skew = (256 − 150) × 500 / 256 = 207 ms; Master_Down = 3 × 500 + 207 = 1707 ms."
+    },
+    {
+      "prompt": "VRRPv3: Advertisement_Interval 200 ms, priorytet backupu 50. Policz Skew_Time i Master_Down_Interval.",
+      "hint": "Skew = (256 − prio) × adv / 256; Master_Down = 3 × adv + skew.",
+      "solution": "Skew = (256 − 50) × 200 / 256 = 160,9 ms; Master_Down = 3 × 200 + 160,9 = 760,9 ms."
+    },
+    {
+      "prompt": "Jaki wirtualny adres MAC użyje VRRP dla VRID 10?",
+      "hint": "00:00:5e:00:01 + VRID hex.",
+      "solution": "00:00:5e:00:01:0a."
+    },
+    {
+      "prompt": "Jaki wirtualny adres MAC użyje VRRP dla VRID 200?",
+      "hint": "00:00:5e:00:01 + VRID hex.",
+      "solution": "00:00:5e:00:01:c8."
+    },
+    {
+      "prompt": "Jaki wirtualny adres MAC użyje HSRPv1 dla grupy 10?",
+      "hint": "00:00:0c:07:ac + grupa hex.",
+      "solution": "00:00:0c:07:ac:0a."
+    },
+    {
+      "prompt": "Jaki wirtualny adres MAC użyje HSRPv1 dla grupy 255?",
+      "hint": "00:00:0c:07:ac + grupa hex.",
+      "solution": "00:00:0c:07:ac:ff."
+    },
+    {
+      "prompt": "Jaki wirtualny adres MAC użyje HSRPv2 dla grupy 10?",
+      "hint": "00:00:0c:9f:f + grupa (3 cyfry hex).",
+      "solution": "00:00:0c:9f:f0:0a."
+    },
+    {
+      "prompt": "Jaki wirtualny adres MAC użyje HSRPv2 dla grupy 1000?",
+      "hint": "00:00:0c:9f:f + grupa (3 cyfry hex).",
+      "solution": "00:00:0c:9f:f3:e8."
+    },
+    {
+      "prompt": "Grupa FHRP: R1 prio 100 adres 10.0.10.2, R2 prio 100 adres 10.0.10.3 — oba z domyślnym priorytetem. Który router będzie aktywny?",
+      "hint": "Najwyższy priorytet, przy remisie najwyższy adres IP.",
+      "solution": "R2."
+    },
+    {
+      "prompt": "Grupa FHRP: R1 prio 110 adres 10.0.10.2, R2 prio 100 adres 10.0.10.3 — R1 z priorytetem 110. Który router będzie aktywny?",
+      "hint": "Najwyższy priorytet, przy remisie najwyższy adres IP.",
+      "solution": "R1."
+    },
+    {
+      "prompt": "Grupa FHRP: R1 prio 110 adres 10.0.10.2 (awaria), R2 prio 100 adres 10.0.10.3, R3 prio 100 adres 10.0.10.4 — R1 (110) uległ awarii, R2 i R3 po 100. Który router będzie aktywny?",
+      "hint": "Najwyższy priorytet, przy remisie najwyższy adres IP.",
+      "solution": "R3."
+    },
+    {
+      "prompt": "R1 (priorytet 110) uległ awarii, rolę przejął R2 (100). Co stanie się po powrocie R1 przy HSRP z domyślną konfiguracją, a co przy VRRP z domyślną? Jakie są skutki dla klientów?",
+      "hint": "Preempt domyślnie: HSRP wyłączony, VRRP włączony.",
+      "solution": "HSRP (bez preempt): aktywny zostaje R2 — brak drugiej przerwy, ale ruch idzie „zapasowym” routerem, dopóki ktoś nie przełączy ręcznie. VRRP (preempt): rolę odbiera R1 — klienci widzą drugą, krótką przerwę; jeśli R1 nie zdążył zbudować tras, może powstać czarna dziura — stąd preempt z opóźnieniem."
+    },
+    {
+      "prompt": "Wykonaj Failure Lab z planu: para Nginx z keepalived, sonda Java na VIP; zatrzymaj węzeł główny, potem sam Nginx (z trackingiem i bez), przywróć węzeł z preempt i bez. Zapisz zmierzone przerwy.",
+      "hint": "FailoverProbe, docker stop, track_script, nopreempt.",
+      "solution": "Stop lb1 (advert 1 s): przerwa ok. 3609,4 ms + okres sondy + nowe połączenie (typowo 3,7–4 s). Stop Nginx bez track_script: przerwa trwa do ręcznej interwencji (VIP na lb1 z martwym Nginx). Z track_script (interval 1, fall 2): ok. 2 s na wykrycie + przełączenie + GARP (2–3 s). Powrót lb1 z preempt: druga, krótka przerwa przy odbieraniu VIP; z nopreempt: brak. advert_int 0.1: przełączenie ok. 360,9 ms."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego router aktywny w HSRP powinien śledzić stan swojego uplinku, i skonfiguruj tracking z obniżeniem priorytetu.",
+      "hint": "track interface, decrement.",
+      "solution": "HSRP sprawdza tylko, czy router żyje w LAN; po awarii uplinku aktywny router nadal przyjmuje ruch hostów, a nie może go przekazać (czarna dziura lub okrężna droga przez drugi router). Konfiguracja: track 1 interface GigabitEthernet0/1 line-protocol; interface Vlan10 / standby 10 priority 110 / standby 10 preempt / standby 10 track 1 decrement 20 — po awarii uplinku priorytet spada do 90 < 100, R2 przejmuje (wymaga preempt na R2). Lepsza wersja: track z IP SLA do celu za uplinkiem."
+    },
+    {
+      "prompt": "Opisz atak przejęcia bramy przez fałszywe ogłoszenia HSRP/VRRP i trzy środki obrony.",
+      "hint": "Priorytet 255, MITM.",
+      "solution": "Atakujący w VLAN-ie wysyła ogłoszenia HSRP/VRRP z tym samym numerem grupy i wyższym priorytetem (np. 255) oraz preempt — staje się aktywną bramą, przyjmuje ruch hostów (MITM, podsłuch, modyfikacja) lub go porzuca (DoS). Obrona: ACL/VACL na portach dostępowych blokujące HSRP (UDP 1985 na 224.0.0.2, UDP 2029 dla v2) i VRRP (protokół IP 112 na 224.0.0.18), uwierzytelnianie HSRP MD5 (i izolacja segmentu dla VRRPv3), monitoring zmian ról (syslog STATECHANGE) i nieznanych źródeł ogłoszeń."
+    },
+    {
+      "prompt": "Dlaczego klasyczny keepalived (VRRP) zwykle nie działa w VPC AWS i jak zrealizować wirtualny IP w chmurze?",
+      "hint": "Brak multicastu i GARP, adresy przydziela platforma.",
+      "solution": "Sieć VPC nie przenosi multicastu (VRRP używa 224.0.0.18) i ignoruje gratuitous ARP — mapowanie IP→instancja zna i kontroluje platforma. Nawet jeśli węzeł doda VIP do interfejsu, ruch nie zostanie do niego skierowany. Rozwiązania: zarządzany load balancer (NLB/ALB) przed węzłami; keepalived w trybie unicast (unicast_peer) + skrypt notify_master przenoszący secondary private IP lub Elastic IP przez API (aws ec2 assign-private-ip-addresses --allow-reassignment / associate-address); dla Kubernetes — Service LoadBalancer."
+    },
+    {
+      "prompt": "Czym różni się GLBP od HSRP i VRRP pod względem wykorzystania łączy?",
+      "hint": "AVG, AVF, różne MAC.",
+      "solution": "HSRP/VRRP: w danej grupie tylko jeden router przekazuje ruch, drugi czeka bezczynnie (równoważenie tylko przez kilka grup z różnymi bramami na hostach). GLBP: AVG odpowiada na ARP o wirtualny IP, podając różnym hostom różne wirtualne MAC należące do różnych AVF (do 4) — ruch hostów rozkłada się na routery przy jednej bramie skonfigurowanej na hostach (round-robin, weighted, host-dependent). Po awarii AVF inny router przejmuje jego wirtualny MAC."
+    },
+    {
+      "prompt": "Twoja aplikacja Java po przełączeniu VIP keepalived loguje przez 60 s błędy „Read timed out”, choć VIP przełączył się w 4 s. Wyjaśnij i napraw.",
+      "hint": "Martwe połączenia w puli, brak timeoutów.",
+      "solution": "Połączenia w puli (HTTP keep-alive, JDBC) były zestawione ze starym węzłem; po przełączeniu nowe pakiety trafiają do nowego węzła, który nie zna tych połączeń (RST) albo do nikogo — przy braku RST klient czeka na odpowiedź do timeoutu odczytu (np. 60 s). Naprawa: krótszy read/socket timeout, walidacja połączeń z puli (HikariCP keepaliveTime/validation, maxLifetime), retry idempotentnych żądań, TCP keepalive; nowy węzeł powinien odpowiadać RST na nieznane połączenia (domyślne zachowanie Linuksa), by klient szybko dostał błąd zamiast czekać."
+    },
+    {
+      "prompt": "Dlaczego w keepalived przy nopreempt oba węzły muszą mieć state BACKUP?",
+      "hint": "Węzeł w stanie MASTER przy starcie zawsze przejmie rolę.",
+      "solution": "state MASTER oznacza, że przy starcie węzeł od razu ogłasza się masterem, niezależnie od tego, czy inny węzeł już pełni tę rolę — co odbiera VIP (efekt jak preempt). nopreempt działa tylko dla instancji startujących jako BACKUP: węzeł z wyższym priorytetem po powrocie zostaje backupem, dopóki obecny master działa."
+    },
+    {
+      "prompt": "Policz wirtualny MAC HSRPv2 dla grupy 4095 i wyjaśnij, dlaczego HSRPv2 obsługuje więcej grup niż v1.",
+      "hint": "12 bitów numeru grupy.",
+      "solution": "00:00:0c:9f:ff:ff — HSRPv2 koduje numer grupy na 12 bitach (0–4095) w końcówce 00:00:0c:9f:fX:XX, podczas gdy HSRPv1 ma tylko 8 bitów (0–255) w 00:00:0c:07:ac:XX. Dzięki temu można np. dopasować numer grupy do numeru VLAN-u (do 4094)."
+    },
+    {
+      "prompt": "Jak wykryć split brain w parze keepalived i jak mu zapobiegać?",
+      "hint": "Oba MASTER, duplikat IP.",
+      "solution": "Wykrywanie: obie instancje logują „Entering MASTER STATE” i mają VIP na interfejsie (ip -br addr na obu), ARP w sieci zmienia MAC dla VIP (arping -c3 VIP pokaże dwa MAC), alerty z notify_master z obu węzłów. Przyczyny: firewall blokujący VRRP (protokół 112), multicast filtrowany przez IGMP snooping, różny virtual_router_id lub hasło, awaria łącza między węzłami. Zapobieganie: reguły firewalla dla VRRP, unicast_peer zamiast multicastu, osobne łącze/monitoring heartbeat, fencing (np. przez API chmury lub STONITH w klastrach)."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między awarią węzła a awarią usługi w kontekście FHRP/keepalived i jak skonfigurować reakcję na obie.",
+      "hint": "Heartbeat vs health check.",
+      "solution": "Awaria węzła (maszyna, keepalived, sieć): ustają ogłoszenia VRRP → backup przejmuje VIP po Master_Down_Interval — działa bez dodatkowej konfiguracji. Awaria usługi (Nginx, aplikacja za nim) przy żywym węźle: ogłoszenia płyną dalej, VIP zostaje na węźle, który nie obsługuje ruchu. Reakcja: vrrp_script/track_script sprawdzający realną ścieżkę (np. curl /healthz przez proxy do aplikacji) z weight lub przejściem w FAULT; na routerach — tracking interfejsów i IP SLA."
+    },
+    {
+      "prompt": "Zaprojektuj redundancję bramy dla VLAN-u serwerów aplikacji Java z dwoma przełącznikami L3 i wymień ustawienia, które ograniczą przerwę dla aplikacji do ~1 s.",
+      "hint": "VRRPv3/HSRP z ms, tracking, BFD, timeouty.",
+      "solution": "VRRPv3 (lub HSRPv2) na SVI Vlan20 obu przełączników: VIP .1, przełącznik A priorytet 110 z preempt delay 60 s i trackingiem uplinków (IP SLA do rdzenia), B priorytet 100; timery advert 100–200 ms (Master_Down ~0,4–0,7 s) lub BFD; ACL blokujące FHRP z portów serwerów; monitoring zmian stanów. Po stronie aplikacji: connectTimeout 0,5–1 s, read timeout dopasowany do usługi, retry idempotentnych operacji, pula połączeń z walidacją — dzięki temu krótkie przełączenie nie powoduje kaskady błędów."
+    },
+    {
+      "prompt": "Uruchom FailoverProbe z lekcji bez argumentów i wyjaśnij zmierzoną przerwę. Następnie zmień okres sondy na 500 ms — jak zmieni się dokładność pomiaru?",
+      "hint": "Rozdzielczość pomiaru = okres sondy.",
+      "solution": "Samodzielny test zatrzymuje wbudowany serwer na 2 s, sonda zgłasza DOWN przy pierwszym nieudanym żądaniu i UP przy pierwszym udanym — zmierzona przerwa ≈ 2000 ms ± okres sondy (100 ms) + czas timeoutu/odrzucenia połączenia. Przy okresie 500 ms błąd pomiaru rośnie do ±500 ms (krótkie przerwy mogą zostać niezauważone). Do pomiaru przełączeń sekundowych potrzebny okres rzędu 50–100 ms."
+    },
+    {
+      "prompt": "Jaki protokół i adres multicast wykorzystuje VRRP (IPv4 i IPv6), a jaki HSRP? Napisz filtry tcpdump do podejrzenia ogłoszeń.",
+      "hint": "Protokół 112, UDP 1985.",
+      "solution": "VRRP: protokół IP 112, adres 224.0.0.18 (IPv6: ff02::12) — tcpdump -ni eth0 vrrp (lub \"ip proto 112\"). HSRPv1: UDP 1985 na 224.0.0.2, HSRPv2: UDP 1985 na 224.0.0.102 (IPv6: UDP 2029, ff02::66) — tcpdump -ni eth0 \"udp port 1985 or udp port 2029\". W wyniku widać VRID/grupę, priorytet, interwał i adres VIP."
+    },
+    {
+      "prompt": "Dlaczego VRRP pozwala, by wirtualny adres był fizycznym adresem jednego z routerów (owner), a HSRP nie? Jakie są tego konsekwencje?",
+      "hint": "Priorytet 255.",
+      "solution": "W VRRP router, którego interfejs ma adres równy VIP, jest „właścicielem” — ma automatycznie priorytet 255 i zawsze zostaje masterem, gdy działa (oszczędza adres w małych podsieciach). HSRP wymaga osobnego adresu dla VIP i dla każdego routera. Konsekwencja ownera: po powrocie owner zawsze odbiera rolę (nie da się wyłączyć wywłaszczenia dla 255), a jego awaria oznacza też utratę adresu zarządzania pod VIP."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "VRRPv3: advert 1000 ms, priorytet backupu 100. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "3609,4 ms",
+        "B": "4000 ms",
+        "C": "609,4 ms",
+        "D": "3000 ms"
+      },
+      "correct": "A",
+      "explanation": "3 × 1000 + (256 − 100) × 1000 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 1000 ms, priorytet backupu 200. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "3000 ms",
+        "B": "4000 ms",
+        "C": "3218,8 ms",
+        "D": "218,8 ms"
+      },
+      "correct": "C",
+      "explanation": "3 × 1000 + (256 − 200) × 1000 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 1000 ms, priorytet backupu 254. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "3000 ms",
+        "B": "3007,8 ms",
+        "C": "7,8 ms",
+        "D": "4000 ms"
+      },
+      "correct": "B",
+      "explanation": "3 × 1000 + (256 − 254) × 1000 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 1000 ms, priorytet backupu 1. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "996,1 ms",
+        "B": "3000 ms",
+        "C": "4000 ms",
+        "D": "3996,1 ms"
+      },
+      "correct": "D",
+      "explanation": "3 × 1000 + (256 − 1) × 1000 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 100 ms, priorytet backupu 100. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "360,9 ms",
+        "B": "400 ms",
+        "C": "300 ms",
+        "D": "60,9 ms"
+      },
+      "correct": "A",
+      "explanation": "3 × 100 + (256 − 100) × 100 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 100 ms, priorytet backupu 200. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "300 ms",
+        "B": "21,9 ms",
+        "C": "400 ms",
+        "D": "321,9 ms"
+      },
+      "correct": "D",
+      "explanation": "3 × 100 + (256 − 200) × 100 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 500 ms, priorytet backupu 100. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "304,7 ms",
+        "B": "1500 ms",
+        "C": "1804,7 ms",
+        "D": "2000 ms"
+      },
+      "correct": "C",
+      "explanation": "3 × 500 + (256 − 100) × 500 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 200 ms, priorytet backupu 128. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "600 ms",
+        "B": "700 ms",
+        "C": "100 ms",
+        "D": "800 ms"
+      },
+      "correct": "B",
+      "explanation": "3 × 200 + (256 − 128) × 200 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 2000 ms, priorytet backupu 100. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "6000 ms",
+        "B": "7218,8 ms",
+        "C": "1218,8 ms",
+        "D": "8000 ms"
+      },
+      "correct": "B",
+      "explanation": "3 × 2000 + (256 − 100) × 2000 / 256."
+    },
+    {
+      "question": "VRRPv3: advert 300 ms, priorytet backupu 250. Ile wynosi Master_Down_Interval?",
+      "options": {
+        "A": "7 ms",
+        "B": "900 ms",
+        "C": "907 ms",
+        "D": "1200 ms"
+      },
+      "correct": "C",
+      "explanation": "3 × 300 + (256 − 250) × 300 / 256."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma VRRP dla VRID 1?",
+      "options": {
+        "A": "00:00:5e:00:01:01",
+        "B": "00:00:5e:00:02:01",
+        "C": "00:00:0c:07:ac:01",
+        "D": "00:00:0c:9f:f0:01"
+      },
+      "correct": "A",
+      "explanation": "00:00:5e:00:01:VRID."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma VRRP dla VRID 10?",
+      "options": {
+        "A": "00:00:0c:9f:f0:0a",
+        "B": "00:00:0c:07:ac:0a",
+        "C": "00:00:5e:00:02:0a",
+        "D": "00:00:5e:00:01:0a"
+      },
+      "correct": "D",
+      "explanation": "00:00:5e:00:01:VRID."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma VRRP dla VRID 51?",
+      "options": {
+        "A": "00:00:0c:07:ac:33",
+        "B": "00:00:0c:9f:f0:33",
+        "C": "00:00:5e:00:01:33",
+        "D": "00:00:5e:00:02:33"
+      },
+      "correct": "C",
+      "explanation": "00:00:5e:00:01:VRID."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma VRRP dla VRID 255?",
+      "options": {
+        "A": "00:00:5e:00:01:ff",
+        "B": "00:00:0c:07:ac:ff",
+        "C": "00:00:5e:00:02:ff",
+        "D": "00:00:0c:9f:f0:ff"
+      },
+      "correct": "A",
+      "explanation": "00:00:5e:00:01:VRID."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv1 dla grupy 1?",
+      "options": {
+        "A": "00:00:0c:9f:f0:01",
+        "B": "00:00:5e:00:02:01",
+        "C": "00:00:5e:00:01:01",
+        "D": "00:00:0c:07:ac:01"
+      },
+      "correct": "D",
+      "explanation": "00:00:0c:07:ac:GG."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv1 dla grupy 10?",
+      "options": {
+        "A": "00:00:0c:9f:f0:0a",
+        "B": "00:00:0c:07:ac:0a",
+        "C": "00:00:5e:00:01:0a",
+        "D": "00:00:5e:00:02:0a"
+      },
+      "correct": "B",
+      "explanation": "00:00:0c:07:ac:GG."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv1 dla grupy 200?",
+      "options": {
+        "A": "00:00:0c:9f:f0:c8",
+        "B": "00:00:0c:07:ac:c8",
+        "C": "00:00:5e:00:02:c8",
+        "D": "00:00:5e:00:01:c8"
+      },
+      "correct": "B",
+      "explanation": "00:00:0c:07:ac:GG."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv2 dla grupy 10?",
+      "options": {
+        "A": "00:00:0c:9f:f0:0a",
+        "B": "00:00:0c:07:ac:0a",
+        "C": "00:00:5e:00:02:0a",
+        "D": "00:00:5e:00:01:0a"
+      },
+      "correct": "A",
+      "explanation": "00:00:0c:9f:f + 3 cyfry hex."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv2 dla grupy 300?",
+      "options": {
+        "A": "00:00:5e:00:01:2c",
+        "B": "00:00:0c:07:ac:2c",
+        "C": "00:00:5e:00:02:2c",
+        "D": "00:00:0c:9f:f1:2c"
+      },
+      "correct": "D",
+      "explanation": "00:00:0c:9f:f + 3 cyfry hex."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv2 dla grupy 4095?",
+      "options": {
+        "A": "00:00:5e:00:01:ff",
+        "B": "00:00:5e:00:02:ff",
+        "C": "00:00:0c:9f:ff:ff",
+        "D": "00:00:0c:07:ac:ff"
+      },
+      "correct": "C",
+      "explanation": "00:00:0c:9f:f + 3 cyfry hex."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma HSRPv2 dla grupy 1?",
+      "options": {
+        "A": "00:00:5e:00:02:01",
+        "B": "00:00:5e:00:01:01",
+        "C": "00:00:0c:9f:f0:01",
+        "D": "00:00:0c:07:ac:01"
+      },
+      "correct": "C",
+      "explanation": "00:00:0c:9f:f + 3 cyfry hex."
+    },
+    {
+      "question": "Jaki wirtualny MAC ma VRRP dla VRID 100?",
+      "options": {
+        "A": "00:00:5e:00:02:64",
+        "B": "00:00:0c:07:ac:64",
+        "C": "00:00:0c:9f:f0:64",
+        "D": "00:00:5e:00:01:64"
+      },
+      "correct": "D",
+      "explanation": "00:00:5e:00:01:VRID."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 100 10.0.10.2, R2 prio 100 10.0.10.3. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R3",
+        "B": "R2",
+        "C": "żaden (konflikt)",
+        "D": "R1"
+      },
+      "correct": "B",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 110 10.0.10.2, R2 prio 100 10.0.10.3. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R1",
+        "B": "żaden (konflikt)",
+        "C": "R2",
+        "D": "R3"
+      },
+      "correct": "A",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 100 10.0.10.200, R2 prio 100 10.0.10.30. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R3",
+        "B": "żaden (konflikt)",
+        "C": "R1",
+        "D": "R2"
+      },
+      "correct": "C",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 90 10.0.10.2, R2 prio 100 10.0.10.3, R3 prio 100 10.0.10.4. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R2",
+        "B": "R1",
+        "C": "żaden (konflikt)",
+        "D": "R3"
+      },
+      "correct": "D",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 255 10.0.10.1, R2 prio 254 10.0.10.3. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R1",
+        "B": "R3",
+        "C": "R2",
+        "D": "żaden (konflikt)"
+      },
+      "correct": "A",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 150 10.0.10.9, R2 prio 150 10.0.10.10. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R3",
+        "B": "R2",
+        "C": "żaden (konflikt)",
+        "D": "R1"
+      },
+      "correct": "B",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 120 10.0.10.2 (awaria), R2 prio 100 10.0.10.3, R3 prio 110 10.0.10.4. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "R1",
+        "B": "R2",
+        "C": "żaden (konflikt)",
+        "D": "R3"
+      },
+      "correct": "D",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "Grupa FHRP: R1 prio 100 172.16.0.2, R2 prio 99 172.16.0.254. Który router będzie aktywny/masterem?",
+      "options": {
+        "A": "żaden (konflikt)",
+        "B": "R1",
+        "C": "R3",
+        "D": "R2"
+      },
+      "correct": "B",
+      "explanation": "Najwyższy priorytet, przy remisie najwyższy adres IP."
+    },
+    {
+      "question": "R2 (prio 100) jest aktywny. Wraca R1 (prio 110, 10.0.10.2) — z preempt. Kto będzie aktywny?",
+      "options": {
+        "A": "R1",
+        "B": "żaden",
+        "C": "oba",
+        "D": "R2"
+      },
+      "correct": "A",
+      "explanation": "Preempt: wyższy priorytet (lub adres przy remisie) odbiera rolę."
+    },
+    {
+      "question": "R2 (prio 100) jest aktywny. Wraca R1 (prio 100, 10.0.10.2) — z preempt. Kto będzie aktywny?",
+      "options": {
+        "A": "oba",
+        "B": "żaden",
+        "C": "R2",
+        "D": "R1"
+      },
+      "correct": "C",
+      "explanation": "Preempt: wyższy priorytet (lub adres przy remisie) odbiera rolę."
+    },
+    {
+      "question": "R2 (prio 100) jest aktywny. Wraca R1 (prio 110, 10.0.10.2) — bez preempt. Kto będzie aktywny?",
+      "options": {
+        "A": "żaden",
+        "B": "oba",
+        "C": "R2",
+        "D": "R1"
+      },
+      "correct": "C",
+      "explanation": "Bez preempt obecny aktywny zostaje."
+    },
+    {
+      "question": "R2 (prio 100) jest aktywny. Wraca R1 (prio 100, 10.0.10.2) — bez preempt. Kto będzie aktywny?",
+      "options": {
+        "A": "oba",
+        "B": "R2",
+        "C": "żaden",
+        "D": "R1"
+      },
+      "correct": "B",
+      "explanation": "Bez preempt obecny aktywny zostaje."
+    },
+    {
+      "question": "Jaki problem rozwiązują protokoły FHRP?",
+      "options": {
+        "A": "Pojedynczy punkt awarii bramy domyślnej",
+        "B": "Pętle przełączania",
+        "C": "Wolne DNS",
+        "D": "Brak adresów IP"
+      },
+      "correct": "A",
+      "explanation": "Wirtualna brama."
+    },
+    {
+      "question": "Co hosty konfigurują jako bramę przy FHRP?",
+      "options": {
+        "A": "Adres multicast",
+        "B": "Adres aktywnego routera",
+        "C": "Adres obu routerów",
+        "D": "Wirtualny adres IP"
+      },
+      "correct": "D",
+      "explanation": "Bez zmian po przełączeniu."
+    },
+    {
+      "question": "Po co nowy aktywny router HSRP/VRRP wysyła gratuitous ARP, skoro wirtualny MAC się nie zmienia?",
+      "options": {
+        "A": "Aby DHCP przydzielił nowe adresy",
+        "B": "Aby wyłączyć stary router",
+        "C": "Aby hosty zmieniły bramę domyślną",
+        "D": "Aby przełączniki od razu nauczyły się nowego portu wirtualnego MAC"
+      },
+      "correct": "D",
+      "explanation": "Hosty mają ten sam MAC w ARP — zmienia się port w tablicy MAC przełącznika."
+    },
+    {
+      "question": "Który protokół FHRP jest standardem IETF?",
+      "options": {
+        "A": "CARP",
+        "B": "VRRP",
+        "C": "GLBP",
+        "D": "HSRP"
+      },
+      "correct": "B",
+      "explanation": "RFC 5798."
+    },
+    {
+      "question": "Które FHRP są własnością Cisco?",
+      "options": {
+        "A": "HSRP i GLBP",
+        "B": "VRRP i GLBP",
+        "C": "VRRP i HSRP",
+        "D": "Tylko VRRP"
+      },
+      "correct": "A",
+      "explanation": "VRRP to IETF."
+    },
+    {
+      "question": "Jak nazywają się role w HSRP?",
+      "options": {
+        "A": "AVG i AVF",
+        "B": "Primary i secondary",
+        "C": "Active i standby",
+        "D": "Master i backup"
+      },
+      "correct": "C",
+      "explanation": "Pozostałe listen."
+    },
+    {
+      "question": "Jak nazywają się role w VRRP?",
+      "options": {
+        "A": "Active i standby",
+        "B": "AVG i AVF",
+        "C": "Leader i follower",
+        "D": "Master i backup"
+      },
+      "correct": "D",
+      "explanation": "RFC 5798."
+    },
+    {
+      "question": "Co oznaczają skróty AVG i AVF w GLBP?",
+      "options": {
+        "A": "Advanced VLAN Group",
+        "B": "Automatic VRRP Gateway",
+        "C": "Active Virtual Gateway i Active Virtual Forwarder",
+        "D": "Active VPN Forwarder"
+      },
+      "correct": "C",
+      "explanation": "Równoważenie."
+    },
+    {
+      "question": "Który FHRP równoważy ruch hostów przy jednej bramie?",
+      "options": {
+        "A": "GLBP",
+        "B": "Żaden",
+        "C": "VRRP",
+        "D": "HSRP"
+      },
+      "correct": "A",
+      "explanation": "Różne MAC w odpowiedziach ARP."
+    },
+    {
+      "question": "Jaki jest domyślny priorytet w HSRP i VRRP?",
+      "options": {
+        "A": "255",
+        "B": "100",
+        "C": "1",
+        "D": "0"
+      },
+      "correct": "B",
+      "explanation": "Zakres 0–255."
+    },
+    {
+      "question": "Co decyduje przy równym priorytecie?",
+      "options": {
+        "A": "Wyższy adres IP interfejsu",
+        "B": "Czas uruchomienia",
+        "C": "Niższy adres IP",
+        "D": "Adres MAC"
+      },
+      "correct": "A",
+      "explanation": "Remis."
+    },
+    {
+      "question": "Co oznacza priorytet 255 w VRRP?",
+      "options": {
+        "A": "Router jest wyłączony",
+        "B": "Najniższy priorytet",
+        "C": "Router jest właścicielem adresu (owner) i zawsze zostaje masterem",
+        "D": "Router tylko backup"
+      },
+      "correct": "C",
+      "explanation": "VIP = adres interfejsu."
+    },
+    {
+      "question": "Czy preempt jest domyślnie włączony w HSRP?",
+      "options": {
+        "A": "Tak",
+        "B": "Tylko w v2",
+        "C": "Tylko z MD5",
+        "D": "Nie"
+      },
+      "correct": "D",
+      "explanation": "Trzeba włączyć."
+    },
+    {
+      "question": "Czy preempt jest domyślnie włączony w VRRP?",
+      "options": {
+        "A": "Tylko w v3",
+        "B": "Tak",
+        "C": "Nie",
+        "D": "Tylko dla ownera"
+      },
+      "correct": "B",
+      "explanation": "RFC 5798."
+    },
+    {
+      "question": "Po co stosuje się preempt z opóźnieniem?",
+      "options": {
+        "A": "Aby zmniejszyć priorytet",
+        "B": "Aby szybciej przełączać",
+        "C": "Aby wyłączyć GARP",
+        "D": "Aby router po powrocie zdążył zbudować trasy, zanim przejmie ruch"
+      },
+      "correct": "D",
+      "explanation": "Uniknięcie czarnej dziury."
+    },
+    {
+      "question": "Jakie są domyślne timery HSRP?",
+      "options": {
+        "A": "Hello 30 s, hold 90 s",
+        "B": "Hello 1 s, hold 3 s",
+        "C": "Hello 3 s, hold 10 s",
+        "D": "Hello 10 s, hold 40 s"
+      },
+      "correct": "C",
+      "explanation": "Można w ms."
+    },
+    {
+      "question": "Jaki jest domyślny interwał ogłoszeń VRRP?",
+      "options": {
+        "A": "1 s",
+        "B": "3 s",
+        "C": "100 ms",
+        "D": "10 s"
+      },
+      "correct": "A",
+      "explanation": "advert_int 1."
+    },
+    {
+      "question": "Jak liczy się Master_Down_Interval w VRRPv3?",
+      "options": {
+        "A": "Hold time",
+        "B": "3 × Advertisement_Interval + Skew_Time",
+        "C": "2 × Advertisement_Interval",
+        "D": "Hello × 4"
+      },
+      "correct": "B",
+      "explanation": "RFC 5798."
+    },
+    {
+      "question": "Jak liczy się Skew_Time?",
+      "options": {
+        "A": "Priorytet / 256",
+        "B": "Stałe 1 s",
+        "C": "(256 − priorytet) × Advertisement_Interval / 256",
+        "D": "256 / priorytet"
+      },
+      "correct": "C",
+      "explanation": "Wyższy priorytet = szybciej."
+    },
+    {
+      "question": "Jaki numer protokołu IP używa VRRP?",
+      "options": {
+        "A": "112",
+        "B": "1985",
+        "C": "47",
+        "D": "89"
+      },
+      "correct": "A",
+      "explanation": "Multicast 224.0.0.18."
+    },
+    {
+      "question": "Na jaki adres multicast wysyła ogłoszenia VRRP (IPv4)?",
+      "options": {
+        "A": "224.0.0.2",
+        "B": "224.0.0.102",
+        "C": "224.0.0.5",
+        "D": "224.0.0.18"
+      },
+      "correct": "D",
+      "explanation": "IPv6: ff02::12."
+    },
+    {
+      "question": "Jakiego portu UDP używa HSRP?",
+      "options": {
+        "A": "3222",
+        "B": "1985 (IPv6: 2029)",
+        "C": "520",
+        "D": "161"
+      },
+      "correct": "B",
+      "explanation": "HSRPv1 na 224.0.0.2."
+    },
+    {
+      "question": "Na jaki adres multicast wysyła HSRPv2?",
+      "options": {
+        "A": "224.0.0.9",
+        "B": "224.0.0.2",
+        "C": "224.0.0.18",
+        "D": "224.0.0.102"
+      },
+      "correct": "D",
+      "explanation": "v1: 224.0.0.2."
+    },
+    {
+      "question": "Ile grup obsługuje HSRPv2?",
+      "options": {
+        "A": "0–4095",
+        "B": "1–100",
+        "C": "0–255",
+        "D": "0–15"
+      },
+      "correct": "A",
+      "explanation": "12 bitów."
+    },
+    {
+      "question": "Ile VRID obsługuje VRRP?",
+      "options": {
+        "A": "0–4095",
+        "B": "1–255",
+        "C": "1–1024",
+        "D": "1–16"
+      },
+      "correct": "B",
+      "explanation": "8 bitów."
+    },
+    {
+      "question": "Po co tracking w FHRP?",
+      "options": {
+        "A": "Aby włączyć DHCP",
+        "B": "Aby zmienić MAC",
+        "C": "Aby obniżyć priorytet, gdy padnie uplink lub sonda",
+        "D": "Aby szyfrować ogłoszenia"
+      },
+      "correct": "C",
+      "explanation": "Router bez wyjścia oddaje rolę."
+    },
+    {
+      "question": "Co się stanie bez trackingu, gdy aktywnemu routerowi padnie uplink?",
+      "options": {
+        "A": "Nadal będzie bramą i stworzy czarną dziurę lub okrężną drogę",
+        "B": "Automatycznie odda rolę",
+        "C": "Hosty zmienią bramę",
+        "D": "Wyłączy się"
+      },
+      "correct": "A",
+      "explanation": "FHRP widzi tylko LAN."
+    },
+    {
+      "question": "Co robi keepalived?",
+      "options": {
+        "A": "Jest load balancerem L7",
+        "B": "Implementuje VRRP (wirtualny IP) i health checki na Linuksie",
+        "C": "Jest serwerem DNS",
+        "D": "Jest protokołem routingu"
+      },
+      "correct": "B",
+      "explanation": "Często z HAProxy/Nginx."
+    },
+    {
+      "question": "Do czego służy vrrp_script w keepalived?",
+      "options": {
+        "A": "Do konfiguracji DNS",
+        "B": "Do generowania certyfikatów",
+        "C": "Do routingu BGP",
+        "D": "Do sprawdzania usługi i zmiany priorytetu/stanu przy awarii"
+      },
+      "correct": "D",
+      "explanation": "track_script."
+    },
+    {
+      "question": "Co oznacza nopreempt w keepalived?",
+      "options": {
+        "A": "Wyłącza health check",
+        "B": "Węzeł nigdy nie zostanie masterem",
+        "C": "Węzeł o wyższym priorytecie nie odbiera roli po powrocie",
+        "D": "Wyłącza VRRP"
+      },
+      "correct": "C",
+      "explanation": "Wymaga state BACKUP."
+    },
+    {
+      "question": "Dlaczego przy nopreempt oba węzły keepalived powinny mieć state BACKUP?",
+      "options": {
+        "A": "Bo tak wymaga RFC",
+        "B": "Bo MASTER nie wysyła ogłoszeń",
+        "C": "Bo MASTER przy starcie od razu przejmuje rolę",
+        "D": "Nie muszą"
+      },
+      "correct": "C",
+      "explanation": "Inaczej efekt preempt."
+    },
+    {
+      "question": "Czym jest split brain w FHRP?",
+      "options": {
+        "A": "Brakiem priorytetu",
+        "B": "Podziałem VLAN",
+        "C": "Awarią obu węzłów",
+        "D": "Sytuacją, gdy oba węzły uważają się za aktywne"
+      },
+      "correct": "D",
+      "explanation": "Duplikat VIP."
+    },
+    {
+      "question": "Co najczęściej powoduje split brain w keepalived?",
+      "options": {
+        "A": "Brak DNS",
+        "B": "Zablokowany ruch VRRP między węzłami (firewall, multicast)",
+        "C": "Za wysoki priorytet",
+        "D": "Za krótki interwał"
+      },
+      "correct": "B",
+      "explanation": "Przepuść protokół 112."
+    },
+    {
+      "question": "Czy połączenia TCP zakończone na starym węźle reverse proxy przetrwają przełączenie VIP?",
+      "options": {
+        "A": "Nie — klient musi nawiązać nowe połączenie",
+        "B": "Tak, dzięki GARP",
+        "C": "Tak, zawsze",
+        "D": "Tylko HTTP/2"
+      },
+      "correct": "A",
+      "explanation": "Stan TCP był na starym węźle."
+    },
+    {
+      "question": "Czy połączenia przechodzące przez router FHRP (brama, nie proxy) zwykle przetrwają krótkie przełączenie?",
+      "options": {
+        "A": "Tak — routery nie trzymają stanu TCP, retransmisje pokryją przerwę",
+        "B": "Tylko UDP",
+        "C": "Nie, nigdy",
+        "D": "Tylko z preempt"
+      },
+      "correct": "A",
+      "explanation": "Chyba że firewall stanowy."
+    },
+    {
+      "question": "Co powinien mieć klient Java, by przetrwać przełączenie FHRP/VIP?",
+      "options": {
+        "A": "Nieskończony timeout",
+        "B": "Wyłączone keep-alive na zawsze",
+        "C": "Krótkie timeouty i retry operacji idempotentnych",
+        "D": "Stały adres MAC bramy"
+      },
+      "correct": "C",
+      "explanation": "Odporność."
+    },
+    {
+      "question": "Dlaczego klasyczny VRRP zwykle nie działa w VPC chmury publicznej?",
+      "options": {
+        "A": "Bo chmura nie ma IP",
+        "B": "Brak multicastu i obsługi gratuitous ARP; adresy przypisuje platforma",
+        "C": "Bo VPC nie ma routerów",
+        "D": "Bo VRRP jest płatny"
+      },
+      "correct": "B",
+      "explanation": "Używaj LB lub API."
+    },
+    {
+      "question": "Jak zrealizować VIP w AWS przy keepalived?",
+      "options": {
+        "A": "Wysyłając GARP",
+        "B": "Nie da się",
+        "C": "Zmieniając MAC instancji",
+        "D": "Skryptem notify przenoszącym secondary IP lub Elastic IP przez API"
+      },
+      "correct": "D",
+      "explanation": "Albo NLB."
+    },
+    {
+      "question": "Które narzędzie realizuje wirtualny IP dla Kubernetes on-prem?",
+      "options": {
+        "A": "kubelet",
+        "B": "etcd",
+        "C": "CoreDNS",
+        "D": "kube-vip lub MetalLB"
+      },
+      "correct": "D",
+      "explanation": "L2 (ARP) lub BGP."
+    },
+    {
+      "question": "Jak zabezpieczyć FHRP przed przejęciem bramy przez atakującego?",
+      "options": {
+        "A": "ACL na portach dostępowych, uwierzytelnianie (HSRP), monitoring zmian ról",
+        "B": "Zmiana VLAN na 1",
+        "C": "Wyłączenie ARP",
+        "D": "Wyższy MTU"
+      },
+      "correct": "A",
+      "explanation": "Blokuj proto 112 i UDP 1985."
+    },
+    {
+      "question": "Jaki komunikat syslog Cisco informuje o zmianie stanu HSRP?",
+      "options": {
+        "A": "%SYS-5-CONFIG_I",
+        "B": "%HSRP-5-STATECHANGE",
+        "C": "%LINK-3-UPDOWN",
+        "D": "%OSPF-5-ADJCHG"
+      },
+      "correct": "B",
+      "explanation": "Do SIEM."
+    },
+    {
+      "question": "Które polecenie Cisco pokazuje stan grup HSRP?",
+      "options": {
+        "A": "show hsrp all",
+        "B": "show vrrp interface",
+        "C": "show standby brief",
+        "D": "show ip route standby"
+      },
+      "correct": "C",
+      "explanation": "VRRP: show vrrp brief."
+    },
+    {
+      "question": "Jak włączyć VRRPv3 na Cisco IOS XE?",
+      "options": {
+        "A": "vrrp enable v3",
+        "B": "standby version 3",
+        "C": "ip vrrp 3",
+        "D": "fhrp version vrrp v3"
+      },
+      "correct": "D",
+      "explanation": "Potem vrrp N address-family."
+    },
+    {
+      "question": "Jak włączyć HSRPv2 na interfejsie?",
+      "options": {
+        "A": "standby v2 enable",
+        "B": "standby version 2",
+        "C": "hsrp version 2",
+        "D": "ip hsrp 2"
+      },
+      "correct": "B",
+      "explanation": "Więcej grup, IPv6."
+    },
+    {
+      "question": "Co robi „standby 10 track 1 decrement 20”?",
+      "options": {
+        "A": "Ustawia priorytet 20",
+        "B": "Zmienia grupę na 20",
+        "C": "Obniża priorytet grupy 10 o 20, gdy obiekt track 1 jest DOWN",
+        "D": "Śledzi 20 interfejsów"
+      },
+      "correct": "C",
+      "explanation": "Tracking."
+    },
+    {
+      "question": "Czy obniżenie priorytetu przez tracking wystarczy, by drugi router przejął rolę?",
+      "options": {
+        "A": "Tylko jeśli drugi router ma włączony preempt",
+        "B": "Nigdy",
+        "C": "Tylko w VRRP",
+        "D": "Zawsze"
+      },
+      "correct": "A",
+      "explanation": "W HSRP preempt domyślnie wyłączony."
+    },
+    {
+      "question": "Jaki skutek ma brak GARP po przełączeniu VIP w keepalived (VIP z fizycznym MAC węzła)?",
+      "options": {
+        "A": "Hosty wysyłają ruch na MAC starego węzła do wygaśnięcia wpisu ARP",
+        "B": "Brak skutków",
+        "C": "Utrata adresu IP przez nowy węzeł",
+        "D": "Szybsze przełączenie"
+      },
+      "correct": "A",
+      "explanation": "Dłuższa przerwa."
+    },
+    {
+      "question": "Czy przy FHRP wirtualny MAC przenosi się na nowy router?",
+      "options": {
+        "A": "Nie, MAC się zmienia",
+        "B": "Tak — nowy aktywny używa tego samego wirtualnego MAC",
+        "C": "Tylko w IPv6",
+        "D": "Tylko w GLBP"
+      },
+      "correct": "B",
+      "explanation": "GARP aktualizuje przełączniki."
+    },
+    {
+      "question": "Jaka jest przewaga VRRP nad HSRP w środowisku wielu producentów?",
+      "options": {
+        "A": "Jest szybszy zawsze",
+        "B": "Ma szyfrowanie",
+        "C": "Jest otwartym standardem obsługiwanym przez różnych producentów i Linuksa",
+        "D": "Nie wymaga adresu IP"
+      },
+      "correct": "C",
+      "explanation": "Interoperacyjność."
+    },
+    {
+      "question": "Czym różni się uwierzytelnianie w VRRPv2 i VRRPv3?",
+      "options": {
+        "A": "Nie różni się",
+        "B": "VRRPv3 dodał TLS",
+        "C": "Oba używają SHA-256",
+        "D": "VRRPv3 usunął uwierzytelnianie (polega na izolacji sieci)"
+      },
+      "correct": "D",
+      "explanation": "v2 miał słabe hasło."
+    },
+    {
+      "question": "Jaki typ uwierzytelniania wspiera HSRP?",
+      "options": {
+        "A": "Brak",
+        "B": "Tekst jawny lub MD5",
+        "C": "Kerberos",
+        "D": "TLS"
+      },
+      "correct": "B",
+      "explanation": "MD5 lepszy niż jawny."
+    },
+    {
+      "question": "Jak zmierzyć w labie przerwę widzianą przez klienta?",
+      "options": {
+        "A": "Logami DNS",
+        "B": "Restartem aplikacji",
+        "C": "Sondą wysyłającą żądania w krótkich odstępach i logującą zmiany stanu",
+        "D": "Jednym pingiem"
+      },
+      "correct": "C",
+      "explanation": "FailoverProbe."
+    },
+    {
+      "question": "Od czego zależy dokładność pomiaru przerwy sondą?",
+      "options": {
+        "A": "Od okresu sondy (rozdzielczość) i timeoutów",
+        "B": "Od DNS TTL",
+        "C": "Od długości URL",
+        "D": "Od adresu MAC"
+      },
+      "correct": "A",
+      "explanation": "100 ms → ±100 ms."
+    },
+    {
+      "question": "Co może sprawić, że VIP zostanie na węźle z martwym Nginx?",
+      "options": {
+        "A": "Za niski priorytet",
+        "B": "Zbyt krótkie advert_int",
+        "C": "GARP",
+        "D": "Brak health checku (track_script) w keepalived"
+      },
+      "correct": "D",
+      "explanation": "Awaria usługi ≠ awaria węzła."
+    },
+    {
+      "question": "Jaka jest zaleta łączenia FHRP z BFD?",
+      "options": {
+        "A": "Szybsze wykrycie awarii sąsiada (setki ms)",
+        "B": "Równoważenie ruchu",
+        "C": "Szyfrowanie",
+        "D": "Mniej adresów"
+      },
+      "correct": "A",
+      "explanation": "Zamiast długiego hold."
+    },
+    {
+      "question": "Jak zapisać w HSRP timery w milisekundach?",
+      "options": {
+        "A": "standby 10 timers 0.2 0.75",
+        "B": "standby 10 timers msec 200 msec 750",
+        "C": "standby timers ms 200",
+        "D": "hsrp timers 200 750"
+      },
+      "correct": "B",
+      "explanation": "Hello/hold."
+    },
+    {
+      "question": "Do czego służy kilka grup HSRP/VRRP na tym samym VLAN-ie?",
+      "options": {
+        "A": "Do zwiększenia MTU",
+        "B": "Do szyfrowania",
+        "C": "Do równoważenia — część hostów używa jednej bramy, część drugiej",
+        "D": "Nie da się"
+      },
+      "correct": "C",
+      "explanation": "Ręczny podział."
+    },
+    {
+      "question": "Dlaczego health check w keepalived powinien sprawdzać realną ścieżkę do aplikacji?",
+      "options": {
+        "A": "Nie powinien",
+        "B": "Bo tak jest szybciej",
+        "C": "Bo VRRP tego wymaga",
+        "D": "Bo działający proces proxy bez dostępu do aplikacji nie obsłuży ruchu"
+      },
+      "correct": "D",
+      "explanation": "Np. curl /healthz."
+    },
+    {
+      "question": "Co wysyła nowy master VRRP zaraz po przejęciu roli?",
+      "options": {
+        "A": "Nic",
+        "B": "DHCP Offer",
+        "C": "Gratuitous ARP (dla IPv6: Unsolicited NA) dla VIP",
+        "D": "ICMP Redirect"
+      },
+      "correct": "C",
+      "explanation": "Aktualizacja sąsiadów."
+    },
+    {
+      "question": "Jaki element Kubernetes pełni rolę „wirtualnej bramy” dla aplikacji?",
+      "options": {
+        "A": "Namespace",
+        "B": "Service / Ingress z wieloma replikami",
+        "C": "ConfigMap",
+        "D": "PersistentVolume"
+      },
+      "correct": "B",
+      "explanation": "Abstrakcja adresu."
+    },
+    {
+      "question": "Jak firewall hosta z keepalived powinien traktować VRRP?",
+      "options": {
+        "A": "Blokować cały multicast",
+        "B": "Przepuszczać tylko TCP",
+        "C": "Blokować ICMP",
+        "D": "Przepuszczać protokół 112 od drugiego węzła"
+      },
+      "correct": "D",
+      "explanation": "Inaczej split brain."
+    },
+    {
+      "question": "Co może zrobić keepalived poza VIP?",
+      "options": {
+        "A": "Uruchamiać skrypty notify przy zmianie stanu (alerty, przenoszenie adresu)",
+        "B": "Serwować HTTP",
+        "C": "Rozwiązywać DNS",
+        "D": "Generować certyfikaty"
+      },
+      "correct": "A",
+      "explanation": "notify_master."
+    },
+    {
+      "question": "Dlaczego FHRP nie zastępuje load balancera?",
+      "options": {
+        "A": "Bo wymaga chmury",
+        "B": "Bo jest wolniejszy",
+        "C": "Przenosi tylko adres między węzłami (aktywny/zapasowy), nie rozkłada ruchu ani nie sprawdza aplikacji (bez dodatków)",
+        "D": "Zastępuje w pełni"
+      },
+      "correct": "C",
+      "explanation": "Wysoka dostępność ≠ skalowanie."
+    },
+    {
+      "question": "Jak wykryć split brain w sieci?",
+      "options": {
+        "A": "dig VIP",
+        "B": "arping do VIP pokazuje odpowiedzi z dwóch MAC",
+        "C": "ping 8.8.8.8",
+        "D": "traceroute VIP"
+      },
+      "correct": "B",
+      "explanation": "Duplikat IP."
+    },
+    {
+      "question": "Co powoduje druga przerwa po naprawie węzła głównego?",
+      "options": {
+        "A": "Preempt — węzeł z wyższym priorytetem odbiera VIP",
+        "B": "Krótkie timery",
+        "C": "Brak DNS",
+        "D": "GARP"
+      },
+      "correct": "A",
+      "explanation": "nopreempt lub opóźnienie."
+    },
+    {
+      "question": "Jaki czas przełączenia daje VRRPv3 z advert 100 ms?",
+      "options": {
+        "A": "Około 3,6 s",
+        "B": "Natychmiast",
+        "C": "Około 10 s",
+        "D": "Około 360 ms"
+      },
+      "correct": "D",
+      "explanation": "3 × 100 + skew."
+    }
+  ]
 }
