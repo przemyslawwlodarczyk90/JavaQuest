@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Trasy, które wpisujesz sam — i plan B na awarię",
+      "image": "netsec/ns03-08-floating.svg",
+      "imageAlt": "Topologia labu: r1 połączony z r2 i r3, oba połączone z serwerem w sieci 198.51.100.0/24. Normalnie w RIB r1 jest trasa statyczna AD 1 przez r2, a trasa przez r3 z AD 250 czeka nieaktywna. Po wyłączeniu łącza r1–r2 trasa główna znika i instalowana jest pływająca przez r3.",
+      "body": "W poprzedniej lekcji czytaliśmy tablicę routingu. Teraz ją **budujemy**. Trasa statyczna to wpis dodany ręcznie (lub przez IaC): „do sieci X idź przez Y”. Brzmi prymitywnie przy OSPF i BGP, ale statyki są wszędzie: trasa domyślna na routerze oddziału, trasa do sieci partnera przez VPN, trasy w tablicach VPC w chmurze, trasy w kontenerach i na serwerach z dwoma interfejsami. Są przewidywalne, nie generują ruchu sterującego i nie da się ich „oszukać” fałszywym ogłoszeniem — ale **nie reagują same** na awarie na dalszych odcinkach.\n\nDlatego poznamy **trasę pływającą (floating static route)** — zapasową trasę z celowo podniesionym **dystansem administracyjnym (AD)**, która „wypływa” do tablicy dopiero wtedy, gdy trasa główna zniknie. I sam **dystans administracyjny**: miarę zaufania do źródła trasy, która rozstrzyga, gdy tę samą sieć zna kilka protokołów.\n\nW tej lekcji:\n- następny skok vs interfejs wyjściowy vs trasa w pełni określona; trasy /32 i domyślne,\n- dystans administracyjny (connected 0, static 1, eBGP 20, OSPF 110, iBGP 200…) i kolejność: prefiks → AD → metryka,\n- trasa pływająca i jej ograniczenia (wykrywa tylko awarię lokalnego łącza — chyba że użyjesz IP SLA/BFD),\n- trasy statyczne IPv6 (next hop link-local wymaga interfejsu),\n- routing między VLAN-ami: **router-on-a-stick** i **SVI na przełączniku L3**,\n- **Guided Lab z planu**: FRR w trzech routerach — trasa główna i pływająca; zerwij łącze i obserwuj przełączenie.\n\nCele: CCNA 200-301 v2 domena 3 (konfiguracja i weryfikacja routingu statycznego IPv4 i IPv6: default, network, host, floating; dystans administracyjny; routing między VLAN-ami), Network+ (routing statyczny vs dynamiczny, AD).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik routingu statycznego",
+      "body": "- **Trasa statyczna** — wpis skonfigurowany ręcznie: prefiks + następny skok i/lub interfejs [+ AD].\n- **Trasa sieciowa / hosta / domyślna** — do sieci (`10.9.0.0/16`), do pojedynczego adresu (`/32`, IPv6 `/128`), do wszystkiego (`0.0.0.0/0`, `::/0`; Cisco: „gateway of last resort”).\n- **Następny skok (next hop)** — adres sąsiedniego routera; wymaga **rekurencyjnego wyszukania** (router musi wiedzieć, jak dojść do next hopa — zwykle connected).\n- **Trasa „directly attached”** (tylko interfejs) — sensowna na łączach punkt-punkt; na Ethernecie wymusza ARP o każdy cel i proxy ARP.\n- **Trasa w pełni określona (fully specified)** — interfejs + next hop; wymagana, gdy next hop to adres **link-local IPv6** (fe80:: jest na każdym łączu, więc trzeba wskazać które).\n- **Dystans administracyjny (AD)** — wiarygodność źródła trasy (0–255, niższy lepszy). Domyślne (Cisco): connected 0, static 1, eBGP 20, EIGRP (wewn.) 90, OSPF 110, IS-IS 115, RIP 120, EIGRP (zewn.) 170, iBGP 200, nieosiągalna (unusable) 255.\n- **RIB / FIB** — Routing Information Base (zwycięzcy z każdego źródła) i Forwarding Information Base (to, czego faktycznie używa przekazywanie; w Linuksie — tablica jądra).\n- **Trasa pływająca (floating static)** — trasa zapasowa z AD wyższym niż trasa główna (np. 250 dla statyka zapasowego wobec statyka 1, albo 130 wobec OSPF 110). Nieaktywna, dopóki główna istnieje.\n- **IP SLA / tracking, BFD** — mechanizmy, które usuwają trasę statyczną, gdy **dalszy** odcinek przestaje działać (ping/HTTP probe lub szybkie wykrywanie awarii sąsiada), a nie tylko gdy lokalny interfejs jest DOWN.\n- **Null route (Null0 / blackhole)** — trasa „donikąd” (`ip route 10.0.0.0 255.0.0.0 Null0`, `ip route add blackhole 10.0.0.0/8`): odrzuca ruch do agregatu, którego części nie istnieją (zapobiega pętlom), używana też do blokowania ruchu (RTBH).\n- **Router-on-a-stick** — jeden fizyczny interfejs routera z podinterfejsami 802.1Q dla każdego VLAN-u.\n- **SVI (Switch Virtual Interface)** — interfejs `Vlan10` na przełączniku L3 z adresem bramy VLAN-u; wymaga `ip routing`.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Nawigacja z objazdem zapisanym w notesie",
+      "body": "Trasa statyczna to **trasa zapisana w notesie kierowcy**: „do magazynu w Poznaniu jedź A2”. Nie zmienia się sama — jeśli na A2 jest wypadek 100 km dalej, kierowca i tak w niego wjedzie (statyk nie widzi awarii dalej niż własny wyjazd z bazy).\n\n**Trasa pływająca** to dopisek „jeśli wjazd na A2 jest zamknięty, jedź drogą krajową 92” — z gwiazdką „gorsza, używaj tylko awaryjnie” (wyższy AD). Kierowca sięga po nią **tylko**, gdy pierwszy wariant fizycznie zniknie (zamknięty wjazd = interfejs DOWN). Jeśli chcesz, żeby reagował na wypadek dalej, potrzebujesz kogoś, kto co minutę dzwoni i sprawdza, czy A2 jest przejezdna (**IP SLA**) albo radia CB z natychmiastowymi komunikatami (**BFD**).\n\n**Dystans administracyjny** to zaufanie do źródeł informacji o drodze: własny notes (static, 1) > komunikat kolegi z firmy przewozowej (OSPF, 110) > plotka z postoju (RIP, 120). Gdy dwa źródła mówią o **tym samym celu**, wierzysz bardziej zaufanemu — nawet jeśli plotka obiecuje krótszą drogę (metryk różnych protokołów się nie porównuje).",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Kto wygrywa w RIB: AD, metryka i awarie",
+      "image": "netsec/ns03-08-ad.svg",
+      "imageAlt": "Wykres dystansów administracyjnych: connected 0, static 1, eBGP 20, EIGRP 90, OSPF 110, IS-IS 115, RIP 120, EIGRP zewnętrzny 170, iBGP 200, 255 nieużywana. Przykład: ta sama sieć 10.50.0.0/16 z OSPF (AD 110) i statyczna (AD 1) — do RIB trafia statyczna.",
+      "body": "Router zna kilka sieci z różnych źródeł. Poniżej RIB policzony modelem lekcji — w stanie normalnym i po awariach poszczególnych interfejsów. Zwróć uwagę na 10.60.0.0/16: statyk z AD 130 jest **pływającym zapasem dla OSPF** (110), a 0.0.0.0/0 z AD 210 — zapasem dla eBGP (20).",
+      "code": "Kandydaci:\n  10.50.0.0/16   OSPF    AD 110  metric 20  via 10.0.0.2 (Gi0/1)\n  10.50.0.0/16   static  AD 1    metric 0   via 10.0.0.6 (Gi0/2)\n  10.60.0.0/16   OSPF    AD 110  metric 30  via 10.0.0.2 (Gi0/1)\n  10.60.0.0/16   static  AD 130  metric 0   via 10.0.0.6 (Gi0/2)\n  0.0.0.0/0      eBGP    AD 20   metric 0   via 203.0.113.1 (Gi0/0)\n  0.0.0.0/0      static  AD 210  metric 0   via 198.51.100.1 (Gi0/3)\n  10.70.0.0/16   RIP     AD 120  metric 2   via 10.0.0.10 (Gi0/4)\n  10.70.0.0/16   iBGP    AD 200  metric 0   via 10.0.0.14 (Gi0/5)\n\nRIB — normalnie:\n  10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static\n  10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1) — OSPF\n  0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP\n  10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP\n\nRIB — awaria Gi0/1 (sąsiad OSPF):\n  10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static\n  10.60.0.0/16 [130/0] via 10.0.0.6 (Gi0/2) — static\n  0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP\n  10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP\n\nRIB — awaria Gi0/0 (łącze do operatora BGP):\n  10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static\n  10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1) — OSPF\n  0.0.0.0/0 [210/0] via 198.51.100.1 (Gi0/3) — static\n  10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Trasy statyczne IPv4 i IPv6: Cisco IOS, FRR i Linux",
+      "image": "netsec/ns03-08-nexthop.svg",
+      "imageAlt": "Trzy formy trasy statycznej: z następnym skokiem (rekurencyjne wyszukanie i ARP o bramę), tylko z interfejsem (na Ethernecie ARP o każdy cel i zależność od proxy ARP, poprawne na łączach punkt-punkt) oraz w pełni określona (interfejs i następny skok, wymagana dla next hop link-local w IPv6).",
+      "body": "Te same trasy w trzech składniach. FRR (`vtysh`) celowo przypomina IOS — to, czego nauczysz się w labie, przeniesiesz na egzamin CCNA.",
+      "code": "! Cisco IOS\nip route 0.0.0.0 0.0.0.0 203.0.113.1                  ! domyślna (gateway of last resort)\nip route 10.9.0.0 255.255.0.0 10.0.12.2               ! sieciowa, next hop\nip route 10.9.5.7 255.255.255.255 10.0.12.2           ! hosta /32\nip route 10.9.0.0 255.255.0.0 10.0.13.2 250           ! pływająca (AD 250)\nip route 10.0.0.0 255.0.0.0 Null0                     ! blackhole dla agregatu\nipv6 unicast-routing\nipv6 route ::/0 GigabitEthernet0/0 FE80::1            ! link-local next hop — interfejs obowiązkowy\nipv6 route 2001:db8:9::/48 2001:db8:12::2\nshow ip route static ; show ip route 10.9.0.0 ; show ipv6 route static\n\n! FRR (vtysh) — identyczna składnia z prefiksem CIDR\nip route 198.51.100.0/24 10.0.12.2\nip route 198.51.100.0/24 10.0.13.2 250\nipv6 route 2001:db8:9::/48 2001:db8:12::2\n\n# Linux (jądro nie zna AD — zapas robi się wyższą metryką; trasa przez interfejs DOWN znika)\nip route add 198.51.100.0/24 via 10.0.12.2 metric 10\nip route add 198.51.100.0/24 via 10.0.13.2 metric 250\nip route add blackhole 10.0.0.0/8\nip -6 route add default via fe80::1 dev eth0          # link-local: dev obowiązkowy"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Guided Lab z planu: FRR w trzech routerach — główna i pływająca",
+      "body": "Każdy kontener to osobny **network namespace** z własnym stosem — tak samo jak w labie z lekcji 02/13, tylko z FRR (zebra + staticd) zamiast ręcznych poleceń `ip`. Wymagany Docker (Linux/WSL2). Topologia: r1 łączy się z r2 (`10.0.12.0/24`) i r3 (`10.0.13.0/24`); r2 i r3 łączą się z serwerem srv (`10.0.24.0/24`, `10.0.34.0/24`), który ma adres `198.51.100.10` na loopbacku.\n1. **Plik `compose.yaml`**: usługi r1, r2, r3 z obrazem `quay.io/frrouting/frr:10.1.1`, `cap_add: [NET_ADMIN, SYS_ADMIN]`, `sysctls: net.ipv4.ip_forward: 1`, oraz srv (`alpine` z `iproute2`). Sieci: `n12`, `n13`, `n24`, `n34` z jawnymi `ipam.subnet` i stałymi `ipv4_address` (np. r1 = 10.0.12.11 i 10.0.13.11, r2 = 10.0.12.2 i 10.0.24.2, r3 = 10.0.13.2 i 10.0.34.2, srv = 10.0.24.10 i 10.0.34.10). Uwaga: Docker rezerwuje .1 każdej sieci dla bramy mostu — dlatego routery mają adresy .2/.11.\n2. **Konfiguracja FRR** (`docker compose exec r1 vtysh`, potem `configure`): na r1 `ip route 198.51.100.0/24 10.0.12.2` i `ip route 198.51.100.0/24 10.0.13.2 250`; na r2 `ip route 198.51.100.0/24 10.0.24.10`, na r3 `ip route 198.51.100.0/24 10.0.34.10`; trasy powrotne do r1 (np. adres testowy r1 `192.168.10.1/32` na loopbacku): na r2 i r3 `ip route 192.168.10.1/32 10.0.12.11` / `10.0.13.11`, na srv `ip route add 192.168.10.1/32 via 10.0.24.2 metric 10` i `via 10.0.34.2 metric 20`.\n3. **Stan normalny**: `docker compose exec r1 vtysh -c \"show ip route 198.51.100.0/24\"` → `S>* [1/0] via 10.0.12.2`, a trasa z AD 250 widoczna jako nieaktywna; `ip route get 198.51.100.10` w r1 → przez sieć n12. Test: `docker compose exec r1 ping -I 192.168.10.1 198.51.100.10`.\n4. **Awaria**: zerwij łącze r1–r2 — `docker compose exec r1 ip link set <interfejs w n12> down` (nazwę sprawdź `ip -br addr`). Obserwuj `show ip route`: trasa główna znika, **`S>* [250/0] via 10.0.13.2`** jest instalowana. Ping przechodzi dalej (srv odpowiada przez r3 dzięki wyższej metryce zapasowej).\n5. **Ograniczenie**: przywróć łącze, a zamiast niego zatrzymaj **r2** w środku (`docker compose exec r2 ip link set <iface do srv> down`). Łącze r1–r2 jest UP, więc trasa główna **zostaje** — ruch ginie w r2. Statyk nie widzi awarii za sąsiadem.\n6. **Naprawa ograniczenia**: BFD w FRR (`bfdd`; `ip route 198.51.100.0/24 10.0.12.2 bfd` w nowszych wersjach lub BFD w protokole dynamicznym), na Cisco IP SLA + `track` (`ip route … 10.0.12.2 track 1`). Albo routing dynamiczny (lekcja 14, OSPF).\n7. **Notatka**: zapisz wyjście `show ip route` przed/po, czas przełączenia (ile pingów zginęło) i wniosek o ograniczeniu.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Routing między VLAN-ami: router-on-a-stick i SVI",
+      "image": "netsec/ns03-08-intervlan.svg",
+      "imageAlt": "Porównanie routingu między VLAN-ami: router-on-a-stick z podinterfejsami Gi0/0.10 i Gi0/0.20 na jednym łączu trunk 802.1Q do przełącznika L2, oraz przełącznik L3 z poleceniem ip routing i interfejsami SVI Vlan10 i Vlan20 pełniącymi rolę bram.",
+      "body": "VLAN-y dzielą sieć na osobne domeny rozgłoszeniowe i podsieci (lekcja 02/05). Żeby host z VLAN 10 porozmawiał z hostem z VLAN 20, potrzebny jest **router** — urządzenie z nogą w obu podsieciach, które jest bramą domyślną dla każdej z nich.\n\n**Router-on-a-stick** (klasyka CCNA): jedno łącze trunk 802.1Q do przełącznika, na routerze podinterfejsy:\n`interface Gi0/0.10` → `encapsulation dot1Q 10` → `ip address 10.10.0.1 255.255.255.0` (i analogicznie .20; natywny VLAN: `encapsulation dot1Q 99 native`). Zaleta: tani, działa z każdym przełącznikiem L2. Wada: ruch między VLAN-ami przechodzi **dwa razy** przez jedno łącze i przez CPU/forwarding routera — wąskie gardło.\n\n**SVI na przełączniku L3** (standard w kampusie i centrum danych): `ip routing`, `interface Vlan10` → `ip address 10.10.0.1 255.255.255.0` → `no shutdown`. Routing odbywa się w ASIC-u przełącznika z pełną prędkością. SVI jest UP tylko, gdy VLAN istnieje i ma przynajmniej jeden aktywny port (lub trunk) — klasyczna pułapka „SVI down/down”. Trzecia opcja: **routed port** (`no switchport`) — port przełącznika L3 działający jak interfejs routera (łącza do routerów/firewalli).\n\nDla developera: brama domyślna Twojego serwera lub poda to często SVI albo jego wirtualny odpowiednik (FHRP — lekcja 15). W chmurze tę rolę pełni niewidoczny router VPC pod adresem `.1` podsieci.",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Trasy statyczne jako kod: Terraform (AWS) i netplan",
+      "body": "W praktyce developera/DevOps trasy statyczne rzadko wpisuje się ręcznie — są w IaC. Te same zasady (prefiks, next hop, zapas, trasa powrotna) obowiązują w tablicach routingu VPC i w konfiguracji serwerów.",
+      "code": "# Terraform: tablica routingu podsieci prywatnej — domyślna przez NAT GW, sieć biura przez Transit Gateway\nresource \"aws_route_table\" \"private_a\" {\n  vpc_id = aws_vpc.main.id\n  route { cidr_block = \"0.0.0.0/0\"     nat_gateway_id     = aws_nat_gateway.a.id }\n  route { cidr_block = \"10.100.0.0/16\" transit_gateway_id = aws_ec2_transit_gateway.hub.id }   # biuro / VPN\n  # trasa local (10.20.0.0/16) jest dodawana automatycznie; LPM: 10.100.x → TGW, reszta → NAT\n}\nresource \"aws_route_table_association\" \"private_a\" {\n  subnet_id = aws_subnet.private[0].id\n  route_table_id = aws_route_table.private_a.id\n}\n\n# netplan (Ubuntu): serwer z interfejsem zarządzania — trasa do sieci adminów i zapas z wyższą metryką\nnetwork:\n  version: 2\n  ethernets:\n    eth1:\n      addresses: [10.0.50.10/24]\n      routes:\n        - to: 10.99.0.0/16\n          via: 10.0.50.1\n          metric: 10\n        - to: 10.99.0.0/16\n          via: 10.0.50.2          # drugi router zarządzania — „pływająca” w wersji Linux (metryka)\n          metric: 200\n# sudo netplan try   ← rollback po 120 s, jeśli stracisz łączność (zawsze przy zmianach tras na zdalnym serwerze!)"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **Oddziały i małe sieci**: router z jedną trasą domyślną do operatora i pływającą przez LTE/5G (AD 250) — klasyczny zapas łącza.\n- **Chmura**: każda trasa w route table VPC jest statyczna (poza propagacją z VPN/TGW/BGP); trasy do sieci on-premises, peeringu, endpointów. Błąd w jednej trasie = „połowa usług nie działa”.\n- **Kontenery i Kubernetes**: proste CNI (host-gw, Flannel host-gw) instalują na węzłach trasy statyczne do podsieci podów innych węzłów.\n- **Serwery z kilkoma interfejsami**: trasy statyczne do sieci zarządzania/backupu przez właściwy interfejs (lekcja 07 — asymetria).\n- **Testy**: trasa /32 lub blackhole do zależności zewnętrznej, żeby zasymulować jej awarię (chaos engineering na poziomie sieci).\n\n**Blue team:**\n- **Trasy statyczne są odporne na fałszywe ogłoszenia** (brak protokołu do przejęcia) — dlatego krytyczne trasy (np. do sieci zarządzania) bywają statyczne; ale wymagają kontroli zmian.\n- **RTBH (Remotely Triggered Black Hole)**: trasa do Null0 dla adresu atakowanego lub atakującego, rozgłaszana do routerów brzegowych — szybkie odcięcie ruchu DDoS.\n- **Null route dla agregatów** zapobiega pętlom routingu, gdy część agregatu nie istnieje.\n- **Niespodziewana nowa trasa statyczna** (szczególnie /32 do DNS, proxy, serwera aktualizacji lub domyślna przez nieznany next hop) to wskaźnik kompromitacji lub nieautoryzowanej zmiany — monitoruj konfigurację (RANCID/Oxidized, Git diff konfiguracji, syslog „%SYS-5-CONFIG_I”).\n- Mapowanie: CCNA (routing statyczny, AD, inter-VLAN), Network+ (routing, redundancja), Security+ (kontrola zmian, DDoS mitigation).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy",
+      "body": "- **Trasa pływająca z AD niższym niż główna** — np. zapas statyczny AD 1 obok głównego OSPF (110): zapas wygrywa zawsze. Zapas dla OSPF musi mieć AD > 110 (np. 130), dla eBGP > 20, dla statyka > 1.\n- **Oczekiwanie, że statyk wykryje awarię za sąsiadem** — usuwany jest tylko wtedy, gdy next hop staje się nieosiągalny lokalnie (interfejs DOWN). Na Ethernecie przez przełącznik interfejs zwykle zostaje UP nawet przy martwym routerze. Potrzebne IP SLA/BFD.\n- **Trasa „tylko interfejs” na Ethernecie** — ARP o każdy cel, zależność od proxy ARP, ogromne tablice ARP.\n- **IPv6 z next hopem link-local bez interfejsu** — trasa odrzucona lub nieprawidłowa.\n- **Brak trasy powrotnej** — dodałeś trasę na r1, ale r2/srv nie wie, jak odpowiedzieć.\n- **Pętla routingu** — dwa routery z trasami domyślnymi wskazującymi na siebie nawzajem; pakiety krążą do wyczerpania TTL (traceroute pokazuje powtarzające się adresy).\n- **Router-on-a-stick bez `encapsulation dot1Q`** lub z niezgodnym natywnym VLAN-em; **SVI down**, bo VLAN nie ma aktywnych portów albo brak `ip routing` na przełączniku L3.\n- **Zmiana tras na zdalnym serwerze bez zabezpieczenia** — odcinasz sobie SSH; używaj `netplan try`, `at now + 5 min` z rollbackiem lub konsoli out-of-band.\n- **Linux: oczekiwanie AD** — jądro zna tylko metrykę; AD działa w FRR/BIRD, które instalują zwycięzców do jądra.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: zapas, który nigdy nie zadziała (albo działa zawsze)",
+      "body": "Dwa typowe błędy konfiguracji zapasowego łącza na routerze oddziału.",
+      "code": "! główne łącze przez OSPF (AD 110), zapas przez LTE:\nip route 0.0.0.0 0.0.0.0 192.168.100.1          ! AD 1 — wygrywa z OSPF ZAWSZE, cały ruch idzie przez LTE (i płacisz za transfer)\n! albo zapas do głównej trasy statycznej przez przełącznik operatora:\nip route 0.0.0.0 0.0.0.0 203.0.113.1            ! główna\nip route 0.0.0.0 0.0.0.0 192.168.100.1 250      ! pływająca\n! awaria routera operatora ZA przełącznikiem: Gi0/0 nadal UP → główna zostaje w RIB → oddział bez Internetu"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: AD dobrany do źródła i śledzenie osiągalności (IP SLA)",
+      "body": "Zapas z AD wyższym niż źródło główne oraz trasa główna powiązana z sondą IP SLA — znika, gdy przestaje odpowiadać zdalny punkt (np. DNS operatora), nie tylko gdy lokalny interfejs padnie.",
+      "code": "ip sla 1\n icmp-echo 198.51.100.53 source-interface GigabitEthernet0/0     ! zdalny cel za łączem operatora\n frequency 5\nip sla schedule 1 life forever start-time now\ntrack 1 ip sla 1 reachability\n delay down 10 up 30                                             ! histereza — bez „mrugania” trasą\nip route 0.0.0.0 0.0.0.0 203.0.113.1 track 1                    ! główna, zależna od sondy\nip route 0.0.0.0 0.0.0.0 192.168.100.1 250                      ! pływająca przez LTE\n! (przy OSPF jako głównym źródle zapas ma AD > 110, np. 130)\nshow track 1 ; show ip sla statistics 1 ; show ip route 0.0.0.0"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Statycznie czy dynamicznie, i jaki AD dla zapasu",
+      "body": "Ściąga projektowa:",
+      "code": "SYTUACJA                                              WYBÓR\nmała sieć / oddział z jednym wyjściem                  statyczna trasa domyślna\nzapasowe łącze (LTE, drugi operator)                   pływająca: AD > AD trasy głównej (+ IP SLA/BFD)\nsieć z wieloma routerami i zmianami topologii          routing dynamiczny (OSPF — lekcja 14), statyki tylko na brzegu\ntrasa do sieci partnera przez VPN                      statyczna (lub BGP przy wielu prefiksach i redundancji)\nchmura (VPC route tables)                              statyczne trasy w IaC; propagacja z VGW/TGW, gdy dynamiczne\nblokada/odcięcie ruchu, agregaty                       Null0 / blackhole (RTBH przy DDoS)\nrouting między VLAN-ami w LAB/małej sieci              router-on-a-stick\nrouting między VLAN-ami w kampusie                     SVI na przełączniku L3 (+ FHRP dla redundancji bramy)\nIPv6 z bramą link-local                                trasa w pełni określona: interfejs + fe80::…\nzapas dla:  static 1 → AD 2–254 · eBGP 20 → 21+ · OSPF 110 → 111+ · iBGP 200 → 201+"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Trasa statyczna: prefiks + next hop (rekurencja) / interfejs (P2P) / oba (w pełni określona; wymagana dla link-local IPv6). Domyślna 0.0.0.0/0, hosta /32, sieciowa.\n- Wybór: najdłuższy prefiks → przy tym samym prefiksie najniższy **AD** (connected 0, static 1, eBGP 20, OSPF 110, RIP 120, iBGP 200) → metryka w obrębie protokołu.\n- **Trasa pływająca**: AD wyższy niż trasa główna; instalowana, gdy główna zniknie. Statyk znika tylko przy lokalnej utracie next hopa — na awarie dalej IP SLA/track lub BFD.\n- Linux nie ma AD (metryka); AD jest w FRR/BIRD i routerach.\n- Routing między VLAN-ami: router-on-a-stick (podinterfejsy dot1Q) lub SVI na przełączniku L3 (`ip routing`), routed ports.\n- Null0/blackhole: agregaty i RTBH. Zmiany tras na zdalnych serwerach — z rollbackiem (`netplan try`).\n- Następna lekcja: **NAT, PAT i port forwarding** — conntrack, wyczerpanie portów, hairpin NAT i NAT w Dockerze.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Router ma kandydatów: 10.50.0.0/16 OSPF metric 20 via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static metric 0 via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF metric 30 via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 metric 0 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP metric 0 via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 metric 0 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP metric 2 via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP metric 0 via 10.0.0.14 (Gi0/5). Podaj zawartość RIB w stanie normalnym.",
+      "hint": "Dla każdego prefiksu: najniższy AD spośród tras przez działające interfejsy.",
+      "solution": "10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static; 10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1) — OSPF; 0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP; 10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP"
+    },
+    {
+      "prompt": "Router ma kandydatów: 10.50.0.0/16 OSPF metric 20 via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static metric 0 via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF metric 30 via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 metric 0 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP metric 0 via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 metric 0 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP metric 2 via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP metric 0 via 10.0.0.14 (Gi0/5). Podaj zawartość RIB po awarii Gi0/1.",
+      "hint": "Dla każdego prefiksu: najniższy AD spośród tras przez działające interfejsy.",
+      "solution": "10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static; 10.60.0.0/16 [130/0] via 10.0.0.6 (Gi0/2) — static; 0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP; 10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP"
+    },
+    {
+      "prompt": "Router ma kandydatów: 10.50.0.0/16 OSPF metric 20 via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static metric 0 via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF metric 30 via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 metric 0 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP metric 0 via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 metric 0 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP metric 2 via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP metric 0 via 10.0.0.14 (Gi0/5). Podaj zawartość RIB po awarii Gi0/0.",
+      "hint": "Dla każdego prefiksu: najniższy AD spośród tras przez działające interfejsy.",
+      "solution": "10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static; 10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1) — OSPF; 0.0.0.0/0 [210/0] via 198.51.100.1 (Gi0/3) — static; 10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP"
+    },
+    {
+      "prompt": "Router ma kandydatów: 10.50.0.0/16 OSPF metric 20 via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static metric 0 via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF metric 30 via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 metric 0 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP metric 0 via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 metric 0 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP metric 2 via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP metric 0 via 10.0.0.14 (Gi0/5). Podaj zawartość RIB po awarii Gi0/2.",
+      "hint": "Dla każdego prefiksu: najniższy AD spośród tras przez działające interfejsy.",
+      "solution": "10.50.0.0/16 [110/20] via 10.0.0.2 (Gi0/1) — OSPF; 10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1) — OSPF; 0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP; 10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP"
+    },
+    {
+      "prompt": "Router ma kandydatów: 10.50.0.0/16 OSPF metric 20 via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static metric 0 via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF metric 30 via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 metric 0 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP metric 0 via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 metric 0 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP metric 2 via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP metric 0 via 10.0.0.14 (Gi0/5). Podaj zawartość RIB po awarii Gi0/1 i Gi0/2.",
+      "hint": "Dla każdego prefiksu: najniższy AD spośród tras przez działające interfejsy.",
+      "solution": "0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP; 10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4) — RIP"
+    },
+    {
+      "prompt": "Router ma kandydatów: 10.50.0.0/16 OSPF metric 20 via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static metric 0 via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF metric 30 via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 metric 0 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP metric 0 via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 metric 0 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP metric 2 via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP metric 0 via 10.0.0.14 (Gi0/5). Podaj zawartość RIB po awarii Gi0/4.",
+      "hint": "Dla każdego prefiksu: najniższy AD spośród tras przez działające interfejsy.",
+      "solution": "10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2) — static; 10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1) — OSPF; 0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0) — eBGP; 10.70.0.0/16 [200/0] via 10.0.0.14 (Gi0/5) — iBGP"
+    },
+    {
+      "prompt": "Trasa główna do sieci pochodzi z OSPF (AD 110). Jaki AD nadasz zapasowej trasie statycznej, żeby była pływająca, i co się stanie, jeśli dasz AD 109?",
+      "hint": "Pływająca: AD wyższy niż główna.",
+      "solution": "Dowolny AD od 111 do 254 (np. 130). Z AD 109 zapas wygrywałby z trasą główną zawsze — ruch szedłby łączem zapasowym."
+    },
+    {
+      "prompt": "Trasa główna do sieci pochodzi z eBGP (AD 20). Jaki AD nadasz zapasowej trasie statycznej, żeby była pływająca, i co się stanie, jeśli dasz AD 19?",
+      "hint": "Pływająca: AD wyższy niż główna.",
+      "solution": "Dowolny AD od 21 do 254 (np. 40). Z AD 19 zapas wygrywałby z trasą główną zawsze — ruch szedłby łączem zapasowym."
+    },
+    {
+      "prompt": "Trasa główna do sieci pochodzi z static (AD 1). Jaki AD nadasz zapasowej trasie statycznej, żeby była pływająca, i co się stanie, jeśli dasz AD 1?",
+      "hint": "Pływająca: AD wyższy niż główna.",
+      "solution": "Dowolny AD od 2 do 254 (np. 21). Z AD 1 oba statyki mają AD 1 — przy tym samym prefiksie router zainstaluje oba (ECMP) lub zachowanie zależy od platformy; zapas przestaje być zapasem."
+    },
+    {
+      "prompt": "Trasa główna do sieci pochodzi z iBGP (AD 200). Jaki AD nadasz zapasowej trasie statycznej, żeby była pływająca, i co się stanie, jeśli dasz AD 199?",
+      "hint": "Pływająca: AD wyższy niż główna.",
+      "solution": "Dowolny AD od 201 do 254 (np. 220). Z AD 199 zapas wygrywałby z trasą główną zawsze — ruch szedłby łączem zapasowym."
+    },
+    {
+      "prompt": "Trasa główna do sieci pochodzi z RIP (AD 120). Jaki AD nadasz zapasowej trasie statycznej, żeby była pływająca, i co się stanie, jeśli dasz AD 119?",
+      "hint": "Pływająca: AD wyższy niż główna.",
+      "solution": "Dowolny AD od 121 do 254 (np. 140). Z AD 119 zapas wygrywałby z trasą główną zawsze — ruch szedłby łączem zapasowym."
+    },
+    {
+      "prompt": "Trasa główna do sieci pochodzi z EIGRP (wewn.) (AD 90). Jaki AD nadasz zapasowej trasie statycznej, żeby była pływająca, i co się stanie, jeśli dasz AD 89?",
+      "hint": "Pływająca: AD wyższy niż główna.",
+      "solution": "Dowolny AD od 91 do 254 (np. 110). Z AD 89 zapas wygrywałby z trasą główną zawsze — ruch szedłby łączem zapasowym."
+    },
+    {
+      "prompt": "Wykonaj Guided Lab z planu: FRR w trzech routerach — skonfiguruj trasę główną i pływającą (AD 250), zerwij łącze r1–r2 i zanotuj przełączenie; potem wyłącz łącze r2–srv i wyjaśnij, dlaczego ruch nie przełączył się.",
+      "hint": "show ip route przed/po; statyk zależy od lokalnego next hopa.",
+      "solution": "Normalnie: S>* 198.51.100.0/24 [1/0] via 10.0.12.2, trasa [250/0] via 10.0.13.2 nieaktywna. Po ip link set (n12) down na r1: główna znika, instalowana [250/0] via 10.0.13.2; ping przechodzi przez r3 (srv ma trasę powrotną przez r3 z wyższą metryką). Po awarii r2–srv: łącze r1–r2 UP, next hop 10.0.12.2 osiągalny → trasa główna zostaje, ruch ginie w r2 (r2 nie ma już trasy do srv lub wysyła w próżnię). Rozwiązanie: BFD/IP SLA lub routing dynamiczny."
+    },
+    {
+      "prompt": "Skonfiguruj router-on-a-stick dla VLAN 10 (10.10.0.0/24), 20 (10.20.0.0/24) i natywnego 99 na Gi0/0 oraz odpowiadający trunk na przełączniku.",
+      "hint": "Podinterfejsy, encapsulation dot1Q, switchport mode trunk.",
+      "solution": "Router: interface Gi0/0 / no shutdown; interface Gi0/0.10 / encapsulation dot1Q 10 / ip address 10.10.0.1 255.255.255.0; interface Gi0/0.20 / encapsulation dot1Q 20 / ip address 10.20.0.1 255.255.255.0; interface Gi0/0.99 / encapsulation dot1Q 99 native. Przełącznik: interface Gi1/0/24 / switchport mode trunk / switchport trunk native vlan 99 / switchport trunk allowed vlan 10,20,99. Hosty: brama .1 w swoim VLAN-ie. Weryfikacja: show ip interface brief, show interfaces trunk, ping między VLAN-ami."
+    },
+    {
+      "prompt": "Skonfiguruj routing między VLAN-ami 10 i 20 na przełączniku L3 przy użyciu SVI i wymień 3 przyczyny, dla których SVI może być w stanie down.",
+      "hint": "ip routing; interface VlanX.",
+      "solution": "ip routing; vlan 10; vlan 20; interface Vlan10 / ip address 10.10.0.1 255.255.255.0 / no shutdown; interface Vlan20 / ip address 10.20.0.1 255.255.255.0 / no shutdown. SVI down: VLAN nie istnieje w bazie VLAN (vlan 10 nie utworzony), brak jakiegokolwiek aktywnego portu dostępowego/trunku z tym VLAN-em (autostate), SVI administracyjnie wyłączony (shutdown); dodatkowo brak ip routing = SVI UP, ale ruch nie jest routowany."
+    },
+    {
+      "prompt": "Dodaj trasę domyślną IPv6 na routerze Cisco przez sąsiada o adresie link-local fe80::1 na Gi0/0 oraz trasę do 2001:db8:9::/48 przez 2001:db8:12::2. Dlaczego pierwsza wymaga interfejsu?",
+      "hint": "Link-local jest unikalny tylko na łączu.",
+      "solution": "ipv6 unicast-routing; ipv6 route ::/0 GigabitEthernet0/0 FE80::1; ipv6 route 2001:db8:9::/48 2001:db8:12::2. Adres fe80::1 może istnieć na każdym łączu routera (link-local jest unikalny tylko w obrębie łącza), więc sam adres nie określa, przez który interfejs wysłać ruch — trzeba podać interfejs (trasa w pełni określona). Adres globalny 2001:db8:12::2 jest rozwiązywany rekurencyjnie przez trasę connected."
+    },
+    {
+      "prompt": "Wyjaśnij, czym jest trasa do Null0 przy agregacji i jak zapobiega pętli routingu.",
+      "hint": "Agregat z dziurami, trasa domyślna u sąsiada.",
+      "solution": "Router ogłasza agregat 10.0.0.0/16, ale ma tylko część podsieci. Pakiet do nieistniejącej 10.0.99.0/24 trafia do niego (agregat), nie pasuje do żadnej szczegółowej trasy i — gdyby nie Null0 — poszedłby jego trasą domyślną do routera wyżej, który odesłałby go z powrotem (agregat) → pętla aż do TTL. Trasa 10.0.0.0/16 Null0 (dłuższa niż default) sprawia, że takie pakiety są odrzucane od razu. OSPF/EIGRP tworzą ją automatycznie przy sumaryzacji."
+    },
+    {
+      "prompt": "Opisz RTBH (Remotely Triggered Black Hole) i rolę tras statycznych/Null0 w obronie przed DDoS.",
+      "hint": "Trasa do Null0 dla atakowanego adresu, propagacja BGP.",
+      "solution": "RTBH: na routerze wyzwalającym dodaje się trasę statyczną do atakowanego adresu (/32) z tagiem; jest ona redystrybuowana do BGP z next hopem wskazującym na adres, który na wszystkich routerach brzegowych jest skierowany do Null0. W efekcie ruch do ofiary jest odrzucany na brzegu sieci (lub u operatora przez community blackhole, np. 65535:666 — RFC 7999), zanim zatka łącza. Wada: ofiara staje się nieosiągalna (atak „wygrywa”, ale reszta sieci działa). Wariant source-based RTBH z uRPF odrzuca ruch od atakujących źródeł."
+    },
+    {
+      "prompt": "Dlaczego w Linuksie bez demona routingu nie ma dystansu administracyjnego i jak FRR/BIRD się z tym łączą?",
+      "hint": "RIB demona vs FIB jądra; metryka.",
+      "solution": "Jądro Linuksa przechowuje tylko trasy do przekazywania (FIB) z metryką i protokołem pochodzenia, bez pojęcia AD. Demony (FRR zebra, BIRD) zbierają trasy z wielu źródeł (static, OSPF, BGP), wybierają zwycięzców według AD/preferencji i instalują je w jądrze przez netlink (proto zebra/bird). Bez demona zapas robi się metryką: dwie trasy o tym samym prefiksie, wyższa metryka = zapas; trasa przez interfejs DOWN jest usuwana (lub ignorowana przy linkdown)."
+    },
+    {
+      "prompt": "W tablicy routingu VPC prywatnej podsieci są trasy: 10.20.0.0/16 local, 10.100.0.0/16 → TGW, 0.0.0.0/0 → NAT GW. Dokąd trafi ruch do 10.100.5.5, 10.20.7.7, 8.8.8.8 i 10.101.0.1?",
+      "hint": "LPM w tablicy VPC.",
+      "solution": "10.100.5.5 → Transit Gateway (/16 pasuje); 10.20.7.7 → local (w obrębie VPC); 8.8.8.8 → NAT Gateway (tylko default); 10.101.0.1 → NAT Gateway (pasuje tylko 0.0.0.0/0) — ruch do „sieci firmowej”, której nie ma w tablicy, wyjdzie do Internetu i zginie: częsty błąd przy dodawaniu nowych zakresów biura."
+    },
+    {
+      "prompt": "Zaprojektuj zapasowe łącze LTE dla oddziału z routerem Cisco: główne łącze światłowodowe z trasą statyczną, zapas LTE. Uwzględnij wykrywanie awarii za łączem i powrót.",
+      "hint": "IP SLA, track, delay, AD 250.",
+      "solution": "Główna: ip route 0.0.0.0 0.0.0.0 <brama operatora> track 1; IP SLA 1 icmp-echo do stabilnego celu za łączem (np. DNS operatora lub własny serwer w chmurze) przez interfejs główny, frequency 5; track 1 ip sla 1 reachability z delay down 10 up 60 (histereza). Zapas: ip route 0.0.0.0 0.0.0.0 <brama LTE> 250. NAT dla obu interfejsów (route-map per interfejs). Monitoring: syslog zmian stanu track, alert o pracy na LTE (koszty). Test: odłączenie światłowodu i zablokowanie celu sondy."
+    },
+    {
+      "prompt": "Jak wykryć pętlę routingu w traceroute i co ją typowo powoduje przy trasach statycznych?",
+      "hint": "Powtarzające się adresy, TTL exceeded.",
+      "solution": "Traceroute pokazuje te same dwa (lub więcej) adresy na zmianę (np. 10.0.12.2, 10.0.12.11, 10.0.12.2…) aż do maksymalnej liczby skoków; ping kończy się „TTL expired in transit”. Przyczyny: dwa routery z trasami (domyślnymi lub do tej samej sieci) wskazującymi na siebie nawzajem, brak trasy do Null0 dla agregatu, błędna trasa powrotna. Naprawa: popraw trasę na jednym z routerów, dodaj Null0 dla agregatów."
+    },
+    {
+      "prompt": "Opisz bezpieczną procedurę zmiany tras statycznych na zdalnym serwerze Linux, do którego łączysz się przez SSH.",
+      "hint": "netplan try, at, konsola.",
+      "solution": "1) Zapisz bieżący stan (ip route > /root/routes-before.txt). 2) Zmiany przez netplan try (automatyczny rollback po 120 s bez potwierdzenia) lub zaplanuj rollback: echo \"netplan apply /root/backup.yaml\" | at now + 5 min, a po sukcesie atrm. 3) Miej dostęp out-of-band (konsola chmury, iDRAC/iLO). 4) Zmieniaj jedną rzecz, testuj ip route get i połączenie SSH z innej sesji. 5) Utrwal w repozytorium IaC i opisz w zgłoszeniu zmiany."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między RIB a FIB i jak zobaczyć jedną i drugą w FRR/Linux oraz na Cisco.",
+      "hint": "show ip route vs show ip cef; ip route.",
+      "solution": "RIB: wszyscy zwycięzcy wyboru tras (z informacją o źródle i AD), na Cisco show ip route, w FRR vtysh show ip route (z flagami > wybrana, * zainstalowana w FIB). FIB: struktura używana do przekazywania pakietów — na Cisco show ip cef (CEF), w Linuksie tablica jądra (ip route). Różnice zdarzają się, gdy trasa jest w RIB, ale nie mogła być zainstalowana (np. next hop nierozwiązywalny) — w FRR brak gwiazdki *."
+    },
+    {
+      "prompt": "Dlaczego trasa statyczna „ip route 10.9.0.0 255.255.0.0 Gi0/1” na Ethernecie może działać tylko dzięki proxy ARP i jakie ma to skutki?",
+      "hint": "ARP o każdy cel.",
+      "solution": "Router uznaje cel za bezpośrednio podłączony i wysyła zapytanie ARP o każdy adres docelowy z 10.9.0.0/16. Odpowie tylko sąsiedni router z włączonym proxy ARP (podając swój MAC). Skutki: tysiące wpisów ARP (po jednym na każdy cel), obciążenie CPU, zależność od proxy ARP (często wyłączanego ze względów bezpieczeństwa) — po jego wyłączeniu ruch przestaje działać. Na Ethernecie zawsze podawaj next hop."
+    },
+    {
+      "prompt": "Twoja aplikacja w Kubernetes (CNI host-gw) nie łączy się z podami na nowym węźle. Na starych węzłach brakuje trasy do podsieci podów nowego węzła. Wyjaśnij mechanizm i diagnozę.",
+      "hint": "Statyczne trasy CNI per węzeł.",
+      "solution": "W trybie host-gw (Flannel) każdy węzeł ma trasę statyczną do podsieci podów każdego innego węzła przez jego adres (np. 10.244.3.0/24 via 192.168.1.13). Trasy dodaje agent CNI na podstawie obiektów Node; jeśli agent na starych węzłach nie zauważył nowego węzła (błąd, brak uprawnień, inna podsieć L2 — host-gw wymaga wspólnego L2), trasy brak. Diagnoza: ip route | grep 10.244 na węźle, kubectl get nodes -o wide i podCIDR, logi daemonsetu CNI, ip route get <IP poda>."
+    },
+    {
+      "prompt": "Porównaj trasę statyczną i OSPF z perspektywy bezpieczeństwa (odporność na manipulację, ryzyko błędów, audyt).",
+      "hint": "Brak protokołu vs uwierzytelnianie OSPF.",
+      "solution": "Statyczna: brak protokołu, więc nie da się wstrzyknąć fałszywej trasy z sieci; ryzyko — błąd człowieka i brak reakcji na awarie; audyt przez kontrolę zmian konfiguracji. OSPF: automatycznie reaguje na awarie, ale wymaga uwierzytelniania (SHA) i pasywnych interfejsów w sieciach użytkowników — inaczej atakujący w LAN może zestawić sąsiedztwo i rozgłosić trasy; audyt przez monitorowanie sąsiedztw i LSDB. W praktyce: OSPF w rdzeniu z uwierzytelnianiem, statyki na brzegu i do krytycznych sieci zarządzania."
+    },
+    {
+      "prompt": "Wymień trzy sposoby wykrycia awarii next hopa przez trasę statyczną i oceń czas reakcji każdego.",
+      "hint": "Interfejs DOWN, IP SLA, BFD.",
+      "solution": "1) Utrata nośnika na łączu bezpośrednim (interfejs DOWN) — natychmiast, ale tylko przy łączu P2P bez przełącznika pośrodku. 2) IP SLA + track (ICMP/TCP/HTTP do celu) — sekundy do dziesiątek sekund (frequency × próby + delay), wykrywa też awarie dalej. 3) BFD — dziesiątki–setki milisekund (np. 3 × 50 ms), wykrywa awarię ścieżki do sąsiada; wymaga obsługi po obu stronach."
+    },
+    {
+      "prompt": "Zinterpretuj fragment FRR: „S>* 198.51.100.0/24 [1/0] via 10.0.12.2, eth1, weight 1, 00:05:12” oraz „S   198.51.100.0/24 [250/0] via 10.0.13.2, eth2 inactive”.",
+      "hint": "Kody i nawiasy.",
+      "solution": "S — trasa statyczna; > — wybrana (najlepsza dla prefiksu); * — zainstalowana w FIB (jądrze); [1/0] — AD 1 / metryka 0; via 10.0.12.2 przez eth1, weight dla ECMP, od 5 min 12 s. Druga: statyczna z AD 250, nie wybrana (brak >) i nieaktywna — trasa pływająca czekająca na awarię głównej."
+    },
+    {
+      "prompt": "Na routerze są trasy 10.9.0.0/16 static via 10.0.12.2 i 10.9.5.0/24 OSPF [110/20] via 10.0.13.2. Dokąd pójdzie pakiet do 10.9.5.7 i do 10.9.6.1? Czy AD ma tu znaczenie?",
+      "hint": "LPM przed AD.",
+      "solution": "10.9.5.7 → OSPF via 10.0.13.2 (dłuższy prefiks /24); 10.9.6.1 → static via 10.0.12.2 (pasuje tylko /16). AD nie ma znaczenia, bo prefiksy są różne — AD porównuje się tylko między trasami do tego samego prefiksu."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: connected?",
+      "options": {
+        "A": "1",
+        "B": "20",
+        "C": "0",
+        "D": "90"
+      },
+      "correct": "C",
+      "explanation": "connected = 0."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: static?",
+      "options": {
+        "A": "0",
+        "B": "20",
+        "C": "90",
+        "D": "1"
+      },
+      "correct": "D",
+      "explanation": "static = 1."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: eBGP?",
+      "options": {
+        "A": "20",
+        "B": "0",
+        "C": "90",
+        "D": "1"
+      },
+      "correct": "A",
+      "explanation": "eBGP = 20."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: EIGRP (wewn.)?",
+      "options": {
+        "A": "0",
+        "B": "90",
+        "C": "1",
+        "D": "20"
+      },
+      "correct": "B",
+      "explanation": "EIGRP (wewn.) = 90."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: OSPF?",
+      "options": {
+        "A": "1",
+        "B": "110",
+        "C": "20",
+        "D": "0"
+      },
+      "correct": "B",
+      "explanation": "OSPF = 110."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: IS-IS?",
+      "options": {
+        "A": "1",
+        "B": "0",
+        "C": "115",
+        "D": "20"
+      },
+      "correct": "C",
+      "explanation": "IS-IS = 115."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: RIP?",
+      "options": {
+        "A": "120",
+        "B": "20",
+        "C": "1",
+        "D": "0"
+      },
+      "correct": "A",
+      "explanation": "RIP = 120."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: EIGRP (zewn.)?",
+      "options": {
+        "A": "20",
+        "B": "0",
+        "C": "1",
+        "D": "170"
+      },
+      "correct": "D",
+      "explanation": "EIGRP (zewn.) = 170."
+    },
+    {
+      "question": "Jaki jest domyślny dystans administracyjny (Cisco) dla: iBGP?",
+      "options": {
+        "A": "0",
+        "B": "20",
+        "C": "1",
+        "D": "200"
+      },
+      "correct": "D",
+      "explanation": "iBGP = 200."
+    },
+    {
+      "question": "Router zna 10.1.0.0/16 z dwóch źródeł: connected (metryka 11) i static (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "static — wyższy AD jest lepszy",
+        "B": "static — niższa metryka",
+        "C": "connected — niższy AD (0)",
+        "D": "obie (ECMP)"
+      },
+      "correct": "C",
+      "explanation": "AD connected = 0, static = 1; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.2.0.0/16 z dwóch źródeł: eBGP (metryka 12) i connected (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "eBGP — wyższy AD jest lepszy",
+        "B": "connected — niższy AD (0)",
+        "C": "eBGP — niższa metryka",
+        "D": "obie (ECMP)"
+      },
+      "correct": "B",
+      "explanation": "AD connected = 0, eBGP = 20; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.3.0.0/16 z dwóch źródeł: connected (metryka 13) i EIGRP (wewn.) (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "connected — niższy AD (0)",
+        "B": "EIGRP (wewn.) — wyższy AD jest lepszy",
+        "C": "EIGRP (wewn.) — niższa metryka",
+        "D": "obie (ECMP)"
+      },
+      "correct": "A",
+      "explanation": "AD connected = 0, EIGRP (wewn.) = 90; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.4.0.0/16 z dwóch źródeł: OSPF (metryka 14) i connected (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "connected — niższy AD (0)",
+        "B": "obie (ECMP)",
+        "C": "OSPF — niższa metryka",
+        "D": "OSPF — wyższy AD jest lepszy"
+      },
+      "correct": "A",
+      "explanation": "AD connected = 0, OSPF = 110; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.5.0.0/16 z dwóch źródeł: connected (metryka 15) i IS-IS (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "IS-IS — wyższy AD jest lepszy",
+        "B": "obie (ECMP)",
+        "C": "connected — niższy AD (0)",
+        "D": "IS-IS — niższa metryka"
+      },
+      "correct": "C",
+      "explanation": "AD connected = 0, IS-IS = 115; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.6.0.0/16 z dwóch źródeł: RIP (metryka 16) i connected (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "obie (ECMP)",
+        "B": "connected — niższy AD (0)",
+        "C": "RIP — niższa metryka",
+        "D": "RIP — wyższy AD jest lepszy"
+      },
+      "correct": "B",
+      "explanation": "AD connected = 0, RIP = 120; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.7.0.0/16 z dwóch źródeł: connected (metryka 17) i EIGRP (zewn.) (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "EIGRP (zewn.) — niższa metryka",
+        "B": "EIGRP (zewn.) — wyższy AD jest lepszy",
+        "C": "obie (ECMP)",
+        "D": "connected — niższy AD (0)"
+      },
+      "correct": "D",
+      "explanation": "AD connected = 0, EIGRP (zewn.) = 170; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.8.0.0/16 z dwóch źródeł: iBGP (metryka 18) i connected (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "obie (ECMP)",
+        "B": "iBGP — niższa metryka",
+        "C": "iBGP — wyższy AD jest lepszy",
+        "D": "connected — niższy AD (0)"
+      },
+      "correct": "D",
+      "explanation": "AD connected = 0, iBGP = 200; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.9.0.0/16 z dwóch źródeł: static (metryka 19) i eBGP (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "static — niższy AD (1)",
+        "B": "obie (ECMP)",
+        "C": "eBGP — wyższy AD jest lepszy",
+        "D": "eBGP — niższa metryka"
+      },
+      "correct": "A",
+      "explanation": "AD static = 1, eBGP = 20; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.10.0.0/16 z dwóch źródeł: EIGRP (wewn.) (metryka 20) i static (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "EIGRP (wewn.) — niższa metryka",
+        "B": "obie (ECMP)",
+        "C": "static — niższy AD (1)",
+        "D": "EIGRP (wewn.) — wyższy AD jest lepszy"
+      },
+      "correct": "C",
+      "explanation": "AD static = 1, EIGRP (wewn.) = 90; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.11.0.0/16 z dwóch źródeł: static (metryka 21) i OSPF (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "OSPF — niższa metryka",
+        "B": "static — niższy AD (1)",
+        "C": "OSPF — wyższy AD jest lepszy",
+        "D": "obie (ECMP)"
+      },
+      "correct": "B",
+      "explanation": "AD static = 1, OSPF = 110; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.12.0.0/16 z dwóch źródeł: IS-IS (metryka 22) i static (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "IS-IS — wyższy AD jest lepszy",
+        "B": "static — niższy AD (1)",
+        "C": "IS-IS — niższa metryka",
+        "D": "obie (ECMP)"
+      },
+      "correct": "B",
+      "explanation": "AD static = 1, IS-IS = 115; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.13.0.0/16 z dwóch źródeł: static (metryka 23) i RIP (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "RIP — niższa metryka",
+        "B": "RIP — wyższy AD jest lepszy",
+        "C": "obie (ECMP)",
+        "D": "static — niższy AD (1)"
+      },
+      "correct": "D",
+      "explanation": "AD static = 1, RIP = 120; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.14.0.0/16 z dwóch źródeł: EIGRP (zewn.) (metryka 24) i static (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "EIGRP (zewn.) — wyższy AD jest lepszy",
+        "B": "EIGRP (zewn.) — niższa metryka",
+        "C": "static — niższy AD (1)",
+        "D": "obie (ECMP)"
+      },
+      "correct": "C",
+      "explanation": "AD static = 1, EIGRP (zewn.) = 170; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.15.0.0/16 z dwóch źródeł: eBGP (metryka 25) i OSPF (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "eBGP — niższy AD (20)",
+        "B": "OSPF — niższa metryka",
+        "C": "obie (ECMP)",
+        "D": "OSPF — wyższy AD jest lepszy"
+      },
+      "correct": "A",
+      "explanation": "AD eBGP = 20, OSPF = 110; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.16.0.0/16 z dwóch źródeł: RIP (metryka 26) i eBGP (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "RIP — wyższy AD jest lepszy",
+        "B": "eBGP — niższy AD (20)",
+        "C": "RIP — niższa metryka",
+        "D": "obie (ECMP)"
+      },
+      "correct": "B",
+      "explanation": "AD eBGP = 20, RIP = 120; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.17.0.0/16 z dwóch źródeł: eBGP (metryka 27) i iBGP (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "eBGP — niższy AD (20)",
+        "B": "iBGP — niższa metryka",
+        "C": "iBGP — wyższy AD jest lepszy",
+        "D": "obie (ECMP)"
+      },
+      "correct": "A",
+      "explanation": "AD eBGP = 20, iBGP = 200; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.18.0.0/16 z dwóch źródeł: IS-IS (metryka 28) i EIGRP (wewn.) (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "IS-IS — niższa metryka",
+        "B": "IS-IS — wyższy AD jest lepszy",
+        "C": "obie (ECMP)",
+        "D": "EIGRP (wewn.) — niższy AD (90)"
+      },
+      "correct": "D",
+      "explanation": "AD EIGRP (wewn.) = 90, IS-IS = 115; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.19.0.0/16 z dwóch źródeł: EIGRP (wewn.) (metryka 29) i EIGRP (zewn.) (metryka 3). Która trasa trafi do RIB?",
+      "options": {
+        "A": "obie (ECMP)",
+        "B": "EIGRP (zewn.) — niższa metryka",
+        "C": "EIGRP (wewn.) — niższy AD (90)",
+        "D": "EIGRP (zewn.) — wyższy AD jest lepszy"
+      },
+      "correct": "C",
+      "explanation": "AD EIGRP (wewn.) = 90, EIGRP (zewn.) = 170; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.20.0.0/16 z dwóch źródeł: RIP (metryka 30) i OSPF (metryka 4). Która trasa trafi do RIB?",
+      "options": {
+        "A": "obie (ECMP)",
+        "B": "RIP — wyższy AD jest lepszy",
+        "C": "OSPF — niższy AD (110)",
+        "D": "RIP — niższa metryka"
+      },
+      "correct": "C",
+      "explanation": "AD OSPF = 110, RIP = 120; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Router zna 10.21.0.0/16 z dwóch źródeł: OSPF (metryka 31) i iBGP (metryka 2). Która trasa trafi do RIB?",
+      "options": {
+        "A": "obie (ECMP)",
+        "B": "iBGP — wyższy AD jest lepszy",
+        "C": "iBGP — niższa metryka",
+        "D": "OSPF — niższy AD (110)"
+      },
+      "correct": "D",
+      "explanation": "AD OSPF = 110, iBGP = 200; metryk różnych protokołów się nie porównuje."
+    },
+    {
+      "question": "Trasa główna pochodzi z static. Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "21",
+        "B": "1",
+        "C": "dowolny — AD nie ma znaczenia przy tym samym prefiksie",
+        "D": "0"
+      },
+      "correct": "A",
+      "explanation": "AD zapasu musi być wyższy niż 1."
+    },
+    {
+      "question": "Trasa główna pochodzi z eBGP. Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "0",
+        "B": "40",
+        "C": "10",
+        "D": "1"
+      },
+      "correct": "B",
+      "explanation": "AD zapasu musi być wyższy niż 20."
+    },
+    {
+      "question": "Trasa główna pochodzi z OSPF. Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "130",
+        "B": "1",
+        "C": "55",
+        "D": "100"
+      },
+      "correct": "A",
+      "explanation": "AD zapasu musi być wyższy niż 110."
+    },
+    {
+      "question": "Trasa główna pochodzi z RIP. Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "60",
+        "B": "1",
+        "C": "140",
+        "D": "110"
+      },
+      "correct": "C",
+      "explanation": "AD zapasu musi być wyższy niż 120."
+    },
+    {
+      "question": "Trasa główna pochodzi z EIGRP (wewn.). Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "80",
+        "B": "110",
+        "C": "1",
+        "D": "45"
+      },
+      "correct": "B",
+      "explanation": "AD zapasu musi być wyższy niż 90."
+    },
+    {
+      "question": "Trasa główna pochodzi z iBGP. Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "100",
+        "B": "1",
+        "C": "190",
+        "D": "220"
+      },
+      "correct": "D",
+      "explanation": "AD zapasu musi być wyższy niż 200."
+    },
+    {
+      "question": "Trasa główna pochodzi z IS-IS. Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "105",
+        "B": "135",
+        "C": "1",
+        "D": "57"
+      },
+      "correct": "B",
+      "explanation": "AD zapasu musi być wyższy niż 115."
+    },
+    {
+      "question": "Trasa główna pochodzi z EIGRP (zewn.). Który AD sprawi, że zapasowa trasa statyczna będzie pływająca?",
+      "options": {
+        "A": "190",
+        "B": "160",
+        "C": "1",
+        "D": "85"
+      },
+      "correct": "A",
+      "explanation": "AD zapasu musi być wyższy niż 170."
+    },
+    {
+      "question": "Kandydaci: 10.50.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP via 10.0.0.14 (Gi0/5). Co będzie w RIB dla 10.60.0.0/16 po awarii Gi0/1?",
+      "options": {
+        "A": "brak trasy w RIB",
+        "B": "10.60.0.0/16 [255/0] via 0.0.0.0",
+        "C": "10.60.0.0/16 [110/30] via 10.0.0.2 (Gi0/1)",
+        "D": "10.60.0.0/16 [130/0] via 10.0.0.6 (Gi0/2)"
+      },
+      "correct": "D",
+      "explanation": "Trasy przez interfejsy DOWN odpadają; z pozostałych najniższy AD."
+    },
+    {
+      "question": "Kandydaci: 10.50.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP via 10.0.0.14 (Gi0/5). Co będzie w RIB dla 0.0.0.0/0 po awarii Gi0/0?",
+      "options": {
+        "A": "brak trasy w RIB",
+        "B": "0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0)",
+        "C": "0.0.0.0/0 [210/0] via 198.51.100.1 (Gi0/3)",
+        "D": "0.0.0.0/0 [255/0] via 0.0.0.0"
+      },
+      "correct": "C",
+      "explanation": "Trasy przez interfejsy DOWN odpadają; z pozostałych najniższy AD."
+    },
+    {
+      "question": "Kandydaci: 10.50.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP via 10.0.0.14 (Gi0/5). Co będzie w RIB dla 10.50.0.0/16 po awarii Gi0/2?",
+      "options": {
+        "A": "brak trasy w RIB",
+        "B": "10.50.0.0/16 [255/0] via 0.0.0.0",
+        "C": "10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2)",
+        "D": "10.50.0.0/16 [110/20] via 10.0.0.2 (Gi0/1)"
+      },
+      "correct": "D",
+      "explanation": "Trasy przez interfejsy DOWN odpadają; z pozostałych najniższy AD."
+    },
+    {
+      "question": "Kandydaci: 10.50.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP via 10.0.0.14 (Gi0/5). Co będzie w RIB dla 10.70.0.0/16 po awarii Gi0/4?",
+      "options": {
+        "A": "10.70.0.0/16 [200/0] via 10.0.0.14 (Gi0/5)",
+        "B": "brak trasy w RIB",
+        "C": "10.70.0.0/16 [120/2] via 10.0.0.10 (Gi0/4)",
+        "D": "10.70.0.0/16 [255/0] via 0.0.0.0"
+      },
+      "correct": "A",
+      "explanation": "Trasy przez interfejsy DOWN odpadają; z pozostałych najniższy AD."
+    },
+    {
+      "question": "Kandydaci: 10.50.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP via 10.0.0.14 (Gi0/5). Co będzie w RIB dla 10.50.0.0/16 po awarii Gi0/1 i Gi0/2?",
+      "options": {
+        "A": "10.50.0.0/16 [110/20] via 10.0.0.2 (Gi0/1)",
+        "B": "10.50.0.0/16 [1/0] via 10.0.0.6 (Gi0/2)",
+        "C": "brak trasy w RIB",
+        "D": "10.50.0.0/16 [255/0] via 0.0.0.0"
+      },
+      "correct": "C",
+      "explanation": "Trasy przez interfejsy DOWN odpadają; z pozostałych najniższy AD."
+    },
+    {
+      "question": "Kandydaci: 10.50.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.50.0.0/16 static via 10.0.0.6 (Gi0/2); 10.60.0.0/16 OSPF via 10.0.0.2 (Gi0/1); 10.60.0.0/16 static AD 130 via 10.0.0.6 (Gi0/2); 0.0.0.0/0 eBGP via 203.0.113.1 (Gi0/0); 0.0.0.0/0 static AD 210 via 198.51.100.1 (Gi0/3); 10.70.0.0/16 RIP via 10.0.0.10 (Gi0/4); 10.70.0.0/16 iBGP via 10.0.0.14 (Gi0/5). Co będzie w RIB dla 0.0.0.0/0 po awarii Gi0/0 i Gi0/3?",
+      "options": {
+        "A": "0.0.0.0/0 [210/0] via 198.51.100.1 (Gi0/3)",
+        "B": "brak trasy w RIB",
+        "C": "0.0.0.0/0 [255/0] via 0.0.0.0",
+        "D": "0.0.0.0/0 [20/0] via 203.0.113.1 (Gi0/0)"
+      },
+      "correct": "B",
+      "explanation": "Trasy przez interfejsy DOWN odpadają; z pozostałych najniższy AD."
+    },
+    {
+      "question": "Co jest ważniejsze przy wyborze trasy: długość prefiksu czy AD?",
+      "options": {
+        "A": "Kolejność konfiguracji",
+        "B": "Długość prefiksu (AD porównuje się tylko dla tego samego prefiksu)",
+        "C": "AD",
+        "D": "Metryka"
+      },
+      "correct": "B",
+      "explanation": "LPM."
+    },
+    {
+      "question": "Czy metryki OSPF i RIP porównuje się ze sobą?",
+      "options": {
+        "A": "Nie — między protokołami decyduje AD",
+        "B": "Tak, niższa wygrywa",
+        "C": "Tak, wyższa wygrywa",
+        "D": "Tylko w IPv6"
+      },
+      "correct": "A",
+      "explanation": "Różne jednostki."
+    },
+    {
+      "question": "Co oznacza AD 255?",
+      "options": {
+        "A": "Najlepsza trasa",
+        "B": "Trasa do Null0",
+        "C": "Trasa nieużywana (niewiarygodna)",
+        "D": "Trasa domyślna"
+      },
+      "correct": "C",
+      "explanation": "Nie trafia do RIB."
+    },
+    {
+      "question": "Czym jest trasa pływająca?",
+      "options": {
+        "A": "Trasą bez maski",
+        "B": "Trasą zmieniającą next hop co minutę",
+        "C": "Trasą multicast",
+        "D": "Zapasową trasą statyczną z AD wyższym niż trasa główna"
+      },
+      "correct": "D",
+      "explanation": "Floating static."
+    },
+    {
+      "question": "Kiedy trasa statyczna z next hopem jest usuwana z RIB bez IP SLA/BFD?",
+      "options": {
+        "A": "Co 24 godziny",
+        "B": "Gdy spadnie przepustowość",
+        "C": "Gdy zdalny serwer przestanie odpowiadać",
+        "D": "Gdy next hop staje się nieosiągalny lokalnie (np. interfejs DOWN)"
+      },
+      "correct": "D",
+      "explanation": "Ograniczenie statyków."
+    },
+    {
+      "question": "Co pozwala trasie statycznej reagować na awarie za sąsiadem?",
+      "options": {
+        "A": "Maska /32",
+        "B": "IP SLA z trackingiem lub BFD",
+        "C": "Wyższy AD",
+        "D": "Niższa metryka"
+      },
+      "correct": "B",
+      "explanation": "Sondy i szybka detekcja."
+    },
+    {
+      "question": "Dlaczego w IP SLA stosuje się delay down/up?",
+      "options": {
+        "A": "Aby przyspieszyć przełączenie",
+        "B": "Aby zmniejszyć AD",
+        "C": "Aby uniknąć „mrugania” trasą przy chwilowych stratach",
+        "D": "Aby szyfrować sondy"
+      },
+      "correct": "C",
+      "explanation": "Histereza."
+    },
+    {
+      "question": "Jaki AD ma domyślnie trasa statyczna?",
+      "options": {
+        "A": "1",
+        "B": "110",
+        "C": "0",
+        "D": "5"
+      },
+      "correct": "A",
+      "explanation": "Connected 0."
+    },
+    {
+      "question": "Jaki AD ma sieć bezpośrednio podłączona?",
+      "options": {
+        "A": "0",
+        "B": "20",
+        "C": "1",
+        "D": "110"
+      },
+      "correct": "A",
+      "explanation": "Connected."
+    },
+    {
+      "question": "Jak zapisać w Cisco trasę statyczną z AD 250?",
+      "options": {
+        "A": "ip static 10.9.0.0 ad 250",
+        "B": "ip route 10.9.0.0/16 10.0.13.2 metric 250",
+        "C": "ip route 10.9.0.0 255.255.0.0 250 10.0.13.2",
+        "D": "ip route 10.9.0.0 255.255.0.0 10.0.13.2 250"
+      },
+      "correct": "D",
+      "explanation": "AD na końcu."
+    },
+    {
+      "question": "Jak zapisać trasę domyślną w Cisco IOS?",
+      "options": {
+        "A": "ip route default <next hop>",
+        "B": "ip route 0.0.0.0 0.0.0.0 <next hop>",
+        "C": "route add default <next hop>",
+        "D": "ip default 0.0.0.0"
+      },
+      "correct": "B",
+      "explanation": "Gateway of last resort."
+    },
+    {
+      "question": "Czym jest trasa hosta?",
+      "options": {
+        "A": "Trasą domyślną",
+        "B": "Trasą do sieci lokalnej",
+        "C": "Trasą z prefiksem /32 (IPv6 /128) do pojedynczego adresu",
+        "D": "Trasą multicast"
+      },
+      "correct": "C",
+      "explanation": "Najbardziej szczegółowa."
+    },
+    {
+      "question": "Co to jest rekurencyjne wyszukiwanie trasy?",
+      "options": {
+        "A": "Pętla routingu",
+        "B": "Podwójne szyfrowanie",
+        "C": "Ustalenie, jak dotrzeć do next hopa przez inną trasę (zwykle connected)",
+        "D": "Wyszukiwanie DNS"
+      },
+      "correct": "C",
+      "explanation": "Next hop musi być osiągalny."
+    },
+    {
+      "question": "Dlaczego trasa tylko z interfejsem na Ethernecie jest problematyczna?",
+      "options": {
+        "A": "Bo wymaga BGP",
+        "B": "Router wysyła ARP o każdy cel i polega na proxy ARP",
+        "C": "Bo nie działa z IPv4",
+        "D": "Bo jest wolniejsza o połowę"
+      },
+      "correct": "B",
+      "explanation": "OK na P2P."
+    },
+    {
+      "question": "Kiedy trasa statyczna IPv6 musi mieć interfejs i next hop?",
+      "options": {
+        "A": "Zawsze",
+        "B": "Gdy prefiks jest /64",
+        "C": "Gdy używasz ::/0 z adresem globalnym",
+        "D": "Gdy next hop jest adresem link-local (fe80::)"
+      },
+      "correct": "D",
+      "explanation": "Link-local jest niejednoznaczny."
+    },
+    {
+      "question": "Które polecenie włącza routing IPv6 na routerze Cisco?",
+      "options": {
+        "A": "ipv6 unicast-routing",
+        "B": "ipv6 route enable",
+        "C": "ip routing ipv6",
+        "D": "ipv6 enable"
+      },
+      "correct": "A",
+      "explanation": "Bez niego router nie przekazuje IPv6."
+    },
+    {
+      "question": "Jak w Linuksie zrobić odpowiednik trasy pływającej bez FRR?",
+      "options": {
+        "A": "Dodać trasę z AD 250",
+        "B": "Użyć ip rule",
+        "C": "Nie da się",
+        "D": "Dodać tę samą trasę z wyższą metryką"
+      },
+      "correct": "D",
+      "explanation": "Jądro nie zna AD."
+    },
+    {
+      "question": "Co oznacza w FRR flaga „>” przy trasie?",
+      "options": {
+        "A": "Trasa wybrana jako najlepsza dla prefiksu",
+        "B": "Trasa nieaktywna",
+        "C": "Trasa IPv6",
+        "D": "Trasa zablokowana"
+      },
+      "correct": "A",
+      "explanation": "„*” = w FIB."
+    },
+    {
+      "question": "Co oznacza w FRR flaga „*” przy trasie?",
+      "options": {
+        "A": "Trasa statyczna",
+        "B": "Trasa zainstalowana w FIB (jądrze)",
+        "C": "Trasa domyślna",
+        "D": "Trasa zapasowa"
+      },
+      "correct": "B",
+      "explanation": "Używana do przekazywania."
+    },
+    {
+      "question": "Czym jest RIB?",
+      "options": {
+        "A": "Listą sąsiadów OSPF",
+        "B": "Tablicą MAC",
+        "C": "Bazą wybranych tras ze wszystkich źródeł",
+        "D": "Tablicą ARP"
+      },
+      "correct": "C",
+      "explanation": "Routing Information Base."
+    },
+    {
+      "question": "Czym jest FIB?",
+      "options": {
+        "A": "Tablicą VLAN",
+        "B": "Strukturą używaną do faktycznego przekazywania pakietów",
+        "C": "Logiem routera",
+        "D": "Bazą haseł"
+      },
+      "correct": "B",
+      "explanation": "Forwarding Information Base, Cisco CEF."
+    },
+    {
+      "question": "Jak na Cisco zobaczyć tylko trasy statyczne?",
+      "options": {
+        "A": "show ip static routes",
+        "B": "show static",
+        "C": "show running static",
+        "D": "show ip route static"
+      },
+      "correct": "D",
+      "explanation": "Kod S."
+    },
+    {
+      "question": "Co robi trasa do Null0?",
+      "options": {
+        "A": "Wysyła ruch broadcastem",
+        "B": "Przekazuje ruch do bramy domyślnej",
+        "C": "Odrzuca ruch do danego prefiksu",
+        "D": "Szyfruje ruch"
+      },
+      "correct": "C",
+      "explanation": "Blackhole."
+    },
+    {
+      "question": "Po co tworzy się trasę Null0 dla agregatu?",
+      "options": {
+        "A": "Aby ruch do nieistniejących części agregatu nie krążył w pętli",
+        "B": "Aby przyspieszyć agregat",
+        "C": "Aby wyłączyć OSPF",
+        "D": "Aby ukryć agregat"
+      },
+      "correct": "A",
+      "explanation": "Zapobieganie pętlom."
+    },
+    {
+      "question": "Czym jest RTBH?",
+      "options": {
+        "A": "Typem VLAN",
+        "B": "Zdalnie wyzwalanym odrzucaniem ruchu (blackhole) do/od adresu przy DDoS",
+        "C": "Protokołem routingu",
+        "D": "Szyfrowaniem tras"
+      },
+      "correct": "B",
+      "explanation": "BGP + Null0."
+    },
+    {
+      "question": "Jakie community BGP oznacza blackhole według RFC 7999?",
+      "options": {
+        "A": "65000:100",
+        "B": "0:0",
+        "C": "65535:666",
+        "D": "65535:65281"
+      },
+      "correct": "C",
+      "explanation": "BLACKHOLE."
+    },
+    {
+      "question": "Czym jest router-on-a-stick?",
+      "options": {
+        "A": "Przełącznikiem L3",
+        "B": "Routerem bez interfejsów",
+        "C": "Routerem z jedną trasą",
+        "D": "Routingiem między VLAN-ami przez podinterfejsy 802.1Q na jednym łączu"
+      },
+      "correct": "D",
+      "explanation": "Trunk do przełącznika."
+    },
+    {
+      "question": "Które polecenie przypisuje VLAN do podinterfejsu routera?",
+      "options": {
+        "A": "encapsulation dot1Q <vlan>",
+        "B": "vlan <id> interface",
+        "C": "switchport access vlan",
+        "D": "ip vlan <id>"
+      },
+      "correct": "A",
+      "explanation": "Np. Gi0/0.10."
+    },
+    {
+      "question": "Jak oznaczyć natywny VLAN na podinterfejsie routera?",
+      "options": {
+        "A": "ip native 99",
+        "B": "native vlan 99",
+        "C": "encapsulation dot1Q 99 native",
+        "D": "switchport trunk native vlan 99"
+      },
+      "correct": "C",
+      "explanation": "Ramki bez tagu."
+    },
+    {
+      "question": "Jaka jest główna wada router-on-a-stick?",
+      "options": {
+        "A": "Brak obsługi IPv4",
+        "B": "Ruch między VLAN-ami przechodzi dwa razy przez jedno łącze",
+        "C": "Brak obsługi VLAN",
+        "D": "Wymaga BGP"
+      },
+      "correct": "B",
+      "explanation": "Wąskie gardło."
+    },
+    {
+      "question": "Czym jest SVI?",
+      "options": {
+        "A": "Wirtualnym interfejsem VLAN na przełączniku (np. interface Vlan10)",
+        "B": "Fizycznym portem",
+        "C": "Protokołem routingu",
+        "D": "Typem kabla"
+      },
+      "correct": "A",
+      "explanation": "Brama dla VLAN-u."
+    },
+    {
+      "question": "Jakie polecenie włącza routing na przełączniku L3?",
+      "options": {
+        "A": "router enable",
+        "B": "switchport routing",
+        "C": "vlan routing",
+        "D": "ip routing"
+      },
+      "correct": "D",
+      "explanation": "Bez niego SVI nie routują."
+    },
+    {
+      "question": "Kiedy SVI jest w stanie down/down mimo no shutdown?",
+      "options": {
+        "A": "Gdy VLAN nie ma żadnego aktywnego portu lub nie istnieje",
+        "B": "Gdy jest IPv6",
+        "C": "Gdy włączono ip routing",
+        "D": "Gdy ma adres /24"
+      },
+      "correct": "A",
+      "explanation": "Autostate."
+    },
+    {
+      "question": "Czym jest routed port na przełączniku L3?",
+      "options": {
+        "A": "Portem SPAN",
+        "B": "Portem trunk",
+        "C": "Portem przełączonym w tryb L3 (no switchport) z adresem IP",
+        "D": "Portem dostępowym w VLAN 1"
+      },
+      "correct": "C",
+      "explanation": "Łącza do routerów/firewalli."
+    },
+    {
+      "question": "Czym różni się routing między VLAN-ami na SVI od router-on-a-stick pod względem wydajności?",
+      "options": {
+        "A": "SVI jest zawsze wolniejsze",
+        "B": "SVI routuje sprzętowo w ASIC z prędkością przełączania",
+        "C": "Nie ma różnicy",
+        "D": "SVI działa tylko w IPv6"
+      },
+      "correct": "B",
+      "explanation": "Standard w kampusie."
+    },
+    {
+      "question": "Jak w Linuksie utworzyć trasę blackhole?",
+      "options": {
+        "A": "iptables -j BLACKHOLE",
+        "B": "ip route add null 10.0.0.0/8",
+        "C": "ip route del 10.0.0.0/8",
+        "D": "ip route add blackhole 10.0.0.0/8"
+      },
+      "correct": "D",
+      "explanation": "Także unreachable/prohibit."
+    },
+    {
+      "question": "Dlaczego zmiany tras na zdalnym serwerze robi się z netplan try?",
+      "options": {
+        "A": "Bo nie wymaga roota",
+        "B": "Bo automatycznie cofa zmiany, jeśli nie potwierdzisz (np. po utracie SSH)",
+        "C": "Bo zapisuje do Gita",
+        "D": "Bo jest szybszy"
+      },
+      "correct": "B",
+      "explanation": "Rollback po 120 s."
+    },
+    {
+      "question": "Co oznacza „Gateway of last resort is not set” na Cisco?",
+      "options": {
+        "A": "Brak trasy domyślnej",
+        "B": "Brak interfejsów",
+        "C": "Brak OSPF",
+        "D": "Brak adresu IPv6"
+      },
+      "correct": "A",
+      "explanation": "Ruch do nieznanych sieci odrzucany."
+    },
+    {
+      "question": "Co się stanie, gdy dwa routery mają trasy domyślne wskazujące na siebie?",
+      "options": {
+        "A": "Automatyczne ECMP",
+        "B": "Podwójna przepustowość",
+        "C": "Nic",
+        "D": "Pętla routingu — pakiety krążą do wyczerpania TTL"
+      },
+      "correct": "D",
+      "explanation": "Traceroute pokaże powtórki."
+    },
+    {
+      "question": "Jak traceroute zdradza pętlę routingu?",
+      "options": {
+        "A": "Jeden skok",
+        "B": "Rosnące RTT bez powtórzeń",
+        "C": "Te same adresy powtarzają się naprzemiennie aż do limitu skoków",
+        "D": "Same gwiazdki"
+      },
+      "correct": "C",
+      "explanation": "TTL expired in transit."
+    },
+    {
+      "question": "Czy trasy w tablicy routingu VPC AWS są statyczne?",
+      "options": {
+        "A": "Tylko trasa local",
+        "B": "Nie, zawsze z RIP",
+        "C": "Nie, zawsze z OSPF",
+        "D": "Tak, poza trasami propagowanymi (np. z VPN/TGW przez BGP)"
+      },
+      "correct": "D",
+      "explanation": "Konfigurujesz je w IaC."
+    },
+    {
+      "question": "Jak w Terraformie dodać trasę do Transit Gateway?",
+      "options": {
+        "A": "aws_subnet { gateway = tgw }",
+        "B": "route { cidr_block = \"...\" transit_gateway_id = ... } w aws_route_table",
+        "C": "aws_tgw_route_static",
+        "D": "aws_vpc { route = ... }"
+      },
+      "correct": "B",
+      "explanation": "Lub aws_route."
+    },
+    {
+      "question": "Co robi CNI w trybie host-gw (np. Flannel)?",
+      "options": {
+        "A": "Wyłącza routing",
+        "B": "Konfiguruje BGP z Internetem",
+        "C": "Dodaje na węzłach trasy statyczne do podsieci podów innych węzłów",
+        "D": "Tworzy tunele VXLAN"
+      },
+      "correct": "C",
+      "explanation": "Wymaga wspólnego L2."
+    },
+    {
+      "question": "Dlaczego trasy statyczne są odporne na wstrzyknięcie fałszywych tras z sieci?",
+      "options": {
+        "A": "Bo nie ma protokołu, który można oszukać ogłoszeniem",
+        "B": "Bo są szyfrowane",
+        "C": "Bo mają AD 0",
+        "D": "Bo są ukryte"
+      },
+      "correct": "A",
+      "explanation": "Ale wymagają kontroli zmian."
+    },
+    {
+      "question": "Jaki komunikat syslog Cisco wskazuje zmianę konfiguracji z CLI?",
+      "options": {
+        "A": "%SEC-6-IPACCESSLOG",
+        "B": "%OSPF-5-ADJCHG",
+        "C": "%SYS-5-CONFIG_I",
+        "D": "%LINK-3-UPDOWN"
+      },
+      "correct": "C",
+      "explanation": "Monitoruj zmiany."
+    },
+    {
+      "question": "Które narzędzia automatycznie wersjonują konfiguracje urządzeń sieciowych?",
+      "options": {
+        "A": "Wireshark, tcpdump",
+        "B": "Oxidized, RANCID",
+        "C": "Grafana, Prometheus",
+        "D": "nmap, masscan"
+      },
+      "correct": "B",
+      "explanation": "Diff konfiguracji w Gicie."
+    },
+    {
+      "question": "Jaki obraz FRR można uruchomić w Dockerze w labie?",
+      "options": {
+        "A": "quay.io/frrouting/frr",
+        "B": "docker/router",
+        "C": "cisco/ios",
+        "D": "library/nginx"
+      },
+      "correct": "A",
+      "explanation": "zebra + staticd + inne demony."
+    },
+    {
+      "question": "Jakie uprawnienie potrzebuje kontener FRR do zmiany tras?",
+      "options": {
+        "A": "SYS_TIME",
+        "B": "AUDIT_WRITE",
+        "C": "MKNOD",
+        "D": "NET_ADMIN"
+      },
+      "correct": "D",
+      "explanation": "cap_add: [NET_ADMIN]."
+    },
+    {
+      "question": "Jaki sysctl jest potrzebny, by kontener/host przekazywał pakiety jak router?",
+      "options": {
+        "A": "net.core.somaxconn=1024",
+        "B": "net.ipv4.tcp_syncookies=1",
+        "C": "net.ipv4.ip_forward=1",
+        "D": "vm.swappiness=0"
+      },
+      "correct": "C",
+      "explanation": "Forwarding."
+    },
+    {
+      "question": "Którą trasę do 10.9.5.7 wybierze router: 10.9.0.0/16 static czy 10.9.5.0/24 OSPF?",
+      "options": {
+        "A": "Obie",
+        "B": "Żadną",
+        "C": "10.9.0.0/16 static — niższy AD",
+        "D": "10.9.5.0/24 OSPF — dłuższy prefiks"
+      },
+      "correct": "D",
+      "explanation": "LPM przed AD."
+    },
+    {
+      "question": "Czym jest ECMP dla tras statycznych?",
+      "options": {
+        "A": "Trasa hosta",
+        "B": "Kilka tras statycznych do tego samego prefiksu z tym samym AD — ruch dzielony",
+        "C": "Trasa do Null0",
+        "D": "Trasa pływająca"
+      },
+      "correct": "B",
+      "explanation": "Load sharing."
+    },
+    {
+      "question": "Jaki jest typowy cel sondy IP SLA dla łącza do Internetu?",
+      "options": {
+        "A": "Stabilny adres za łączem operatora (np. własny serwer, DNS)",
+        "B": "127.0.0.1",
+        "C": "Adres multicast",
+        "D": "Adres bramy w tej samej podsieci"
+      },
+      "correct": "A",
+      "explanation": "Wykrywa awarie dalej."
+    },
+    {
+      "question": "Czym różni się trasa w pełni określona od trasy z samym next hopem?",
+      "options": {
+        "A": "Ma AD 0",
+        "B": "Podaje też interfejs, więc nie wymaga rekurencji",
+        "C": "Ma maskę /32",
+        "D": "Działa tylko w IPv6"
+      },
+      "correct": "B",
+      "explanation": "Fully specified."
+    },
+    {
+      "question": "Co się stanie z trasą statyczną, której next hop nie leży w żadnej podłączonej sieci?",
+      "options": {
+        "A": "Przejdzie przez trasę domyślną",
+        "B": "Zostanie zainstalowana z AD 255",
+        "C": "Nie zostanie zainstalowana (next hop nierozwiązywalny)",
+        "D": "Zostanie zamieniona na Null0"
+      },
+      "correct": "C",
+      "explanation": "Chyba że rekurencja przez inną trasę."
+    },
+    {
+      "question": "Do czego w testach aplikacji może posłużyć trasa blackhole?",
+      "options": {
+        "A": "Do przyspieszenia testów",
+        "B": "Do generowania certyfikatów",
+        "C": "Do tworzenia VLAN-ów",
+        "D": "Do symulacji niedostępności zależności (chaos engineering)"
+      },
+      "correct": "D",
+      "explanation": "Sprawdzisz timeouty i fallbacki."
+    },
+    {
+      "question": "Dlaczego zapas przez LTE z AD 1 obok głównego OSPF jest błędem?",
+      "options": {
+        "A": "Bo statyk z AD 1 wygrywa z OSPF i cały ruch idzie przez LTE",
+        "B": "Bo LTE nie obsługuje tras",
+        "C": "Bo AD 1 jest niedozwolony",
+        "D": "Bo OSPF wyłączy LTE"
+      },
+      "correct": "A",
+      "explanation": "AD zapasu > 110."
+    }
+  ]
 }
