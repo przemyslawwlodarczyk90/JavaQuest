@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Gdy pakiet nie mieści się w łączu",
+      "image": "netsec/ns03-11-blackhole.svg",
+      "imageAlt": "PMTUD black hole: małe pakiety SYN, SYN-ACK i ClientHello przechodzą przez tunel o MTU 1420, a duża odpowiedź serwera 1500 bajtów z DF jest odrzucana; komunikat ICMP fragmentation needed jest blokowany przez firewall, więc serwer retransmituje bez końca, a klient zgłasza timeout handshake TLS.",
+      "body": "Każde łącze ma **MTU** — maksymalny rozmiar pakietu IP, który przeniesie (Ethernet: 1500 B, z tunelami i enkapsulacjami — mniej). Gdy pakiet jest większy niż MTU następnego łącza, są dwie drogi: **pociąć go (fragmentacja)** albo **odrzucić i powiedzieć nadawcy, żeby wysyłał mniejsze (Path MTU Discovery)**. Współczesny Internet wybiera prawie zawsze tę drugą: TCP ustawia flagę **DF** (Don’t Fragment), a router odsyła ICMP „fragmentation needed” z MTU łącza. W IPv6 routery **nigdy** nie fragmentują.\n\nWszystko działa — dopóki ktoś nie zablokuje ICMP. Wtedy powstaje **PMTUD black hole**: małe pakiety (SYN, ping, pierwsze bajty) przechodzą, duże giną bez śladu. Objaw dobrze znany developerom i zupełnie niezrozumiały bez tej lekcji: **„handshake TLS wisi, a ping działa”**, „curl zatrzymuje się po Client hello”, „git clone przez VPN stoi”, „małe odpowiedzi API wracają, duże nie”, „w Kubernetes z VXLAN część żądań ma timeout”.\n\nW tej lekcji:\n- fragmentacja IPv4 krok po kroku (ID, MF, offset w jednostkach 8 B) i dlaczego jest zła,\n- flaga DF, PMTUD (RFC 1191 / RFC 8201 dla IPv6) i PLPMTUD,\n- narzuty tuneli (PPPoE, GRE, VXLAN, WireGuard, IPsec) i MTU wewnątrz,\n- **MSS** i **MSS clamping**,\n- **Failure Lab z planu**: zablokuj ICMP i obniż MTU na tunelu — odtwórz zawieszone połączenie, napraw MSS clampingiem.\n\nCele: Network+ N10-009 (MTU, jumbo frames, problemy z MTU w troubleshootingu), CCNA v2 (MTU i fragmentacja w IPv4/IPv6, ICMP), Security+ (ataki fragmentacyjne i omijanie IDS).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik fragmentacji i PMTUD",
+      "body": "- **MTU (Maximum Transmission Unit)** — maksymalny rozmiar pakietu IP na łączu (bez nagłówka L2). Ethernet 1500, jumbo 9000 (9001 w AWS), PPPoE 1492, tunel WireGuard zwykle 1420.\n- **Path MTU (PMTU)** — najmniejsze MTU na całej ścieżce między hostami (np. min(1500, 1500, 1420) = 1420).\n- **Fragmentacja IPv4** — podział datagramu na fragmenty z tym samym **ID**, flagą **MF** (więcej fragmentów) i **Fragment Offset** w jednostkach 8 B; składa **odbiorca**.\n- **DF (Don’t Fragment)** — zakaz fragmentacji; router musi odrzucić za duży pakiet i odesłać **ICMP 3/4 (fragmentation needed)** z MTU następnego łącza.\n- **PMTUD (RFC 1191, IPv6: RFC 8201)** — nadawca wysyła z DF i obniża rozmiar po otrzymaniu ICMP; Linux trzyma wynik w cache tras (`ip route get` → `mtu 1420`).\n- **ICMPv6 Packet Too Big (typ 2)** — odpowiednik 3/4 w IPv6; w IPv6 fragmentować może tylko nadawca (nagłówek rozszerzający Fragment), minimalne MTU IPv6 to 1280.\n- **PMTUD black hole** — ICMP 3/4 lub Packet Too Big są blokowane (firewall, security group, źle skonfigurowany router), więc nadawca nie dowie się o za małym MTU.\n- **PLPMTUD (RFC 4821, RFC 8899)** — wykrywanie MTU ścieżki przez warstwę transportową (sondy o rosnącym rozmiarze), bez polegania na ICMP; Linux: `net.ipv4.tcp_mtu_probing`; QUIC ma go wbudowanego.\n- **MSS (Maximum Segment Size)** — maksymalna ilość danych w segmencie TCP, ogłaszana w SYN: MTU − 40 (IPv4) lub MTU − 60 (IPv6); 1500 → 1460.\n- **MSS clamping** — router przepisuje (zmniejsza) MSS w pakietach SYN przechodzących przez tunel, aby segmenty od początku mieściły się w MTU ścieżki; działa bez ICMP, tylko dla TCP.\n- **Narzut enkapsulacji** — bajty dodawane przez tunel: PPPoE (DSL/światłowód) 8 B, GRE (bez klucza) 24 B, IP-in-IP (IPIP) 20 B, VXLAN (Docker overlay, Flannel, Calico VXLAN) 50 B, WireGuard (zewnętrzny IPv4) 60 B, WireGuard (zewnętrzny IPv6) 80 B, IPsec ESP tunnel AES-GCM (IPv4, + NAT-T UDP) 73 B, GENEVE (AWS GWLB, OVN) 58 B.\n- **Jumbo frames** — MTU > 1500 (zwykle 9000); tylko gdy **wszystkie** urządzenia w domenie L2 je obsługują (lekcja 02/13).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Ciężarówki, tunele i znak „max 3,5 m”",
+      "body": "Pakiet to ciężarówka, MTU to **wysokość tunelu** na trasie.\n- **Fragmentacja** to przeładowanie towaru na kilka mniejszych aut przed niskim tunelem. Działa, ale: trzeba zatrzymać się i przepakować (koszt w routerze), wszystkie auta muszą dojechać, żeby odbiorca złożył dostawę (zgubienie jednego = cała dostawa do kosza), a złodziej łatwiej przemyci coś między częściami (omijanie IDS).\n- **DF** to naklejka „nie przepakowywać — towar nierozdzielny”. Kierowca przed za niskim tunelem musi zawrócić — i powinien zadzwonić do nadawcy: „tunel ma 3,5 m, wysyłaj niższe auta” (**ICMP fragmentation needed**). Nadawca zapamiętuje i kolejne auta są niższe (**PMTUD**).\n- **Black hole** to sytuacja, w której ktoś ze względów „bezpieczeństwa” wyłączył telefony. Kierowca zawraca, nadawca o niczym nie wie i wysyła kolejne za wysokie auta. Małe paczki (rowerem) dojeżdżają, duże nigdy.\n- **MSS clamping** to dyspozytor przy wjeździe na trasę, który przy pierwszym kontakcie (SYN) mówi obu firmom: „na tej trasie maksymalna wysokość ładunku to X” — więc nikt nie wysyła za wysokich aut, nawet bez telefonów.\n- **Narzut tunelu** to dach z kogutem doczepiany do każdej ciężarówki przy wjeździe do tunelu VPN — auto robi się wyższe o kilka centymetrów, więc wcześniej „mieszczące się” ładunki przestają się mieścić.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Fragmentacja policzona krok po kroku",
+      "image": "netsec/ns03-11-fragments.svg",
+      "imageAlt": "Datagram 4000 bajtów z 3980 bajtami danych dzielony na trzy fragmenty dla MTU 1500: 1480 bajtów danych z offsetem 0, 1480 bajtów z offsetem 185 i 1020 bajtów z offsetem 370; MF=1 w dwóch pierwszych. Offset w jednostkach 8 bajtów, składa odbiorca.",
+      "body": "Reguła: dane w każdym fragmencie (poza ostatnim) to **największa wielokrotność 8 nie większa niż MTU − 20**. Offset = pozycja danych w oryginale / 8. Każdy fragment ma własny 20-bajtowy nagłówek IP z tym samym ID; MF=1 we wszystkich poza ostatnim. Przykłady policzone modelem lekcji:",
+      "code": "Datagram 4000 B, MTU 1500:\n  1) Total 1500  dane 1480  offset 0 (= 0 B)  MF=1\n  2) Total 1500  dane 1480  offset 185 (= 1480 B)  MF=1\n  3) Total 1040  dane 1020  offset 370 (= 2960 B)  MF=0\n\nDatagram 1500 B, MTU 1400 (np. tunel), DF=0:\n  1) Total 1396  dane 1376  offset 0 (= 0 B)  MF=1\n  2) Total 124  dane 104  offset 172 (= 1376 B)  MF=0\n  ← (1400 − 20) = 1380 nie dzieli się przez 8 → 1376\n\nDatagram 3000 B, MTU 576 (minimalny reassembly IPv4):\n  1) Total 572  dane 552  offset 0  MF=1\n  2) Total 572  dane 552  offset 69  MF=1\n  3) Total 572  dane 552  offset 138  MF=1\n  4) Total 572  dane 552  offset 207  MF=1\n  5) Total 572  dane 552  offset 276  MF=1\n  6) Total 240  dane 220  offset 345  MF=0\n\nTen sam datagram z DF=1 → żadnej fragmentacji: router odrzuca i odsyła ICMP 3/4 „next-hop MTU …”"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Diagnoza MTU: ping z DF, tracepath, cache PMTU",
+      "image": "netsec/ns03-11-pmtud.svg",
+      "imageAlt": "Path MTU Discovery: serwer wysyła pakiet 1500 bajtów z flagą DF, router R2 przed łączem tunelowym o MTU 1420 odrzuca go i odsyła ICMP fragmentation needed z MTU 1420, serwer zapamiętuje PMTU i zmniejsza pakiety; w IPv6 analogicznie Packet Too Big.",
+      "body": "Zestaw poleceń do znalezienia MTU ścieżki i sprawdzenia, czy PMTUD działa. Najszybszy test: **bisekcja rozmiaru ping z DF** — największy rozmiar danych, który przechodzi, + 28 B (IPv4) = PMTU.",
+      "code": "# Linux\nping -c1 -M do -s 1472 10.2.0.2      # 1472 + 28 = 1500 — „message too long”/brak odpowiedzi = mniejsze PMTU\nping -c1 -M do -s 1392 10.2.0.2      # 1392 + 28 = 1420 — przechodzi? → PMTU ≥ 1420\ntracepath -n 10.2.0.2                # „pmtu 1420” — miejsce spadku MTU (używa ICMP, więc też wykrywa black hole)\nip route get 10.2.0.2                # po ICMP 3/4: „cache expires 587sec mtu 1420”\nip -s link show eth0                 # MTU interfejsu, liczniki błędów\nss -ti dst 10.2.0.2                  # mss:1460 pmtu:1500 advmss … — MSS i PMTU dla gniazda TCP\nsysctl net.ipv4.tcp_mtu_probing      # 0 = wyłączone, 1 = włącz po wykryciu black hole, 2 = zawsze\n\n# Windows\nping -f -l 1472 10.2.0.2             # -f = DF, -l = rozmiar danych; „Packet needs to be fragmented but DF set.”\nnetsh interface ipv4 show subinterfaces          # MTU interfejsów\n# IPv6: ping -6 -M do -s 1452 host (1452 + 48 = 1500), tracepath -6\n\n# Wireshark: icmp.type == 3 && icmp.code == 4   |   icmpv6.type == 2   |   ip.flags.mf == 1 || ip.frag_offset > 0\n#            tcp.analysis.retransmission && frame.len > 1400   ← duże segmenty retransmitowane bez skutku"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Failure Lab z planu: zablokuj ICMP i obniż MTU tunelu — napraw MSS clampingiem",
+      "body": "Cztery network namespace’y: **cli** (10.1.0.2) — **r1** — łącze „tunelowe” MTU 1400 (10.9.0.0/30) — **r2** — **srv** (10.2.0.2). Końcówki mają MTU 1500, więc **ogłaszają MSS 1460** i nie wiedzą o wąskim gardle w środku — dokładnie jak przy VPN/VXLAN. Wymaga roota, iproute2, iptables, curl, python3.\n1. **Budowa**: `ip netns add` cli, r1, r2, srv; pary veth: cli↔r1 (10.1.0.0/24), r1↔r2 (10.9.0.1/30–10.9.0.2/30), r2↔srv (10.2.0.0/24); trasy domyślne w cli (via 10.1.0.1) i srv (via 10.2.0.1); r1: trasa do 10.2.0.0/24 via 10.9.0.2, r2: do 10.1.0.0/24 via 10.9.0.1; `sysctl -w net.ipv4.ip_forward=1` w r1 i r2. Na łączu r1↔r2 ustaw **MTU 1400 po obu stronach**: `ip -n r1 link set <if> mtu 1400`, `ip -n r2 link set <if> mtu 1400`.\n2. **Serwer**: `ip netns exec srv sh -c 'head -c 2000000 /dev/urandom > /tmp/big.bin; cd /tmp; python3 -m http.server 80' &`.\n3. **PMTUD działa**: `ip netns exec cli curl -o /dev/null -w '%{http_code} %{size_download}\\n' http://10.2.0.2/big.bin` → 200 i 2 000 000 B. `ip netns exec srv ip route get 10.1.0.2` → `mtu 1400` w cache (serwer dostał ICMP 3/4 od r2).\n4. **Zepsuj ICMP** (jak nadgorliwy firewall): `ip netns exec r2 iptables -A OUTPUT -p icmp --icmp-type fragmentation-needed -j DROP` (r2 przestaje mówić serwerowi o za dużych pakietach) i wyczyść cache: `ip netns exec srv ip route flush cache`.\n5. **Objaw**: `curl -m 15 …/big.bin` → nagłówki HTTP przychodzą (małe pakiety), pobieranie staje i kończy się timeoutem. `ip netns exec r2 tcpdump -ni <if do srv> 'tcp and greater 1400'` pokazuje segmenty 1500 B od serwera retransmitowane w kółko; `ss -ti` w srv: rosnące `retrans`. To samo zrobiłby TLS z dużym łańcuchem certyfikatów: „Client hello” → cisza.\n6. **Napraw MSS clampingiem** (na obu routerach, bo SYN i SYN-ACK idą w przeciwnych kierunkach): `ip netns exec r1 iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu` i to samo w r2. Teraz w SYN przechodzącym przez łącze 1400 MSS jest przepisywany na **1360**; curl pobiera cały plik **mimo zablokowanego ICMP**. Sprawdź `ss -ti` (mss:1360) i tcpdump SYN (`-v` pokaże `mss 1360`).\n7. **Alternatywy do porównania**: usuń regułę DROP (właściwa naprawa źródła problemu); albo `sysctl -w net.ipv4.tcp_mtu_probing=1` na srv (PLPMTUD: TCP po timeoutach sam zmniejsza segmenty — działa, ale z opóźnieniem); albo obniż MTU interfejsów końcowych do 1400 (MSS z automatu 1360).\n8. **Sprzątanie i notatka**: `ip netns del …`; zapisz objaw, dowód (tcpdump/ss), przyczynę (ICMP 3/4 blokowany + MTU 1400 w środku), naprawę i jej ograniczenie (clamping działa tylko dla TCP — UDP/QUIC potrzebują PMTUD/PLPMTUD).",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "MTU w tunelach, chmurze i Kubernetes",
+      "image": "netsec/ns03-11-mss.svg",
+      "imageAlt": "Tabela narzutów enkapsulacji dla łącza o MTU 1500: PPPoE 8 B (MTU 1492, MSS 1452), GRE 24 B, IPIP 20 B, VXLAN 50 B (1450, MSS 1410), WireGuard 60 lub 80 B (1440 lub 1420), IPsec ESP z NAT-T około 73 B, GENEVE 58 B. MSS clamping przepisuje MSS w pakietach SYN.",
+      "body": "Typowe miejsca, gdzie MTU „kurczy się” niezauważenie:\n- **VPN** (WireGuard domyślnie 1420, OpenVPN, IPsec) — klienci i serwery po obu stronach muszą mieć poprawne MTU lub MSS clamping na bramie VPN.\n- **Kubernetes z overlay** (Flannel/Calico VXLAN: −50 B, Cilium/GENEVE, WireGuard encryption) — MTU interfejsów podów musi uwzględniać narzut; źle ustawione CNI = sporadyczne timeouty dużych żądań między węzłami. Calico/Cilium wykrywają MTU automatycznie, ale nie zawsze (np. węzły w różnych sieciach).\n- **Docker** — sieć bridge dziedziczy 1500; gdy host stoi za VPN lub w chmurze z innym MTU, ustaw `\"mtu\"` w `daemon.json` (lub `com.docker.network.driver.mtu` w compose).\n- **Chmura** — AWS: 9001 w obrębie VPC, 1500 przez Internet Gateway, VPN i między regionami (peering inter-region), 8500 przez Transit Gateway; Azure 1500 (większe w VNet opcjonalnie); GCP 1460 domyślnie. Instancje z jumbo frames rozmawiające przez VPN polegają na PMTUD — **dopuść ICMP 3/4 w security groups i NACL**, inaczej black hole.\n- **PPPoE** u operatora — 1492; router domowy powinien robić MSS clamping (większość robi).\n\n**Dlaczego fragmentacja jest zła**: koszt CPU w routerach i hostach, utrata jednego fragmentu niszczy cały datagram (przy 1% strat pakietów datagram z 3 fragmentów ginie z prawdopodobieństwem ~3%), firewalle i NAT widzą porty tylko w pierwszym fragmencie, a **nakładające się/malutkie fragmenty** służą do omijania IDS (Teardrop, ataki na reassembly). Dlatego: DF + PMTUD dla TCP, PLPMTUD/odpowiednio małe datagramy dla UDP (DNS: EDNS0 bufor 1232 B — DNS Flag Day 2020).",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Konfiguracja: MTU Dockera, WireGuard, Kubernetes i MSS clamping",
+      "body": "Najczęstsze ustawienia, które developer/DevOps zmienia, gdy diagnozuje problemy z MTU. Zasada: **MTU wewnętrzne = MTU zewnętrzne − narzut**, a tam, gdzie nie kontrolujesz końcówek — **MSS clamping na bramie**.",
+      "code": "# Docker — sieć bridge za VPN o MTU 1420\n# /etc/docker/daemon.json\n{ \"mtu\": 1420 }\n# docker compose (sieć użytkownika)\nnetworks:\n  app:\n    driver_opts:\n      com.docker.network.driver.mtu: \"1420\"\n\n# WireGuard (wg-quick): MTU interfejsu tunelu; zewnętrzne 1500 i IPv4 → 1440, IPv6 → 1420 (bezpieczna wartość domyślna)\n[Interface]\nMTU = 1420\n\n# Kubernetes — Calico (VXLAN: 1500 − 50 = 1450)\nkubectl patch felixconfiguration default --type merge -p '{\"spec\":{\"vxlanMTU\":1450}}'\n# Cilium: --set MTU=1450 (lub auto-detect), Flannel: automatycznie z interfejsu − 50\n\n# Brama VPN / router: MSS clamping (nftables)\ntable inet mangle {\n  chain forward {\n    type filter hook forward priority mangle;\n    tcp flags syn tcp option maxseg size set rt mtu         # odpowiednik --clamp-mss-to-pmtu\n  }\n}\n# lub stała wartość: tcp flags syn tcp option maxseg size set 1360\n# Cisco: interface Tunnel0 → ip tcp adjust-mss 1360 ; ip mtu 1400\n\n# Linux — PLPMTUD jako zabezpieczenie przed black hole\nsysctl -w net.ipv4.tcp_mtu_probing=1\nsysctl -w net.ipv4.tcp_base_mss=1024"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **„TLS handshake timeout”, ale tylko przez VPN / z niektórych sieci** — duży łańcuch certyfikatów (Certificate ~3–5 kB) nie mieści się w pakietach, a ICMP 3/4 jest blokowany; ping i nawiązanie TCP działają.\n- **Klient Java (HttpClient, sterownik JDBC) wisi na dużych odpowiedziach**, małe zapytania przechodzą — szczególnie przez Site-to-Site VPN do bazy on-premises.\n- **Kubernetes**: żądania między podami na różnych węzłach czasem kończą się timeoutem, w obrębie węzła — nigdy (overlay i MTU).\n- **CI/CD**: `docker pull`/`git clone` w runnerze za VPN stoi na dużych warstwach.\n- **gRPC/HTTP2**: duże wiadomości i ramki zwiększają szanse trafienia w black hole; zwykłe REST z małymi JSON-ami — nie.\n- **UDP i QUIC (HTTP/3)**: nie ma MSS clampingu — QUIC zaczyna od 1200 B i sam wykrywa MTU (PLPMTUD); aplikacje UDP powinny trzymać datagramy ≤ 1200–1400 B.\n\n**Blue team:**\n- **Polityka ICMP**: blokada ICMP 3/4 / ICMPv6 Packet Too Big to błąd, nie zabezpieczenie — audytuj reguły firewalli, SG i NACL.\n- **Ataki fragmentacyjne**: Teardrop (nakładające się offsety), Ping of Death (fragmenty składające się w > 65 535 B), tiny fragments (nagłówek TCP rozbity między fragmenty, by ominąć filtr portów), fragmentation overlap do ukrycia payloadu przed IDS. Obrona: reassembly przed inspekcją (Suricata `defrag`), odrzucanie fragmentów o nietypowej strukturze, polityki „drop fragments” na brzegu tam, gdzie fragmentacja nie jest potrzebna.\n- **Wykrywanie**: Suricata/Zeek — zdarzenia o nakładających się fragmentach, fragmenty do usług, które nie powinny ich otrzymywać.\n- Mapowanie: Network+ (MTU troubleshooting), CCNA (MTU, ICMP), Security+ (ataki sieciowe), CySA+ (analiza pcap).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy",
+      "body": "- **Blokowanie całego ICMP** — tworzy PMTUD black hole (w IPv4 i IPv6).\n- **Zakładanie, że MTU 1500 jest wszędzie** — tunele, PPPoE, overlay i chmura zmniejszają je po cichu.\n- **Ustawienie jumbo frames tylko na części urządzeń** — błędy i odrzucone ramki w domenie L2 (lekcja 02/13).\n- **Liczenie MSS jako MTU − 20** — MSS = MTU − 40 (IPv4: 20 IP + 20 TCP), IPv6: − 60; opcje TCP (timestamps) zmniejszają efektywny ładunek o kolejne 12 B.\n- **MSS clamping tylko w jednym kierunku** — SYN i SYN-ACK przechodzą przez różne interfejsy; reguła musi łapać oba (FORWARD na bramie zwykle łapie oba, ale przy dwóch bramach — obie).\n- **Oczekiwanie, że MSS clamping pomoże UDP/QUIC/IPsec ESP** — działa tylko dla TCP.\n- **Ping 1500 jako test MTU** — ping `-s` to rozmiar danych ICMP; całość = `-s` + 28 (IPv4) / + 48 (IPv6).\n- **Diagnoza z laptopa zamiast z miejsca problemu** — PMTU jest per ścieżka; test z poda/serwera.\n- **„Naprawa” przez wyłączenie DF w aplikacji** — Java nie daje kontroli nad DF dla TCP, a fragmentacja i tak jest gorsza; napraw ICMP lub MSS.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: VPN site-to-site do bazy bez MSS i z blokadą ICMP",
+      "body": "Konfiguracja, po której aplikacja w chmurze łączy się z bazą on-premises, wykonuje małe zapytania, ale raporty z dużymi wynikami kończą się timeoutem.",
+      "code": "# brama VPN (Linux, IPsec): tunel ma efektywne MTU ~1400, końcówki 1500\niptables -A INPUT  -p icmp -j DROP          # „hardening”\niptables -A FORWARD -p icmp -j DROP         # ICMP 3/4 od bramy do serwera bazy nie dotrze\n# brak MSS clamping: SYN z MSS 1460 przechodzi bez zmian\n# AWS: security group bazy proxy bez reguły ICMP → także brak „fragmentation needed”\n# aplikacja: spring.datasource.hikari.connection-timeout=30000, brak socketTimeout → wątki wiszą minutami"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: ICMP błędów przepuszczony, MSS clamping na bramie, timeouty w aplikacji",
+      "body": "Naprawa wielowarstwowa: przyczyna (ICMP), zabezpieczenie (MSS clamping), odporność aplikacji (timeouty) i weryfikacja testem z DF.",
+      "code": "# brama VPN\niptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT        # ICMP błędów jako RELATED\niptables -A INPUT -p icmp --icmp-type fragmentation-needed -j ACCEPT\niptables -A INPUT -p icmp --icmp-type time-exceeded -j ACCEPT\niptables -t mangle -A FORWARD -o vti0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\niptables -t mangle -A FORWARD -i vti0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n# AWS SG / NACL: ICMP typ 3 kod 4 dopuszczony z zakresu po drugiej stronie VPN\n# aplikacja (PostgreSQL JDBC): socketTimeout, connectTimeout; HikariCP: connection-timeout=3000\nspring.datasource.url=jdbc:postgresql://db.onprem:5432/app?connectTimeout=3&socketTimeout=60\n# weryfikacja: z poda aplikacji  ping -M do -s 1372 db.onprem  (1400 − 28)  i  ss -ti dst db.onprem → mss:1360"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Objaw → przyczyna → naprawa",
+      "body": "Ściąga do diagnozy problemów z MTU:",
+      "code": "OBJAW                                              PRAWDOPODOBNA PRZYCZYNA                 NAPRAWA\nping OK, TLS „Client hello” → cisza                PMTUD black hole (ICMP 3/4 blokowany)   przepuść ICMP 3/4 / PTB; MSS clamping\nmałe odpowiedzi API OK, duże timeout               jw. lub MTU overlay/VPN                  MTU interfejsów, clamping, tcp_mtu_probing\ntimeouty tylko między podami na różnych węzłach    MTU CNI nie uwzględnia VXLAN/GENEVE      ustaw MTU CNI = MTU węzła − narzut\ndocker pull / git clone za VPN stoi                MTU bridge Dockera 1500 > MTU VPN        daemon.json \"mtu\"\nQUIC/HTTP3 nie działa, HTTP/2 tak                  UDP > MTU ścieżki, blokada UDP 443       QUIC robi PLPMTUD; sprawdź UDP 443\nDNS odpowiedzi „truncated”/timeout dla DNSSEC      duże odpowiedzi UDP fragmentowane        EDNS0 bufor 1232, fallback na TCP 53\nIDS alert „overlapping fragments”                  próba omijania IDS / błędny sprzęt       reassembly przed inspekcją, drop\nIPv6 działa dla małych, nie dla dużych             ICMPv6 Packet Too Big blokowany          przepuść ICMPv6 typ 2 (RFC 4890)"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- MTU łącza i PMTU ścieżki (minimum po drodze); tunele i overlay zmniejszają MTU o swój narzut (VXLAN 50, WireGuard 60/80, PPPoE 8…).\n- Fragmentacja IPv4: ID, MF, offset w jednostkach 8 B; składa odbiorca; utrata fragmentu = utrata datagramu; ryzyka bezpieczeństwa (omijanie IDS). IPv6: routery nie fragmentują, minimalne MTU 1280.\n- DF + PMTUD: router odsyła ICMP 3/4 (IPv6: Packet Too Big) z MTU; blokada tych komunikatów = **black hole** (ping OK, TLS/duże odpowiedzi wiszą).\n- MSS = MTU − 40 (IPv4) / − 60 (IPv6); **MSS clamping** na bramie naprawia TCP nawet bez ICMP; UDP/QUIC wymagają PMTUD/PLPMTUD.\n- Narzędzia: `ping -M do -s`, `tracepath`, `ip route get` (cache mtu), `ss -ti`, tcpdump/Wireshark (`icmp.type==3 && icmp.code==4`).\n- Konfiguracja: MTU Dockera (daemon.json), WireGuard (MTU = 1420), CNI w Kubernetes, `tcp_mtu_probing`, ICMP 3/4 w SG/NACL.\n- Następna lekcja: **IPv6 od środka** — notacja, typy adresów, nagłówek i extension headers, SLAAC, IPv6 w Javie i Dockerze.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Podziel datagram IPv4 o Total Length 4000 B (nagłówek 20 B, DF=0) na fragmenty dla MTU 1500. Podaj Total Length, dane, offset i MF każdego fragmentu.",
+      "hint": "Dane w fragmencie: największa wielokrotność 8 ≤ MTU − 20; offset = bajty / 8.",
+      "solution": "fragment 1: Total Length 1500, dane 1480 B, offset 0 (0 B), MF=1; fragment 2: Total Length 1500, dane 1480 B, offset 185 (1480 B), MF=1; fragment 3: Total Length 1040, dane 1020 B, offset 370 (2960 B), MF=0."
+    },
+    {
+      "prompt": "Podziel datagram IPv4 o Total Length 2000 B (nagłówek 20 B, DF=0) na fragmenty dla MTU 1400. Podaj Total Length, dane, offset i MF każdego fragmentu.",
+      "hint": "Dane w fragmencie: największa wielokrotność 8 ≤ MTU − 20; offset = bajty / 8.",
+      "solution": "fragment 1: Total Length 1396, dane 1376 B, offset 0 (0 B), MF=1; fragment 2: Total Length 624, dane 604 B, offset 172 (1376 B), MF=0."
+    },
+    {
+      "prompt": "Podziel datagram IPv4 o Total Length 1500 B (nagłówek 20 B, DF=0) na fragmenty dla MTU 1280. Podaj Total Length, dane, offset i MF każdego fragmentu.",
+      "hint": "Dane w fragmencie: największa wielokrotność 8 ≤ MTU − 20; offset = bajty / 8.",
+      "solution": "fragment 1: Total Length 1276, dane 1256 B, offset 0 (0 B), MF=1; fragment 2: Total Length 244, dane 224 B, offset 157 (1256 B), MF=0."
+    },
+    {
+      "prompt": "Podziel datagram IPv4 o Total Length 5000 B (nagłówek 20 B, DF=0) na fragmenty dla MTU 1492. Podaj Total Length, dane, offset i MF każdego fragmentu.",
+      "hint": "Dane w fragmencie: największa wielokrotność 8 ≤ MTU − 20; offset = bajty / 8.",
+      "solution": "fragment 1: Total Length 1492, dane 1472 B, offset 0 (0 B), MF=1; fragment 2: Total Length 1492, dane 1472 B, offset 184 (1472 B), MF=1; fragment 3: Total Length 1492, dane 1472 B, offset 368 (2944 B), MF=1; fragment 4: Total Length 584, dane 564 B, offset 552 (4416 B), MF=0."
+    },
+    {
+      "prompt": "Podziel datagram IPv4 o Total Length 3000 B (nagłówek 20 B, DF=0) na fragmenty dla MTU 576. Podaj Total Length, dane, offset i MF każdego fragmentu.",
+      "hint": "Dane w fragmencie: największa wielokrotność 8 ≤ MTU − 20; offset = bajty / 8.",
+      "solution": "fragment 1: Total Length 572, dane 552 B, offset 0 (0 B), MF=1; fragment 2: Total Length 572, dane 552 B, offset 69 (552 B), MF=1; fragment 3: Total Length 572, dane 552 B, offset 138 (1104 B), MF=1; fragment 4: Total Length 572, dane 552 B, offset 207 (1656 B), MF=1; fragment 5: Total Length 572, dane 552 B, offset 276 (2208 B), MF=1; fragment 6: Total Length 240, dane 220 B, offset 345 (2760 B), MF=0."
+    },
+    {
+      "prompt": "Łącze zewnętrzne ma MTU 1500, enkapsulacja: PPPoE (DSL/światłowód) (narzut 8 B). Jakie MTU ustawisz wewnątrz tunelu i jakie MSS (IPv4 i IPv6) ogłoszą hosty?",
+      "hint": "MTU wewn. = 1500 − narzut; MSS = MTU − 40 (IPv4) / − 60 (IPv6).",
+      "solution": "MTU 1492, MSS IPv4 1452, IPv6 1432."
+    },
+    {
+      "prompt": "Łącze zewnętrzne ma MTU 1500, enkapsulacja: GRE (bez klucza) (narzut 24 B). Jakie MTU ustawisz wewnątrz tunelu i jakie MSS (IPv4 i IPv6) ogłoszą hosty?",
+      "hint": "MTU wewn. = 1500 − narzut; MSS = MTU − 40 (IPv4) / − 60 (IPv6).",
+      "solution": "MTU 1476, MSS IPv4 1436, IPv6 1416."
+    },
+    {
+      "prompt": "Łącze zewnętrzne ma MTU 1500, enkapsulacja: IP-in-IP (IPIP) (narzut 20 B). Jakie MTU ustawisz wewnątrz tunelu i jakie MSS (IPv4 i IPv6) ogłoszą hosty?",
+      "hint": "MTU wewn. = 1500 − narzut; MSS = MTU − 40 (IPv4) / − 60 (IPv6).",
+      "solution": "MTU 1480, MSS IPv4 1440, IPv6 1420."
+    },
+    {
+      "prompt": "Łącze zewnętrzne ma MTU 1500, enkapsulacja: VXLAN (Docker overlay, Flannel, Calico VXLAN) (narzut 50 B). Jakie MTU ustawisz wewnątrz tunelu i jakie MSS (IPv4 i IPv6) ogłoszą hosty?",
+      "hint": "MTU wewn. = 1500 − narzut; MSS = MTU − 40 (IPv4) / − 60 (IPv6).",
+      "solution": "MTU 1450, MSS IPv4 1410, IPv6 1390."
+    },
+    {
+      "prompt": "Łącze zewnętrzne ma MTU 1500, enkapsulacja: WireGuard (zewnętrzny IPv4) (narzut 60 B). Jakie MTU ustawisz wewnątrz tunelu i jakie MSS (IPv4 i IPv6) ogłoszą hosty?",
+      "hint": "MTU wewn. = 1500 − narzut; MSS = MTU − 40 (IPv4) / − 60 (IPv6).",
+      "solution": "MTU 1440, MSS IPv4 1400, IPv6 1380."
+    },
+    {
+      "prompt": "Łącze zewnętrzne ma MTU 1500, enkapsulacja: WireGuard (zewnętrzny IPv6) (narzut 80 B). Jakie MTU ustawisz wewnątrz tunelu i jakie MSS (IPv4 i IPv6) ogłoszą hosty?",
+      "hint": "MTU wewn. = 1500 − narzut; MSS = MTU − 40 (IPv4) / − 60 (IPv6).",
+      "solution": "MTU 1420, MSS IPv4 1380, IPv6 1360."
+    },
+    {
+      "prompt": "Ścieżka przechodzi przez łącza o MTU 1500, 1500, 1420, 1500. Jakie jest PMTU, jaki największy rozmiar danych przejdzie w ping -M do -s (IPv4) i jakie MSS powinno być użyte?",
+      "hint": "Minimum; ping: PMTU − 28; MSS: PMTU − 40.",
+      "solution": "PMTU 1420; ping -M do -s 1392; MSS 1380."
+    },
+    {
+      "prompt": "Ścieżka przechodzi przez łącza o MTU 9001, 1500, 9001. Jakie jest PMTU, jaki największy rozmiar danych przejdzie w ping -M do -s (IPv4) i jakie MSS powinno być użyte?",
+      "hint": "Minimum; ping: PMTU − 28; MSS: PMTU − 40.",
+      "solution": "PMTU 1500; ping -M do -s 1472; MSS 1460."
+    },
+    {
+      "prompt": "Ścieżka przechodzi przez łącza o MTU 1500, 1492, 1500, 1450. Jakie jest PMTU, jaki największy rozmiar danych przejdzie w ping -M do -s (IPv4) i jakie MSS powinno być użyte?",
+      "hint": "Minimum; ping: PMTU − 28; MSS: PMTU − 40.",
+      "solution": "PMTU 1450; ping -M do -s 1422; MSS 1410."
+    },
+    {
+      "prompt": "Ścieżka przechodzi przez łącza o MTU 1500, 1280, 1500. Jakie jest PMTU, jaki największy rozmiar danych przejdzie w ping -M do -s (IPv4) i jakie MSS powinno być użyte?",
+      "hint": "Minimum; ping: PMTU − 28; MSS: PMTU − 40.",
+      "solution": "PMTU 1280; ping -M do -s 1252; MSS 1240."
+    },
+    {
+      "prompt": "Wykonaj Failure Lab z planu: w topologii cli–r1–(MTU 1400)–r2–srv zablokuj ICMP fragmentation-needed na r2, odtwórz zawieszone pobieranie dużego pliku i napraw je MSS clampingiem. Pokaż dowody przed i po.",
+      "hint": "tcpdump greater 1400, ss -ti, iptables TCPMSS na obu routerach.",
+      "solution": "Przed: curl pobiera nagłówki i staje; tcpdump na r2 pokazuje retransmitowane segmenty 1500 B od srv; ss -ti w srv rośnie retrans; ip route get 10.1.0.2 w srv bez mtu w cache (ICMP nie dotarł). Naprawa: iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu na r1 i r2. Po: SYN ma mss 1360 (tcpdump -v), ss -ti mss:1360, curl pobiera cały plik. Właściwa naprawa przyczyny: przepuścić ICMP 3/4."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego w black hole przechodzi handshake TCP i ClientHello TLS, a zawodzi odpowiedź serwera.",
+      "hint": "Rozmiary pakietów w handshake.",
+      "solution": "SYN/SYN-ACK/ACK mają po kilkadziesiąt bajtów, ClientHello zwykle kilkaset — mieszczą się w każdym MTU. Odpowiedź serwera (ServerHello + Certificate z łańcuchem + ewentualnie inne wiadomości) ma kilka kB, więc TCP wysyła pełne segmenty o MSS 1460 (bo obie strony ogłosiły MTU 1500), które nie mieszczą się w tunelu; bez ICMP 3/4 serwer nie zmniejsza segmentów i retransmituje je w nieskończoność."
+    },
+    {
+      "prompt": "Dlaczego MSS clamping musi działać na obu kierunkach (SYN i SYN-ACK) i co się stanie, jeśli zadziała tylko na SYN klienta?",
+      "hint": "Każda strona wysyła dane w segmentach ≤ MSS drugiej strony.",
+      "solution": "Każda strona ogłasza w swoim SYN/SYN-ACK, jakie maksymalne segmenty chce OTRZYMYWAĆ. Jeśli przepiszemy tylko SYN klienta, serwer będzie wysyłał klientowi mniejsze segmenty (problem pobierania rozwiązany), ale klient — sugerując się MSS z SYN-ACK serwera (1460) — wysyła duże segmenty do serwera; upload/duże żądania (POST, gRPC streaming) nadal trafiają w black hole. Dlatego reguła łapie wszystkie pakiety z flagą SYN w obu kierunkach."
+    },
+    {
+      "prompt": "Pody w Kubernetes z Calico VXLAN na węzłach z MTU 1500 mają MTU 1500. Opisz objaw i naprawę.",
+      "hint": "Narzut VXLAN 50 B.",
+      "solution": "Pakiety 1500 B z poda po enkapsulacji VXLAN mają 1550 B — nie mieszczą się w MTU węzła; z DF są odrzucane (ICMP może nie dotrzeć do poda przez NAT/overlay), bez DF — fragmentowane (spadek wydajności). Objaw: sporadyczne timeouty dużych żądań między podami na różnych węzłach, ruch w obrębie węzła OK. Naprawa: MTU CNI = 1500 − 50 = 1450 (Calico FelixConfiguration vxlanMTU lub autodetekcja), restart podów, by dostały nowe MTU; weryfikacja ping -M do -s 1422 między podami."
+    },
+    {
+      "prompt": "Policz, ile danych aplikacji niesie pełny segment TCP przy MTU 1500 z opcją timestamps i jaki jest narzut procentowy nagłówków.",
+      "hint": "IP 20 + TCP 20 + timestamps 12.",
+      "solution": "MSS 1460, ale opcja timestamps (10 B + 2 B wypełnienia) zajmuje 12 B w każdym segmencie, więc dane = 1448 B. Narzut nagłówków = 52 B z 1500 ≈ 3,5% (plus nagłówek Ethernet 14 B + FCS 4 B + preambuła/odstęp 20 B na łączu: ok. 1448/1538 ≈ 94% efektywności)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego QUIC/HTTP3 nie korzysta z MSS clampingu i jak radzi sobie z MTU.",
+      "hint": "UDP, PLPMTUD, 1200 B.",
+      "solution": "QUIC działa na UDP — nie ma SYN ani opcji MSS, więc router nie ma czego przepisać. QUIC wymaga, by ścieżka przenosiła co najmniej 1200 B (pierwsze pakiety Initial są dopełniane do 1200) i sam wykrywa większe MTU sondami (DPLPMTUD, RFC 8899) — nie polega na ICMP, choć może go wykorzystać. Jeśli UDP 443 jest blokowany lub MTU < 1200, przeglądarka wraca do HTTP/2 po TCP."
+    },
+    {
+      "prompt": "Opisz atak tiny fragments i overlapping fragments oraz jak nowoczesne IDS/firewalle się przed nimi bronią.",
+      "hint": "Porty w pierwszym fragmencie, nadpisywanie danych.",
+      "solution": "Tiny fragments: pierwszy fragment tak mały, że nie zawiera pełnego nagłówka TCP (np. bez flag/portów) — filtr sprawdzający porty w pierwszym fragmencie nie widzi, co jest blokowane (RFC 1858). Overlapping: kolejne fragmenty nadpisują część wcześniejszych danych; różne systemy składają je różnie, więc IDS widzi inny strumień niż ofiara (np. ukryty exploit). Obrona: składanie fragmentów przed inspekcją (Suricata defrag z politykami per system docelowy), odrzucanie fragmentów z offsetem 1 i nietypowo małych pierwszych fragmentów (RFC 1858/3128), drop fragmentów na brzegu, gdy nie są potrzebne."
+    },
+    {
+      "prompt": "Dlaczego DNS przy DNSSEC i dużych odpowiedziach ma problem z fragmentacją i co zaleca DNS Flag Day 2020?",
+      "hint": "EDNS0, UDP, fragmenty.",
+      "solution": "Duże odpowiedzi DNS (DNSSEC, wiele rekordów) przekraczają MTU i są fragmentowane w UDP; fragmenty bywają odrzucane przez firewalle lub są celem ataków (zatruwanie przez fragmenty). DNS Flag Day 2020 zalecił domyślny rozmiar bufora EDNS0 1232 B (mieści się w minimalnym MTU IPv6 1280 minus nagłówki) i przechodzenie na TCP 53, gdy odpowiedź jest obcięta (flaga TC). Firewalle muszą przepuszczać DNS po TCP."
+    },
+    {
+      "prompt": "Na serwerze w AWS z MTU 9001 klienci z Internetu zgłaszają zawieszone pobieranie dużych plików, a w VPC wszystko działa. Wyjaśnij i napraw.",
+      "hint": "IGW 1500, ICMP w SG/NACL.",
+      "solution": "W VPC ścieżka ma 9001, ale przez Internet Gateway — 1500. Serwer polega na PMTUD przy połączeniach z Internetu; jeśli security group lub NACL nie przepuszcza ICMP typ 3 kod 4, serwer nie dowie się o MTU 1500 i wysyła ramki ~9000 B (jeśli klient ogłosił duży MSS — rzadko) lub — częściej — problem pojawia się przy tunelach/VPN klienta. Naprawa: dodaj regułę ICMP 3/4 w SG i NACL, rozważ MTU 1500 na interfejsach obsługujących ruch internetowy lub MSS clamping na load balancerze (ALB/NLB terminuje TCP, co zwykle rozwiązuje problem po stronie instancji)."
+    },
+    {
+      "prompt": "Jak włączyć i do czego służy net.ipv4.tcp_mtu_probing? Jakie są wady?",
+      "hint": "PLPMTUD, 1 vs 2.",
+      "solution": "tcp_mtu_probing=1: Linux włącza sondowanie MTU po wykryciu black hole (powtarzające się timeouty dużych segmentów) — zmniejsza MSS do tcp_base_mss i stopniowo sonduje większe rozmiary bez polegania na ICMP; =2: sondowanie zawsze. Zaleta: odporność na zablokowany ICMP. Wady: problem jest wykrywany dopiero po timeoutach (opóźnienie pierwszego transferu, nawet kilka sekund), dotyczy tylko TCP i tylko strony z włączonym parametrem (zwykle serwera wysyłającego duże dane)."
+    },
+    {
+      "prompt": "W IPv6 host wysyła pakiety 1500 B, łącze w środku ma 1400 i ICMPv6 Packet Too Big dociera. Kto fragmentuje i jak?",
+      "hint": "Routery IPv6 nie fragmentują.",
+      "solution": "Router odrzuca pakiet i odsyła Packet Too Big (MTU 1400). Nadawca zapamiętuje PMTU 1400 i dla TCP zmniejsza segmenty (MSS), a dla UDP (gdy aplikacja wyśle datagram > 1400) fragmentuje SAM, dodając nagłówek rozszerzający Fragment (Next Header 44). Routery po drodze nigdy nie fragmentują w IPv6. Minimalne MTU IPv6 to 1280 — każde łącze musi je przenieść."
+    },
+    {
+      "prompt": "Twoja aplikacja Java wysyła datagramy UDP po 4000 B (np. własny protokół telemetrii). Jakie problemy mogą wystąpić i jak przeprojektować wysyłkę?",
+      "hint": "Fragmentacja, utrata fragmentu, firewalle.",
+      "solution": "Każdy datagram 4000 B zostanie podzielony na 3 fragmenty IP (MTU 1500); utrata dowolnego fragmentu oznacza utratę całego datagramu (przy 1% strat ~3%), firewalle/NAT mogą odrzucać fragmenty bez nagłówka UDP, w tunelach jeszcze więcej fragmentów, część sieci blokuje fragmenty całkowicie. Przeprojektowanie: datagramy ≤ 1200–1400 B (podział w aplikacji z numeracją), kompresja, albo przejście na TCP/QUIC/gRPC; w Javie DatagramSocket nie ustawia DF dla UDP w przenośny sposób — kontroluj rozmiar po swojej stronie."
+    },
+    {
+      "prompt": "Ustal metodą bisekcji PMTU do hosta, jeśli wiesz, że ping -M do -s 1472 nie przechodzi, a -s 1272 przechodzi. Podaj kolejne kroki do wyniku 1420.",
+      "hint": "Połowienie przedziału; PMTU = max przechodzący + 28.",
+      "solution": "Przedział rozmiaru danych: 1272 przechodzi, 1472 nie. 1372 → przechodzi (dolna granica 1372). 1422 → nie (górna 1422). 1397 → nie (górna 1397). 1384 → przechodzi. 1390 → przechodzi. 1393 → nie. 1391 → przechodzi. 1392 → przechodzi. Największy przechodzący rozmiar danych to 1392, więc PMTU = 1392 + 28 = 1420. (tracepath podaje wynik od razu; bisekcja przydaje się, gdy tracepath nie działa przez filtrowanie ICMP po drodze.)"
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego jedna zgubiona ramka niszczy cały datagram przy fragmentacji, i policz prawdopodobieństwo utraty datagramu z 3 fragmentów przy 2% strat pakietów.",
+      "hint": "Wszystkie fragmenty muszą dotrzeć.",
+      "solution": "Odbiorca może złożyć datagram tylko z kompletu fragmentów; IP nie retransmituje pojedynczych fragmentów, więc brak jednego oznacza odrzucenie całości po timeoucie reassembly (i retransmisję całego datagramu przez warstwę wyższą, jeśli w ogóle istnieje). P(dotarcia) = 0,98³ ≈ 0,941 → P(utraty) ≈ 5,9% — prawie trzy razy więcej niż dla pojedynczego pakietu."
+    },
+    {
+      "prompt": "Dlaczego firewall z regułami na porty może źle traktować fragmenty IP i jak to obchodzą nowoczesne firewalle?",
+      "hint": "Porty tylko w pierwszym fragmencie.",
+      "solution": "Nagłówek TCP/UDP (porty) jest tylko w pierwszym fragmencie; kolejne fragmenty mają sam nagłówek IP z offsetem > 0. Prosty filtr bezstanowy nie może dopasować ich do reguły portowej — albo je przepuszcza (ryzyko), albo odrzuca (psuje legalny ruch). Firewalle stanowe (Netfilter z nf_defrag, pfSense, NGFW) składają fragmenty przed dopasowaniem reguł lub śledzą je po ID i adresach, dzięki czemu reguły działają na kompletnym datagramie."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 4000 B przy MTU 1500 (DF=0)?",
+      "options": {
+        "A": "6",
+        "B": "3",
+        "C": "2",
+        "D": "4"
+      },
+      "correct": "B",
+      "explanation": "Dane na fragment: 1480 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 4000 B przy MTU 1500?",
+      "options": {
+        "A": "1480",
+        "B": "184",
+        "C": "185",
+        "D": "186"
+      },
+      "correct": "C",
+      "explanation": "1480 B / 8 = 185."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 4000 B przy MTU 1500?",
+      "options": {
+        "A": "1480",
+        "B": "1028",
+        "C": "1040",
+        "D": "1020"
+      },
+      "correct": "D",
+      "explanation": "3980 − 2 × 1480."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 3000 B przy MTU 1500 (DF=0)?",
+      "options": {
+        "A": "3",
+        "B": "4",
+        "C": "2",
+        "D": "6"
+      },
+      "correct": "A",
+      "explanation": "Dane na fragment: 1480 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 3000 B przy MTU 1500?",
+      "options": {
+        "A": "184",
+        "B": "1480",
+        "C": "185",
+        "D": "186"
+      },
+      "correct": "C",
+      "explanation": "1480 B / 8 = 185."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 3000 B przy MTU 1500?",
+      "options": {
+        "A": "28",
+        "B": "20",
+        "C": "40",
+        "D": "1480"
+      },
+      "correct": "B",
+      "explanation": "2980 − 2 × 1480."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 2000 B przy MTU 1400 (DF=0)?",
+      "options": {
+        "A": "2",
+        "B": "4",
+        "C": "1",
+        "D": "3"
+      },
+      "correct": "A",
+      "explanation": "Dane na fragment: 1376 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 2000 B przy MTU 1400?",
+      "options": {
+        "A": "173",
+        "B": "1380",
+        "C": "1376",
+        "D": "172"
+      },
+      "correct": "D",
+      "explanation": "1376 B / 8 = 172."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 2000 B przy MTU 1400?",
+      "options": {
+        "A": "604",
+        "B": "1376",
+        "C": "624",
+        "D": "600"
+      },
+      "correct": "A",
+      "explanation": "1980 − 1 × 1376."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 1600 B przy MTU 1500 (DF=0)?",
+      "options": {
+        "A": "1",
+        "B": "4",
+        "C": "3",
+        "D": "2"
+      },
+      "correct": "D",
+      "explanation": "Dane na fragment: 1480 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 1600 B przy MTU 1500?",
+      "options": {
+        "A": "186",
+        "B": "1480",
+        "C": "185",
+        "D": "184"
+      },
+      "correct": "C",
+      "explanation": "1480 B / 8 = 185."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 1600 B przy MTU 1500?",
+      "options": {
+        "A": "120",
+        "B": "100",
+        "C": "1480",
+        "D": "108"
+      },
+      "correct": "B",
+      "explanation": "1580 − 1 × 1480."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 5000 B przy MTU 1492 (DF=0)?",
+      "options": {
+        "A": "4",
+        "B": "3",
+        "C": "8",
+        "D": "5"
+      },
+      "correct": "A",
+      "explanation": "Dane na fragment: 1472 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 5000 B przy MTU 1492?",
+      "options": {
+        "A": "185",
+        "B": "183",
+        "C": "1472",
+        "D": "184"
+      },
+      "correct": "D",
+      "explanation": "1472 B / 8 = 184."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 5000 B przy MTU 1492?",
+      "options": {
+        "A": "572",
+        "B": "1472",
+        "C": "564",
+        "D": "584"
+      },
+      "correct": "C",
+      "explanation": "4980 − 3 × 1472."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 3000 B przy MTU 576 (DF=0)?",
+      "options": {
+        "A": "5",
+        "B": "6",
+        "C": "12",
+        "D": "7"
+      },
+      "correct": "B",
+      "explanation": "Dane na fragment: 552 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 3000 B przy MTU 576?",
+      "options": {
+        "A": "70",
+        "B": "552",
+        "C": "69",
+        "D": "556"
+      },
+      "correct": "C",
+      "explanation": "552 B / 8 = 69."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 3000 B przy MTU 576?",
+      "options": {
+        "A": "240",
+        "B": "220",
+        "C": "552",
+        "D": "200"
+      },
+      "correct": "B",
+      "explanation": "2980 − 5 × 552."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 6000 B przy MTU 1500 (DF=0)?",
+      "options": {
+        "A": "5",
+        "B": "10",
+        "C": "4",
+        "D": "6"
+      },
+      "correct": "A",
+      "explanation": "Dane na fragment: 1480 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 6000 B przy MTU 1500?",
+      "options": {
+        "A": "186",
+        "B": "184",
+        "C": "1480",
+        "D": "185"
+      },
+      "correct": "D",
+      "explanation": "1480 B / 8 = 185."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 6000 B przy MTU 1500?",
+      "options": {
+        "A": "68",
+        "B": "80",
+        "C": "1480",
+        "D": "60"
+      },
+      "correct": "D",
+      "explanation": "5980 − 4 × 1480."
+    },
+    {
+      "question": "Na ile fragmentów zostanie podzielony datagram IPv4 o Total Length 2500 B przy MTU 1280 (DF=0)?",
+      "options": {
+        "A": "1",
+        "B": "2",
+        "C": "3",
+        "D": "4"
+      },
+      "correct": "B",
+      "explanation": "Dane na fragment: 1256 B."
+    },
+    {
+      "question": "Jaki Fragment Offset (pole nagłówka) ma DRUGI fragment datagramu 2500 B przy MTU 1280?",
+      "options": {
+        "A": "157",
+        "B": "158",
+        "C": "1260",
+        "D": "1256"
+      },
+      "correct": "A",
+      "explanation": "1256 B / 8 = 157."
+    },
+    {
+      "question": "Ile bajtów danych niesie OSTATNI fragment datagramu 2500 B przy MTU 1280?",
+      "options": {
+        "A": "1256",
+        "B": "1244",
+        "C": "1224",
+        "D": "1220"
+      },
+      "correct": "C",
+      "explanation": "2480 − 1 × 1256."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji PPPoE (DSL/światłowód) na łączu 1500?",
+      "options": {
+        "A": "1472",
+        "B": "1508",
+        "C": "1500",
+        "D": "1492"
+      },
+      "correct": "D",
+      "explanation": "1500 − 8."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu PPPoE (DSL/światłowód) (MTU 1492)?",
+      "options": {
+        "A": "1452",
+        "B": "1460",
+        "C": "1472",
+        "D": "1432"
+      },
+      "correct": "A",
+      "explanation": "1492 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji GRE (bez klucza) na łączu 1500?",
+      "options": {
+        "A": "1456",
+        "B": "1476",
+        "C": "1524",
+        "D": "1500"
+      },
+      "correct": "B",
+      "explanation": "1500 − 24."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu GRE (bez klucza) (MTU 1476)?",
+      "options": {
+        "A": "1460",
+        "B": "1416",
+        "C": "1436",
+        "D": "1456"
+      },
+      "correct": "C",
+      "explanation": "1476 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji IP-in-IP (IPIP) na łączu 1500?",
+      "options": {
+        "A": "1460",
+        "B": "1500",
+        "C": "1520",
+        "D": "1480"
+      },
+      "correct": "D",
+      "explanation": "1500 − 20."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu IP-in-IP (IPIP) (MTU 1480)?",
+      "options": {
+        "A": "1440",
+        "B": "1420",
+        "C": "1460",
+        "D": "1480"
+      },
+      "correct": "A",
+      "explanation": "1480 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji VXLAN (Docker overlay, Flannel, Calico VXLAN) na łączu 1500?",
+      "options": {
+        "A": "1500",
+        "B": "1450",
+        "C": "1430",
+        "D": "1550"
+      },
+      "correct": "B",
+      "explanation": "1500 − 50."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu VXLAN (Docker overlay, Flannel, Calico VXLAN) (MTU 1450)?",
+      "options": {
+        "A": "1460",
+        "B": "1390",
+        "C": "1410",
+        "D": "1430"
+      },
+      "correct": "C",
+      "explanation": "1450 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji WireGuard (zewnętrzny IPv4) na łączu 1500?",
+      "options": {
+        "A": "1500",
+        "B": "1440",
+        "C": "1560",
+        "D": "1420"
+      },
+      "correct": "B",
+      "explanation": "1500 − 60."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu WireGuard (zewnętrzny IPv4) (MTU 1440)?",
+      "options": {
+        "A": "1460",
+        "B": "1380",
+        "C": "1400",
+        "D": "1420"
+      },
+      "correct": "C",
+      "explanation": "1440 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji WireGuard (zewnętrzny IPv6) na łączu 1500?",
+      "options": {
+        "A": "1420",
+        "B": "1500",
+        "C": "1580",
+        "D": "1400"
+      },
+      "correct": "A",
+      "explanation": "1500 − 80."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu WireGuard (zewnętrzny IPv6) (MTU 1420)?",
+      "options": {
+        "A": "1360",
+        "B": "1460",
+        "C": "1400",
+        "D": "1380"
+      },
+      "correct": "D",
+      "explanation": "1420 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji IPsec ESP tunnel AES-GCM (IPv4, + NAT-T UDP) na łączu 1500?",
+      "options": {
+        "A": "1500",
+        "B": "1573",
+        "C": "1427",
+        "D": "1407"
+      },
+      "correct": "C",
+      "explanation": "1500 − 73."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu IPsec ESP tunnel AES-GCM (IPv4, + NAT-T UDP) (MTU 1427)?",
+      "options": {
+        "A": "1460",
+        "B": "1387",
+        "C": "1367",
+        "D": "1407"
+      },
+      "correct": "B",
+      "explanation": "1427 − 40."
+    },
+    {
+      "question": "Jakie MTU wewnątrz tunelu przy enkapsulacji GENEVE (AWS GWLB, OVN) na łączu 1500?",
+      "options": {
+        "A": "1442",
+        "B": "1500",
+        "C": "1422",
+        "D": "1558"
+      },
+      "correct": "A",
+      "explanation": "1500 − 58."
+    },
+    {
+      "question": "Jakie MSS (TCP/IPv4) ogłosi host w tunelu GENEVE (AWS GWLB, OVN) (MTU 1442)?",
+      "options": {
+        "A": "1422",
+        "B": "1460",
+        "C": "1382",
+        "D": "1402"
+      },
+      "correct": "D",
+      "explanation": "1442 − 40."
+    },
+    {
+      "question": "Łącza na ścieżce mają MTU 1500, 1500, 1420, 1500. Jakie jest Path MTU?",
+      "options": {
+        "A": "1420",
+        "B": "1500",
+        "C": "1392",
+        "D": "1480"
+      },
+      "correct": "A",
+      "explanation": "Minimum na ścieżce."
+    },
+    {
+      "question": "Łącza na ścieżce mają MTU 9001, 1500, 9001. Jakie jest Path MTU?",
+      "options": {
+        "A": "6501",
+        "B": "1472",
+        "C": "9001",
+        "D": "1500"
+      },
+      "correct": "D",
+      "explanation": "Minimum na ścieżce."
+    },
+    {
+      "question": "Łącza na ścieżce mają MTU 1500, 1492, 1450. Jakie jest Path MTU?",
+      "options": {
+        "A": "1422",
+        "B": "1450",
+        "C": "1481",
+        "D": "1500"
+      },
+      "correct": "B",
+      "explanation": "Minimum na ścieżce."
+    },
+    {
+      "question": "Łącza na ścieżce mają MTU 1500, 1280, 1500. Jakie jest Path MTU?",
+      "options": {
+        "A": "1252",
+        "B": "1500",
+        "C": "1280",
+        "D": "1427"
+      },
+      "correct": "C",
+      "explanation": "Minimum na ścieżce."
+    },
+    {
+      "question": "Łącza na ścieżce mają MTU 9000, 1500, 9000. Jakie jest Path MTU?",
+      "options": {
+        "A": "6500",
+        "B": "1472",
+        "C": "1500",
+        "D": "9000"
+      },
+      "correct": "C",
+      "explanation": "Minimum na ścieżce."
+    },
+    {
+      "question": "Łącza na ścieżce mają MTU 1500, 1400, 1476, 1500. Jakie jest Path MTU?",
+      "options": {
+        "A": "1372",
+        "B": "1400",
+        "C": "1469",
+        "D": "1500"
+      },
+      "correct": "B",
+      "explanation": "Minimum na ścieżce."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przez ścieżkę o PMTU 1420 (IPv4)?",
+      "options": {
+        "A": "1392",
+        "B": "1372",
+        "C": "1420",
+        "D": "1400"
+      },
+      "correct": "A",
+      "explanation": "1420 − 28."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przez ścieżkę o PMTU 1400 (IPv4)?",
+      "options": {
+        "A": "1380",
+        "B": "1400",
+        "C": "1352",
+        "D": "1372"
+      },
+      "correct": "D",
+      "explanation": "1400 − 28."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przez ścieżkę o PMTU 1450 (IPv6)?",
+      "options": {
+        "A": "1450",
+        "B": "1430",
+        "C": "1422",
+        "D": "1402"
+      },
+      "correct": "D",
+      "explanation": "1450 − 48."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przez ścieżkę o PMTU 1280 (IPv6)?",
+      "options": {
+        "A": "1232",
+        "B": "1280",
+        "C": "1252",
+        "D": "1260"
+      },
+      "correct": "A",
+      "explanation": "1280 − 48."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przez ścieżkę o PMTU 9000 (IPv4)?",
+      "options": {
+        "A": "8980",
+        "B": "8972",
+        "C": "9000",
+        "D": "8952"
+      },
+      "correct": "B",
+      "explanation": "9000 − 28."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przez ścieżkę o PMTU 1492 (IPv4)?",
+      "options": {
+        "A": "1492",
+        "B": "1444",
+        "C": "1464",
+        "D": "1472"
+      },
+      "correct": "C",
+      "explanation": "1492 − 28."
+    },
+    {
+      "question": "Co oznacza flaga DF?",
+      "options": {
+        "A": "Ostatni fragment",
+        "B": "Pakiet uszkodzony",
+        "C": "Priorytet QoS",
+        "D": "Zakaz fragmentacji pakietu"
+      },
+      "correct": "D",
+      "explanation": "Don’t Fragment."
+    },
+    {
+      "question": "Kto składa fragmenty IPv4?",
+      "options": {
+        "A": "Nadawca",
+        "B": "Odbiorca (host docelowy)",
+        "C": "Pierwszy router",
+        "D": "Każdy router po drodze"
+      },
+      "correct": "B",
+      "explanation": "Routery nie składają."
+    },
+    {
+      "question": "W jakich jednostkach jest Fragment Offset?",
+      "options": {
+        "A": "16 bajtów",
+        "B": "1 bajt",
+        "C": "8 bajtów",
+        "D": "4 bajty"
+      },
+      "correct": "C",
+      "explanation": "Dlatego dane to wielokrotność 8."
+    },
+    {
+      "question": "Co robi router z pakietem większym niż MTU łącza, gdy DF=1?",
+      "options": {
+        "A": "Odrzuca go i odsyła ICMP 3/4 z MTU następnego łącza",
+        "B": "Przekazuje bez zmian",
+        "C": "Obniża TTL",
+        "D": "Fragmentuje go"
+      },
+      "correct": "A",
+      "explanation": "PMTUD."
+    },
+    {
+      "question": "Jaki komunikat ICMPv6 odpowiada fragmentation needed?",
+      "options": {
+        "A": "Neighbor Advertisement",
+        "B": "Time Exceeded",
+        "C": "Echo Reply",
+        "D": "Packet Too Big (typ 2)"
+      },
+      "correct": "D",
+      "explanation": "IPv6."
+    },
+    {
+      "question": "Czy routery IPv6 fragmentują pakiety?",
+      "options": {
+        "A": "Tylko przy MTU < 1280",
+        "B": "Nie — może to zrobić tylko nadawca",
+        "C": "Tak, gdy DF=0",
+        "D": "Tak, zawsze"
+      },
+      "correct": "B",
+      "explanation": "Nagłówek Fragment."
+    },
+    {
+      "question": "Jakie jest minimalne MTU wymagane przez IPv6?",
+      "options": {
+        "A": "1280",
+        "B": "576",
+        "C": "68",
+        "D": "1500"
+      },
+      "correct": "A",
+      "explanation": "Każde łącze IPv6."
+    },
+    {
+      "question": "Czym jest Path MTU?",
+      "options": {
+        "A": "MTU bramy domyślnej",
+        "B": "Sumą MTU",
+        "C": "Najmniejszym MTU na całej ścieżce",
+        "D": "MTU pierwszego łącza"
+      },
+      "correct": "C",
+      "explanation": "Minimum."
+    },
+    {
+      "question": "Czym jest PMTUD black hole?",
+      "options": {
+        "A": "Brakiem DNS",
+        "B": "Pętlą routingu",
+        "C": "Sytuacją, gdy ICMP fragmentation needed jest blokowany i duże pakiety giną bez informacji",
+        "D": "Przepełnieniem conntrack"
+      },
+      "correct": "C",
+      "explanation": "Ping OK, TLS wisi."
+    },
+    {
+      "question": "Jaki jest klasyczny objaw PMTUD black hole?",
+      "options": {
+        "A": "Brak adresu IP",
+        "B": "Ping i handshake TCP działają, ale TLS/duże odpowiedzi wiszą",
+        "C": "Natychmiastowe Connection refused",
+        "D": "Błąd certyfikatu"
+      },
+      "correct": "B",
+      "explanation": "Małe przechodzą."
+    },
+    {
+      "question": "Jak obliczyć MSS dla IPv4?",
+      "options": {
+        "A": "MTU − 60",
+        "B": "MTU − 28",
+        "C": "MTU − 20",
+        "D": "MTU − 40"
+      },
+      "correct": "D",
+      "explanation": "IP 20 + TCP 20."
+    },
+    {
+      "question": "Jak obliczyć MSS dla IPv6?",
+      "options": {
+        "A": "MTU − 60",
+        "B": "MTU − 48",
+        "C": "MTU − 40",
+        "D": "MTU − 20"
+      },
+      "correct": "A",
+      "explanation": "IPv6 40 + TCP 20."
+    },
+    {
+      "question": "Jakie MSS ogłasza host z MTU 1500 (IPv4)?",
+      "options": {
+        "A": "1480",
+        "B": "1440",
+        "C": "1500",
+        "D": "1460"
+      },
+      "correct": "D",
+      "explanation": "1500 − 40."
+    },
+    {
+      "question": "Co robi MSS clamping?",
+      "options": {
+        "A": "Zmniejsza MSS w pakietach SYN przechodzących przez router",
+        "B": "Fragmentuje TCP",
+        "C": "Zwiększa MTU",
+        "D": "Blokuje ICMP"
+      },
+      "correct": "A",
+      "explanation": "Działa bez ICMP."
+    },
+    {
+      "question": "Dla jakiego protokołu działa MSS clamping?",
+      "options": {
+        "A": "UDP",
+        "B": "ICMP",
+        "C": "Tylko TCP",
+        "D": "QUIC"
+      },
+      "correct": "C",
+      "explanation": "Opcja MSS jest w SYN."
+    },
+    {
+      "question": "Jaka reguła iptables robi MSS clamping do PMTU?",
+      "options": {
+        "A": "-t nat -A POSTROUTING -j MASQUERADE",
+        "B": "-t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu",
+        "C": "-A INPUT -p icmp -j DROP",
+        "D": "-t raw -A PREROUTING -j NOTRACK"
+      },
+      "correct": "B",
+      "explanation": "Tabela mangle."
+    },
+    {
+      "question": "Jakie polecenie Cisco ustawia MSS na tunelu?",
+      "options": {
+        "A": "tcp mss 1360 set",
+        "B": "ip tcp adjust-mss 1360",
+        "C": "ip mtu clamp 1360",
+        "D": "mss adjust tunnel"
+      },
+      "correct": "B",
+      "explanation": "Na interfejsie."
+    },
+    {
+      "question": "Co pokazuje tracepath?",
+      "options": {
+        "A": "Kolejne skoki i Path MTU",
+        "B": "Przepustowość",
+        "C": "Tylko DNS",
+        "D": "Otwarte porty"
+      },
+      "correct": "A",
+      "explanation": "pmtu na skoku."
+    },
+    {
+      "question": "Gdzie Linux przechowuje wykryte PMTU?",
+      "options": {
+        "A": "W /etc/hosts",
+        "B": "W tablicy ARP",
+        "C": "W conntrack",
+        "D": "W cache tras (ip route get → mtu)"
+      },
+      "correct": "D",
+      "explanation": "Wygasa po ~10 min."
+    },
+    {
+      "question": "Jaki parametr Linuksa włącza PLPMTUD dla TCP?",
+      "options": {
+        "A": "net.ipv4.tcp_ecn",
+        "B": "net.core.rmem_max",
+        "C": "net.ipv4.tcp_mtu_probing",
+        "D": "net.ipv4.ip_forward"
+      },
+      "correct": "C",
+      "explanation": "1 = po wykryciu black hole."
+    },
+    {
+      "question": "Czym jest PLPMTUD?",
+      "options": {
+        "A": "Protokołem routingu",
+        "B": "Wykrywaniem MTU przez warstwę transportową bez polegania na ICMP",
+        "C": "Typem VLAN",
+        "D": "Formą NAT"
+      },
+      "correct": "B",
+      "explanation": "RFC 4821/8899."
+    },
+    {
+      "question": "Od jakiego rozmiaru zaczyna QUIC?",
+      "options": {
+        "A": "9000",
+        "B": "576",
+        "C": "1200 bajtów",
+        "D": "1500"
+      },
+      "correct": "C",
+      "explanation": "Potem sonduje większe."
+    },
+    {
+      "question": "Jaki domyślny MTU ma interfejs WireGuard w wg-quick?",
+      "options": {
+        "A": "1280",
+        "B": "9000",
+        "C": "1500",
+        "D": "1420"
+      },
+      "correct": "D",
+      "explanation": "Bezpieczny dla IPv6 zewnętrznego."
+    },
+    {
+      "question": "Ile bajtów dodaje VXLAN?",
+      "options": {
+        "A": "50",
+        "B": "100",
+        "C": "20",
+        "D": "8"
+      },
+      "correct": "A",
+      "explanation": "Ethernet + IP + UDP + VXLAN."
+    },
+    {
+      "question": "Jakie MTU ma typowo PPPoE?",
+      "options": {
+        "A": "1450",
+        "B": "1280",
+        "C": "1492",
+        "D": "1500"
+      },
+      "correct": "C",
+      "explanation": "8 B nagłówka."
+    },
+    {
+      "question": "Jakie MTU ma ruch w obrębie VPC w AWS?",
+      "options": {
+        "A": "1280",
+        "B": "576",
+        "C": "1500",
+        "D": "9001 (jumbo)"
+      },
+      "correct": "D",
+      "explanation": "Przez IGW 1500."
+    },
+    {
+      "question": "Jakie MTU ma ruch przez Internet Gateway w AWS?",
+      "options": {
+        "A": "1500",
+        "B": "8500",
+        "C": "9001",
+        "D": "1280"
+      },
+      "correct": "A",
+      "explanation": "PMTUD potrzebny."
+    },
+    {
+      "question": "Jak ustawić MTU sieci bridge w Dockerze?",
+      "options": {
+        "A": "Nie da się",
+        "B": "\"mtu\" w /etc/docker/daemon.json",
+        "C": "sysctl docker.mtu",
+        "D": "docker run --mtu"
+      },
+      "correct": "B",
+      "explanation": "Lub driver_opts w compose."
+    },
+    {
+      "question": "Dlaczego MTU podów w CNI z VXLAN musi być mniejsze niż MTU węzła?",
+      "options": {
+        "A": "Bo enkapsulacja dodaje narzut 50 B",
+        "B": "Bo DNS się psuje",
+        "C": "Bo pody nie obsługują 1500",
+        "D": "Bo Kubernetes tego wymaga"
+      },
+      "correct": "A",
+      "explanation": "Inaczej fragmentacja/black hole."
+    },
+    {
+      "question": "Jaki objaw daje złe MTU w overlay Kubernetes?",
+      "options": {
+        "A": "Błędy RBAC",
+        "B": "Brak DNS w klastrze",
+        "C": "Timeouty dużych żądań tylko między podami na różnych węzłach",
+        "D": "Pody nie startują"
+      },
+      "correct": "C",
+      "explanation": "W obrębie węzła OK."
+    },
+    {
+      "question": "Co się stanie z datagramem, gdy zginie jeden fragment?",
+      "options": {
+        "A": "Nic",
+        "B": "Odbiorca odrzuci cały datagram",
+        "C": "Router dośle fragment",
+        "D": "Zostanie złożony bez brakującej części"
+      },
+      "correct": "B",
+      "explanation": "IP nie retransmituje."
+    },
+    {
+      "question": "Dlaczego fragmentacja utrudnia pracę firewalli?",
+      "options": {
+        "A": "Bo zmienia się adres",
+        "B": "Bo fragmenty są szyfrowane",
+        "C": "Bo brak TTL",
+        "D": "Porty TCP/UDP są tylko w pierwszym fragmencie"
+      },
+      "correct": "D",
+      "explanation": "Składanie przed inspekcją."
+    },
+    {
+      "question": "Czym był atak Teardrop?",
+      "options": {
+        "A": "Spoofingiem ARP",
+        "B": "Wysłaniem nakładających się fragmentów psujących składanie",
+        "C": "Atakiem na DNS",
+        "D": "Floodem SYN"
+      },
+      "correct": "B",
+      "explanation": "Błędy reassembly."
+    },
+    {
+      "question": "Czym był Ping of Death?",
+      "options": {
+        "A": "Floodem ICMP",
+        "B": "Pingiem z TTL 0",
+        "C": "Fragmentami składającymi się w pakiet > 65 535 B",
+        "D": "Pingiem bez odpowiedzi"
+      },
+      "correct": "C",
+      "explanation": "Przepełnienie bufora."
+    },
+    {
+      "question": "Czym jest atak tiny fragments?",
+      "options": {
+        "A": "Rozbiciem nagłówka TCP między fragmenty, by ominąć filtr portów",
+        "B": "Floodem UDP",
+        "C": "Zmniejszeniem MTU",
+        "D": "Wysyłaniem małych pingów"
+      },
+      "correct": "A",
+      "explanation": "RFC 1858."
+    },
+    {
+      "question": "Jak Suricata radzi sobie z fragmentacją?",
+      "options": {
+        "A": "Ignoruje fragmenty",
+        "B": "Blokuje cały ruch IP",
+        "C": "Wyłącza TCP",
+        "D": "Składa fragmenty (defrag) przed inspekcją"
+      },
+      "correct": "D",
+      "explanation": "Polityki per system."
+    },
+    {
+      "question": "Jaki rozmiar bufora EDNS0 zaleca DNS Flag Day 2020?",
+      "options": {
+        "A": "512 bajtów",
+        "B": "4096 bajtów",
+        "C": "1232 bajty",
+        "D": "65 535 bajtów"
+      },
+      "correct": "C",
+      "explanation": "Unikanie fragmentacji."
+    },
+    {
+      "question": "Jak testować MTU w Windows?",
+      "options": {
+        "A": "netstat -m",
+        "B": "ping -M do -s",
+        "C": "tracert -m",
+        "D": "ping -f -l <rozmiar>"
+      },
+      "correct": "D",
+      "explanation": "-f = DF."
+    },
+    {
+      "question": "Co oznacza komunikat Windows „Packet needs to be fragmented but DF set”?",
+      "options": {
+        "A": "Host nie istnieje",
+        "B": "Pakiet jest za duży dla lokalnego interfejsu lub ścieżki z DF",
+        "C": "Port zamknięty",
+        "D": "Brak DNS"
+      },
+      "correct": "B",
+      "explanation": "Zmniejsz rozmiar."
+    },
+    {
+      "question": "Dlaczego jumbo frames muszą być włączone na wszystkich urządzeniach w domenie L2?",
+      "options": {
+        "A": "Bo ramki większe niż MTU urządzenia są odrzucane bez ICMP",
+        "B": "Nie muszą",
+        "C": "Bo wymaga tego IPv6",
+        "D": "Bo przyspieszają DNS"
+      },
+      "correct": "A",
+      "explanation": "Lekcja 02/13."
+    },
+    {
+      "question": "Co pokazuje ss -ti dla połączenia?",
+      "options": {
+        "A": "Tablicę routingu",
+        "B": "Reguły firewalla",
+        "C": "Tablicę ARP",
+        "D": "Między innymi mss, pmtu i retransmisje"
+      },
+      "correct": "D",
+      "explanation": "Diagnoza TCP."
+    },
+    {
+      "question": "Jaki filtr Wiresharka pokaże ICMP fragmentation needed?",
+      "options": {
+        "A": "icmp.type == 3 && icmp.code == 4",
+        "B": "ip.ttl == 0",
+        "C": "icmp.type == 11",
+        "D": "tcp.flags.syn == 1"
+      },
+      "correct": "A",
+      "explanation": "PMTUD."
+    },
+    {
+      "question": "Jaki filtr Wiresharka pokaże fragmenty IPv4?",
+      "options": {
+        "A": "icmp.type == 3",
+        "B": "ip.flags.mf == 1 || ip.frag_offset > 0",
+        "C": "ip.flags.df == 1",
+        "D": "ip.len > 1500"
+      },
+      "correct": "B",
+      "explanation": "Wszystkie fragmenty."
+    },
+    {
+      "question": "Czy aplikacja Java może ustawić flagę DF dla połączeń TCP?",
+      "options": {
+        "A": "Tak, przez HttpClient",
+        "B": "Tak, przez IP_TOS",
+        "C": "Nie w przenośny sposób — robi to system (PMTUD)",
+        "D": "Tak, Socket.setDF(true)"
+      },
+      "correct": "C",
+      "explanation": "Konfiguruj sieć, nie kod."
+    },
+    {
+      "question": "Jak aplikacja UDP powinna unikać fragmentacji?",
+      "options": {
+        "A": "Trzymać datagramy ≤ ~1200–1400 B",
+        "B": "Wyłączyć IPv6",
+        "C": "Używać TTL 255",
+        "D": "Wysyłać 64 kB datagramy"
+      },
+      "correct": "A",
+      "explanation": "Lub przejść na TCP/QUIC."
+    },
+    {
+      "question": "Dlaczego MSS clamping powinien obejmować SYN w obu kierunkach?",
+      "options": {
+        "A": "Bo SYN-ACK nie ma opcji",
+        "B": "Bo tylko serwer wysyła dane",
+        "C": "Nie musi",
+        "D": "Bo każda strona ogłasza w SYN/SYN-ACK swój MSS"
+      },
+      "correct": "D",
+      "explanation": "Upload i download."
+    },
+    {
+      "question": "Co jest właściwą naprawą PMTUD black hole (a nie obejściem)?",
+      "options": {
+        "A": "Wyłączenie TLS",
+        "B": "Zmiana DNS",
+        "C": "Przepuszczenie ICMP 3/4 i Packet Too Big",
+        "D": "Zwiększenie MTU"
+      },
+      "correct": "C",
+      "explanation": "Clamping to zabezpieczenie."
+    },
+    {
+      "question": "Którą regułę AWS dodać przy problemach z MTU przez VPN?",
+      "options": {
+        "A": "UDP 53 do Internetu",
+        "B": "ICMP typ 3 kod 4 w security group i NACL",
+        "C": "ICMP Echo do wszystkich",
+        "D": "TCP 22 z 0.0.0.0/0"
+      },
+      "correct": "B",
+      "explanation": "Fragmentation needed."
+    }
+  ]
 }
