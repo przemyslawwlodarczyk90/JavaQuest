@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "ICMP: system nerwowy sieci, który wszyscy chcą wyłączyć",
+      "image": "netsec/ns03-10-traceroute.svg",
+      "imageAlt": "Mechanizm traceroute: pakiet z TTL 1 wygasa w R1, który odsyła ICMP Time Exceeded; TTL 2 wygasa w R2; TTL 3 w R3; pakiet z TTL 4 dociera do serwera, który odpowiada Port Unreachable dla UDP lub Echo Reply dla ICMP. Gwiazdka oznacza brak odpowiedzi.",
+      "body": "**ICMP (Internet Control Message Protocol, protokół IP nr 1; ICMPv6 — nr 58)** to kanał, którym sieć mówi nadawcy, co poszło nie tak: „nie ma trasy”, „host nie odpowiada”, „port zamknięty”, „pakiet za duży”, „TTL się skończył”. Na nim opierają się dwa najczęściej używane narzędzia diagnostyczne: **ping** (Echo Request/Reply) i **traceroute** (Time Exceeded).\n\nProblem w tym, że ICMP jest często traktowany jako „niebezpieczny” i blokowany w całości — co psuje sieć w subtelny sposób (PMTUD, IPv6), a jednocześnie wyniki ping/traceroute bywają **źle interpretowane**: 40% strat na jednym routerze w mtr wywołuje panikę i zgłoszenie do operatora, choć to tylko router, który oszczędza CPU i ogranicza odpowiedzi ICMP.\n\nW tej lekcji:\n- typy i kody ICMP (echo, unreachable, time exceeded, fragmentation needed) i ICMPv6,\n- TTL i Hop Limit jako fundament traceroute,\n- traceroute UDP, ICMP i **TCP** (`traceroute -T`, `tcptraceroute`) — który przejdzie przez firewall,\n- interpretacja gwiazdek, asymetrii i opóźnień,\n- **mtr** i odróżnianie strat realnych od rate-limitu ICMP,\n- dlaczego blokowanie **całego** ICMP psuje sieć i co blokować z głową,\n- Java: dlaczego `InetAddress.isReachable()` nie robi tego, co myślisz.\n\nZadanie z planu: **analiza 5 wyników mtr — gdzie jest problem, a gdzie router tylko ignoruje ICMP**. Cele: Network+ N10-009 (narzędzia: ping, traceroute/tracert, pathping, mtr; troubleshooting), CCNA v2 (ping, traceroute, interpretacja), Security+ i CySA+ (ICMP w rekonesansie, tunelowanie ICMP, polityka filtrowania).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik ICMP i narzędzi",
+      "body": "- **Typ / kod ICMP** — rodzaj komunikatu (np. 3 = Destination Unreachable) i jego wariant (kod 4 = fragmentation needed).\n- **Echo Request (8) / Echo Reply (0)** — ping; ICMPv6: 128/129.\n- **Destination Unreachable (3)** — kody: 0 net, 1 host, 3 port (odpowiedź na UDP do zamkniętego portu), 4 **fragmentation needed and DF set** (PMTUD), 13 administratively prohibited (firewall z REJECT).\n- **Time Exceeded (11)** — kod 0: TTL spadł do 0 w trasie (traceroute), kod 1: nie złożono fragmentów na czas.\n- **Redirect (5)** — router podpowiada lepszą bramę (zwykle wyłączany na serwerach i routerach brzegowych).\n- **ICMPv6** — oprócz powyższych obejmuje **Neighbor Discovery** (NS/NA 135/136 — zamiast ARP), **Router Solicitation/Advertisement** (133/134 — SLAAC), **Packet Too Big** (2), MLD. Bez ICMPv6 IPv6 nie działa.\n- **TTL / Hop Limit** — licznik skoków w nagłówku IPv4/IPv6; router zmniejsza go o 1, przy 0 odrzuca pakiet i wysyła Time Exceeded.\n- **RTT** — round-trip time, czas tam i z powrotem.\n- **Rate limiting ICMP** — routery generują ICMP w procesorze sterującym (control plane), więc ograniczają ich liczbę (np. Linux: `net.ipv4.icmp_ratelimit`); skutek: straty i wysokie opóźnienia **tylko na danym skoku** w traceroute/mtr.\n- **traceroute** (Linux: UDP 33434+; `-I` ICMP; `-T` TCP SYN), **tracert** (Windows, ICMP), **tcptraceroute**, **pathping** (Windows: trasa + statystyka strat), **mtr** (My Traceroute: ciągły pomiar per skok).\n- **Asymetria** — droga powrotna odpowiedzi ICMP może być inna niż droga pakietu w przód; traceroute pokazuje tylko drogę „tam”.\n- **ICMP tunneling** — ukrywanie danych w polu danych Echo (eksfiltracja/C2); wykrywane po nietypowym rozmiarze i częstości.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Listy polecone z potwierdzeniem odbioru",
+      "body": "- **Ping** to list z prośbą „odpisz, że dotarło” — wiesz, że adresat istnieje i ile trwała podróż w obie strony. Brak odpowiedzi nie znaczy, że adresata nie ma: może po prostu nie odpisuje na takie listy (firewall).\n- **Traceroute** to sprytny trik: wysyłasz list z pieczątką „ważny przez 1 sortownię”, potem „przez 2”, „przez 3”… Każda sortownia, w której list wygasa, odsyła Ci kartkę „list przeterminowany u nas” — z jej adresem. Tak poznajesz kolejne sortownie na trasie.\n- **Gwiazdka** to sortownia, która nie odsyła kartek (albo ma limit: „odsyłamy najwyżej 10 kartek na minutę”) — list mógł przejść dalej bez problemu.\n- **mtr** to wysyłanie takich listów co sekundę przez kilka minut i liczenie, ile kartek wróciło z każdej sortowni. Jeśli tylko jedna sortownia „gubi” kartki, a do adresata wszystko dochodzi — sortownia jest leniwa w pisaniu kartek, nie gubi listów. Jeśli od sortowni nr 4 aż do adresata brakuje 12% — listy naprawdę giną gdzieś za sortownią 3.\n- **Blokowanie całego ICMP** to zakaz wysyłania jakichkolwiek kartek zwrotnych — także tej najważniejszej: „paczka za duża na naszą ciężarówkę, przepakuj” (fragmentation needed). Nadawca w nieskończoność wysyła za duże paczki, a odbiorca nic nie dostaje.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Najważniejsze typy ICMP i ICMPv6",
+      "image": "netsec/ns03-10-types.svg",
+      "imageAlt": "Tabela typów ICMP: 0 Echo Reply, 3/0 net unreachable, 3/1 host unreachable, 3/3 port unreachable, 3/4 fragmentation needed (nie wolno blokować — PMTUD), 3/13 administratively prohibited, 5 Redirect, 8 Echo Request, 11/0 TTL exceeded, 11/1 reassembly time exceeded. ICMPv6 jest obowiązkowy.",
+      "body": "Ściąga typów — z tym, co dany komunikat mówi diagnoście. W Wiresharku filtruj `icmp.type == 3 && icmp.code == 4`, `icmp.type == 11`, `icmpv6.type == 2`.",
+      "code": "ICMP (IPv4)  typ/kod  znaczenie\n   0/0   Echo Reply                                                     odpowiedź na ping\n   3/0   Destination Unreachable — net unreachable                      router nie ma trasy do sieci\n   3/1   Destination Unreachable — host unreachable                     ostatni router nie dostał odpowiedzi ARP/ND od hosta\n   3/3   Destination Unreachable — port unreachable                     host nie słucha na porcie UDP (traceroute UDP: koniec trasy)\n   3/4   Destination Unreachable — fragmentation needed (DF set)        pakiet za duży, a DF=1 — podstawa PMTUD\n   3/13  Destination Unreachable — communication administratively prohibited odrzucone przez ACL/firewall (REJECT)\n   5/1   Redirect — for host                                            użyj innej bramy (lekcja 02/13)\n   8/0   Echo Request                                                   ping\n  11/0   Time Exceeded — TTL exceeded in transit                        TTL spadł do 0 — na tym działa traceroute\n  11/1   Time Exceeded — fragment reassembly time exceeded              nie dotarły wszystkie fragmenty\n\nICMPv6       typ   znaczenie\n     1   Destination Unreachable\n     2   Packet Too Big (PMTUD w IPv6)\n     3   Time Exceeded\n   128   Echo Request\n   129   Echo Reply\n   133   Router Solicitation\n   134   Router Advertisement\n   135   Neighbor Solicitation\n   136   Neighbor Advertisement"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "ping, traceroute, mtr — polecenia i jak czytać wynik",
+      "image": "netsec/ns03-10-tracemodes.svg",
+      "imageAlt": "Porównanie trybów traceroute: UDP na porty 33434 i wyżej kończony Port Unreachable, często blokowany; ICMP Echo kończony Echo Reply; TCP SYN na port usługi kończony SYN-ACK lub RST, przechodzi tam, gdzie działa usługa; mtr łączy traceroute z ciągłym pomiarem strat i opóźnień.",
+      "body": "Zestaw poleceń z najważniejszymi przełącznikami. Dla diagnozy aplikacji najcenniejszy jest **traceroute/mtr w trybie TCP na port usługi** — idzie tą samą drogą i przez te same reguły firewalla co prawdziwy ruch.",
+      "code": "# ping\nping -c 5 -i 0.2 api.example.com        # 5 pakietów co 200 ms (Linux); Windows: ping -n 5\nping -c 3 -s 1472 -M do 10.0.0.1        # test MTU (lekcja 01, 11)\nping -6 ipv6.google.com                 # IPv6\n#  64 bytes from 93.184.216.34: icmp_seq=1 ttl=56 time=11.8 ms   ← TTL 56 = start 64, 8 skoków\n#  --- 5 packets transmitted, 5 received, 0% packet loss, rtt min/avg/max/mdev = 11.2/11.9/12.8/0.5 ms\n\n# traceroute — trzy tryby\ntraceroute -n api.example.com           # UDP 33434+ (Linux), -n: bez DNS (szybciej, bez mylących nazw)\ntraceroute -n -I api.example.com        # ICMP Echo (jak Windows tracert)\nsudo traceroute -n -T -p 443 api.example.com   # TCP SYN na 443 — przechodzi tam, gdzie działa HTTPS\ntracert -d api.example.com              # Windows\n#  3  10.10.0.1  7.9 ms  8.1 ms  7.7 ms\n#  4  * * *                              ← router nie odpowiada (lub limit) — NIE oznacza awarii\n#  5  198.51.100.9  12.4 ms  12.1 ms *\n\n# mtr — traceroute + ciągły pomiar\nmtr -rwzbc 100 api.example.com          # raport 100 cykli: -w szeroko, -z AS, -b IP i nazwa\nmtr -T -P 443 -rwc 100 api.example.com  # TCP na port 443\n# Windows: pathping -n api.example.com ; PowerShell: Test-NetConnection api.example.com -Port 443 -TraceRoute"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Zadanie z planu: analiza 5 wyników mtr",
+      "image": "netsec/ns03-10-mtr.svg",
+      "imageAlt": "Pięć wyników mtr z analizą: A — 40% strat tylko na jednym skoku pośrednim, cel bez strat: rate limiting ICMP; B — około 12% strat od skoku 4 do celu: realny problem; C — skok opóźnienia o 90 ms na łączu transatlantyckim utrzymany do celu: realne opóźnienie; D — wysokie opóźnienie tylko na jednym routerze: wolne ICMP; E — duża zmienność już od pierwszego skoku: Wi-Fi lub przeciążenie lokalne.",
+      "body": "Trzy reguły interpretacji (stosuj w tej kolejności):\n1. **Patrz najpierw na ostatni wiersz (cel).** Jeśli cel ma 0% strat i stabilne opóźnienie — ścieżka działa; straty na skokach pośrednich to ograniczanie ICMP przez routery (one przekazują ruch sprzętowo, a odpowiedzi ICMP generują „z doskoku” w procesorze).\n2. **Realna strata zaczyna się na pewnym skoku i utrzymuje do celu.** Podejrzany jest odcinek między ostatnim „czystym” skokiem a pierwszym stratnym (lub cokolwiek dalej). Pamiętaj o asymetrii — problem może być na drodze powrotnej.\n3. **Opóźnienie liczy się, gdy skok w górę utrzymuje się do celu** (odległość, łącze transoceaniczne, przeciążenie). Pojedynczy wysoki średni czas na jednym routerze = wolne generowanie ICMP. Duża zmienność od **pierwszego** skoku = problem lokalny (Wi-Fi, przeciążone łącze domowe).\n\nWyniki i wnioski (model lekcji):\n**A**: 192.168.1.1 0%/1.2 ms → 10.10.0.1 0%/8 ms → isp-core-1 40%/9 ms → ix-waw 0%/10 ms → cdn-edge 0%/11 ms\n   → straty tylko na skokach pośrednich (isp-core-1) nie przenoszą się do celu → rate limiting ICMP, ścieżka OK\n**B**: 192.168.1.1 0%/1.1 ms → 10.10.0.1 0%/7 ms → isp-core-1 0%/9 ms → isp-edge-fra 12%/25 ms → dc-gw 13%/26 ms → api.example 12%/27 ms\n   → strata zaczyna się na skoku 4 (isp-edge-fra) i trwa do celu → realny problem na łączu isp-core-1 → isp-edge-fra lub dalej\n**C**: 192.168.1.1 0%/2 ms → 10.10.0.1 0%/9 ms → ix-fra 0%/22 ms → atlantic-1 0%/112 ms → us-east-gw 0%/114 ms → api.us 0%/115 ms\n   → brak istotnych strat; skok opóźnienia +90 ms na atlantic-1, utrzymany do celu → realne opóźnienie (odległość/łącze/kolejka)\n**D**: 192.168.1.1 0%/1 ms → 10.10.0.1 0%/8 ms → isp-core-1 0%/210 ms → ix-waw 0%/11 ms → cdn-edge 0%/12 ms\n   → brak istotnych strat; wysokie opóźnienie tylko na isp-core-1 → router wolno generuje ICMP (ignoruj)\n**E**: 192.168.1.1 0%/35 ms → 10.10.0.1 0%/44 ms → isp-core-1 0%/46 ms → ix-waw 0%/47 ms → cdn-edge 0%/48 ms\n   → brak istotnych strat; duża zmienność już od pierwszego skoku (192.168.1.1: 2–410 ms) → problem lokalny: Wi-Fi, przeciążone łącze domowe lub LAN\n\nDo zgłoszenia u operatora/dostawcy chmury dołącz: `mtr -rwzbc 200` w **obu kierunkach** (z serwera do klienta też), czas testu, protokół (`-T -P 443`, jeśli ICMP jest filtrowany) i opis objawu w aplikacji.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Dlaczego blokowanie całego ICMP psuje sieć",
+      "body": "„Zablokujmy ICMP, bo ping to rekonesans” — to jedna z najdroższych „optymalizacji bezpieczeństwa”:\n- **PMTUD black hole** — bez ICMP 3/4 (IPv4) i Packet Too Big (IPv6) nadawca nie dowie się, że pakiet jest za duży dla ścieżki (tunel, VPN, PPPoE). Objaw: połączenie TCP nawiązuje się (małe pakiety), ping działa, a **TLS handshake lub duże odpowiedzi HTTP wiszą** (lekcja 11).\n- **IPv6 przestaje działać** — Neighbor Discovery, Router Advertisement i PMTUD to ICMPv6. RFC 4890 opisuje, które typy filtrować, a których nie wolno.\n- **Diagnoza staje się niemożliwa** — brak traceroute, brak „port unreachable” (aplikacje czekają na timeout zamiast natychmiastowego błędu), brak „net unreachable”.\n- **Monitoring** — systemy oparte na ping widzą fałszywe awarie.\n\nCo robić zamiast tego: **przepuszczaj** Destination Unreachable (szczególnie 3/4), Time Exceeded, Packet Too Big i niezbędne ICMPv6 (ND/RA tylko na łączu); **Echo** dopuszczaj z rate limitem (lub tylko z sieci zarządzania/monitoringu); **blokuj** Redirect, Source Quench, Timestamp, Address Mask, Router Advertisement z nieuprawnionych źródeł (RA Guard). W chmurze security groups domyślnie blokują ICMP — dodaj regułę dla „ICMP – Destination Unreachable – fragmentation needed” (AWS: typ 3 kod 4), jeśli masz tunele lub nietypowe MTU.",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Java: isReachable() to nie ping — sprawdzaj usługę",
+      "body": "`InetAddress.isReachable(timeout)` w JDK próbuje wysłać **ICMP Echo tylko, jeśli proces ma uprawnienia** (root lub `CAP_NET_RAW`); w przeciwnym razie łączy się **TCP na port 7 (echo)** i uznaje host za osiągalny także przy odpowiedzi RST. Na Windows zachowanie zależy od wersji JDK. W kontenerze bez uprawnień i z firewallem wynik bywa fałszywie negatywny lub pozytywny. Dla aplikacji liczy się **dostępność usługi**, nie ICMP — sprawdzaj połączenie TCP na właściwy port lub endpoint health.",
+      "code": "import java.io.IOException;\nimport java.net.*;\nimport java.time.Duration;\n\npublic class ReachabilityCheck {\n    // to sprawdza, czy USŁUGA przyjmuje połączenia — a nie czy host odpowiada na ICMP\n    static String tcpCheck(String host, int port, Duration timeout) {\n        long t0 = System.nanoTime();\n        try (Socket s = new Socket()) {\n            s.connect(new InetSocketAddress(host, port), (int) timeout.toMillis());\n            return \"OK %d ms\".formatted((System.nanoTime() - t0) / 1_000_000);\n        } catch (ConnectException e) {          // RST — host osiągalny, port zamknięty (lub REJECT)\n            return \"ODMOWA: \" + e.getMessage();\n        } catch (SocketTimeoutException e) {    // brak odpowiedzi — firewall DROP, brak trasy powrotnej, host wyłączony\n            return \"TIMEOUT\";\n        } catch (NoRouteToHostException e) {    // często ICMP host/net unreachable\n            return \"BRAK TRASY: \" + e.getMessage();\n        } catch (UnknownHostException e) {\n            return \"DNS: nieznany host\";\n        } catch (IOException e) {\n            return \"BŁĄD: \" + e;\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n        String host = args.length > 0 ? args[0] : \"example.com\";\n        System.out.println(\"isReachable (ICMP lub TCP/7): \" + InetAddress.getByName(host).isReachable(2000));\n        System.out.println(\"TCP 443: \" + tcpCheck(host, 443, Duration.ofSeconds(2)));\n        System.out.println(\"TCP 81 : \" + tcpCheck(host, 81, Duration.ofSeconds(2)));   // zwykle TIMEOUT (DROP) lub ODMOWA\n    }\n}\n// Spring Boot: health indicator do zależności (DataSource, Redis, własny HTTP endpoint) zamiast „pingu” hosta."
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **„Serwis jest wolny”** — mtr TCP do endpointu z miejsca, gdzie działa aplikacja (pod, VM), a nie z laptopa; porównanie z mtr z innej lokalizacji odróżnia problem sieci od problemu aplikacji.\n- **Timeout vs natychmiastowy błąd** — klient dostaje szybkie „Connection refused” lub „No route to host” dzięki ICMP/RST; przy DROP czeka do timeoutu. Ustaw rozsądne `connectTimeout` w klientach HTTP/JDBC.\n- **Kubernetes/chmura** — security groups i NetworkPolicy domyślnie nie przepuszczają ICMP; ping między podami może „nie działać”, choć TCP działa. Load balancery często nie odpowiadają na ping wcale — testuj portem.\n- **Monitoring** — blackbox exporter (Prometheus) z modułami `icmp`, `tcp_connect`, `http_2xx`; alarmy na TCP/HTTP, ICMP tylko jako dodatkowy sygnał.\n\n**Blue team:**\n- **Rekonesans**: ping sweep (`nmap -sn`), traceroute do mapowania sieci, ICMP Timestamp/Address Mask do fingerprintingu — wykrywanie w IDS (Suricata/Zeek: wiele Echo do kolejnych adresów).\n- **ICMP tunneling** (ptunnel, icmpsh) — dane ukryte w Echo: alarm na Echo o nietypowym rozmiarze, dużej liczbie pakietów do jednego zewnętrznego adresu, zmiennej treści payloadu; ogranicz Echo do Internetu z hostów, które go nie potrzebują.\n- **Smurf / ICMP flood** — historyczne ataki wzmacniające na broadcast (dziś `no ip directed-broadcast` domyślnie) i zalewanie Echo; rate limiting i CoPP na routerach.\n- **ICMP Redirect** — możliwość przekierowania ruchu (MITM) w LAN; wyłącz akceptowanie (`net.ipv4.conf.all.accept_redirects=0`).\n- Mapowanie: Network+ (narzędzia), CCNA (ping/traceroute), Security+ (rekonesans, filtrowanie), CySA+ (analiza ruchu), BTL1 (analiza pcap z ICMP).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy interpretacji",
+      "body": "- **„Router na skoku 3 gubi 40% pakietów”** — jeśli kolejne skoki i cel mają 0%, to rate limiting ICMP, nie strata ruchu.\n- **„Ping nie działa, więc serwer leży”** — ICMP może być filtrowany; sprawdź TCP na port usługi.\n- **„Traceroute kończy się gwiazdkami, więc cel jest nieosiągalny”** — firewall celu może blokować UDP traceroute; użyj `-T -p 443`.\n- **Ufanie nazwom DNS w traceroute** — rekordy PTR bywają mylące lub nieaktualne; używaj `-n` i sprawdzaj AS (`mtr -z`).\n- **Ignorowanie asymetrii** — problem może być na drodze powrotnej; rób mtr z obu stron.\n- **Pomiar z laptopa na Wi-Fi** zamiast z serwera aplikacji — mierzysz swoje Wi-Fi.\n- **Zbyt krótki test** — 10 pakietów to za mało, by wykryć 1–2% strat; mtr minimum 100 cykli.\n- **Blokowanie całego ICMP/ICMPv6** — PMTUD black hole, zepsute IPv6.\n- **`InetAddress.isReachable()` jako health check** — zależny od uprawnień i portu 7; sprawdzaj usługę.\n- **Wnioskowanie o systemie wyłącznie z TTL** — tylko heurystyka (64/128/255), łatwo zmienić.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: firewall „bez ICMP” i health check na ping",
+      "body": "Polityka, która wygląda bezpiecznie, a powoduje zawieszone połączenia TLS przez VPN, niedziałające IPv6 i fałszywe alarmy monitoringu.",
+      "code": "# nftables — „blokujemy wszystko, co ICMP”\nnft add rule inet filter input  ip protocol icmp drop\nnft add rule inet filter input  ip6 nexthdr icmpv6 drop          # IPv6 przestaje działać (ND, RA)\nnft add rule inet filter output ip protocol icmp drop            # nikt nie dostanie „fragmentation needed” od nas\n\n// Java: health check zależności\nboolean dbUp = InetAddress.getByName(\"db.internal\").isReachable(1000);   // bez CAP_NET_RAW: TCP/7 → zwykle false\n// alarm „baza leży”, choć PostgreSQL na 5432 działa"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: ICMP z głową i health check na usługę",
+      "body": "Przepuszczanie komunikatów niezbędnych do działania sieci, ograniczanie Echo, blokowanie niebezpiecznych typów; monitoring sprawdza usługę, a ICMP jest dodatkowym sygnałem.",
+      "code": "table inet filter {\n  chain input {\n    type filter hook input priority 0; policy drop;\n    ct state established,related accept                                   # w tym ICMP błędów dla naszych połączeń\n    ip protocol icmp icmp type { destination-unreachable, time-exceeded } accept\n    ip protocol icmp icmp type echo-request limit rate 10/second accept    # ping z limitem\n    ip6 nexthdr icmpv6 icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem } accept\n    ip6 nexthdr icmpv6 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } ip6 hoplimit 255 accept\n    ip6 nexthdr icmpv6 icmpv6 type echo-request limit rate 10/second accept\n  }\n}\n# sysctl: net.ipv4.conf.all.accept_redirects=0, net.ipv6.conf.all.accept_redirects=0, net.ipv4.conf.all.send_redirects=0\n\n// health check: połączenie z usługą (Spring Boot: DataSourceHealthIndicator, własny HTTP endpoint /actuator/health)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Które narzędzie do jakiego pytania",
+      "body": "Ściąga diagnosty:",
+      "code": "PYTANIE                                               NARZĘDZIE\nczy host odpowiada / jakie jest RTT                      ping (pamiętaj: ICMP może być filtrowany)\nczy usługa przyjmuje połączenia                          nc -vz host port, curl -v, Test-NetConnection -Port, tcpCheck w Javie\nktórędy idzie ruch                                       traceroute -n (UDP/ICMP), traceroute -T -p <port> przez firewalle\nczy i gdzie giną pakiety / skąd opóźnienie               mtr -rwzbc 100 (TCP: -T -P <port>), Windows: pathping\njaki MTU ma ścieżka                                      ping -M do -s, tracepath (lekcja 11)\njaki ICMP przychodzi w odpowiedzi                        tcpdump -ni any icmp or icmp6\nzgłoszenie do operatora                                   mtr w obu kierunkach, 200+ cykli, czas, protokół\nmonitoring produkcji                                     blackbox exporter: tcp_connect/http_2xx; icmp pomocniczo"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- ICMP (protokół 1) i ICMPv6 (58) przenoszą komunikaty sterujące: Echo (8/0), Destination Unreachable (3: net, host, port, **fragmentation needed**, prohibited), Time Exceeded (11), Redirect (5); ICMPv6 dodatkowo ND, RA, Packet Too Big.\n- Traceroute zwiększa TTL o 1 i zbiera Time Exceeded; tryby UDP/ICMP/TCP — TCP na port usługi przechodzi przez firewalle.\n- Interpretacja mtr: patrz na cel; strata realna trwa od pewnego skoku do celu; strata/opóźnienie tylko na jednym skoku = rate limiting ICMP; zmienność od 1. skoku = problem lokalny; mierz z obu stron.\n- Nie blokuj całego ICMP: PMTUD black hole i niedziałające IPv6; przepuszczaj błędy, limituj Echo, blokuj Redirect.\n- Java: `isReachable()` to nie ping — sprawdzaj usługę TCP/HTTP; rozróżniaj odmowę, timeout i brak trasy.\n- Blue team: ping sweep, ICMP tunneling, redirect — wykrywanie i polityka filtrowania.\n- Następna lekcja: **fragmentacja i Path MTU Discovery** — Failure Lab z zawieszonym TLS i MSS clampingiem.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Zadanie z planu — mtr A:\nHOST                Loss%   Avg   Best  Wrst\n 1. 192.168.1.1         0%    1.2   0.8     3\n 2. 10.10.0.1           0%      8     6    12\n 3. isp-core-1         40%      9     7    30\n 4. ix-waw              0%     10     8    14\n 5. cdn-edge            0%     11     9    15\nGdzie jest problem (jeśli jest) i co zrobisz dalej?",
+      "hint": "Najpierw cel; potem czy strata/opóźnienie utrzymuje się do celu; zmienność od pierwszego skoku.",
+      "solution": "straty tylko na skokach pośrednich (isp-core-1) nie przenoszą się do celu → rate limiting ICMP, ścieżka OK. Nie zgłaszaj problemu operatorowi — to zachowanie control plane routera."
+    },
+    {
+      "prompt": "Zadanie z planu — mtr B:\nHOST                Loss%   Avg   Best  Wrst\n 1. 192.168.1.1         0%    1.1   0.8     2\n 2. 10.10.0.1           0%      7     6    10\n 3. isp-core-1          0%      9     7    13\n 4. isp-edge-fra       12%     25    22    80\n 5. dc-gw              13%     26    23    85\n 6. api.example        12%     27    24    90\nGdzie jest problem (jeśli jest) i co zrobisz dalej?",
+      "hint": "Najpierw cel; potem czy strata/opóźnienie utrzymuje się do celu; zmienność od pierwszego skoku.",
+      "solution": "strata zaczyna się na skoku 4 (isp-edge-fra) i trwa do celu → realny problem na łączu isp-core-1 → isp-edge-fra lub dalej. Zbierz mtr w obu kierunkach (także TCP -T -P 443), zgłoś operatorowi odcinek isp-core-1 → isp-edge-fra z czasem testu."
+    },
+    {
+      "prompt": "Zadanie z planu — mtr C:\nHOST                Loss%   Avg   Best  Wrst\n 1. 192.168.1.1         0%      2     1     4\n 2. 10.10.0.1           0%      9     7    15\n 3. ix-fra              0%     22    20    30\n 4. atlantic-1          0%    112   109   120\n 5. us-east-gw          0%    114   110   125\n 6. api.us              0%    115   111   126\nGdzie jest problem (jeśli jest) i co zrobisz dalej?",
+      "hint": "Najpierw cel; potem czy strata/opóźnienie utrzymuje się do celu; zmienność od pierwszego skoku.",
+      "solution": "brak istotnych strat; skok opóźnienia +90 ms na atlantic-1, utrzymany do celu → realne opóźnienie (odległość/łącze/kolejka). To fizyka (łącze transatlantyckie ~90 ms); rozważ region bliżej użytkowników lub CDN."
+    },
+    {
+      "prompt": "Zadanie z planu — mtr D:\nHOST                Loss%   Avg   Best  Wrst\n 1. 192.168.1.1         0%      1   0.8     2\n 2. 10.10.0.1           0%      8     6    11\n 3. isp-core-1          0%    210     9   900\n 4. ix-waw              0%     11     9    15\n 5. cdn-edge            0%     12    10    16\nGdzie jest problem (jeśli jest) i co zrobisz dalej?",
+      "hint": "Najpierw cel; potem czy strata/opóźnienie utrzymuje się do celu; zmienność od pierwszego skoku.",
+      "solution": "brak istotnych strat; wysokie opóźnienie tylko na isp-core-1 → router wolno generuje ICMP (ignoruj). Nie zgłaszaj problemu operatorowi — to zachowanie control plane routera."
+    },
+    {
+      "prompt": "Zadanie z planu — mtr E:\nHOST                Loss%   Avg   Best  Wrst\n 1. 192.168.1.1         0%     35     2   410\n 2. 10.10.0.1           0%     44     8   420\n 3. isp-core-1          0%     46     9   430\n 4. ix-waw              0%     47    10   435\n 5. cdn-edge            0%     48    11   440\nGdzie jest problem (jeśli jest) i co zrobisz dalej?",
+      "hint": "Najpierw cel; potem czy strata/opóźnienie utrzymuje się do celu; zmienność od pierwszego skoku.",
+      "solution": "brak istotnych strat; duża zmienność już od pierwszego skoku (192.168.1.1: 2–410 ms) → problem lokalny: Wi-Fi, przeciążone łącze domowe lub LAN. Sprawdź Wi-Fi (sygnał, kanał), obciążenie łącza domowego, test kablem."
+    },
+    {
+      "prompt": "Opisz, co dzieje się w kolejnych krokach traceroute do serwera położonego 4 skoki dalej (3 routery + cel).",
+      "hint": "TTL 1..4, kto odsyła jaki ICMP.",
+      "solution": "TTL=1: ICMP Time Exceeded od R1 10.0.0.1; TTL=2: ICMP Time Exceeded od R2 198.51.100.1; TTL=3: ICMP Time Exceeded od R3 203.0.113.9; TTL=4: koniec: serwer 93.184.216.34 (UDP → Port Unreachable, ICMP → Echo Reply, TCP → SYN-ACK/RST)"
+    },
+    {
+      "prompt": "Ping zwraca ttl=57. Oszacuj system operacyjny/urządzenie i liczbę skoków. Dlaczego to tylko heurystyka?",
+      "hint": "Najbliższa typowa wartość startowa powyżej: 64, 128, 255.",
+      "solution": "Start 64 (Linux/macOS/Android/iOS), 7 skoków. Heurystyka: TTL można zmienić (sysctl, rejestr), NAT/proxy/load balancer odpowiada swoim TTL, droga powrotna może mieć inną długość."
+    },
+    {
+      "prompt": "Ping zwraca ttl=118. Oszacuj system operacyjny/urządzenie i liczbę skoków. Dlaczego to tylko heurystyka?",
+      "hint": "Najbliższa typowa wartość startowa powyżej: 64, 128, 255.",
+      "solution": "Start 128 (Windows), 10 skoków. Heurystyka: TTL można zmienić (sysctl, rejestr), NAT/proxy/load balancer odpowiada swoim TTL, droga powrotna może mieć inną długość."
+    },
+    {
+      "prompt": "Ping zwraca ttl=244. Oszacuj system operacyjny/urządzenie i liczbę skoków. Dlaczego to tylko heurystyka?",
+      "hint": "Najbliższa typowa wartość startowa powyżej: 64, 128, 255.",
+      "solution": "Start 255 (urządzenie sieciowe, np. router), 11 skoków. Heurystyka: TTL można zmienić (sysctl, rejestr), NAT/proxy/load balancer odpowiada swoim TTL, droga powrotna może mieć inną długość."
+    },
+    {
+      "prompt": "Ping zwraca ttl=49. Oszacuj system operacyjny/urządzenie i liczbę skoków. Dlaczego to tylko heurystyka?",
+      "hint": "Najbliższa typowa wartość startowa powyżej: 64, 128, 255.",
+      "solution": "Start 64 (Linux/macOS/Android/iOS), 15 skoków. Heurystyka: TTL można zmienić (sysctl, rejestr), NAT/proxy/load balancer odpowiada swoim TTL, droga powrotna może mieć inną długość."
+    },
+    {
+      "prompt": "Ping zwraca ttl=110. Oszacuj system operacyjny/urządzenie i liczbę skoków. Dlaczego to tylko heurystyka?",
+      "hint": "Najbliższa typowa wartość startowa powyżej: 64, 128, 255.",
+      "solution": "Start 128 (Windows), 18 skoków. Heurystyka: TTL można zmienić (sysctl, rejestr), NAT/proxy/load balancer odpowiada swoim TTL, droga powrotna może mieć inną długość."
+    },
+    {
+      "prompt": "Traceroute UDP do serwera kończy się na skoku 9 gwiazdkami aż do 30, a curl https://serwer działa. Wyjaśnij i pokaż lepszy test.",
+      "hint": "Firewall celu, tryby traceroute.",
+      "solution": "Firewall serwera (lub przed nim) odrzuca bez odpowiedzi pakiety UDP na porty 33434+ i nie odsyła Port Unreachable — traceroute nie wie, że dotarł do celu, i dalej zwiększa TTL. Ścieżka działa (curl OK). Lepszy test: sudo traceroute -n -T -p 443 serwer lub mtr -T -P 443 -rwc 100 serwer — SYN na port usługi przechodzi przez te same reguły co prawdziwy ruch i kończy się SYN-ACK."
+    },
+    {
+      "prompt": "Napisz regułę nftables, która przepuszcza niezbędne ICMP/ICMPv6, limituje ping i blokuje resztę ICMP. Uzasadnij każdy element.",
+      "hint": "RFC 4890, PMTUD, ND.",
+      "solution": "Patrz blok CODE_RIGHT: established/related (błędy ICMP dotyczące naszych połączeń), destination-unreachable i time-exceeded (diagnoza, PMTUD — w tym 3/4), echo-request z limitem 10/s (monitoring bez floodu), ICMPv6 packet-too-big (PMTUD w IPv6 — routery nie fragmentują), parameter-problem, ND/RA z hoplimit 255 (tylko z łącza), reszta (redirect, timestamp, address mask, router advertisement z zewnątrz) blokowana przez policy drop."
+    },
+    {
+      "prompt": "Aplikacja Java łączy się z bazą danych w innej podsieci; po zmianie reguł firewalla połączenie kończy się po 30 s błędem „Connect timed out”, a wcześniej szybkim „Connection refused”. Co się zmieniło?",
+      "hint": "DROP vs REJECT.",
+      "solution": "Wcześniej firewall (lub host) odpowiadał RST lub ICMP 3/13/3/3 (REJECT/port zamknięty) — klient natychmiast dostawał ConnectException. Teraz reguła robi DROP (brak odpowiedzi), więc klient czeka do connectTimeout (domyślnie długi). Dla aplikacji: ustaw krótki connectTimeout (np. 3 s w HikariCP connectionTimeout / sterowniku), a w sieci rozważ REJECT dla ruchu wewnętrznego (szybsza diagnoza)."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego InetAddress.isReachable() może zwracać false dla działającego serwera i true dla wyłączonej usługi.",
+      "hint": "Uprawnienia ICMP, TCP port 7, RST.",
+      "solution": "Bez uprawnień do surowych gniazd JDK próbuje połączenia TCP na port 7 (echo). Jeśli firewall odrzuca ruch na port 7 przez DROP lub host nie odpowiada na ICMP — false, mimo że serwer i jego usługi działają. Jeśli host odpowie RST na port 7 (port zamknięty, ale host żyje) — true, choć interesująca nas usługa (np. 5432) może nie działać. Wynik mówi o hoście, nie o usłudze. Sprawdzaj usługę: Socket.connect na właściwy port lub health endpoint."
+    },
+    {
+      "prompt": "Jak wykryć ICMP tunneling w ruchu sieciowym? Podaj trzy cechy i źródło danych.",
+      "hint": "Rozmiar, częstość, zawartość payloadu.",
+      "solution": "Cechy: Echo Request/Reply o nietypowym, zmiennym rozmiarze (zamiast 64/84 B lub 32 B Windows), duża liczba pakietów Echo do jednego zewnętrznego adresu przez długi czas, zawartość payloadu niebędąca typowym wzorcem (losowe/zaszyfrowane dane zamiast sekwencji bajtów), niedopasowanie Request/Reply. Źródła: Zeek (icmp logi, conn.log), Suricata (reguły na rozmiar i treść), NetFlow/IPFIX (wolumen ICMP per host), pcap. Zapobieganie: ogranicz Echo do Internetu z hostów, które tego nie potrzebują."
+    },
+    {
+      "prompt": "Co to jest ping sweep i jak go wykryć oraz ograniczyć w sieci firmowej?",
+      "hint": "nmap -sn, wiele adresów.",
+      "solution": "Ping sweep to wysyłanie Echo (i/lub innych sond: TCP SYN 443, ARP w LAN) do wielu adresów w celu ustalenia aktywnych hostów (nmap -sn 10.0.0.0/24). Wykrywanie: IDS — jeden źródłowy adres wysyła Echo do wielu kolejnych adresów w krótkim czasie (Suricata/Zeek scan detection), NetFlow. Ograniczanie: blokada Echo między segmentami użytkowników, filtrowanie na brzegu, segmentacja; w LAN ARP-sweep i tak zadziała, więc ważniejsza jest detekcja i reagowanie."
+    },
+    {
+      "prompt": "Dlaczego na Linuksie warto wyłączyć akceptowanie ICMP Redirect na serwerach i jak to zrobić?",
+      "hint": "MITM, sysctl.",
+      "solution": "Redirect pozwala routerowi (lub atakującemu podszywającemu się pod router w LAN) zmienić bramę dla danego celu w tablicy hosta — możliwe przekierowanie ruchu przez maszynę atakującego (MITM). Na serwerach z poprawną konfiguracją redirecty nie są potrzebne. sysctl: net.ipv4.conf.all.accept_redirects=0, net.ipv4.conf.default.accept_redirects=0, net.ipv6.conf.all.accept_redirects=0, net.ipv4.conf.all.secure_redirects=0, a na hostach niebędących routerami także send_redirects=0; utrwalić w /etc/sysctl.d/."
+    },
+    {
+      "prompt": "W AWS dwie instancje w tej samej VPC nie odpowiadają sobie na ping, a połączenie TCP 8080 działa. Wyjaśnij i popraw konfigurację.",
+      "hint": "Security groups domyślnie bez ICMP.",
+      "solution": "Security group dopuszcza tylko zdefiniowane protokoły/porty (TCP 8080), a ICMP nie ma w regułach — Echo jest odrzucane. Ping nie jest potrzebny do działania aplikacji, ale do diagnozy można dodać regułę ICMP Echo Request (typ 8) z zakresu VPC lub z SG monitoringu. Warto też dopuścić ICMP typ 3 kod 4 (fragmentation needed) przy tunelach/VPN i nietypowym MTU — inaczej PMTUD black hole."
+    },
+    {
+      "prompt": "Opisz, czym różni się pathping (Windows) od tracert i jak go użyć do zgłoszenia problemu.",
+      "hint": "Statystyka strat per skok.",
+      "solution": "tracert pokazuje jednorazowo kolejne skoki (3 próby na skok). pathping najpierw odkrywa trasę jak tracert, a potem przez kilka minut (domyślnie 100 zapytań na skok) wysyła pakiety do każdego skoku i liczy straty oraz opóźnienia — odpowiednik mtr na Windows. Kolumny „Lost/Sent” rozróżniają straty na samym routerze i na łączu do niego. Do zgłoszenia: pathping -n -q 200 cel, czas testu, oraz (jeśli możliwe) wynik z drugiej strony."
+    },
+    {
+      "prompt": "Dlaczego ping do load balancera w chmurze często „nie działa”, mimo że aplikacja działa? Jak monitorować taki endpoint?",
+      "hint": "LB nie odpowiada na ICMP.",
+      "solution": "Load balancery (AWS ALB/NLB, wiele usług PaaS) nie odpowiadają na ICMP Echo — obsługują tylko skonfigurowane listenery TCP/UDP/HTTP. Brak odpowiedzi na ping jest normalny. Monitoruj tak, jak korzysta z niego klient: TCP connect na port, HTTP GET na endpoint health z oczekiwanym kodem i czasem odpowiedzi (blackbox exporter http_2xx, syntetyczne testy w chmurze), alarm na kod/latencję, nie na ICMP."
+    },
+    {
+      "prompt": "Na skoku 5 traceroute widzisz adres 10.255.3.1 (prywatny) w środku drogi do serwera w Internecie. Czy to błąd?",
+      "hint": "Sieci operatorów, MPLS.",
+      "solution": "Nie musi być błędem: operatorzy używają adresów prywatnych (lub CGNAT 100.64/10) na łączach wewnętrznych swojej sieci; router odpowiada Time Exceeded ze swojego wewnętrznego adresu. Odpowiedzi z adresów prywatnych mogą być jednak filtrowane przez inne sieci (bogon filtering), stąd czasem gwiazdki. W sieciach MPLS część skoków bywa ukryta (no-propagate TTL) — traceroute pokazuje mniej skoków niż w rzeczywistości."
+    },
+    {
+      "prompt": "Zaplanuj monitoring dostępności zewnętrznego API, od którego zależy Twoja aplikacja, z użyciem Prometheus blackbox exporter.",
+      "hint": "Moduły tcp_connect, http_2xx, icmp.",
+      "solution": "Moduły: http_2xx (GET na endpoint health lub lekki endpoint API, oczekiwany status, timeout, TLS — także data ważności certyfikatu), tcp_connect (port 443), pomocniczo icmp. Sondy z miejsc, gdzie działa aplikacja (ten sam klaster/region), plus jedna zewnętrzna. Alarmy: probe_success == 0 przez 2–3 cykle, probe_duration_seconds powyżej progu, probe_ssl_earliest_cert_expiry < 14 dni. Dashboard z latencją i mtr uruchamianym ręcznie przy incydencie."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego RTT widziany na skoku pośrednim w traceroute może być WIĘKSZY niż RTT do celu.",
+      "hint": "Control plane, asymetria.",
+      "solution": "Router przekazuje ruch tranzytowy sprzętowo (szybko), ale odpowiedź ICMP Time Exceeded generuje jego procesor sterujący z niskim priorytetem (opóźnienie, rate limit). Dodatkowo odpowiedź ICMP może wracać inną, dłuższą drogą (asymetria). Cel odpowiada „normalnie” i krótszą drogą. Dlatego liczy się opóźnienie, które utrzymuje się do celu."
+    },
+    {
+      "prompt": "Zdiagnozuj: ping do serwera w Japonii ma 250 ms i 0% strat, użytkownicy skarżą się na wolną aplikację. Czy to problem sieci?",
+      "hint": "Fizyka, RTT w handshake.",
+      "solution": "Opóźnienie 250 ms wynika z odległości (prędkość światła w światłowodzie ~200 000 km/s, trasy dłuższe niż linia prosta) — to nie awaria. Ale aplikacja cierpi, bo każdy round trip (TCP handshake, TLS handshake, sekwencyjne zapytania API) kosztuje 250 ms. Rozwiązania: serwery/CDN bliżej użytkowników, mniej round tripów (HTTP/2 lub HTTP/3, TLS 1.3, 0-RTT, łączenie zapytań, keep-alive), cache."
+    },
+    {
+      "prompt": "Jakie komunikaty ICMPv6 są niezbędne do działania sieci IPv6 i dlaczego Router Advertisement należy filtrować na portach użytkowników?",
+      "hint": "ND, RA, PTB, RA Guard.",
+      "solution": "Niezbędne: Neighbor Solicitation/Advertisement (135/136 — odpowiednik ARP), Router Solicitation/Advertisement (133/134 — SLAAC, brama domyślna), Packet Too Big (2 — PMTUD, routery nie fragmentują), Destination Unreachable, Time Exceeded, Parameter Problem, Echo (diagnoza). RA z portów użytkowników należy blokować (RA Guard na przełącznikach), bo fałszywy Router Advertisement pozwala atakującemu stać się bramą domyślną lub ogłosić fałszywy prefiks/DNS dla całego segmentu (MITM)."
+    },
+    {
+      "prompt": "Przechwyć tcpdumpem ruch podczas traceroute (UDP) do dowolnego hosta w Internecie i opisz, jakie pakiety widzisz.",
+      "hint": "tcpdump -ni any \"udp portrange 33434-33534 or icmp\".",
+      "solution": "Wychodzące: pakiety UDP z rosnącym TTL (1, 1, 1, 2, 2, 2, …) na porty 33434, 33435… (każda sonda inny port, by dopasować odpowiedź). Przychodzące: ICMP Time Exceeded (typ 11 kod 0) od kolejnych routerów, każdy z kopią nagłówka IP i 8 bajtów UDP oryginalnej sondy (stąd traceroute wie, której sondy dotyczy odpowiedź); na końcu ICMP Port Unreachable (typ 3 kod 3) od celu lub brak odpowiedzi, jeśli cel filtruje UDP."
+    },
+    {
+      "prompt": "Dlaczego komunikat ICMP o błędzie zawiera fragment oryginalnego pakietu i do czego to służy?",
+      "hint": "Dopasowanie błędu do gniazda.",
+      "solution": "ICMP Destination Unreachable/Time Exceeded zawiera nagłówek IP oryginalnego pakietu i co najmniej 8 bajtów danych (czyli porty TCP/UDP). Dzięki temu system nadawcy może dopasować błąd do konkretnego gniazda/połączenia (np. zwrócić aplikacji ECONNREFUSED dla UDP albo zaktualizować PMTU dla połączenia TCP po „fragmentation needed”), a traceroute — do konkretnej sondy. Firewall stanowy używa go, by przepuścić ICMP jako RELATED do istniejącego połączenia."
+    },
+    {
+      "prompt": "Twoja usługa UDP (np. syslog na 514) nie otrzymuje danych, a klient nie zgłasza błędu. Jak ICMP może pomóc w diagnozie?",
+      "hint": "Port Unreachable, connected UDP socket.",
+      "solution": "Gdy na serwerze nic nie słucha na porcie UDP, system odsyła ICMP Port Unreachable (3/3), chyba że firewall go blokuje. Klient UDP bez connect() zwykle tego nie widzi; z „połączonym” gniazdem UDP (DatagramSocket.connect) kolejna operacja zgłosi PortUnreachableException w Javie. Diagnoza: tcpdump -ni any \"udp port 514 or icmp\" po stronie serwera i klienta — widać, czy datagramy dochodzą i czy wraca Port Unreachable (usługa nie słucha) albo nic (DROP po drodze)."
+    },
+    {
+      "prompt": "Wyjaśnij różnicę między ICMP 3/13 (administratively prohibited) a brakiem odpowiedzi (DROP) z perspektywy atakującego i obrońcy.",
+      "hint": "REJECT ujawnia filtr.",
+      "solution": "REJECT z 3/13 (lub TCP RST) szybko informuje klienta, że ruch jest zablokowany — dobre dla legalnych użytkowników i diagnozy wewnątrz sieci, ale ujawnia skanerowi obecność filtra i przyspiesza skanowanie. DROP spowalnia skanowanie (timeouty) i nie zdradza polityki, ale utrudnia diagnozę i powoduje długie oczekiwanie klientów. Typowa praktyka: DROP na brzegu od strony Internetu, REJECT wewnątrz sieci firmowej."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Co oznacza ICMP typ 0 kod 0?",
+      "options": {
+        "A": "Destination Unreachable — net unreachable",
+        "B": "Echo Reply",
+        "C": "Destination Unreachable — port unreachable",
+        "D": "Destination Unreachable — host unreachable"
+      },
+      "correct": "B",
+      "explanation": "0/0."
+    },
+    {
+      "question": "Co oznacza ICMP typ 3 kod 0?",
+      "options": {
+        "A": "Destination Unreachable — net unreachable",
+        "B": "Destination Unreachable — host unreachable",
+        "C": "Echo Reply",
+        "D": "Destination Unreachable — port unreachable"
+      },
+      "correct": "A",
+      "explanation": "3/0."
+    },
+    {
+      "question": "Co oznacza ICMP typ 3 kod 1?",
+      "options": {
+        "A": "Destination Unreachable — port unreachable",
+        "B": "Echo Reply",
+        "C": "Destination Unreachable — host unreachable",
+        "D": "Destination Unreachable — net unreachable"
+      },
+      "correct": "C",
+      "explanation": "3/1."
+    },
+    {
+      "question": "Co oznacza ICMP typ 3 kod 3?",
+      "options": {
+        "A": "Destination Unreachable — host unreachable",
+        "B": "Destination Unreachable — net unreachable",
+        "C": "Echo Reply",
+        "D": "Destination Unreachable — port unreachable"
+      },
+      "correct": "D",
+      "explanation": "3/3."
+    },
+    {
+      "question": "Co oznacza ICMP typ 3 kod 4?",
+      "options": {
+        "A": "Destination Unreachable — host unreachable",
+        "B": "Echo Reply",
+        "C": "Destination Unreachable — net unreachable",
+        "D": "Destination Unreachable — fragmentation needed (DF set)"
+      },
+      "correct": "D",
+      "explanation": "3/4."
+    },
+    {
+      "question": "Co oznacza ICMP typ 3 kod 13?",
+      "options": {
+        "A": "Destination Unreachable — communication administratively prohibited",
+        "B": "Destination Unreachable — host unreachable",
+        "C": "Echo Reply",
+        "D": "Destination Unreachable — net unreachable"
+      },
+      "correct": "A",
+      "explanation": "3/13."
+    },
+    {
+      "question": "Co oznacza ICMP typ 5 kod 1?",
+      "options": {
+        "A": "Destination Unreachable — host unreachable",
+        "B": "Redirect — for host",
+        "C": "Echo Reply",
+        "D": "Destination Unreachable — net unreachable"
+      },
+      "correct": "B",
+      "explanation": "5/1."
+    },
+    {
+      "question": "Co oznacza ICMP typ 8 kod 0?",
+      "options": {
+        "A": "Destination Unreachable — host unreachable",
+        "B": "Echo Reply",
+        "C": "Echo Request",
+        "D": "Destination Unreachable — net unreachable"
+      },
+      "correct": "C",
+      "explanation": "8/0."
+    },
+    {
+      "question": "Co oznacza ICMP typ 11 kod 0?",
+      "options": {
+        "A": "Echo Reply",
+        "B": "Destination Unreachable — host unreachable",
+        "C": "Destination Unreachable — net unreachable",
+        "D": "Time Exceeded — TTL exceeded in transit"
+      },
+      "correct": "D",
+      "explanation": "11/0."
+    },
+    {
+      "question": "Co oznacza ICMP typ 11 kod 1?",
+      "options": {
+        "A": "Destination Unreachable — host unreachable",
+        "B": "Destination Unreachable — net unreachable",
+        "C": "Time Exceeded — fragment reassembly time exceeded",
+        "D": "Echo Reply"
+      },
+      "correct": "C",
+      "explanation": "11/1."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Echo Reply”?",
+      "options": {
+        "A": "3/1",
+        "B": "0/0",
+        "C": "3/0",
+        "D": "3/3"
+      },
+      "correct": "B",
+      "explanation": "Echo Reply."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Destination Unreachable — net unreachable”?",
+      "options": {
+        "A": "3/0",
+        "B": "0/0",
+        "C": "3/1",
+        "D": "3/3"
+      },
+      "correct": "A",
+      "explanation": "Destination Unreachable — net unreachable."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Destination Unreachable — host unreachable”?",
+      "options": {
+        "A": "0/0",
+        "B": "3/0",
+        "C": "3/3",
+        "D": "3/1"
+      },
+      "correct": "D",
+      "explanation": "Destination Unreachable — host unreachable."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Destination Unreachable — port unreachable”?",
+      "options": {
+        "A": "3/1",
+        "B": "0/0",
+        "C": "3/3",
+        "D": "3/0"
+      },
+      "correct": "C",
+      "explanation": "Destination Unreachable — port unreachable."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Destination Unreachable — fragmentation needed (DF set)”?",
+      "options": {
+        "A": "3/1",
+        "B": "3/4",
+        "C": "0/0",
+        "D": "3/0"
+      },
+      "correct": "B",
+      "explanation": "Destination Unreachable — fragmentation needed (DF set)."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Destination Unreachable — communication administratively prohibited”?",
+      "options": {
+        "A": "3/13",
+        "B": "0/0",
+        "C": "3/0",
+        "D": "3/1"
+      },
+      "correct": "A",
+      "explanation": "Destination Unreachable — communication administratively prohibited."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Redirect — for host”?",
+      "options": {
+        "A": "0/0",
+        "B": "3/0",
+        "C": "5/1",
+        "D": "3/1"
+      },
+      "correct": "C",
+      "explanation": "Redirect — for host."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Echo Request”?",
+      "options": {
+        "A": "8/0",
+        "B": "3/0",
+        "C": "3/1",
+        "D": "0/0"
+      },
+      "correct": "A",
+      "explanation": "Echo Request."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Time Exceeded — TTL exceeded in transit”?",
+      "options": {
+        "A": "3/0",
+        "B": "11/0",
+        "C": "3/1",
+        "D": "0/0"
+      },
+      "correct": "B",
+      "explanation": "Time Exceeded — TTL exceeded in transit."
+    },
+    {
+      "question": "Jaki typ/kod ICMP odpowiada komunikatowi „Time Exceeded — fragment reassembly time exceeded”?",
+      "options": {
+        "A": "3/1",
+        "B": "0/0",
+        "C": "3/0",
+        "D": "11/1"
+      },
+      "correct": "D",
+      "explanation": "Time Exceeded — fragment reassembly time exceeded."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 1?",
+      "options": {
+        "A": "Packet Too Big (PMTUD w IPv6)",
+        "B": "Destination Unreachable",
+        "C": "Time Exceeded",
+        "D": "Echo Request"
+      },
+      "correct": "B",
+      "explanation": "Typ 1."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 2?",
+      "options": {
+        "A": "Time Exceeded",
+        "B": "Destination Unreachable",
+        "C": "Packet Too Big (PMTUD w IPv6)",
+        "D": "Echo Request"
+      },
+      "correct": "C",
+      "explanation": "Typ 2."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 3?",
+      "options": {
+        "A": "Echo Request",
+        "B": "Packet Too Big (PMTUD w IPv6)",
+        "C": "Destination Unreachable",
+        "D": "Time Exceeded"
+      },
+      "correct": "D",
+      "explanation": "Typ 3."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 128?",
+      "options": {
+        "A": "Echo Request",
+        "B": "Time Exceeded",
+        "C": "Packet Too Big (PMTUD w IPv6)",
+        "D": "Destination Unreachable"
+      },
+      "correct": "A",
+      "explanation": "Typ 128."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 129?",
+      "options": {
+        "A": "Echo Reply",
+        "B": "Time Exceeded",
+        "C": "Packet Too Big (PMTUD w IPv6)",
+        "D": "Destination Unreachable"
+      },
+      "correct": "A",
+      "explanation": "Typ 129."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 133?",
+      "options": {
+        "A": "Packet Too Big (PMTUD w IPv6)",
+        "B": "Router Solicitation",
+        "C": "Time Exceeded",
+        "D": "Destination Unreachable"
+      },
+      "correct": "B",
+      "explanation": "Typ 133."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 134?",
+      "options": {
+        "A": "Packet Too Big (PMTUD w IPv6)",
+        "B": "Destination Unreachable",
+        "C": "Time Exceeded",
+        "D": "Router Advertisement"
+      },
+      "correct": "D",
+      "explanation": "Typ 134."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 135?",
+      "options": {
+        "A": "Time Exceeded",
+        "B": "Packet Too Big (PMTUD w IPv6)",
+        "C": "Neighbor Solicitation",
+        "D": "Destination Unreachable"
+      },
+      "correct": "C",
+      "explanation": "Typ 135."
+    },
+    {
+      "question": "Co oznacza ICMPv6 typ 136?",
+      "options": {
+        "A": "Destination Unreachable",
+        "B": "Neighbor Advertisement",
+        "C": "Time Exceeded",
+        "D": "Packet Too Big (PMTUD w IPv6)"
+      },
+      "correct": "B",
+      "explanation": "Typ 136."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=63. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Linux/macOS (start 64), 1 skoków",
+        "B": "urządzenie sieciowe (start 255), 192 skoków",
+        "C": "Linux/macOS (start 64), 63 skoków",
+        "D": "Windows (start 128), 65 skoków"
+      },
+      "correct": "A",
+      "explanation": "Najbliższa wartość startowa powyżej 63: 64."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=57. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "urządzenie sieciowe (start 255), 198 skoków",
+        "B": "Windows (start 128), 71 skoków",
+        "C": "Linux/macOS (start 64), 7 skoków",
+        "D": "Linux/macOS (start 64), 57 skoków"
+      },
+      "correct": "C",
+      "explanation": "Najbliższa wartość startowa powyżej 57: 64."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=52. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Windows (start 128), 76 skoków",
+        "B": "urządzenie sieciowe (start 255), 203 skoków",
+        "C": "Linux/macOS (start 64), 52 skoków",
+        "D": "Linux/macOS (start 64), 12 skoków"
+      },
+      "correct": "D",
+      "explanation": "Najbliższa wartość startowa powyżej 52: 64."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=127. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Windows (start 128), 1 skoków",
+        "B": "urządzenie sieciowe (start 255), 128 skoków",
+        "C": "Linux/macOS (start 64), 63 skoków",
+        "D": "Windows (start 128), 127 skoków"
+      },
+      "correct": "A",
+      "explanation": "Najbliższa wartość startowa powyżej 127: 128."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=119. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Windows (start 128), 119 skoków",
+        "B": "urządzenie sieciowe (start 255), 136 skoków",
+        "C": "Linux/macOS (start 64), 55 skoków",
+        "D": "Windows (start 128), 9 skoków"
+      },
+      "correct": "D",
+      "explanation": "Najbliższa wartość startowa powyżej 119: 128."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=113. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Windows (start 128), 113 skoków",
+        "B": "Windows (start 128), 15 skoków",
+        "C": "urządzenie sieciowe (start 255), 142 skoków",
+        "D": "Linux/macOS (start 64), 49 skoków"
+      },
+      "correct": "B",
+      "explanation": "Najbliższa wartość startowa powyżej 113: 128."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=254. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Linux/macOS (start 64), 190 skoków",
+        "B": "Windows (start 128), 126 skoków",
+        "C": "urządzenie sieciowe (start 255), 1 skoków",
+        "D": "urządzenie sieciowe (start 255), 254 skoków"
+      },
+      "correct": "C",
+      "explanation": "Najbliższa wartość startowa powyżej 254: 255."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=247. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "urządzenie sieciowe (start 255), 247 skoków",
+        "B": "urządzenie sieciowe (start 255), 8 skoków",
+        "C": "Windows (start 128), 119 skoków",
+        "D": "Linux/macOS (start 64), 183 skoków"
+      },
+      "correct": "B",
+      "explanation": "Najbliższa wartość startowa powyżej 247: 255."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=60. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Linux/macOS (start 64), 4 skoków",
+        "B": "Linux/macOS (start 64), 60 skoków",
+        "C": "Windows (start 128), 68 skoków",
+        "D": "urządzenie sieciowe (start 255), 195 skoków"
+      },
+      "correct": "A",
+      "explanation": "Najbliższa wartość startowa powyżej 60: 64."
+    },
+    {
+      "question": "Odpowiedź ping ma ttl=125. Jaki system i ile skoków (typowa heurystyka)?",
+      "options": {
+        "A": "Windows (start 128), 125 skoków",
+        "B": "Linux/macOS (start 64), 61 skoków",
+        "C": "urządzenie sieciowe (start 255), 130 skoków",
+        "D": "Windows (start 128), 3 skoków"
+      },
+      "correct": "D",
+      "explanation": "Najbliższa wartość startowa powyżej 125: 128."
+    },
+    {
+      "question": "mtr: 192.168.1.1 0% avg 1.2 ms (best 0.8, worst 3) → 10.10.0.1 0% avg 8 ms (best 6, worst 12) → isp-core-1 40% avg 9 ms (best 7, worst 30) → ix-waw 0% avg 10 ms (best 8, worst 14) → cdn-edge 0% avg 11 ms (best 9, worst 15). Jaka jest diagnoza?",
+      "options": {
+        "A": "Realne opóźnienie z odległości (łącze transatlantyckie)",
+        "B": "Realna strata od skoku 4 do celu",
+        "C": "Rate limiting ICMP na jednym routerze — ścieżka OK",
+        "D": "Wolne generowanie ICMP przez jeden router — ignorować"
+      },
+      "correct": "C",
+      "explanation": "straty tylko na skokach pośrednich (isp-core-1) nie przenoszą się do celu → rate limiting ICMP, ścieżka OK"
+    },
+    {
+      "question": "mtr: 192.168.1.1 0% avg 1.1 ms (best 0.8, worst 2) → 10.10.0.1 0% avg 7 ms (best 6, worst 10) → isp-core-1 0% avg 9 ms (best 7, worst 13) → isp-edge-fra 12% avg 25 ms (best 22, worst 80) → dc-gw 13% avg 26 ms (best 23, worst 85) → api.example 12% avg 27 ms (best 24, worst 90). Jaka jest diagnoza?",
+      "options": {
+        "A": "Realna strata od skoku 4 do celu",
+        "B": "Rate limiting ICMP na jednym routerze — ścieżka OK",
+        "C": "Realne opóźnienie z odległości (łącze transatlantyckie)",
+        "D": "Wolne generowanie ICMP przez jeden router — ignorować"
+      },
+      "correct": "A",
+      "explanation": "strata zaczyna się na skoku 4 (isp-edge-fra) i trwa do celu → realny problem na łączu isp-core-1 → isp-edge-fra lub dalej"
+    },
+    {
+      "question": "mtr: 192.168.1.1 0% avg 2 ms (best 1, worst 4) → 10.10.0.1 0% avg 9 ms (best 7, worst 15) → ix-fra 0% avg 22 ms (best 20, worst 30) → atlantic-1 0% avg 112 ms (best 109, worst 120) → us-east-gw 0% avg 114 ms (best 110, worst 125) → api.us 0% avg 115 ms (best 111, worst 126). Jaka jest diagnoza?",
+      "options": {
+        "A": "Realna strata od skoku 4 do celu",
+        "B": "Realne opóźnienie z odległości (łącze transatlantyckie)",
+        "C": "Rate limiting ICMP na jednym routerze — ścieżka OK",
+        "D": "Wolne generowanie ICMP przez jeden router — ignorować"
+      },
+      "correct": "B",
+      "explanation": "brak istotnych strat; skok opóźnienia +90 ms na atlantic-1, utrzymany do celu → realne opóźnienie (odległość/łącze/kolejka)"
+    },
+    {
+      "question": "mtr: 192.168.1.1 0% avg 1 ms (best 0.8, worst 2) → 10.10.0.1 0% avg 8 ms (best 6, worst 11) → isp-core-1 0% avg 210 ms (best 9, worst 900) → ix-waw 0% avg 11 ms (best 9, worst 15) → cdn-edge 0% avg 12 ms (best 10, worst 16). Jaka jest diagnoza?",
+      "options": {
+        "A": "Rate limiting ICMP na jednym routerze — ścieżka OK",
+        "B": "Realne opóźnienie z odległości (łącze transatlantyckie)",
+        "C": "Wolne generowanie ICMP przez jeden router — ignorować",
+        "D": "Realna strata od skoku 4 do celu"
+      },
+      "correct": "C",
+      "explanation": "brak istotnych strat; wysokie opóźnienie tylko na isp-core-1 → router wolno generuje ICMP (ignoruj)"
+    },
+    {
+      "question": "mtr: 192.168.1.1 0% avg 35 ms (best 2, worst 410) → 10.10.0.1 0% avg 44 ms (best 8, worst 420) → isp-core-1 0% avg 46 ms (best 9, worst 430) → ix-waw 0% avg 47 ms (best 10, worst 435) → cdn-edge 0% avg 48 ms (best 11, worst 440). Jaka jest diagnoza?",
+      "options": {
+        "A": "Realna strata od skoku 4 do celu",
+        "B": "Rate limiting ICMP na jednym routerze — ścieżka OK",
+        "C": "Realne opóźnienie z odległości (łącze transatlantyckie)",
+        "D": "Problem lokalny od pierwszego skoku (Wi-Fi/łącze domowe)"
+      },
+      "correct": "D",
+      "explanation": "brak istotnych strat; duża zmienność już od pierwszego skoku (192.168.1.1: 2–410 ms) → problem lokalny: Wi-Fi, przeciążone łącze domowe lub LAN"
+    },
+    {
+      "question": "Jaki numer protokołu IP ma ICMP?",
+      "options": {
+        "A": "17",
+        "B": "1",
+        "C": "58",
+        "D": "6"
+      },
+      "correct": "B",
+      "explanation": "ICMPv6 = 58."
+    },
+    {
+      "question": "Jaki numer protokołu (Next Header) ma ICMPv6?",
+      "options": {
+        "A": "58",
+        "B": "1",
+        "C": "41",
+        "D": "50"
+      },
+      "correct": "A",
+      "explanation": "IPv6."
+    },
+    {
+      "question": "Na jakim komunikacie ICMP opiera się traceroute?",
+      "options": {
+        "A": "Source Quench",
+        "B": "Redirect",
+        "C": "Time Exceeded (TTL exceeded in transit)",
+        "D": "Echo Reply"
+      },
+      "correct": "C",
+      "explanation": "Typ 11 kod 0."
+    },
+    {
+      "question": "Na jakie porty wysyła sondy klasyczny traceroute w Linuksie?",
+      "options": {
+        "A": "ICMP Echo",
+        "B": "UDP 53",
+        "C": "TCP 80",
+        "D": "UDP od 33434 w górę"
+      },
+      "correct": "D",
+      "explanation": "Koniec = Port Unreachable."
+    },
+    {
+      "question": "Jakiego protokołu używa domyślnie tracert w Windows?",
+      "options": {
+        "A": "ICMP Echo Request",
+        "B": "ARP",
+        "C": "UDP 33434",
+        "D": "TCP SYN 443"
+      },
+      "correct": "A",
+      "explanation": "Linux: traceroute -I."
+    },
+    {
+      "question": "Który tryb traceroute najlepiej przechodzi przez firewalle przed usługą HTTPS?",
+      "options": {
+        "A": "ARP",
+        "B": "ICMP Echo",
+        "C": "TCP SYN na port 443 (traceroute -T -p 443)",
+        "D": "UDP 33434"
+      },
+      "correct": "C",
+      "explanation": "Te same reguły co prawdziwy ruch."
+    },
+    {
+      "question": "Co oznacza gwiazdka (*) w traceroute?",
+      "options": {
+        "A": "Pętlę routingu",
+        "B": "Adres IPv6",
+        "C": "Utratę 100% ruchu na łączu",
+        "D": "Brak odpowiedzi od danego skoku w czasie oczekiwania"
+      },
+      "correct": "D",
+      "explanation": "Często filtr lub limit ICMP."
+    },
+    {
+      "question": "Co oznaczają straty na jednym skoku pośrednim mtr przy 0% strat na celu?",
+      "options": {
+        "A": "Atak DDoS",
+        "B": "Ograniczanie odpowiedzi ICMP przez router — nie problem ścieżki",
+        "C": "Pętlę routingu",
+        "D": "Awarię łącza"
+      },
+      "correct": "B",
+      "explanation": "Control plane."
+    },
+    {
+      "question": "Kiedy strata w mtr jest realna?",
+      "options": {
+        "A": "Nigdy",
+        "B": "Gdy dotyczy pierwszego skoku z 0% na kolejnych",
+        "C": "Gdy występuje tylko na jednym skoku",
+        "D": "Gdy zaczyna się na pewnym skoku i utrzymuje aż do celu"
+      },
+      "correct": "D",
+      "explanation": "Patrz na cel."
+    },
+    {
+      "question": "Dlaczego RTT do routera pośredniego bywa większe niż do celu?",
+      "options": {
+        "A": "Bo cel jest bliżej",
+        "B": "Bo TTL rośnie",
+        "C": "Router generuje ICMP wolno w procesorze sterującym, a odpowiedź może wracać inną drogą",
+        "D": "Bo traceroute liczy źle"
+      },
+      "correct": "C",
+      "explanation": "Ignoruj, jeśli nie utrzymuje się do celu."
+    },
+    {
+      "question": "Ile cykli mtr warto zebrać, by wiarygodnie wykryć 1–2% strat?",
+      "options": {
+        "A": "10",
+        "B": "Co najmniej 100",
+        "C": "1",
+        "D": "3"
+      },
+      "correct": "B",
+      "explanation": "mtr -c 100."
+    },
+    {
+      "question": "Jakie polecenie Windows łączy tracert ze statystyką strat?",
+      "options": {
+        "A": "pathping",
+        "B": "nslookup",
+        "C": "ipconfig",
+        "D": "netstat"
+      },
+      "correct": "A",
+      "explanation": "Odpowiednik mtr."
+    },
+    {
+      "question": "Co robi mtr -T -P 443?",
+      "options": {
+        "A": "Wysyła ICMP na port 443",
+        "B": "Skanuje porty",
+        "C": "Mierzy trasę i straty sondami TCP na port 443",
+        "D": "Testuje DNS"
+      },
+      "correct": "C",
+      "explanation": "Gdy ICMP jest filtrowany."
+    },
+    {
+      "question": "Dlaczego w traceroute warto używać -n?",
+      "options": {
+        "A": "Aby zwiększyć TTL",
+        "B": "Aby wymusić IPv6",
+        "C": "Aby użyć TCP",
+        "D": "Aby nie czekać na odwrotny DNS i nie sugerować się mylącymi nazwami"
+      },
+      "correct": "D",
+      "explanation": "Szybciej i czytelniej."
+    },
+    {
+      "question": "Co pokazuje mtr -z?",
+      "options": {
+        "A": "Zakres portów",
+        "B": "Numery systemów autonomicznych (AS) skoków",
+        "C": "Strefy DNS",
+        "D": "Zera w adresach"
+      },
+      "correct": "B",
+      "explanation": "Kto jest operatorem."
+    },
+    {
+      "question": "Co oznacza „Destination Host Unreachable” od routera ostatniego skoku?",
+      "options": {
+        "A": "Router nie otrzymał odpowiedzi ARP/ND od hosta docelowego",
+        "B": "Port zamknięty",
+        "C": "Brak trasy do sieci",
+        "D": "Za duży pakiet"
+      },
+      "correct": "A",
+      "explanation": "Kod 1."
+    },
+    {
+      "question": "Co wysyła host, gdy datagram UDP trafi na zamknięty port?",
+      "options": {
+        "A": "TCP RST",
+        "B": "ICMP Port Unreachable (3/3)",
+        "C": "ICMP Echo Reply",
+        "D": "Nic, zawsze"
+      },
+      "correct": "B",
+      "explanation": "Chyba że firewall blokuje."
+    },
+    {
+      "question": "Co wysyła host, gdy segment TCP SYN trafi na zamknięty port?",
+      "options": {
+        "A": "SYN-ACK",
+        "B": "ICMP Port Unreachable",
+        "C": "ICMP Time Exceeded",
+        "D": "TCP RST"
+      },
+      "correct": "D",
+      "explanation": "TCP ma własny mechanizm."
+    },
+    {
+      "question": "Który komunikat ICMP jest kluczowy dla Path MTU Discovery w IPv4?",
+      "options": {
+        "A": "Redirect",
+        "B": "Echo Reply",
+        "C": "Destination Unreachable — fragmentation needed (3/4)",
+        "D": "Time Exceeded"
+      },
+      "correct": "C",
+      "explanation": "Nie blokować."
+    },
+    {
+      "question": "Który komunikat ICMPv6 jest odpowiednikiem fragmentation needed?",
+      "options": {
+        "A": "Packet Too Big (typ 2)",
+        "B": "Echo Request",
+        "C": "Neighbor Solicitation",
+        "D": "Router Advertisement"
+      },
+      "correct": "A",
+      "explanation": "Routery IPv6 nie fragmentują."
+    },
+    {
+      "question": "Co się stanie, gdy zablokujesz cały ICMPv6?",
+      "options": {
+        "A": "Nic, IPv6 nie używa ICMP",
+        "B": "Zwiększy się MTU",
+        "C": "Tylko ping przestanie działać",
+        "D": "IPv6 przestanie działać (Neighbor Discovery, RA, PMTUD)"
+      },
+      "correct": "D",
+      "explanation": "RFC 4890."
+    },
+    {
+      "question": "Jaki objaw daje blokada ICMP fragmentation needed na ścieżce z mniejszym MTU?",
+      "options": {
+        "A": "Błędy CRC",
+        "B": "Brak adresu IP",
+        "C": "Połączenie się nawiązuje, ping działa, ale TLS/duże odpowiedzi wiszą",
+        "D": "Natychmiastowy błąd DNS"
+      },
+      "correct": "C",
+      "explanation": "PMTUD black hole."
+    },
+    {
+      "question": "Który ICMP warto blokować na hostach i routerach brzegowych?",
+      "options": {
+        "A": "Packet Too Big (ICMPv6 2)",
+        "B": "Redirect (5)",
+        "C": "Fragmentation needed (3/4)",
+        "D": "Time Exceeded (11)"
+      },
+      "correct": "B",
+      "explanation": "Ryzyko MITM."
+    },
+    {
+      "question": "Jak wyłączyć akceptowanie ICMP Redirect w Linuksie?",
+      "options": {
+        "A": "sysctl net.ipv4.conf.all.accept_redirects=0",
+        "B": "iptables -F",
+        "C": "ip route flush cache",
+        "D": "sysctl net.ipv4.icmp_echo_ignore_all=1"
+      },
+      "correct": "A",
+      "explanation": "Także IPv6."
+    },
+    {
+      "question": "Czym jest ICMP tunneling?",
+      "options": {
+        "A": "Routingiem ICMP",
+        "B": "Ukrywaniem danych w polu danych pakietów Echo",
+        "C": "Tunelem VPN po ICMP-u w nagłówku",
+        "D": "Szyfrowaniem ICMP"
+      },
+      "correct": "B",
+      "explanation": "Eksfiltracja/C2."
+    },
+    {
+      "question": "Jaka cecha ruchu sugeruje ICMP tunneling?",
+      "options": {
+        "A": "Pojedynczy ping do 8.8.8.8",
+        "B": "Echo co sekundę do bramy",
+        "C": "Echo o nietypowym, zmiennym rozmiarze i dużej liczbie do jednego zewnętrznego adresu",
+        "D": "Time Exceeded przy traceroute"
+      },
+      "correct": "C",
+      "explanation": "Zeek/Suricata."
+    },
+    {
+      "question": "Czym jest ping sweep?",
+      "options": {
+        "A": "Testem MTU",
+        "B": "Pingiem z dużym rozmiarem",
+        "C": "Pingiem w IPv6",
+        "D": "Wysyłaniem Echo do wielu adresów w celu znalezienia aktywnych hostów"
+      },
+      "correct": "D",
+      "explanation": "nmap -sn."
+    },
+    {
+      "question": "Czym był atak Smurf?",
+      "options": {
+        "A": "Wzmocnieniem ICMP Echo przez broadcast skierowany z fałszywym źródłem ofiary",
+        "B": "Atakiem na ARP",
+        "C": "Atakiem SQL",
+        "D": "Atakiem na DNS"
+      },
+      "correct": "A",
+      "explanation": "Dziś no ip directed-broadcast."
+    },
+    {
+      "question": "Jak ograniczyć ryzyko floodu ICMP Echo bez wyłączania ping?",
+      "options": {
+        "A": "Zwiększenie TTL",
+        "B": "Rate limiting (np. limit 10/s) i CoPP na routerach",
+        "C": "Blokada wszystkiego",
+        "D": "Wyłączenie IPv6"
+      },
+      "correct": "B",
+      "explanation": "Ping zostaje dla diagnozy."
+    },
+    {
+      "question": "Co robi InetAddress.isReachable() bez uprawnień do surowych gniazd?",
+      "options": {
+        "A": "Wysyła ICMP mimo to",
+        "B": "Zawsze zwraca true",
+        "C": "Wysyła UDP 53",
+        "D": "Próbuje połączenia TCP na port 7 (echo)"
+      },
+      "correct": "D",
+      "explanation": "Zależne od uprawnień."
+    },
+    {
+      "question": "Czym lepiej sprawdzać dostępność zależności w aplikacji niż pingiem?",
+      "options": {
+        "A": "Połączeniem z usługą (TCP/HTTP health check)",
+        "B": "Traceroute",
+        "C": "ARP",
+        "D": "ICMP Timestamp"
+      },
+      "correct": "A",
+      "explanation": "Liczy się usługa."
+    },
+    {
+      "question": "Który wyjątek Java oznacza zwykle RST (port zamknięty)?",
+      "options": {
+        "A": "BindException",
+        "B": "SocketTimeoutException",
+        "C": "ConnectException (Connection refused)",
+        "D": "UnknownHostException"
+      },
+      "correct": "C",
+      "explanation": "Host osiągalny."
+    },
+    {
+      "question": "Który wyjątek Java oznacza brak odpowiedzi (np. DROP)?",
+      "options": {
+        "A": "NoRouteToHostException",
+        "B": "SocketTimeoutException",
+        "C": "ConnectException",
+        "D": "MalformedURLException"
+      },
+      "correct": "B",
+      "explanation": "Czekanie do timeoutu."
+    },
+    {
+      "question": "Co często oznacza NoRouteToHostException w Javie?",
+      "options": {
+        "A": "ICMP host/net unreachable lub brak trasy",
+        "B": "Port zamknięty",
+        "C": "Zły login",
+        "D": "Błąd TLS"
+      },
+      "correct": "A",
+      "explanation": "Problem L3."
+    },
+    {
+      "question": "Dlaczego load balancer w chmurze może nie odpowiadać na ping?",
+      "options": {
+        "A": "Bo TTL jest za mały",
+        "B": "Bo jest wyłączony",
+        "C": "Obsługuje tylko skonfigurowane listenery, nie ICMP Echo",
+        "D": "Bo używa IPv6"
+      },
+      "correct": "C",
+      "explanation": "Monitoruj portem."
+    },
+    {
+      "question": "Czy security group AWS domyślnie przepuszcza ICMP?",
+      "options": {
+        "A": "Tak, zawsze",
+        "B": "Tylko w IPv6",
+        "C": "Tak, tylko Echo",
+        "D": "Nie, trzeba dodać regułę"
+      },
+      "correct": "D",
+      "explanation": "Dodaj typ 3/4 przy tunelach."
+    },
+    {
+      "question": "Co mierzy ping?",
+      "options": {
+        "A": "Przepustowość łącza",
+        "B": "Osiągalność hosta przez ICMP i czas tam i z powrotem (RTT)",
+        "C": "Liczbę skoków",
+        "D": "Działanie usługi HTTP"
+      },
+      "correct": "B",
+      "explanation": "Nie usługę."
+    },
+    {
+      "question": "Co oznacza „mdev” w podsumowaniu ping w Linuksie?",
+      "options": {
+        "A": "Odchylenie RTT (zmienność, jitter)",
+        "B": "Rozmiar pakietu",
+        "C": "Maksymalny TTL",
+        "D": "Liczbę skoków"
+      },
+      "correct": "A",
+      "explanation": "Stabilność."
+    },
+    {
+      "question": "Ile bajtów ma domyślny ping w Linuksie (dane)?",
+      "options": {
+        "A": "32 bajty",
+        "B": "0 bajtów",
+        "C": "1500 bajtów",
+        "D": "56 bajtów danych (84 z nagłówkami IP i ICMP)"
+      },
+      "correct": "D",
+      "explanation": "Windows: 32 B."
+    },
+    {
+      "question": "Jak wysłać ping z TTL=3 w Linuksie?",
+      "options": {
+        "A": "ping -s 3",
+        "B": "ping -c 3",
+        "C": "ping -t 3",
+        "D": "ping -i 3"
+      },
+      "correct": "C",
+      "explanation": "Odpowie 3. router."
+    },
+    {
+      "question": "Czym jest asymetria w kontekście traceroute?",
+      "options": {
+        "A": "Różna liczba sond",
+        "B": "Różne TTL",
+        "C": "Droga powrotna może być inna niż droga pakietu w przód",
+        "D": "Różne MTU"
+      },
+      "correct": "C",
+      "explanation": "Mierz z obu stron."
+    },
+    {
+      "question": "Dlaczego warto zrobić mtr także z serwera do klienta?",
+      "options": {
+        "A": "Bo tak każe RFC",
+        "B": "Bo mtr działa tylko z serwera",
+        "C": "Bo klient nie ma ICMP",
+        "D": "Bo problem może leżeć na drodze powrotnej"
+      },
+      "correct": "D",
+      "explanation": "Asymetria."
+    },
+    {
+      "question": "Co zawiera komunikat ICMP o błędzie oprócz typu i kodu?",
+      "options": {
+        "A": "Nagłówek IP i początek (≥8 B) oryginalnego pakietu",
+        "B": "Hasło",
+        "C": "Cały oryginalny pakiet zawsze",
+        "D": "Tablicę routingu"
+      },
+      "correct": "A",
+      "explanation": "Dopasowanie do gniazda."
+    },
+    {
+      "question": "Jak firewall stanowy traktuje ICMP błędu dotyczący istniejącego połączenia?",
+      "options": {
+        "A": "Ignoruje",
+        "B": "Jako RELATED i przepuszcza",
+        "C": "Jako INVALID",
+        "D": "Jako NEW i blokuje"
+      },
+      "correct": "B",
+      "explanation": "ct state related."
+    },
+    {
+      "question": "Co oznacza ICMP 3/13 od firewalla?",
+      "options": {
+        "A": "TTL wyczerpany",
+        "B": "Brak trasy",
+        "C": "Za duży pakiet",
+        "D": "Ruch odrzucony administracyjnie (REJECT)"
+      },
+      "correct": "D",
+      "explanation": "Szybki błąd dla klienta."
+    },
+    {
+      "question": "Jaka jest wada DROP zamiast REJECT w sieci wewnętrznej?",
+      "options": {
+        "A": "Zwiększa ruch",
+        "B": "Ujawnia politykę",
+        "C": "Klienci czekają do timeoutu, a diagnoza jest trudniejsza",
+        "D": "Wyłącza IPv6"
+      },
+      "correct": "C",
+      "explanation": "REJECT wewnątrz, DROP na brzegu."
+    },
+    {
+      "question": "Dlaczego w traceroute mogą pojawić się adresy prywatne operatora?",
+      "options": {
+        "A": "Operatorzy używają ich na łączach wewnętrznych",
+        "B": "To zawsze błąd",
+        "C": "To adresy klienta",
+        "D": "To atak"
+      },
+      "correct": "A",
+      "explanation": "Lub CGNAT."
+    },
+    {
+      "question": "Co może ukryć skoki w traceroute w sieci operatora?",
+      "options": {
+        "A": "TLS",
+        "B": "MPLS bez propagacji TTL",
+        "C": "DNSSEC",
+        "D": "IPv6"
+      },
+      "correct": "B",
+      "explanation": "Mniej widocznych skoków."
+    },
+    {
+      "question": "Jak zgłosić problem sieciowy operatorowi, by był użyteczny?",
+      "options": {
+        "A": "mtr w obu kierunkach (200+ cykli), czas, protokół i objaw",
+        "B": "Plik logów aplikacji",
+        "C": "Tylko adres IP",
+        "D": "Zrzut ekranu ping 4 pakietów"
+      },
+      "correct": "A",
+      "explanation": "Konkretne dane."
+    },
+    {
+      "question": "Które narzędzie Prometheus sprawdza dostępność przez ICMP/TCP/HTTP?",
+      "options": {
+        "A": "node exporter",
+        "B": "pushgateway",
+        "C": "alertmanager",
+        "D": "blackbox exporter"
+      },
+      "correct": "D",
+      "explanation": "Moduły http_2xx, tcp_connect, icmp."
+    },
+    {
+      "question": "Co oznacza duża zmienność RTT już na pierwszym skoku (router domowy)?",
+      "options": {
+        "A": "Awarię operatora",
+        "B": "Problem lokalny: Wi-Fi lub przeciążone łącze domowe",
+        "C": "Problem DNS",
+        "D": "Atak DDoS na serwer"
+      },
+      "correct": "B",
+      "explanation": "Testuj kablem."
+    },
+    {
+      "question": "Jakie opóźnienie wynika z samej odległości Europa–USA?",
+      "options": {
+        "A": "500–1000 ms",
+        "B": "1–2 ms",
+        "C": "Około 70–100 ms RTT",
+        "D": "0 ms"
+      },
+      "correct": "C",
+      "explanation": "Fizyka światłowodu."
+    },
+    {
+      "question": "Jak w Wiresharku odfiltrować komunikaty TTL exceeded?",
+      "options": {
+        "A": "tcp.flags.reset == 1",
+        "B": "icmp.type == 11",
+        "C": "icmp.type == 8",
+        "D": "ip.ttl == 64"
+      },
+      "correct": "B",
+      "explanation": "Traceroute."
+    },
+    {
+      "question": "Jak w tcpdump przechwycić ICMP dla IPv4 i IPv6?",
+      "options": {
+        "A": "tcpdump udp 53",
+        "B": "tcpdump port 1",
+        "C": "tcpdump arp",
+        "D": "tcpdump -ni any icmp or icmp6"
+      },
+      "correct": "D",
+      "explanation": "Oba protokoły."
+    },
+    {
+      "question": "Który typ ICMPv6 musi przychodzić z hop limit 255, by był zaufany?",
+      "options": {
+        "A": "Time Exceeded",
+        "B": "Echo Request",
+        "C": "Neighbor Discovery i Router Advertisement",
+        "D": "Packet Too Big"
+      },
+      "correct": "C",
+      "explanation": "Tylko z łącza."
+    },
+    {
+      "question": "Co to jest RA Guard?",
+      "options": {
+        "A": "Blokowanie fałszywych Router Advertisement na portach przełącznika",
+        "B": "Typ VLAN",
+        "C": "Wersja ICMP",
+        "D": "Szyfrowanie RA"
+      },
+      "correct": "A",
+      "explanation": "Ochrona IPv6."
+    }
+  ]
 }
