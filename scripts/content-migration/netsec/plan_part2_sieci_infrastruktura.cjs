@@ -38,7 +38,7 @@ module.exports = [
       'Architecture Lab: dokument projektowy (diagram L1/L2/L3, adresacja, lista sprzętu, polityka Wi-Fi) oceniany checklistą'],
   ]],
 
-  ['_ns_14_operacje_sieci', 'Sieci - operacje, automatyzacja, AI i troubleshooting', 'utrzymanie, automatyzacja i diagnoza sieci: monitoring, dokumentacja, wysoka dostępność, sieć jako kod, AI w operacjach i metodyka rozwiązywania problemów [N+ D3, D5; CCNA v2 D5]', [
+  ['_ns_14_operacje_sieci', 'Sieci - operacje, automatyzacja, AI i rozwiązywanie problemów', 'utrzymanie, automatyzacja i diagnoza sieci: monitoring, dokumentacja, wysoka dostępność, sieć jako kod, AI w operacjach i metodyka rozwiązywania problemów [N+ D3, D5; CCNA v2 D5]', [
     ['01_SnmpSyslogAndNetflow', 'SNMP, syslog i NetFlow/IPFIX', 'L2', 'K',
       'SNMPv2c vs SNMPv3 (uwierzytelnianie i szyfrowanie), MIB/OID, trapy; syslog i poziomy ważności; NetFlow/IPFIX/sFlow — kto z kim rozmawia; baseline ruchu',
       'Guided Lab: eksport przepływów z labu (softflowd → nfdump), znajdź największych „rozmówców”'],

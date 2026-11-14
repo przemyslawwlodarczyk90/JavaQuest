@@ -58,7 +58,7 @@ public final class ChapterSeedData {
                     "22_Queue", "23_SpecialMaps"
             )),
 
-            new ChapterSeed("_04_io", "Input/Output i praca z plikami", List.of(
+            new ChapterSeed("_04_io", "Wejście/wyjście (I/O) i praca z plikami", List.of(
                     "01_IOIntroduction", "02_FileReaderWriter", "03_BufferedReaderWriter",
                     "04_BufferedStreams", "05_DataStreams", "06_PrintWriterAndStream", "07_Scanner",
                     "08_FileClass", "09_PathAndPaths", "10_FilesClass", "11_RandomAccessFile",
@@ -67,7 +67,7 @@ public final class ChapterSeedData {
                     "19_JsonIntro", "20_Gson", "21_Jackson", "22_SerializableVsJson", "23_CSV", "24_ZIP"
             )),
 
-            new ChapterSeed("_05_multithreading", "Multithreading / Watki w Javie", List.of(
+            new ChapterSeed("_05_multithreading", "Wielowątkowość - wątki w Javie", List.of(
                     "01_ThreadsIntroduction", "02_ThreadClass", "03_Runnable",
                     "04_RunnableAnonymousAndLambda", "05_ThreadBasicMethods", "06_ThreadLifecycleAndStates",
                     "07_RaceCondition", "08_VisibilityProblem", "09_Atomicity", "10_ThreadSafety",
@@ -88,7 +88,7 @@ public final class ChapterSeedData {
                     "12_JsonOverNetwork", "13_XmlParsing", "14_HtmlUnit"
             )),
 
-            new ChapterSeed("_07_servlets", "Servlety - Java Web bez Spring Boot", List.of(
+            new ChapterSeed("_07_servlets", "Servlety - aplikacje webowe w Javie bez Spring Boot", List.of(
                     "01_ServletApiIntroduction", "02_ServletContainers", "03_ServletProjectSetup",
                     "04_HttpServlet", "05_HttpServletRequest", "06_HttpServletResponse", "07_GetAndPost",
                     "08_OtherHttpMethods", "09_FormParameters", "10_Cookies", "11_HttpSession",
@@ -104,7 +104,7 @@ public final class ChapterSeedData {
                     "20_TransactionIsolationLevels"
             )),
 
-            new ChapterSeed("_09_jdbc", "JDBC - Java Database Connectivity", List.of(
+            new ChapterSeed("_09_jdbc", "JDBC - łączenie Javy z bazą danych", List.of(
                     "01_JdbcIntroduction", "02_JdbcDriver", "03_Connection", "04_Statement",
                     "05_PreparedStatement", "06_ResultSet", "07_JdbcInsert", "08_JdbcSelect",
                     "09_JdbcUpdate", "10_JdbcDelete", "11_CreateAndDropTableFromJava",
@@ -113,7 +113,7 @@ public final class ChapterSeedData {
                     "19_Dto", "20_Mapper"
             )),
 
-            new ChapterSeed("_10_dao", "DAO i architektura dostepu do danych", List.of(
+            new ChapterSeed("_10_dao", "DAO i architektura dostępu do danych", List.of(
                     "01_DaoIntroduction", "02_LayeredArchitecture", "03_DaoInterface",
                     "04_JdbcDaoImplementation", "05_CrudInDao", "06_OptionalInDao", "07_ListResultsInDao",
                     "08_OneToManyDao", "09_ManyToManyDao", "10_RepositoryVsDao", "11_ConnectionFactory",
@@ -125,7 +125,7 @@ public final class ChapterSeedData {
                     "28_JdbcBestPractices"
             )),
 
-            new ChapterSeed("_11_buildtools", "Build Tools w Javie - Ant, Maven, Gradle", List.of(
+            new ChapterSeed("_11_buildtools", "Narzędzia budowania w Javie - Ant, Maven, Gradle", List.of(
                     "01_WhyBuildTools", "02_JavacJavaJarClasspath", "03_AntBasics",
                     "04_AntProjectStructure", "05_AntClasspath", "06_AntTesting", "07_AntPackaging",
                     "08_AntAdvanced", "09_AntIvy", "10_AntDebugging", "11_MavenBasics",
@@ -152,7 +152,7 @@ public final class ChapterSeedData {
                     "28_BeanValidationIntegration", "29_HibernateEnvers", "30_BestPracticesAndCapstone"
             )),
 
-            new ChapterSeed("_13_libraries", "Biblioteki - popularne narzedzia w ekosystemie Javy", List.of(
+            new ChapterSeed("_13_libraries", "Biblioteki - popularne narzędzia w ekosystemie Javy", List.of(
                     "01_WhyLibraries", "02_ChoosingAndAddingDependencies", "03_LombokBasics",
                     "04_LombokConstructorsAndBuilder", "05_LombokAdvancedAndPitfalls", "06_CommonsLang3",
                     "07_CommonsIO", "08_CommonsCollections4", "09_GuavaImmutableCollections",
@@ -167,7 +167,7 @@ public final class ChapterSeedData {
                     "30_PicocliSubcommandsAndValidation", "31_SnakeYamlBasics", "32_YamlToObjectMapping"
             )),
 
-            new ChapterSeed("_14_advancedjava", "Zaawansowane mechanizmy jezyka Java", List.of(
+            new ChapterSeed("_14_advancedjava", "Zaawansowane mechanizmy języka Java", List.of(
                     "01_GenericsIntroduction", "02_GenericClassesAndMethods", "03_BoundedTypes",
                     "04_WildcardsExtendsSuper", "05_VarianceAndPecs", "06_TypeErasure",
                     "07_GenericsBestPracticesAndPitfalls", "08_FunctionalInterfaces", "09_LambdaExpressions",
@@ -181,7 +181,7 @@ public final class ChapterSeedData {
                     "29_AdvancedLanguageBestPractices", "30_CapstoneAdvancedJava"
             )),
 
-            new ChapterSeed("_15_jvm_internals", "JVM, pamiec i wydajnosc", List.of(
+            new ChapterSeed("_15_jvm_internals", "JVM, pamięć i wydajność", List.of(
                     "01_JdkJreJvmAndSpecification", "02_CompilationAndBytecode", "03_ClassLoadingMechanics",
                     "04_CustomClassLoaders", "05_ClasspathVsModulepath", "06_HeapStackMetaspace",
                     "07_ReferenceTypesAndStringPool", "08_GarbageCollectionFoundations",
@@ -192,7 +192,7 @@ public final class ChapterSeedData {
                     "20_JvmTuningAndBestPracticesCapstone"
             )),
 
-            new ChapterSeed("_16_clean_code", "Clean Code i refactoring", List.of(
+            new ChapterSeed("_16_clean_code", "Czysty kod i refaktoryzacja", List.of(
                     "01_WhatIsCleanCode", "02_Naming", "03_Comments", "04_MethodsAndFunctions",
                     "05_Formatting", "06_ClassesAndResponsibilities", "07_SingleResponsibilityPrinciple",
                     "08_OpenClosedPrinciple", "09_LiskovSubstitutionPrinciple",
@@ -225,7 +225,7 @@ public final class ChapterSeedData {
                     "20_RestApiBestPracticesAndCapstone"
             )),
 
-            new ChapterSeed("_19_security_basics", "Podstawy bezpieczenstwa aplikacji", List.of(
+            new ChapterSeed("_19_security_basics", "Podstawy bezpieczeństwa aplikacji", List.of(
                     "01_AuthenticationVsAuthorization", "02_PasswordHashing", "03_BCrypt",
                     "04_SessionsAndCookies", "05_JwtIntroduction", "06_OAuth2AndOpenIdConnectIntro",
                     "07_AuthorizationPatternsAndRbac", "08_HttpsTlsBasics", "09_Cors", "10_Csrf",
@@ -236,7 +236,7 @@ public final class ChapterSeedData {
                     "20_DependencyAndSupplyChainSecurity", "21_OwaspTop10OverviewAndCapstone"
             )),
 
-            new ChapterSeed("_20_spring_core", "Spring Core i Dependency Injection", List.of(
+            new ChapterSeed("_20_spring_core", "Spring Core i wstrzykiwanie zależności", List.of(
                     "01_WhatIsSpring", "02_SpringVersionsAndCompatibilityOverview",
                     "03_InversionOfControl", "04_DependencyInjection",
                     "05_ConfigurationStylesXmlVsJavaVsAnnotations", "06_Bean", "07_ApplicationContext",
@@ -321,7 +321,7 @@ public final class ChapterSeedData {
                     "19_SpringTestBestPractices", "20_SpringTestCapstone"
             )),
 
-            new ChapterSeed("_28_java_evolution", "Ewolucja Javy: od Java 8 do dzis", List.of(
+            new ChapterSeed("_28_java_evolution", "Ewolucja Javy: od Javy 8 do dziś", List.of(
                     "01_JavaReleaseCadenceAndLtsExplained", "02_Java8LambdasAndFunctionalInterfaces",
                     "03_Java8StreamsAndOptional", "04_Java8DefaultAndStaticInterfaceMethods",
                     "05_Java8NewDateTimeApi", "06_Java9ModuleSystemJpms", "07_Java9SmallerFeatures",
@@ -346,7 +346,7 @@ public final class ChapterSeedData {
                     "16_WhenToUseReactiveVsBlocking", "17_ReactiveCapstone"
             )),
 
-            new ChapterSeed("_30_spring_messaging_and_async", "Asynchronicznosc i komunikaty", List.of(
+            new ChapterSeed("_30_spring_messaging_and_async", "Asynchroniczność i komunikaty", List.of(
                     "01_AsyncMethodsWithEnableAsync", "02_TaskExecutorConfiguration",
                     "03_CompletableFutureWithAsync", "04_SchedulingWithEnableScheduling",
                     "05_ApplicationEventsDeepDive", "06_JmsIntro", "07_SpringJmsTemplate",
@@ -1134,7 +1134,7 @@ public final class ChapterSeedData {
                     "06_PerformanceMetrics", "07_FirstPacketCapture", "08_BossPacketJourney"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_02_ethernet_lan", "Sieci - Ethernet, switching i sieć lokalna", List.of(
+            new ChapterSeed("_ns_02_ethernet_lan", "Sieci - Ethernet, przełączanie i sieć lokalna", List.of(
                     "01_EthernetFramesAndMtu", "02_MacAddressesAndSwitching", "03_ArpAndNeighborDiscovery",
                     "04_UnicastBroadcastMulticast", "05_VlanTrunkingAndStp", "06_CiscoIosCliEssentials",
                     "07_StpRstpDeepDive", "08_EtherChannelLacp", "09_LldpCdpAndL2Discovery",
@@ -1191,7 +1191,7 @@ public final class ChapterSeedData {
                     "09_NetworkServicesSnmpSyslogDhcpDns", "10_BossProtocolZoo"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_09_linux_networking", "Sieci - Linux networking i metodyka diagnozy", List.of(
+            new ChapterSeed("_ns_09_linux_networking", "Sieci - sieć w Linuksie i metodyka diagnozy", List.of(
                     "01_IproutePrimer", "02_SocketsInspectionSsLsof", "03_TcpdumpMastery",
                     "04_WiresharkDeepDive", "05_OpensslAndCurlForDiagnostics",
                     "06_NetworkNamespacesVethBridges", "07_NftablesAndHostFirewall",
@@ -1207,7 +1207,7 @@ public final class ChapterSeedData {
                     "12_BossAwsVpcIncident"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_11_proxy_i_load_balancing", "Sieci - reverse proxy, load balancing i ruch produkcyjny", List.of(
+            new ChapterSeed("_ns_11_proxy_i_load_balancing", "Sieci - reverse proxy, równoważenie obciążenia i ruch produkcyjny", List.of(
                     "01_ForwardAndReverseProxy", "02_NginxAndCaddyAsReverseProxy",
                     "03_LoadBalancingAlgorithmsAndHealthChecks", "04_Explaining502503504", "05_CdnAndEdge",
                     "06_ApiGatewayAndRateLimiting", "07_BossProductionNetworkingMeltdown"
@@ -1230,7 +1230,7 @@ public final class ChapterSeedData {
                     "10_BossDesignABranchNetwork"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_14_operacje_sieci", "Sieci - operacje, automatyzacja, AI i troubleshooting", List.of(
+            new ChapterSeed("_ns_14_operacje_sieci", "Sieci - operacje, automatyzacja, AI i rozwiązywanie problemów", List.of(
                     "01_SnmpSyslogAndNetflow", "02_MonitoringAndAlerting",
                     "03_DocumentationAndChangeManagement", "04_HighAvailabilityAndDisasterRecovery",
                     "05_NetworkAutomationWithPython", "06_NetconfRestconfYangAndTelemetry",
@@ -1298,7 +1298,7 @@ public final class ChapterSeedData {
                     "13_BossSecureArchitectureReview"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_22_hardening_i_podatnosci", "Cyber - hardening i zarządzanie podatnościami", List.of(
+            new ChapterSeed("_ns_22_hardening_i_podatnosci", "Cyber - utwardzanie systemów (hardening) i zarządzanie podatnościami", List.of(
                     "01_SecureBaselinesCisAndScap", "02_LinuxAndSshHardening", "03_WindowsHardeningBaselines",
                     "04_ContainerAndKubernetesHardening", "05_JvmAndSpringBootHardening",
                     "06_VulnerabilityScanning", "07_AnalyzingScannerOutput", "08_CvssEpssKevPrioritization",
@@ -1341,7 +1341,7 @@ public final class ChapterSeedData {
                     "11_DeceptionAndCanaries", "12_BossSocShift"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_27_detection_engineering", "Cyber - detection engineering", List.of(
+            new ChapterSeed("_ns_27_detection_engineering", "Cyber - inżynieria detekcji (detection engineering)", List.of(
                     "01_DetectionEngineeringLifecycle", "02_AttackFrameworkForDetection",
                     "03_DetectionEngineeringSigma", "04_YaraRulesForDefenders",
                     "05_SuricataAndSnortRuleWriting", "06_DetectionAsCode",
@@ -1349,7 +1349,7 @@ public final class ChapterSeedData {
                     "09_ApplicationLayerDetectionsForJava", "10_BossDetectionCoverageSprint"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_28_analiza_ruchu_i_nsm", "Cyber - analiza ruchu sieciowego i network forensics", List.of(
+            new ChapterSeed("_ns_28_analiza_ruchu_i_nsm", "Cyber - analiza ruchu sieciowego i sieciowa informatyka śledcza", List.of(
                     "01_WiresharkForSecurityAnalysts", "02_ZeekLogsDeepDive",
                     "03_SuricataEveAndAlertAnalysis", "04_TlsFingerprintingJa4AndEncryptedTraffic",
                     "05_DnsAnalyticsTunnelingAndDga", "06_C2BeaconingAndExfiltrationDetection",
@@ -1357,14 +1357,14 @@ public final class ChapterSeedData {
                     "09_BossNetworkForensicsCase"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_29_threat_intelligence", "Cyber - threat intelligence", List.of(
+            new ChapterSeed("_ns_29_threat_intelligence", "Cyber - analiza zagrożeń (threat intelligence)", List.of(
                     "01_ThreatIntelligence", "02_AnalyticalModelsKillChainDiamond", "03_IocsTtpsAndStixTaxii",
                     "04_MispAndOpenCtiPlatforms", "05_OsintForDefenders",
                     "06_ThreatActorProfilingAndAttribution", "07_IntelReportingAndDissemination",
                     "08_BossIntelDrivenDefense"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_30_threat_hunting", "Cyber - threat hunting", List.of(
+            new ChapterSeed("_ns_30_threat_hunting", "Cyber - polowanie na zagrożenia (threat hunting)", List.of(
                     "01_ThreatHuntingMethodology", "02_StackingAndLongTailAnalysis",
                     "03_HuntingOnWindowsEndpoints", "04_HuntingOnLinuxAndContainers",
                     "05_HuntingInCloudAndIdentity", "06_LogAnalysisOfWebAttacks", "07_BossThreatHuntCampaign"
@@ -1414,7 +1414,7 @@ public final class ChapterSeedData {
                     "07_AiEnabledAttacksAndDefense", "08_BossSecureLlmApplication"
             ), CourseTrack.NETWORKING),
 
-            new ChapterSeed("_ns_37_purple_team_i_walidacja", "Cyber - purple team i walidacja zabezpieczeń", List.of(
+            new ChapterSeed("_ns_37_purple_team_i_walidacja", "Cyber - purple team: wspólne ćwiczenia i walidacja zabezpieczeń", List.of(
                     "01_PurpleTeamingPrinciples", "02_AdversaryEmulationWithCaldera",
                     "03_SecurityControlValidationAndBas", "04_BossPurpleTeamExercise"
             ), CourseTrack.NETWORKING),

@@ -259,7 +259,7 @@ module.exports = [
       'Architecture Lab: otrzymujesz diagram i konfiguracje słabo zabezpieczonego systemu — raport z ryzykami, priorytetami i wdrożonymi poprawkami potwierdzonymi testami'],
   ]],
 
-  ['_ns_22_hardening_i_podatnosci', 'Cyber - hardening i zarządzanie podatnościami', 'utwardzanie systemów i ciągły cykl zarządzania podatnościami: od skanu po zamknięcie i raport [Sec+ V8 D4; CySA+ V4 D2]', [
+  ['_ns_22_hardening_i_podatnosci', 'Cyber - utwardzanie systemów (hardening) i zarządzanie podatnościami', 'utwardzanie systemów i ciągły cykl zarządzania podatnościami: od skanu po zamknięcie i raport [Sec+ V8 D4; CySA+ V4 D2]', [
     ['01_SecureBaselinesCisAndScap', 'Bezpieczne konfiguracje bazowe: CIS Benchmarks, STIG i SCAP', 'L2', 'K',
       'baseline i jego cykl (ustal, wdroż, utrzymuj); CIS Benchmarks i CIS Controls IG1–IG3; DISA STIG; SCAP, OpenSCAP, oscap i profile; skanowanie zgodności (CySA+ V4: baseline scanning wg CIS i PCI DSS); drift konfiguracji',
       'Defense Lab: OpenSCAP na serwerze Linux — raport, naprawa 10 niezgodności, ponowny skan'],
@@ -463,7 +463,7 @@ module.exports = [
       'Incident Lab: kilkugodzinny symulowany ruch z ukrytym incydentem — wykryj go w SIEM, zbuduj oś czasu i raport'],
   ]],
 
-  ['_ns_27_detection_engineering', 'Cyber - detection engineering', 'projektowanie, testowanie i utrzymanie detekcji jako kodu: ATT&CK, Sigma, YARA, Suricata i reguły SIEM [Sec+ V8 D4; CySA+ V4 D1]', [
+  ['_ns_27_detection_engineering', 'Cyber - inżynieria detekcji (detection engineering)', 'projektowanie, testowanie i utrzymanie detekcji jako kodu: ATT&CK, Sigma, YARA, Suricata i reguły SIEM [Sec+ V8 D4; CySA+ V4 D1]', [
     ['01_DetectionEngineeringLifecycle', 'Cykl życia detekcji: od hipotezy do wycofania', 'L2', 'K',
       'wymagania detekcji, źródła danych, logika, testy, wdrożenie, strojenie, przegląd i wycofanie; Detection Development Life Cycle; Detection Maturity Level; Pyramid of Pain — dlaczego TTP są trwalsze niż IoC; atomic vs behavioral vs anomaly detections',
       'zadanie: przygotuj specyfikację detekcji (cel, dane, logika, fałszywe alarmy, reakcja) dla 3 technik ATT&CK'],
@@ -496,7 +496,7 @@ module.exports = [
       'Build Lab: w tydzień laboratoryjny zwiększ pokrycie wybranej taktyki — 6 nowych detekcji jako kod, testy, dokumentacja i raport przed/po'],
   ]],
 
-  ['_ns_28_analiza_ruchu_i_nsm', 'Cyber - analiza ruchu sieciowego i network forensics', 'analityk przy pakietach: Wireshark, Zeek, Suricata, fingerprinty TLS, DNS i beaconing [CySA+ V4 D1, D3; BTL1; CCD]', [
+  ['_ns_28_analiza_ruchu_i_nsm', 'Cyber - analiza ruchu sieciowego i sieciowa informatyka śledcza', 'analityk przy pakietach: Wireshark, Zeek, Suricata, fingerprinty TLS, DNS i beaconing [CySA+ V4 D1, D3; BTL1; CCD]', [
     ['01_WiresharkForSecurityAnalysts', 'Wireshark dla analityka bezpieczeństwa', 'L2', 'K',
       'profile i kolumny pod analizę; Statistics: Conversations, Endpoints, Protocol Hierarchy, IO Graph; filtry wyświetlania dla typowych śledztw (http.request, dns.qry.name, tls.handshake.extensions_server_name, tcp.flags); Follow Stream; Export Objects; geolokalizacja; odszyfrowanie TLS z SSLKEYLOGFILE w labie (także z JVM)',
       'Packet Lab: pcap z incydentu — ustal hosta ofiary, domenę infekcji, pobrany plik i serwer C2'],
@@ -526,7 +526,7 @@ module.exports = [
       'Incident Lab: odpowiedz na 15 pytań śledczych i przygotuj raport z osią czasu i IoC'],
   ]],
 
-  ['_ns_29_threat_intelligence', 'Cyber - threat intelligence', 'wywiad o zagrożeniach: cykl, modele analityczne, platformy i przekładanie wiedzy na detekcje [Sec+ V8 D4; CySA+ V4 D1]', [
+  ['_ns_29_threat_intelligence', 'Cyber - analiza zagrożeń (threat intelligence)', 'wywiad o zagrożeniach: cykl, modele analityczne, platformy i przekładanie wiedzy na detekcje [Sec+ V8 D4; CySA+ V4 D1]', [
     ['01_ThreatIntelligence', 'Threat intelligence: rodzaje, źródła i cykl wywiadowczy', 'L2', 'W',
       'strategiczny, operacyjny, taktyczny i techniczny CTI; cykl: wymagania (PIR), zbieranie, przetwarzanie, analiza, dystrybucja, feedback; źródła otwarte, komercyjne, rządowe (CERT Polska, CSIRT GOV, CSIRT KNF, CSIRT NASK), ISAC; jakość i wiarygodność źródeł; TLP 2.0',
       'Guided Lab: MISP w kontenerze, import feedu i dopasowanie IoC do logów labu'],
@@ -553,7 +553,7 @@ module.exports = [
       'Build Lab: na podstawie raportu publicznego o kampanii przygotuj STIX, reguły Sigma/Suricata, hunt w danych labu i raport wyników'],
   ]],
 
-  ['_ns_30_threat_hunting', 'Cyber - threat hunting', 'proaktywne poszukiwanie zagrożeń, których nie wykryły reguły [Sec+ V8 D4; CySA+ V4 D1]', [
+  ['_ns_30_threat_hunting', 'Cyber - polowanie na zagrożenia (threat hunting)', 'proaktywne poszukiwanie zagrożeń, których nie wykryły reguły [Sec+ V8 D4; CySA+ V4 D1]', [
     ['01_ThreatHuntingMethodology', 'Metodyka threat huntingu', 'L3', 'K',
       'hunting oparty na hipotezie, na wywiadzie i na anomaliach; framework PEAK i TaHiTI; od hipotezy do danych i zapytań; dokumentowanie huntów; hunt → nowa detekcja; mierzenie wyników (nie tylko „znaleźliśmy atak”)',
       'Incident Lab: 3 hipotezy i polowanie w zebranych logach labu'],
@@ -751,7 +751,7 @@ module.exports = [
       'Build Lab: asystent dla działu obsługi w Spring AI z RAG i narzędziami, przechodzący zestaw testów bezpieczeństwa i z dokumentacją ryzyk'],
   ]],
 
-  ['_ns_37_purple_team_i_walidacja', 'Cyber - purple team i walidacja zabezpieczeń', 'kontrolowana emulacja przeciwnika w labie, aby mierzyć i poprawiać obronę [Sec+ V8 D4; CySA+ V4 D1]', [
+  ['_ns_37_purple_team_i_walidacja', 'Cyber - purple team: wspólne ćwiczenia i walidacja zabezpieczeń', 'kontrolowana emulacja przeciwnika w labie, aby mierzyć i poprawiać obronę [Sec+ V8 D4; CySA+ V4 D1]', [
     ['01_PurpleTeamingPrinciples', 'Purple teaming: współpraca zamiast rywalizacji', 'L2', 'K',
       'red, blue, purple — role i cele; ćwiczenie purple krok po kroku (wybór TTP, wykonanie w labie, obserwacja, poprawa, ponowny test); zasady bezpieczeństwa i autoryzacji; mierzenie postępu; adversary emulation plans (MITRE CTID) [Sec+ V8 D4]',
       'zadanie: plan ćwiczenia purple dla 5 technik istotnych dla firmy z kryteriami sukcesu'],

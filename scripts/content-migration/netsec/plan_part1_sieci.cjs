@@ -53,7 +53,7 @@ module.exports = [
       'Boss Lab: laptop → router/NAT (kontener) → proxy → Spring Boot; przechwyć ARP, ICMP i TCP na trzech punktach, wyjaśnij każdą zmianę adresów i portów; artefakt: opisany diagram + 3 pliki pcap'],
   ]],
 
-  ['_ns_02_ethernet_lan', 'Sieci - Ethernet, switching i sieć lokalna', 'warstwa łącza danych, switching w przedsiębiorstwie i usługi sieci lokalnej, które decydują, czy pakiet w ogóle opuści host [N+ D1, D2; CCNA v2 D1, D2]', [
+  ['_ns_02_ethernet_lan', 'Sieci - Ethernet, przełączanie i sieć lokalna', 'warstwa łącza danych, switching w przedsiębiorstwie i usługi sieci lokalnej, które decydują, czy pakiet w ogóle opuści host [N+ D1, D2; CCNA v2 D1, D2]', [
     ['01_EthernetFramesAndMtu', 'Ramka Ethernet i MTU', 'L2', 'W',
       'budowa ramki (MAC docelowy/źródłowy, EtherType, payload, FCS); MTU 1500, jumbo frames; overhead VLAN i tuneli (VXLAN, WireGuard) obniżający MTU; skutki złego MTU dla aplikacji',
       'Packet Lab: odczytaj pola ramki w Wiresharku; ping -M do -s, aby znaleźć MTU ścieżki'],
@@ -340,7 +340,7 @@ module.exports = [
       'Packet Lab: jeden plik pcap z ruchem kilkunastu protokołów — zidentyfikuj każdy, wskaż port, wersję i czy był szyfrowany; zaproponuj bezpieczne zamienniki'],
   ]],
 
-  ['_ns_09_linux_networking', 'Sieci - Linux networking i metodyka diagnozy', 'narzędzia i model diagnozy „warstwa po warstwie”, którymi developer sam ustala, gdzie leży problem', [
+  ['_ns_09_linux_networking', 'Sieci - sieć w Linuksie i metodyka diagnozy', 'narzędzia i model diagnozy „warstwa po warstwie”, którymi developer sam ustala, gdzie leży problem', [
     ['01_IproutePrimer', 'iproute2: ip addr, link, route, neigh (i odpowiedniki Windows)', 'L1', 'K',
       'ip addr/link/route/neigh/rule; ip route get; stare ifconfig/netstat/route; Windows: ipconfig /all, Get-NetIPAddress, Get-NetRoute, Test-NetConnection; WSL2 i jego sieć NAT/mirrored',
       'zadanie: opisz pełną konfigurację sieci maszyny (interfejsy, adresy, trasy, sąsiedzi) na Linuksie i Windows'],
@@ -412,7 +412,7 @@ module.exports = [
       'Boss Lab: ALB → EC2 działa, EC2 → DB i EC2 → Internet nie; lokalny symulator VPC (namespace’y + reguły) i opcjonalnie prawdziwe AWS z Terraform; dowody, poprawki, test reachability'],
   ]],
 
-  ['_ns_11_proxy_i_load_balancing', 'Sieci - reverse proxy, load balancing i ruch produkcyjny', 'warstwa między klientem a aplikacją: proxy, LB, CDN i gateway — skąd biorą się 502, 503 i 504', [
+  ['_ns_11_proxy_i_load_balancing', 'Sieci - reverse proxy, równoważenie obciążenia i ruch produkcyjny', 'warstwa między klientem a aplikacją: proxy, LB, CDN i gateway — skąd biorą się 502, 503 i 504', [
     ['01_ForwardAndReverseProxy', 'Forward proxy i reverse proxy', 'L2', 'K',
       'rola proxy; terminacja i ponowne zestawienie połączeń; nagłówki X-Forwarded-For/Proto/Host i Forwarded (RFC 7239); server.forward-headers-strategy i ForwardedHeaderFilter w Spring; zaufane proxy i podrabianie X-Forwarded-For; proxy korporacyjne i -Dhttps.proxyHost',
       'Debug Lab: aplikacja za proxy generuje linki http:// zamiast https:// i loguje IP proxy — napraw konfigurację'],
