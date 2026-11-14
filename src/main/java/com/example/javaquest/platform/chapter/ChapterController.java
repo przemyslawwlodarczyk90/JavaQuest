@@ -20,6 +20,10 @@ class ChapterController {
     record LessonSummary(String slug, String title) {
     }
 
+    // Spis tresci toru: wszystkie rozdzialy z lekcjami w jednym zapytaniu (zamiast N wywolan /lessons).
+    record ChapterToc(String slug, String title, List<LessonSummary> lessons) {
+    }
+
     private final ChapterRepository chapterRepository;
     private final LessonRepository lessonRepository;
 
@@ -35,6 +39,19 @@ class ChapterController {
                         chapter.getSlug(),
                         chapter.getTitle(),
                         lessonRepository.findByChapterSlugOrderBySortOrderAsc(chapter.getSlug()).size()))
+                .toList();
+    }
+
+    @GetMapping(value = "/api/chapters", params = "withLessons=true")
+    List<ChapterToc> getTableOfContents(@RequestParam(defaultValue = "JAVA") CourseTrack track) {
+        var lessonsByChapter = new java.util.LinkedHashMap<String, List<LessonSummary>>();
+        for (Lesson lesson : lessonRepository.findAllByTrackWithChapter(track)) {
+            lessonsByChapter.computeIfAbsent(lesson.getChapter().getSlug(), slug -> new java.util.ArrayList<>())
+                    .add(new LessonSummary(lesson.getSlug(), lesson.getTitle()));
+        }
+        return chapterRepository.findAllByTrackOrderBySortOrderAsc(track).stream()
+                .map(chapter -> new ChapterToc(chapter.getSlug(), chapter.getTitle(),
+                        lessonsByChapter.getOrDefault(chapter.getSlug(), List.of())))
                 .toList();
     }
 

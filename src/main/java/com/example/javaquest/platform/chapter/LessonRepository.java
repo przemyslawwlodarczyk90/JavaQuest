@@ -41,6 +41,9 @@ public interface LessonRepository extends JpaRepository<Lesson, Long> {
     @Query("select l from Lesson l join fetch l.chapter")
     List<Lesson> findAllWithChapter();
 
+    @Query("select l from Lesson l join fetch l.chapter c where c.track = :track order by c.sortOrder, l.sortOrder")
+    List<Lesson> findAllByTrackWithChapter(@org.springframework.data.repository.query.Param("track") CourseTrack track);
+
     @Query("select count(m) from LessonMaterial m where m.lesson = :lesson")
     long countMaterials(Lesson lesson);
 
