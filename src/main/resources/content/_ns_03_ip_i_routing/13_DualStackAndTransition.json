@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Dwa protokoły naraz: co może pójść źle",
+      "image": "netsec/ns03-13-happy-eyeballs.svg",
+      "imageAlt": "Porównanie: klient sekwencyjny próbuje IPv6, czeka 10 sekund do timeoutu i dopiero łączy się po IPv4 po 10 028 ms; Happy Eyeballs v2 po 250 ms startuje równolegle IPv4 i łączy się po 278 ms. Klasyczne klienty JDK łączą się z pierwszym adresem z resolvera.",
+      "body": "Przez najbliższe lata większość sieci będzie **dual-stack**: hosty mają adresy IPv4 i IPv6, a nazwy DNS — rekordy **A** i **AAAA**. Klient musi wybrać, którym protokołem się połączyć. Gdy oba działają — wszystko jedno. Problem pojawia się, gdy **rekord AAAA istnieje, a IPv6 po drodze nie działa** (zepsuty router, firewall gubiący IPv6, VPN tunelujący tylko IPv4, błędna trasa w chmurze): klient, który „uczciwie” spróbuje najpierw IPv6, czeka do timeoutu połączenia, zanim spróbuje IPv4.\n\nDla użytkownika przeglądarki to niewidoczne — przeglądarki od lat stosują **Happy Eyeballs** (równoległe próby z niewielkim opóźnieniem). Dla aplikacji Java bywa to dramatyczne: klasyczne klienty JDK łączą się z **pierwszym adresem z resolvera**, więc „losowe” 10–30-sekundowe opóźnienia, timeouty w pulach połączeń i alerty „usługa wolna” mogą mieć jedną przyczynę: zepsute IPv6 przy działającym AAAA.\n\nDruga strona medalu: sieci **IPv6-only** (operatorzy mobilni, nowe centra danych, chmury oszczędzające na IPv4) korzystają z **NAT64/DNS64** i **464XLAT**, żeby dotrzeć do starego Internetu IPv4 — co psuje aplikacje z wpisanymi na sztywno adresami IPv4.\n\nW tej lekcji: kolejność adresów (RFC 6724), **Happy Eyeballs v2** (RFC 8305), właściwości `java.net.preferIPv6Addresses` i `preferIPv4Stack`, cache DNS w JVM, IPv6-only, NAT64/DNS64, 464XLAT, tunelowanie (6to4, Teredo — i dlaczego są ryzykiem) oraz **Failure Lab z planu**: zepsuty IPv6 przy działającym AAAA — zmierz opóźnienie klienta Java i napraw. Cele: Network+ N10-009 (dual-stack, tunelowanie, NAT64), CCNA v2 (IPv6 w sieciach dual-stack), Security+ (tunele omijające kontrole).",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik przejścia na IPv6",
+      "body": "- **Dual-stack** — host/sieć z równoczesnym IPv4 i IPv6; aplikacja wybiera protokół na podstawie adresów z DNS.\n- **RFC 6724 (Default Address Selection)** — algorytm sortowania adresów docelowych i wyboru źródłowego: unikaj nieosiągalnych, preferuj zgodny zakres, wyższą *precedence* (domyślnie IPv6 GUA 40 > IPv4 35), najdłuższy wspólny prefiks. Konfiguracja: Linux `/etc/gai.conf`, Windows `netsh interface ipv6 show prefixpolicies`.\n- **Happy Eyeballs v2 (RFC 8305)** — klient przeplata rodziny adresów (v6, v4, v6…), startuje pierwszą próbę, a kolejną po **250 ms** (Connection Attempt Delay) lub natychmiast po błędzie; wygrywa pierwsze udane połączenie, pozostałe są zamykane. Zapytania A i AAAA wysyłane równolegle.\n- **`java.net.preferIPv6Addresses`** — `false` (domyślnie: IPv4 pierwsze), `true` (IPv6 pierwsze), `system` (JDK 9+, kolejność systemowa).\n- **`java.net.preferIPv4Stack=true`** — JVM używa tylko gniazd IPv4 (wyłącza IPv6 w aplikacji).\n- **Cache DNS JVM** — `networkaddress.cache.ttl` (domyślnie 30 s bez SecurityManagera) i `networkaddress.cache.negative.ttl` (10 s) w `java.security` lub `Security.setProperty`.\n- **IPv6-only** — sieć bez IPv4 na hostach; dostęp do IPv4 przez translację.\n- **DNS64 (RFC 6147)** — resolver, który dla nazw bez AAAA syntetyzuje AAAA z prefiksu NAT64 i adresu IPv4.\n- **NAT64 (RFC 6146)** — stanowa translacja IPv6 → IPv4 z prefiksem **64:ff9b::/96** (well-known, RFC 6052) lub własnym; np. 140.82.121.4 → **64:ff9b::8c52:7904**.\n- **464XLAT (RFC 6877)** — CLAT na urządzeniu (tłumaczy lokalny IPv4 na IPv6) + PLAT (NAT64 u operatora); pozwala działać aplikacjom z literałami IPv4. Standard w sieciach mobilnych (Android, iOS).\n- **Tunele** — 6in4 (protokół 41), 6to4 (2002::/16, wycofany), Teredo (UDP 3544, 2001::/32, wycofany), ISATAP; przenoszą IPv6 w IPv4 (i potrafią omijać firewalle IPv4).\n- **MAP-T/MAP-E, DS-Lite** — mechanizmy operatorskie dostarczania IPv4 przez sieć IPv6 (IPv4-as-a-service).",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Dwie kasy w sklepie",
+      "body": "Sklep ma dwie kasy: nową (IPv6) i starą (IPv4). Szyld nad wejściem (rekord AAAA) zaprasza do nowej.\n- **Klient sekwencyjny** grzecznie staje w kolejce do nowej kasy. Kasa jest zamknięta, ale nikt tego nie mówi — klient stoi, aż straci cierpliwość (timeout 10–30 s), i dopiero wtedy idzie do starej. Każdy kolejny zakup — to samo.\n- **Happy Eyeballs** to klient, który staje do nowej kasy, ale po ćwierć sekundy wysyła kolegę do starej. Kto pierwszy dojdzie do kasjera, ten płaci; drugi rezygnuje. Gdy nowa kasa działa — zwykle wygrywa (bo startuje pierwsza); gdy nie — strata to ćwierć sekundy.\n- **`preferIPv6Addresses=false`** to klient, który z przyzwyczajenia zawsze idzie najpierw do starej kasy — nie cierpi, gdy nowa nie działa, ale nie korzysta z nowej nawet wtedy, gdy jest szybsza.\n- **NAT64/DNS64** to sklep, w którym zostały tylko nowe kasy, a obsługa przy wejściu (DNS64) wydaje klientom „nowe” numerki także dla towarów z magazynu starego typu; tłumacz na zapleczu (NAT64) obsługuje stare zamówienia. Klient z kartką „idź do kasy nr 4 na starym piętrze” (literał IPv4) się gubi — chyba że ma w kieszeni własnego tłumacza (CLAT, 464XLAT).",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Ile trwa nawiązanie połączenia w pięciu scenariuszach",
+      "image": "netsec/ns03-13-java.svg",
+      "imageAlt": "Właściwości Javy wpływające na dual-stack: preferIPv6Addresses false (domyślnie, najpierw IPv4), true (najpierw IPv6), system (kolejność systemowa RFC 6724) oraz preferIPv4Stack (tylko IPv4). Cache DNS JVM: networkaddress.cache.ttl i negative.ttl.",
+      "body": "Model z lekcji: lista adresów w kolejności z resolvera (IPv6 pierwsze), connectTimeout klienta 10 s, RTT ~30 ms. „Blackhole” = pakiety giną bez odpowiedzi (najgorszy przypadek), „unreachable” = szybki błąd (ICMPv6 unreachable/RST). Zwróć uwagę, że przy szybkim błędzie nawet klient sekwencyjny działa dobrze — problem tworzy **cisza** po drodze.",
+      "code": "healthy         sekwencyjnie:     30 ms   Happy Eyeballs:   30 ms (wygrywa IPv6)\nv6blackhole     sekwencyjnie:  10028 ms   Happy Eyeballs:  278 ms (wygrywa IPv4)\nv6unreachable   sekwencyjnie:     30 ms   Happy Eyeballs:   30 ms (wygrywa IPv4)\nv6slow          sekwencyjnie:    400 ms   Happy Eyeballs:  280 ms (wygrywa IPv4)\ntwoV6blackhole  sekwencyjnie:  20028 ms   Happy Eyeballs:  278 ms (wygrywa IPv4)\n\nPrzebieg Happy Eyeballs dla v6blackhole:\n  start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms)\n  start IPv4 w 250 ms → OK w 278 ms\nPrzebieg Happy Eyeballs dla v6slow (IPv6 działa, ale ma RTT 400 ms):\n  start IPv6 w 0 ms → OK w 400 ms\n  start IPv4 w 250 ms → OK w 280 ms\n  → wygrywa IPv4, bo zestawił połączenie wcześniej (start 250 + 30 < 400)"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "Diagnoza dual-stack: DNS, trasy, curl i Java",
+      "body": "Szybki zestaw poleceń, który odpowiada na pytania: czy nazwa ma AAAA, czy IPv6 w ogóle działa z tego hosta, ile trwa połączenie każdym protokołem i co wybiera JVM.",
+      "code": "dig +short A api.example.com ; dig +short AAAA api.example.com     # czy są oba rekordy\ngetent ahosts api.example.com                                        # kolejność adresów wg systemu (RFC 6724, gai.conf)\nip -6 route get 2001:db8::10                                         # czy jest trasa IPv6 (default via fe80::…)\ncurl -6 -sv -o /dev/null --connect-timeout 5 https://api.example.com 2>&1 | grep -E 'Trying|Connected|timed out'\ncurl -4 -s  -o /dev/null -w 'v4 connect=%{time_connect}s\\n' https://api.example.com\ncurl -s -o /dev/null -w 'auto connect=%{time_connect}s ip=%{remote_ip}\\n' https://api.example.com   # curl: Happy Eyeballs (200 ms)\n# Windows: Resolve-DnsName api.example.com ; Test-NetConnection api.example.com -Port 443\n\n# Java — co zwróci resolver i w jakiej kolejności\njshell> java.util.Arrays.toString(java.net.InetAddress.getAllByName(\"api.example.com\"))\njava -Djava.net.preferIPv6Addresses=system -jar app.jar        # kolejność jak w systemie\njava -Djava.net.preferIPv6Addresses=false -jar app.jar         # IPv4 najpierw (domyślne)\n# cache DNS JVM (np. w kodzie startowym):  java.security.Security.setProperty(\"networkaddress.cache.ttl\", \"30\");"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Failure Lab z planu: zepsuty IPv6 przy działającym AAAA — zmierz i napraw",
+      "image": "netsec/ns03-13-rfc6724.svg",
+      "imageAlt": "Tabela domyślnej polityki RFC 6724: ::1 precedence 50, ::/0 (IPv6) 40, ::ffff:0:0/96 (IPv4) 35, 6to4 30, Teredo 5, ULA 3. Reguły: unikanie nieosiągalnych, zgodny zakres, wyższa precedence, najdłuższy wspólny prefiks.",
+      "body": "Lab na jednym Linuksie (root). Tworzymy nazwę `api.lab` z rekordami A i AAAA, usługę dostępną tylko po IPv4 i „czarną dziurę” dla IPv6 — dokładnie jak źle skonfigurowany firewall gubiący IPv6.\n1. **Usługa IPv4**: `python3 -m http.server 8080 --bind 127.0.0.1 &`.\n2. **Czarna dziura IPv6**: namespace `dead` połączony vethem: `ip netns add dead; ip link add v-dead type veth peer name eth0 netns dead; ip link set v-dead up; ip -n dead link set eth0 up`; trasa: `ip -6 route add 2001:db8:dead::/48 via fe80::<link-local eth0 w dead> dev v-dead` (adres sprawdź `ip -n dead -6 addr`). W `dead` forwarding IPv6 jest wyłączony, więc pakiety do 2001:db8:dead::10 są **po cichu porzucane** (prawdziwy blackhole — ND do bramy działa, SYN ginie).\n3. **Nazwa**: w `/etc/hosts` dopisz `2001:db8:dead::10 api.lab` i `127.0.0.1 api.lab`. Sprawdź `getent ahosts api.lab` — IPv6 jest pierwszy (precedence 40 > 35).\n4. **Pomiar curl**: `curl -6 --connect-timeout 10 http://api.lab:8080/` → timeout po 10 s; `curl -s -o /dev/null -w '%{time_connect} %{remote_ip}\\n' http://api.lab:8080/` → ~0,2 s i `127.0.0.1` (Happy Eyeballs w curl).\n5. **Pomiar Java**: prosty program `new Socket()` + `connect(new InetSocketAddress(\"api.lab\", 8080), 10_000)` z `-Djava.net.preferIPv6Addresses=true` → **~10 s i SocketTimeoutException** (InetSocketAddress bierze pierwszy adres i nie próbuje kolejnych); z `=false` → kilka ms; z `=system` → jak w systemie (IPv6 pierwsze → 10 s).\n6. **Naprawy — od najlepszej**: (a) napraw IPv6 na ścieżce albo **usuń rekord AAAA**, jeśli usługa nie działa po IPv6 (w labie: usuń wpis z /etc/hosts); (b) klient z **Happy Eyeballs** (kod obok: łączy się w ~250 ms mimo blackhole) lub biblioteka z fast fallback (OkHttp); (c) **krótki connectTimeout + pętla po `getAllByName`** (gorzej: 2 s straty na każdy martwy adres); (d) obejścia: `preferIPv6Addresses=false` lub `gai.conf` — tylko gdy nie możesz naprawić sieci.\n7. **Sprzątanie**: `ip netns del dead`, usuń wpisy z /etc/hosts, zakończ serwer. **Notatka**: czasy dla każdej konfiguracji i wybrana naprawa z uzasadnieniem.",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "IPv6-only, NAT64/DNS64 i 464XLAT",
+      "image": "netsec/ns03-13-nat64.svg",
+      "imageAlt": "Sieć IPv6-only: klient pyta DNS64 o AAAA, resolver zwraca syntetyczny adres 64:ff9b::8c52:7904 utworzony z 140.82.121.4, klient łączy się po IPv6 z bramą NAT64, która tłumaczy ruch na IPv4 do serwera. Literały IPv4 wymagają 464XLAT.",
+      "body": "W sieci **IPv6-only** host nie ma adresu IPv4. Gdy chce połączyć się z serwisem, który ma tylko rekord A:\n1. Resolver **DNS64** nie znajduje AAAA, więc **syntetyzuje** go: prefiks 64:ff9b::/96 + 32 bity IPv4 (140.82.121.4 → 64:ff9b::8c52:7904; z powrotem: 64:ff9b::c000:221 → 192.0.2.33).\n2. Klient łączy się po IPv6 z tym adresem; trasa do 64:ff9b::/96 prowadzi do bramy **NAT64**.\n3. NAT64 tłumaczy nagłówki (stanowo, jak PAT) na IPv4 i z powrotem.\n\n**Co się psuje:** aplikacje z **literałami IPv4** (`http://203.0.113.5/`, `jdbc:postgresql://10.0.0.5`) — DNS64 nie ma czego syntetyzować; aplikacje, które same sprawdzają „czy mam adres IPv4” zamiast próbować połączenia; protokoły z adresami IPv4 w treści; walidujące DNSSEC resolvery (syntetyczne AAAA nie mają podpisu). Rozwiązaniem po stronie urządzenia jest **464XLAT**: CLAT daje aplikacjom lokalny interfejs IPv4 i tłumaczy go na IPv6 (dlatego w sieciach mobilnych z IPv6-only Android i iOS działają z każdą aplikacją).\n\n**W chmurze**: AWS obsługuje podsieci IPv6-only z DNS64 (opcja w podsieci) i NAT64 w NAT Gateway; Kubernetes dual-stack i IPv6-only to już normalne konfiguracje. **Wytyczne dla aplikacji Java**: zawsze nazwy DNS zamiast literałów; nie zakładaj obecności IPv4; testuj w sieci IPv6-only (Apple wymaga tego od aplikacji w App Store od 2016 r.).\n\n**Tunele a bezpieczeństwo**: 6to4, Teredo (UDP 3544) i 6in4 (protokół 41) mogą przenosić ruch IPv6 przez firewall, który filtruje tylko IPv4 — kanał omijający kontrole i monitoring. Blokuj protokół 41 i UDP 3544 tam, gdzie nie są potrzebne, wyłącz Teredo w Windows (`netsh interface teredo set state disabled`), monitoruj ruch IPv6.",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "Happy Eyeballs v2 w Javie (przetestowany)",
+      "body": "Minimalna implementacja RFC 8305 na wątkach wirtualnych (JDK 21+): adresy z `getAllByName` są przeplatane rodzinami, kolejne próby startują co 250 ms lub natychmiast po błędzie, wygrywa pierwsze połączenie, pozostałe są zamykane. Test w `main`: usługa nasłuchuje tylko na 127.0.0.1, a klient z `-Djava.net.preferIPv6Addresses=true` próbuje najpierw `::1` — połączenie i tak zestawia się w kilkadziesiąt ms. W produkcji użyj biblioteki z wbudowanym mechanizmem (np. OkHttp 5 — *fast fallback*) albo opakuj tę logikę w fabrykę gniazd dla swojego klienta.",
+      "code": "import java.io.IOException;\nimport java.net.*;\nimport java.util.*;\nimport java.util.concurrent.*;\n\npublic class HappyEyeballs {\n    // Minimalny Happy Eyeballs v2: przeplata rodziny adresów, startuje kolejne próby co 250 ms\n    // (albo od razu po błędzie poprzedniej), zwraca pierwsze udane połączenie, resztę zamyka.\n    static Socket connect(String host, int port, int attemptDelayMs, int timeoutMs) throws Exception {\n        List<InetAddress> addrs = interleave(Arrays.asList(InetAddress.getAllByName(host)));\n        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();\n        CompletionService<Socket> cs = new ExecutorCompletionService<>(pool);\n        List<Future<Socket>> started = new ArrayList<>();\n        List<Socket> all = Collections.synchronizedList(new ArrayList<>());\n        try {\n            int next = 0, pending = 0;\n            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);\n            while (System.nanoTime() < deadline) {\n                if (next < addrs.size()) {\n                    InetAddress a = addrs.get(next++);\n                    started.add(cs.submit(() -> {\n                        Socket s = new Socket(); all.add(s);\n                        s.connect(new InetSocketAddress(a, port), timeoutMs);\n                        return s;\n                    }));\n                    pending++;\n                }\n                Future<Socket> f = cs.poll(next < addrs.size() ? attemptDelayMs : timeoutMs, TimeUnit.MILLISECONDS);\n                if (f == null) continue;                       // nikt jeszcze nie skończył — startuj kolejną próbę\n                pending--;\n                try {\n                    Socket winner = f.get();\n                    for (Socket s : all) if (s != winner) try { s.close(); } catch (IOException ignored) {}\n                    return winner;\n                } catch (ExecutionException e) {\n                    if (next >= addrs.size() && pending == 0) throw e;   // wszystkie zawiodły\n                }\n            }\n            throw new SocketTimeoutException(\"Happy Eyeballs: timeout \" + timeoutMs + \" ms\");\n        } finally {\n            started.forEach(fu -> fu.cancel(true));\n            pool.shutdownNow();\n        }\n    }\n\n    static List<InetAddress> interleave(List<InetAddress> in) {\n        if (in.isEmpty()) return in;\n        Class<?> first = in.get(0).getClass();\n        Deque<InetAddress> a = new ArrayDeque<>(), b = new ArrayDeque<>();\n        for (InetAddress x : in) (x.getClass() == first ? a : b).add(x);\n        List<InetAddress> out = new ArrayList<>();\n        while (!a.isEmpty() || !b.isEmpty()) { if (!a.isEmpty()) out.add(a.poll()); if (!b.isEmpty()) out.add(b.poll()); }\n        return out;\n    }\n\n    public static void main(String[] args) throws Exception {\n        try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getByName(\"127.0.0.1\"))) {   // usługa tylko na IPv4\n            int port = server.getLocalPort();\n            System.out.println(\"adresy localhost: \" + Arrays.toString(InetAddress.getAllByName(\"localhost\")));\n            long t0 = System.nanoTime();\n            try (Socket s = connect(\"localhost\", port, 250, 3000)) {\n                System.out.printf(\"połączono z %s w %d ms%n\", s.getInetAddress().getHostAddress(), (System.nanoTime() - t0) / 1_000_000);\n            }\n        }\n    }\n}"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Gdzie to spotkasz jako developer i jako obrońca",
+      "body": "**Developer / DevOps:**\n- **„Co jakiś czas połączenie do API trwa 20 s”** — sprawdź AAAA i IPv6 na ścieżce; logi z adresem docelowym (IPv6 czy IPv4) i czasem `connect`.\n- **Kontenery i Kubernetes**: węzeł z IPv6, pod bez trasy IPv6 (lub odwrotnie); usługa Service tylko IPv4 w klastrze dual-stack (`ipFamilyPolicy: SingleStack`).\n- **Pule połączeń** (HikariCP, klienci HTTP): długi `connectTimeout` × martwy adres = wątki zablokowane, kaskadowe timeouty. Ustaw krótkie timeouty i monitoruj czas zestawiania połączeń.\n- **Konfiguracja**: zawsze nazwy, nie literały; aplikacja ma słuchać na `::` (dual-stack); testy w CI także w sieci IPv6-only (Docker z siecią IPv6).\n- **Cache DNS JVM**: po zmianie rekordów (usunięcie zepsutego AAAA) aplikacja może korzystać ze starych adresów przez `networkaddress.cache.ttl`; przy cache „na zawsze” (stare ustawienia z SecurityManagerem) — aż do restartu.\n\n**Blue team:**\n- **Tunele IPv6 omijające kontrole**: Teredo, 6to4, 6in4 — wykrywanie (Zeek: protokół 41, UDP 3544, ruch do 2001::/32 i 2002::/16), blokada na brzegu.\n- **Widoczność IPv6**: polityki firewalla i reguły IDS muszą obejmować IPv6 tak samo jak IPv4 — inaczej dual-stack daje atakującemu „drugie, niepilnowane drzwi”.\n- **Logowanie i korelacja**: ten sam użytkownik raz po IPv4 (przez NAT/CGNAT), raz po IPv6 (adres tymczasowy) — korelacja po sesji/koncie, nie po IP.\n- **NAT64 w logach**: adresy 64:ff9b::/96 w logach serwera IPv6 oznaczają klientów IPv4 za translatorem (i odwrotnie — w logach IPv4 widać adres NAT64).\n- Mapowanie: Network+ (dual-stack, tunelowanie, NAT64), CCNA (IPv6 w praktyce), Security+ (protokoły tunelowania), CySA+ (analiza ruchu).",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Częste błędy",
+      "body": "- **Publikowanie AAAA bez działającego IPv6** (lub bez monitoringu IPv6) — połowa klientów „losowo” czeka na timeouty.\n- **„Naprawa” przez `preferIPv4Stack=true` na zawsze** — wyłączasz IPv6 w aplikacji; w sieci IPv6-only aplikacja przestaje działać.\n- **Długi `connectTimeout`** (domyślnie nieskończony lub minuty) — wzmacnia każdy problem z dual-stack.\n- **`new Socket(host, port)` / `InetSocketAddress(host, port)`** — biorą pierwszy adres; brak próby kolejnych.\n- **Literały IPv4 w konfiguracji** — nie działają w IPv6-only bez 464XLAT.\n- **Sprawdzanie „czy mamy IPv4/IPv6” przez listę interfejsów** zamiast po prostu próby połączenia — błędne decyzje w sieciach z NAT64 lub z samym link-local.\n- **Testy tylko w sieci IPv4** — błędy IPv6 wychodzą dopiero u klientów mobilnych.\n- **Zostawione tunele (Teredo, 6to4)** — preferowane przez stare systemy i omijające kontrole.\n- **Ignorowanie cache DNS JVM** — „usunęliśmy AAAA, a problem trwa jeszcze kilka minut/do restartu”.",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: połączenie do pierwszego adresu z długim timeoutem",
+      "body": "Typowy kod i konfiguracja, które przy zepsutym IPv6 dają 30-sekundowe opóźnienia każdego nowego połączenia.",
+      "code": "// JVM: -Djava.net.preferIPv6Addresses=true  (ktoś „włączył IPv6”)\nSocket s = new Socket();\ns.connect(new InetSocketAddress(\"api.partner.com\", 443), 30_000);   // tylko pierwszy adres (AAAA), 30 s timeout\n// HikariCP: connectionTimeout=30000, sterownik JDBC bez connectTimeout\n// konfiguracja: partner.url=https://203.0.113.5/api                   // literał IPv4 — nie działa w IPv6-only\n// DNS: AAAA dla api.firma.pl opublikowany „na zapas”, IPv6 na load balancerze niewłączone"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: nazwy, krótkie timeouty, fallback i monitoring obu protokołów",
+      "body": "Klient próbuje wszystkich adresów z szybkim fallbackiem, timeouty są krótkie, konfiguracja używa nazw, a rekordy AAAA są publikowane tylko dla usług z działającym i monitorowanym IPv6.",
+      "code": "Socket s = HappyEyeballs.connect(\"api.partner.com\", 443, 250, 3_000);   // przeplot v6/v4, 250 ms, 3 s łącznie\n// lub OkHttp 5: OkHttpClient.Builder().fastFallback(true) (domyślnie włączone)\n// HikariCP: connectionTimeout=3000; JDBC: ?connectTimeout=3\n// JVM: -Djava.net.preferIPv6Addresses=system   (spójnie z OS; naprawy rób w sieci, nie w JVM)\n// konfiguracja: partner.url=https://api.partner.com/api                 // nazwa — działa w IPv6-only przez DNS64\n// DNS: AAAA tylko z działającym IPv6 na LB; monitoring syntetyczny osobno dla IPv4 i IPv6 (curl -4 / curl -6)\n// blackbox exporter: moduły http_2xx_v4 (preferred_ip_protocol: ip4) i http_2xx_v6 (ip6, ip_protocol_fallback: false)"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Objaw → przyczyna → działanie",
+      "body": "Ściąga diagnostyczna dla dual-stack i IPv6-only:",
+      "code": "OBJAW                                              PRZYCZYNA                                DZIAŁANIE\nnowe połączenia czasem trwają ~connectTimeout       AAAA + zepsute IPv6, klient bez HE        napraw IPv6 / usuń AAAA; HE; krótki timeout\nprzeglądarka OK, aplikacja Java wolna               przeglądarka ma Happy Eyeballs, JDK nie   jw.; porównaj curl -6 i curl -4\ndziała w biurze, nie działa w sieci komórkowej      literał IPv4 / brak obsługi IPv6-only      nazwy DNS, test w IPv6-only, 464XLAT\npo usunięciu AAAA problem trwa                      cache DNS JVM / resolvera                 networkaddress.cache.ttl, restart, TTL DNS\nw logach adresy 64:ff9b::…                          klienci IPv4 za NAT64 (lub odwrotnie)     uwzględnij w allow-listach i analizie\nruch IPv6 do 2001::/32 lub 2002::/16                Teredo / 6to4 — tunel omijający kontrole   zablokuj UDP 3544 i protokół 41, wyłącz tunele\nklaster dual-stack: pod nie widzi usługi po IPv6    Service SingleStack, brak trasy w CNI      ipFamilyPolicy, ipFamilies, trasy CNI"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie",
+      "body": "- Dual-stack: wybór protokołu zależy od kolejności adresów (RFC 6724: IPv6 GUA przed IPv4) i od klienta.\n- **AAAA + zepsute IPv6** = opóźnienie równe connectTimeout dla klientów sekwencyjnych; **Happy Eyeballs v2** (przeplot, 250 ms) zmniejsza je do ~250 ms.\n- Java: klasyczne klienty łączą się z pierwszym adresem; `preferIPv6Addresses` (false/true/system), `preferIPv4Stack`; cache DNS `networkaddress.cache.ttl`; krótkie timeouty i fallback w kodzie lub bibliotece (OkHttp fast fallback).\n- IPv6-only: DNS64 syntetyzuje AAAA (64:ff9b::/96 + IPv4), NAT64 tłumaczy; literały IPv4 wymagają 464XLAT (CLAT).\n- Tunele 6to4/Teredo/6in4 omijają firewalle IPv4 — blokuj i monitoruj; polityki bezpieczeństwa równoważnie dla IPv4 i IPv6.\n- Naprawy: działające i monitorowane IPv6 albo brak AAAA; obejścia w JVM/gai.conf tylko tymczasowo.\n- Następna lekcja: **OSPF w jednym obszarze** — sąsiedztwa, LSA, koszt i lab na FRR.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Scenariusz „v6blackhole” (IPv6 blackhole, IPv4 ok 28 ms), connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia przez klienta sekwencyjnego, a ile z Happy Eyeballs v2 (250 ms)?",
+      "hint": "Sekwencyjnie: sumuj czasy prób; HE: przeplot, kolejna próba po 250 ms lub od razu po błędzie, wygrywa najszybsza.",
+      "solution": "Sekwencyjnie: 10028 ms (IPv6 brak odpowiedzi → timeout 10000 ms; IPv4 OK po 28 ms). Happy Eyeballs: 278 ms, wygrywa IPv4 (start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms)."
+    },
+    {
+      "prompt": "Scenariusz „v6blackhole” (IPv6 blackhole, IPv4 ok 28 ms), connectTimeout 30000 ms. Ile potrwa nawiązanie połączenia przez klienta sekwencyjnego, a ile z Happy Eyeballs v2 (250 ms)?",
+      "hint": "Sekwencyjnie: sumuj czasy prób; HE: przeplot, kolejna próba po 250 ms lub od razu po błędzie, wygrywa najszybsza.",
+      "solution": "Sekwencyjnie: 30028 ms (IPv6 brak odpowiedzi → timeout 30000 ms; IPv4 OK po 28 ms). Happy Eyeballs: 278 ms, wygrywa IPv4 (start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms)."
+    },
+    {
+      "prompt": "Scenariusz „twoV6blackhole” (IPv6 blackhole, IPv6 blackhole, IPv4 ok 28 ms), connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia przez klienta sekwencyjnego, a ile z Happy Eyeballs v2 (250 ms)?",
+      "hint": "Sekwencyjnie: sumuj czasy prób; HE: przeplot, kolejna próba po 250 ms lub od razu po błędzie, wygrywa najszybsza.",
+      "solution": "Sekwencyjnie: 20028 ms (IPv6 brak odpowiedzi → timeout 10000 ms; IPv6 brak odpowiedzi → timeout 10000 ms; IPv4 OK po 28 ms). Happy Eyeballs: 278 ms, wygrywa IPv4 (start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms)."
+    },
+    {
+      "prompt": "Scenariusz „v6unreachable” (IPv6 unreachable, IPv4 ok 28 ms), connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia przez klienta sekwencyjnego, a ile z Happy Eyeballs v2 (250 ms)?",
+      "hint": "Sekwencyjnie: sumuj czasy prób; HE: przeplot, kolejna próba po 250 ms lub od razu po błędzie, wygrywa najszybsza.",
+      "solution": "Sekwencyjnie: 30 ms (IPv6 natychmiastowy błąd (unreachable) po 2 ms; IPv4 OK po 28 ms). Happy Eyeballs: 30 ms, wygrywa IPv4 (start IPv6 w 0 ms → błąd po 2 ms (kolejna próba od razu); start IPv4 w 2 ms → OK w 30 ms)."
+    },
+    {
+      "prompt": "Scenariusz „v6slow” (IPv6 ok 400 ms, IPv4 ok 30 ms), connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia przez klienta sekwencyjnego, a ile z Happy Eyeballs v2 (250 ms)?",
+      "hint": "Sekwencyjnie: sumuj czasy prób; HE: przeplot, kolejna próba po 250 ms lub od razu po błędzie, wygrywa najszybsza.",
+      "solution": "Sekwencyjnie: 400 ms (IPv6 OK po 400 ms). Happy Eyeballs: 280 ms, wygrywa IPv4 (start IPv6 w 0 ms → OK w 400 ms; start IPv4 w 250 ms → OK w 280 ms)."
+    },
+    {
+      "prompt": "Scenariusz „healthy” (IPv6 ok 30 ms, IPv4 ok 28 ms), connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia przez klienta sekwencyjnego, a ile z Happy Eyeballs v2 (250 ms)?",
+      "hint": "Sekwencyjnie: sumuj czasy prób; HE: przeplot, kolejna próba po 250 ms lub od razu po błędzie, wygrywa najszybsza.",
+      "solution": "Sekwencyjnie: 30 ms (IPv6 OK po 30 ms). Happy Eyeballs: 30 ms, wygrywa IPv6 (start IPv6 w 0 ms → OK w 30 ms)."
+    },
+    {
+      "prompt": "Jaki syntetyczny adres AAAA zwróci DNS64 (prefiks 64:ff9b::/96) dla serwera z adresem 140.82.121.4?",
+      "hint": "Ostatnie 32 bity = adres IPv4 w hex.",
+      "solution": "64:ff9b::8c52:7904 (ostatnie 32 bity: 140.82.121.4 w zapisie szesnastkowym)."
+    },
+    {
+      "prompt": "Jaki syntetyczny adres AAAA zwróci DNS64 (prefiks 64:ff9b::/96) dla serwera z adresem 203.0.113.5?",
+      "hint": "Ostatnie 32 bity = adres IPv4 w hex.",
+      "solution": "64:ff9b::cb00:7105 (ostatnie 32 bity: 203.0.113.5 w zapisie szesnastkowym)."
+    },
+    {
+      "prompt": "Klient w sieci IPv6-only łączy się z adresem 64:ff9b::cb00:7105. Jaki serwer IPv4 jest po drugiej stronie translatora NAT64?",
+      "hint": "Ostatnie 32 bity adresu to IPv4.",
+      "solution": "203.0.113.5 — DNS64 zsyntetyzował ten AAAA z rekordu A, a NAT64 przetłumaczy ruch na IPv4 do 203.0.113.5."
+    },
+    {
+      "prompt": "Klient w sieci IPv6-only łączy się z adresem 64:ff9b::808:808. Jaki serwer IPv4 jest po drugiej stronie translatora NAT64?",
+      "hint": "Ostatnie 32 bity adresu to IPv4.",
+      "solution": "8.8.8.8 — DNS64 zsyntetyzował ten AAAA z rekordu A, a NAT64 przetłumaczy ruch na IPv4 do 8.8.8.8."
+    },
+    {
+      "prompt": "Klient w sieci IPv6-only łączy się z adresem 64:ff9b::c000:221. Jaki serwer IPv4 jest po drugiej stronie translatora NAT64?",
+      "hint": "Ostatnie 32 bity adresu to IPv4.",
+      "solution": "192.0.2.33 — DNS64 zsyntetyzował ten AAAA z rekordu A, a NAT64 przetłumaczy ruch na IPv4 do 192.0.2.33."
+    },
+    {
+      "prompt": "Wykonaj Failure Lab z planu: odtwórz zepsuty IPv6 przy działającym AAAA, zmierz czas połączenia curl i klienta Java (preferIPv6Addresses=true/false/system) i zastosuj naprawę.",
+      "hint": "Namespace „dead” jako blackhole, /etc/hosts z A i AAAA.",
+      "solution": "Pomiary: curl -6 → timeout po connect-timeout; curl (auto) → ~0,2 s przez IPv4 (Happy Eyeballs); Java InetSocketAddress z preferIPv6Addresses=true → ~10 s i SocketTimeoutException (pierwszy adres to IPv6, brak kolejnych prób); false → kilka ms (IPv4 pierwszy); system → jak getent ahosts (IPv6 pierwszy) → ~10 s. Naprawy: usunięcie AAAA lub naprawa IPv6 (najlepsze), klient Happy Eyeballs (~250 ms), krótki timeout + pętla po getAllByName, obejście preferIPv6Addresses=false."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego przy szybkim błędzie IPv6 (ICMPv6 unreachable lub RST) nawet klient sekwencyjny działa dobrze, a przy „ciszy” — źle.",
+      "hint": "Natychmiastowy błąd vs timeout.",
+      "solution": "Szybki błąd (ICMPv6 Destination Unreachable, RST) zwraca do aplikacji wyjątek po kilku milisekundach, więc klient od razu próbuje kolejnego adresu (IPv4) — opóźnienie pomijalne. Cisza (firewall DROP, zepsuty router, brak trasy powrotnej) oznacza, że SYN ginie bez odpowiedzi; klient czeka cały connectTimeout (lub systemowe retransmisje SYN: na Linuksie ~127 s domyślnie), zanim uzna próbę za nieudaną. Dlatego REJECT zamiast DROP w sieci wewnętrznej i krótkie timeouty w klientach."
+    },
+    {
+      "prompt": "Porównaj java.net.preferIPv6Addresses=false, true i system — kiedy którego użyć?",
+      "hint": "Kolejność adresów z resolvera.",
+      "solution": "false (domyślne): IPv4 pierwsze — bezpieczne przy niepewnym IPv6, ale nie korzysta z IPv6 nawet gdy lepsze; true: IPv6 pierwsze — tylko gdy IPv6 jest pewne i monitorowane; system (JDK 9+): kolejność jak w systemie (RFC 6724/gai.conf) — spójne zachowanie z innymi programami, polecane, gdy sieć dual-stack działa poprawnie. Żadne nie zastępuje Happy Eyeballs ani naprawy sieci."
+    },
+    {
+      "prompt": "Twoja aplikacja ma w konfiguracji adres bazy jdbc:postgresql://10.20.112.10:5432/app i zostaje przeniesiona do podsieci IPv6-only w AWS z DNS64/NAT64. Co się stanie i jak to naprawić?",
+      "hint": "Literały IPv4, DNS64.",
+      "solution": "Połączenie się nie uda: host nie ma IPv4, a literału IPv4 nie da się przetłumaczyć przez DNS64 (nie ma zapytania DNS do syntetyzowania). Naprawa: użyć nazwy DNS bazy (np. endpointu RDS) — DNS64 zsyntetyzuje AAAA w prefiksie NAT64 lub zwróci natywny AAAA, jeśli baza ma IPv6; albo dać bazie adres IPv6 (dual-stack RDS); unikać literałów IPv4 w konfiguracji."
+    },
+    {
+      "prompt": "Wyjaśnij działanie 464XLAT i dlaczego dzięki niemu aplikacje mobilne z literałami IPv4 działają w sieciach IPv6-only.",
+      "hint": "CLAT + PLAT.",
+      "solution": "Urządzenie (Android, iOS) uruchamia CLAT: lokalny interfejs z adresem IPv4 (np. 192.0.0.4) i trasą domyślną IPv4 do niego; pakiety IPv4 aplikacji są bezstanowo tłumaczone na IPv6 (z prefiksem NAT64 wykrytym przez RFC 7050 — zapytanie o ipv4only.arpa) i wysyłane w sieć IPv6-only do PLAT (NAT64 operatora), który tłumaczy je na IPv4. Aplikacja z literałem IPv4 lub gniazdem IPv4 widzi „normalne” IPv4."
+    },
+    {
+      "prompt": "Jak wykryć i zablokować tunele IPv6 (6to4, Teredo, 6in4) w sieci firmowej?",
+      "hint": "Protokół 41, UDP 3544, prefiksy.",
+      "solution": "Wykrywanie: ruch IP z protokołem 41 (6in4/6to4/ISATAP) i UDP na port 3544 (Teredo) w logach firewalla/NetFlow/Zeek; zapytania DNS o teredo.ipv6.microsoft.com; ruch do 2001::/32 (Teredo) i 2002::/16 (6to4). Blokada: odrzucanie protokołu 41 i UDP 3544 na brzegu (poza zatwierdzonymi tunelami), wyłączenie Teredo/6to4/ISATAP w Windows przez GPO (netsh interface teredo set state disabled), zapewnienie natywnego IPv6 tam, gdzie potrzebne."
+    },
+    {
+      "prompt": "Skonfiguruj Prometheus blackbox exporter do osobnego monitorowania dostępności usługi po IPv4 i IPv6.",
+      "hint": "preferred_ip_protocol, ip_protocol_fallback.",
+      "solution": "Moduły: http_2xx_v4: prober http, http: { preferred_ip_protocol: ip4, ip_protocol_fallback: false } oraz http_2xx_v6: { preferred_ip_protocol: ip6, ip_protocol_fallback: false }. Dwa zadania scrape z tym samym celem i różnymi modułami; alarmy osobno dla probe_success{module=\"http_2xx_v6\"} == 0 — wykrywa sytuację „AAAA jest, IPv6 nie działa”, której nie widać w monitoringu z fallbackiem."
+    },
+    {
+      "prompt": "Dlaczego po usunięciu błędnego rekordu AAAA aplikacja Java może jeszcze przez jakiś czas łączyć się po IPv6? Jak to kontrolować?",
+      "hint": "Cache DNS JVM i resolvera.",
+      "solution": "JVM trzyma wyniki rozwiązywania nazw w cache (networkaddress.cache.ttl, domyślnie 30 s bez SecurityManagera; w starszych konfiguracjach z SecurityManagerem — na zawsze), a do tego resolver systemowy (nscd, systemd-resolved) i serwery DNS trzymają rekord przez jego TTL. Kontrola: ustawić rozsądny networkaddress.cache.ttl (np. 30–60 s) w java.security lub Security.setProperty na starcie, krótkie TTL rekordów przed planowanymi zmianami, restart aplikacji przy pilnych naprawach."
+    },
+    {
+      "prompt": "Kubernetes dual-stack: pod ma adresy IPv4 i IPv6, ale połączenia do Service po IPv6 nie działają. Co sprawdzisz?",
+      "hint": "ipFamilies, ipFamilyPolicy, kube-proxy, CNI.",
+      "solution": "Czy Service ma ipFamilyPolicy PreferDualStack/RequireDualStack i ipFamilies [IPv4, IPv6] (domyślnie SingleStack — tylko jedna rodzina, ClusterIP IPv4); kubectl get svc -o yaml (clusterIPs). Czy kube-proxy/CNI obsługują IPv6 (tryb dual-stack, reguły ip6tables/IPVS/eBPF), czy węzły mają trasy IPv6 do podsieci podów, czy NetworkPolicy dopuszczają IPv6, czy aplikacja słucha na [::] (nie tylko 0.0.0.0)."
+    },
+    {
+      "prompt": "Dlaczego Happy Eyeballs ustawia opóźnienie 250 ms, a nie 0 ms (równoległe próby od razu)?",
+      "hint": "Preferencja IPv6, obciążenie.",
+      "solution": "Gdyby oba połączenia startowały jednocześnie, IPv4 często wygrywałby o milisekundy (mniej narzutu, inne ścieżki), więc IPv6 byłby rzadko używany mimo działania — a celem jest preferowanie IPv6. Do tego podwojenie liczby połączeń obciąża serwery i NAT-y. 250 ms (RFC 8305: zalecane 250, dopuszczalne 100–2000) to kompromis: niewidoczne dla użytkownika opóźnienie przy awarii, a w normalnej sytuacji IPv6 zdąży nawiązać połączenie pierwszy."
+    },
+    {
+      "prompt": "Wyjaśnij, jak system wybiera adres źródłowy IPv6 (RFC 6724), gdy interfejs ma adres tymczasowy, stabilny GUA i ULA, a cel jest w Internecie.",
+      "hint": "Zakres, temporary, longest match.",
+      "solution": "Dla celu GUA: adres ULA ma niepasujący zakres/etykietę i niższą preferencję, więc wybierany jest GUA; spośród GUA reguła „prefer temporary addresses” (jeśli use_tempaddr=2) wskazuje adres tymczasowy — prywatność połączeń wychodzących. Dla celu w ULA tej samej organizacji wybrany zostanie adres ULA (zgodna etykieta i najdłuższy wspólny prefiks)."
+    },
+    {
+      "prompt": "Twój load balancer ma rekord AAAA, ale grupa docelowa nie obsługuje IPv6 i LB nie ma listenera IPv6. Jakie objawy zobaczą klienci i jak to wykryć przed użytkownikami?",
+      "hint": "Rekord bez usługi.",
+      "solution": "Klienci z IPv6 (mobilni, domowi) próbują najpierw IPv6: przeglądarki po ~250 ms przechodzą na IPv4 (niewielkie opóźnienie), klienci bez Happy Eyeballs (aplikacje serwerowe, IoT, starsze SDK) czekają do timeoutu lub kończą się błędem. Wykrywanie: monitoring syntetyczny osobno po IPv6 (curl -6, blackbox ip6 bez fallbacku), testy po każdej zmianie DNS, alarm na różnicę dostępności v4/v6. Naprawa: włączyć IPv6 end-to-end albo usunąć AAAA."
+    },
+    {
+      "prompt": "Napisz w Javie prosty fallback bez wątków: pętla po InetAddress.getAllByName z krótkim timeoutem na każdy adres. Jaka jest jego wada w porównaniu z Happy Eyeballs?",
+      "hint": "Sekwencyjnie, timeout per adres.",
+      "solution": "for (InetAddress a : InetAddress.getAllByName(host)) { try { Socket s = new Socket(); s.connect(new InetSocketAddress(a, port), 2000); return s; } catch (IOException e) { last = e; } } throw last; — działa przy każdym martwym adresie, ale każdy blackhole kosztuje pełne 2 s (dwa martwe IPv6 = 4 s), a zbyt krótki timeout może zrywać poprawne, ale wolne połączenia (daleki serwer). Happy Eyeballs traci tylko ~250 ms i nie przerywa wolnej, ale działającej próby."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego zapytania A i AAAA powinny być wysyłane równolegle i co się dzieje, gdy serwer DNS nie odpowiada na AAAA.",
+      "hint": "RFC 8305 §3, czekanie na DNS.",
+      "solution": "Sekwencyjne zapytania (najpierw AAAA, potem A) wydłużają rozwiązywanie nazwy; gdy serwer DNS (lub firewall) gubi zapytania AAAA, klient czeka timeout resolvera (np. 5 s), zanim zapyta o A. Happy Eyeballs v2 wysyła oba zapytania równolegle i — jeśli A przyjdzie pierwsze — czeka najwyżej 50 ms (Resolution Delay) na AAAA, po czym startuje połączenie IPv4. W glibc pomaga opcja single-request lub poprawa DNS."
+    },
+    {
+      "prompt": "Opisz, jak Windows i Linux pozwalają zmienić preferencję IPv4 nad IPv6 bez wyłączania IPv6, i dlaczego to tylko obejście.",
+      "hint": "gai.conf, prefixpolicies.",
+      "solution": "Linux: /etc/gai.conf — precedence ::ffff:0:0/96 100 (podnosi priorytet adresów IPv4-mapped ponad ::/0 40) — wpływa na getaddrinfo (i Javę z preferIPv6Addresses=system). Windows: netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 precedence=60 label=4 lub rejestr DisabledComponents=0x20 („prefer IPv4 over IPv6”). Obejście, bo maskuje problem z IPv6 tylko na tym hoście; inni klienci nadal cierpią, a w IPv6-only nic nie zmienia."
+    },
+    {
+      "prompt": "Jakie testy warto dodać do CI aplikacji Java, by wcześnie wykryć problemy z dual-stack i IPv6-only?",
+      "hint": "Testcontainers/Docker z siecią IPv6.",
+      "solution": "1) Test integracyjny w sieci Dockera tylko IPv6 (docker network create --ipv6 --subnet fd00:… --ipv4=false, Docker 27+): aplikacja startuje i łączy się z zależnościami po nazwach. 2) Test, że aplikacja słucha na [::] (połączenie przez ::1). 3) Test klienta z rekordem AAAA wskazującym blackhole i A działającym — czas połączenia < 1 s (Happy Eyeballs/fallback). 4) Skan konfiguracji pod kątem literałów IPv4 (regex w application*.yml). 5) Logowanie adresów w formacie obsługującym IPv6."
+    },
+    {
+      "prompt": "Dlaczego allow-lista po adresach IP w aplikacji dual-stack musi zawierać wpisy IPv4 i IPv6 partnera? Co się stanie, gdy partner włączy IPv6?",
+      "hint": "Klient może przyjść innym protokołem.",
+      "solution": "Klient partnera z dual-stack i Happy Eyeballs zacznie łączyć się po IPv6, gdy tylko Twoja usługa ma AAAA i działający IPv6 — z adresu, którego nie ma na allow-liście (lista zawierała tylko jego IPv4). Skutek: nagłe odrzucenia po zmianie po stronie partnera lub Twojego DNS. Allow-lista musi obejmować prefiksy IPv4 i IPv6 (najlepiej prefiksy, nie pojedyncze adresy IPv6), a uwierzytelnianie nie powinno opierać się wyłącznie na IP (mTLS, tokeny)."
+    },
+    {
+      "prompt": "W sieci IPv6-only klient pyta o ipv4only.arpa. Po co?",
+      "hint": "RFC 7050, wykrywanie prefiksu NAT64.",
+      "solution": "Nazwa ipv4only.arpa ma wyłącznie rekordy A (192.0.0.170 i 192.0.0.171). Jeśli resolver zwraca dla niej AAAA, to znaczy, że działa DNS64 — a ostatnie 32 bity zwróconego adresu pozwalają klientowi ustalić używany prefiks NAT64 (np. 64:ff9b::/96 lub prefiks operatora). Korzysta z tego CLAT (464XLAT) i aplikacje, które same syntetyzują adresy IPv6 dla literałów IPv4 (np. Apple, przy walidacji DNSSEC)."
+    },
+    {
+      "prompt": "Jak zachowa się pula połączeń HikariCP z connectionTimeout=30000 przy zepsutym IPv6 i bazie z rekordami A i AAAA, gdy sterownik łączy się z pierwszym adresem (IPv6)?",
+      "hint": "Wątki czekają, kaskada.",
+      "solution": "Każda próba otwarcia nowego połączenia (start aplikacji, odnawianie po maxLifetime, wzrost ruchu) czeka do timeoutu sterownika/HikariCP — wątki żądań czekające na połączenie z puli również czekają do 30 s, rośnie liczba wiszących żądań, health checki padają, orkiestrator restartuje pody — kaskada. Naprawa: działające IPv6 lub brak AAAA, krótki connectionTimeout (np. 3 s) i connectTimeout w URL JDBC, fabryka gniazd z fallbackiem po wszystkich adresach (Happy Eyeballs) tam, gdzie sterownik na to pozwala (np. własny SocketFactory w pgjdbc), monitoring czasu pozyskania połączenia (hikaricp_connections_acquire)."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Adresy w kolejności: IPv6 działa (RTT 30 ms), IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "10000 ms",
+        "B": "30 ms",
+        "C": "60 ms",
+        "D": "280 ms"
+      },
+      "correct": "B",
+      "explanation": "IPv6 OK po 30 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 działa (RTT 30 ms), IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 30000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "30 ms",
+        "B": "280 ms",
+        "C": "60 ms",
+        "D": "30000 ms"
+      },
+      "correct": "A",
+      "explanation": "IPv6 OK po 30 ms"
+    },
+    {
+      "question": "Adresy: IPv6 działa (RTT 30 ms), IPv4 działa (RTT 28 ms). Ile potrwa nawiązanie połączenia z Happy Eyeballs v2 (opóźnienie 250 ms)?",
+      "options": {
+        "A": "280 ms",
+        "B": "0 ms",
+        "C": "30 ms",
+        "D": "10030 ms"
+      },
+      "correct": "C",
+      "explanation": "start IPv6 w 0 ms → OK w 30 ms"
+    },
+    {
+      "question": "Adresy: IPv6 działa (RTT 30 ms), IPv4 działa (RTT 28 ms). Którą rodziną zostanie zestawione połączenie przy Happy Eyeballs v2?",
+      "options": {
+        "A": "IPv4",
+        "B": "żadną — błąd",
+        "C": "oboma jednocześnie (dwa połączenia)",
+        "D": "IPv6"
+      },
+      "correct": "D",
+      "explanation": "start IPv6 w 0 ms → OK w 30 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 blackhole, IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "10028 ms",
+        "B": "30 ms",
+        "C": "10000 ms",
+        "D": "10278 ms"
+      },
+      "correct": "A",
+      "explanation": "IPv6 brak odpowiedzi → timeout 10000 ms; IPv4 OK po 28 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 blackhole, IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 30000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "30278 ms",
+        "B": "30000 ms",
+        "C": "30 ms",
+        "D": "30028 ms"
+      },
+      "correct": "D",
+      "explanation": "IPv6 brak odpowiedzi → timeout 30000 ms; IPv4 OK po 28 ms"
+    },
+    {
+      "question": "Adresy: IPv6 blackhole, IPv4 działa (RTT 28 ms). Ile potrwa nawiązanie połączenia z Happy Eyeballs v2 (opóźnienie 250 ms)?",
+      "options": {
+        "A": "528 ms",
+        "B": "278 ms",
+        "C": "10028 ms",
+        "D": "10278 ms"
+      },
+      "correct": "B",
+      "explanation": "start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms"
+    },
+    {
+      "question": "Adresy: IPv6 blackhole, IPv4 działa (RTT 28 ms). Którą rodziną zostanie zestawione połączenie przy Happy Eyeballs v2?",
+      "options": {
+        "A": "IPv6",
+        "B": "żadną — błąd",
+        "C": "IPv4",
+        "D": "oboma jednocześnie (dwa połączenia)"
+      },
+      "correct": "C",
+      "explanation": "start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 szybki błąd, IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "30 ms",
+        "B": "280 ms",
+        "C": "10000 ms",
+        "D": "60 ms"
+      },
+      "correct": "A",
+      "explanation": "IPv6 natychmiastowy błąd (unreachable) po 2 ms; IPv4 OK po 28 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 szybki błąd, IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 30000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "30000 ms",
+        "B": "280 ms",
+        "C": "30 ms",
+        "D": "60 ms"
+      },
+      "correct": "C",
+      "explanation": "IPv6 natychmiastowy błąd (unreachable) po 2 ms; IPv4 OK po 28 ms"
+    },
+    {
+      "question": "Adresy: IPv6 szybki błąd, IPv4 działa (RTT 28 ms). Ile potrwa nawiązanie połączenia z Happy Eyeballs v2 (opóźnienie 250 ms)?",
+      "options": {
+        "A": "280 ms",
+        "B": "10030 ms",
+        "C": "0 ms",
+        "D": "30 ms"
+      },
+      "correct": "D",
+      "explanation": "start IPv6 w 0 ms → błąd po 2 ms (kolejna próba od razu); start IPv4 w 2 ms → OK w 30 ms"
+    },
+    {
+      "question": "Adresy: IPv6 szybki błąd, IPv4 działa (RTT 28 ms). Którą rodziną zostanie zestawione połączenie przy Happy Eyeballs v2?",
+      "options": {
+        "A": "oboma jednocześnie (dwa połączenia)",
+        "B": "IPv4",
+        "C": "żadną — błąd",
+        "D": "IPv6"
+      },
+      "correct": "B",
+      "explanation": "start IPv6 w 0 ms → błąd po 2 ms (kolejna próba od razu); start IPv4 w 2 ms → OK w 30 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 działa (RTT 400 ms), IPv4 działa (RTT 30 ms). Klient sekwencyjny, connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "400 ms",
+        "B": "10000 ms",
+        "C": "650 ms",
+        "D": "30 ms"
+      },
+      "correct": "A",
+      "explanation": "IPv6 OK po 400 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 działa (RTT 400 ms), IPv4 działa (RTT 30 ms). Klient sekwencyjny, connectTimeout 30000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "30000 ms",
+        "B": "30 ms",
+        "C": "400 ms",
+        "D": "650 ms"
+      },
+      "correct": "C",
+      "explanation": "IPv6 OK po 400 ms"
+    },
+    {
+      "question": "Adresy: IPv6 działa (RTT 400 ms), IPv4 działa (RTT 30 ms). Ile potrwa nawiązanie połączenia z Happy Eyeballs v2 (opóźnienie 250 ms)?",
+      "options": {
+        "A": "530 ms",
+        "B": "400 ms",
+        "C": "10280 ms",
+        "D": "280 ms"
+      },
+      "correct": "D",
+      "explanation": "start IPv6 w 0 ms → OK w 400 ms; start IPv4 w 250 ms → OK w 280 ms"
+    },
+    {
+      "question": "Adresy: IPv6 działa (RTT 400 ms), IPv4 działa (RTT 30 ms). Którą rodziną zostanie zestawione połączenie przy Happy Eyeballs v2?",
+      "options": {
+        "A": "oboma jednocześnie (dwa połączenia)",
+        "B": "IPv4",
+        "C": "IPv6",
+        "D": "żadną — błąd"
+      },
+      "correct": "B",
+      "explanation": "start IPv6 w 0 ms → OK w 400 ms; start IPv4 w 250 ms → OK w 280 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 blackhole, IPv6 blackhole, IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 10000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "10000 ms",
+        "B": "10028 ms",
+        "C": "20278 ms",
+        "D": "20028 ms"
+      },
+      "correct": "D",
+      "explanation": "IPv6 brak odpowiedzi → timeout 10000 ms; IPv6 brak odpowiedzi → timeout 10000 ms; IPv4 OK po 28 ms"
+    },
+    {
+      "question": "Adresy w kolejności: IPv6 blackhole, IPv6 blackhole, IPv4 działa (RTT 28 ms). Klient sekwencyjny, connectTimeout 30000 ms. Ile potrwa nawiązanie połączenia?",
+      "options": {
+        "A": "60278 ms",
+        "B": "60028 ms",
+        "C": "30028 ms",
+        "D": "30000 ms"
+      },
+      "correct": "B",
+      "explanation": "IPv6 brak odpowiedzi → timeout 30000 ms; IPv6 brak odpowiedzi → timeout 30000 ms; IPv4 OK po 28 ms"
+    },
+    {
+      "question": "Adresy: IPv6 blackhole, IPv6 blackhole, IPv4 działa (RTT 28 ms). Ile potrwa nawiązanie połączenia z Happy Eyeballs v2 (opóźnienie 250 ms)?",
+      "options": {
+        "A": "20028 ms",
+        "B": "10278 ms",
+        "C": "278 ms",
+        "D": "528 ms"
+      },
+      "correct": "C",
+      "explanation": "start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms"
+    },
+    {
+      "question": "Adresy: IPv6 blackhole, IPv6 blackhole, IPv4 działa (RTT 28 ms). Którą rodziną zostanie zestawione połączenie przy Happy Eyeballs v2?",
+      "options": {
+        "A": "IPv4",
+        "B": "oboma jednocześnie (dwa połączenia)",
+        "C": "IPv6",
+        "D": "żadną — błąd"
+      },
+      "correct": "A",
+      "explanation": "start IPv6 w 0 ms → brak odpowiedzi (kolejna próba po 250 ms); start IPv4 w 250 ms → OK w 278 ms"
+    },
+    {
+      "question": "Jaki adres AAAA zsyntetyzuje DNS64 (64:ff9b::/96) dla 140.82.121.4?",
+      "options": {
+        "A": "::ffff:140.82.121.4",
+        "B": "2001:db8::8c52:7904",
+        "C": "64:ff9b::8c52:7904",
+        "D": "64:ff9b::140:82:121:4"
+      },
+      "correct": "C",
+      "explanation": "Ostatnie 32 bity = IPv4 w hex."
+    },
+    {
+      "question": "Jaki adres AAAA zsyntetyzuje DNS64 (64:ff9b::/96) dla 192.0.2.33?",
+      "options": {
+        "A": "64:ff9b::c000:221",
+        "B": "2001:db8::c000:221",
+        "C": "::ffff:192.0.2.33",
+        "D": "64:ff9b::192:0:2:33"
+      },
+      "correct": "A",
+      "explanation": "Ostatnie 32 bity = IPv4 w hex."
+    },
+    {
+      "question": "Jaki adres AAAA zsyntetyzuje DNS64 (64:ff9b::/96) dla 8.8.8.8?",
+      "options": {
+        "A": "2001:db8::808:808",
+        "B": "::ffff:8.8.8.8",
+        "C": "64:ff9b::8:8:8:8",
+        "D": "64:ff9b::808:808"
+      },
+      "correct": "D",
+      "explanation": "Ostatnie 32 bity = IPv4 w hex."
+    },
+    {
+      "question": "Jaki adres AAAA zsyntetyzuje DNS64 (64:ff9b::/96) dla 203.0.113.5?",
+      "options": {
+        "A": "2001:db8::cb00:7105",
+        "B": "64:ff9b::cb00:7105",
+        "C": "::ffff:203.0.113.5",
+        "D": "64:ff9b::203:0:113:5"
+      },
+      "correct": "B",
+      "explanation": "Ostatnie 32 bity = IPv4 w hex."
+    },
+    {
+      "question": "Jaki adres AAAA zsyntetyzuje DNS64 (64:ff9b::/96) dla 1.1.1.1?",
+      "options": {
+        "A": "2001:db8::101:101",
+        "B": "64:ff9b::1:1:1:1",
+        "C": "64:ff9b::101:101",
+        "D": "::ffff:1.1.1.1"
+      },
+      "correct": "C",
+      "explanation": "Ostatnie 32 bity = IPv4 w hex."
+    },
+    {
+      "question": "Jaki adres IPv4 kryje się w adresie NAT64 64:ff9b::c000:221?",
+      "options": {
+        "A": "192.0.2.33",
+        "B": "192.0.0.0",
+        "C": "193.1.3.34",
+        "D": "33.2.0.192"
+      },
+      "correct": "A",
+      "explanation": "Ostatnie 32 bity."
+    },
+    {
+      "question": "Jaki adres IPv4 kryje się w adresie NAT64 64:ff9b::808:808?",
+      "options": {
+        "A": "64.255.155.0",
+        "B": "8.8.0.0",
+        "C": "9.9.9.9",
+        "D": "8.8.8.8"
+      },
+      "correct": "D",
+      "explanation": "Ostatnie 32 bity."
+    },
+    {
+      "question": "Jaki adres IPv4 kryje się w adresie NAT64 64:ff9b::8c52:7904?",
+      "options": {
+        "A": "4.121.82.140",
+        "B": "140.82.121.4",
+        "C": "141.83.122.5",
+        "D": "140.82.0.0"
+      },
+      "correct": "B",
+      "explanation": "Ostatnie 32 bity."
+    },
+    {
+      "question": "Jaki adres IPv4 kryje się w adresie NAT64 64:ff9b::cb00:7105?",
+      "options": {
+        "A": "203.0.113.5",
+        "B": "204.1.114.6",
+        "C": "203.0.0.0",
+        "D": "5.113.0.203"
+      },
+      "correct": "A",
+      "explanation": "Ostatnie 32 bity."
+    },
+    {
+      "question": "Jaki adres IPv4 kryje się w adresie NAT64 64:ff9b::a00:1?",
+      "options": {
+        "A": "10.0.0.0",
+        "B": "11.1.1.2",
+        "C": "10.0.0.1",
+        "D": "1.0.0.10"
+      },
+      "correct": "C",
+      "explanation": "Ostatnie 32 bity."
+    },
+    {
+      "question": "Co oznacza dual-stack?",
+      "options": {
+        "A": "Dwa routery w parze",
+        "B": "Tunel IPv6 w IPv4",
+        "C": "Dwa stosy TCP w JVM",
+        "D": "Jednoczesne działanie IPv4 i IPv6 na hostach i w sieci"
+      },
+      "correct": "D",
+      "explanation": "A i AAAA."
+    },
+    {
+      "question": "Jaki rekord DNS zawiera adres IPv6?",
+      "options": {
+        "A": "A",
+        "B": "AAAA",
+        "C": "CNAME",
+        "D": "PTR"
+      },
+      "correct": "B",
+      "explanation": "A — IPv4."
+    },
+    {
+      "question": "Który RFC opisuje wybór adresu źródłowego i docelowego?",
+      "options": {
+        "A": "RFC 6146",
+        "B": "RFC 1918",
+        "C": "RFC 6724",
+        "D": "RFC 8305"
+      },
+      "correct": "C",
+      "explanation": "Default Address Selection."
+    },
+    {
+      "question": "Który RFC opisuje Happy Eyeballs v2?",
+      "options": {
+        "A": "RFC 8305",
+        "B": "RFC 4193",
+        "C": "RFC 6724",
+        "D": "RFC 6052"
+      },
+      "correct": "A",
+      "explanation": "Następca RFC 6555."
+    },
+    {
+      "question": "Jakie jest zalecane opóźnienie między próbami połączeń w Happy Eyeballs v2?",
+      "options": {
+        "A": "10 ms",
+        "B": "250 ms",
+        "C": "2 s",
+        "D": "30 s"
+      },
+      "correct": "B",
+      "explanation": "Connection Attempt Delay."
+    },
+    {
+      "question": "Jak Happy Eyeballs v2 porządkuje adresy?",
+      "options": {
+        "A": "Losowo",
+        "B": "Najpierw wszystkie IPv4",
+        "C": "Najpierw wszystkie IPv6, potem IPv4",
+        "D": "Przeplata rodziny: IPv6, IPv4, IPv6…"
+      },
+      "correct": "D",
+      "explanation": "Odporność na wiele martwych adresów."
+    },
+    {
+      "question": "Co robi Happy Eyeballs, gdy próba IPv6 szybko zwróci błąd?",
+      "options": {
+        "A": "Czeka 250 ms",
+        "B": "Ponawia IPv6",
+        "C": "Kończy z błędem",
+        "D": "Od razu startuje kolejną próbę"
+      },
+      "correct": "D",
+      "explanation": "Bez czekania."
+    },
+    {
+      "question": "Czy klasyczne klienty JDK (Socket, HttpURLConnection) implementują Happy Eyeballs?",
+      "options": {
+        "A": "Nie — łączą się z pierwszym adresem z resolvera",
+        "B": "Tylko w trybie debug",
+        "C": "Tak, zawsze",
+        "D": "Tak, od Java 8"
+      },
+      "correct": "A",
+      "explanation": "Fallback trzeba dodać samemu lub użyć biblioteki."
+    },
+    {
+      "question": "Którą bibliotekę HTTP dla JVM wymieniono jako mającą fast fallback (Happy Eyeballs)?",
+      "options": {
+        "A": "Log4j",
+        "B": "Jackson",
+        "C": "OkHttp 5",
+        "D": "Apache Commons IO"
+      },
+      "correct": "C",
+      "explanation": "fastFallback."
+    },
+    {
+      "question": "Jaka jest domyślna wartość java.net.preferIPv6Addresses?",
+      "options": {
+        "A": "system",
+        "B": "false (najpierw IPv4)",
+        "C": "auto",
+        "D": "true"
+      },
+      "correct": "B",
+      "explanation": "Od JDK 9 dostępne system."
+    },
+    {
+      "question": "Co robi java.net.preferIPv6Addresses=system?",
+      "options": {
+        "A": "Wyłącza IPv6",
+        "B": "Losuje kolejność",
+        "C": "Wymusza IPv6",
+        "D": "Używa kolejności adresów z systemu operacyjnego"
+      },
+      "correct": "D",
+      "explanation": "Spójnie z OS."
+    },
+    {
+      "question": "Co robi -Djava.net.preferIPv4Stack=true?",
+      "options": {
+        "A": "JVM używa wyłącznie gniazd IPv4",
+        "B": "Wyłącza DNS",
+        "C": "Preferuje IPv4, ale używa IPv6",
+        "D": "Włącza NAT64"
+      },
+      "correct": "A",
+      "explanation": "Brak IPv6 w aplikacji."
+    },
+    {
+      "question": "Jaka właściwość steruje czasem cache udanych rozwiązań DNS w JVM?",
+      "options": {
+        "A": "java.net.dns.ttl",
+        "B": "dns.cache.seconds",
+        "C": "networkaddress.cache.ttl",
+        "D": "sun.net.inetaddr.cache"
+      },
+      "correct": "C",
+      "explanation": "W java.security."
+    },
+    {
+      "question": "Jaki jest domyślny czas cache negatywnych odpowiedzi DNS w JVM?",
+      "options": {
+        "A": "Na zawsze",
+        "B": "10 s",
+        "C": "1 godzina",
+        "D": "0 s"
+      },
+      "correct": "B",
+      "explanation": "networkaddress.cache.negative.ttl."
+    },
+    {
+      "question": "Co bierze InetSocketAddress(host, port) przy wielu adresach?",
+      "options": {
+        "A": "Wszystkie po kolei",
+        "B": "Ostatni",
+        "C": "Losowy",
+        "D": "Pierwszy adres zwrócony przez resolver"
+      },
+      "correct": "D",
+      "explanation": "Brak fallbacku."
+    },
+    {
+      "question": "Dlaczego „cisza” (blackhole) IPv6 jest gorsza niż szybki błąd?",
+      "options": {
+        "A": "Klient czeka do timeoutu, zanim spróbuje IPv4",
+        "B": "Bo blokuje IPv4",
+        "C": "Bo zmienia MTU",
+        "D": "Bo psuje DNS"
+      },
+      "correct": "A",
+      "explanation": "Timeout."
+    },
+    {
+      "question": "Ile trwa domyślnie na Linuksie łączenie TCP bez odpowiedzi (6 retransmisji SYN)?",
+      "options": {
+        "A": "1 s",
+        "B": "Około 127 s",
+        "C": "10 minut",
+        "D": "3 s"
+      },
+      "correct": "B",
+      "explanation": "tcp_syn_retries=6."
+    },
+    {
+      "question": "Jaka precedence ma ::/0 (IPv6) w domyślnej tabeli RFC 6724?",
+      "options": {
+        "A": "35",
+        "B": "3",
+        "C": "40",
+        "D": "50"
+      },
+      "correct": "C",
+      "explanation": "IPv4-mapped 35."
+    },
+    {
+      "question": "Jaka precedence ma ::ffff:0:0/96 (IPv4) w RFC 6724?",
+      "options": {
+        "A": "50",
+        "B": "40",
+        "C": "35",
+        "D": "1"
+      },
+      "correct": "C",
+      "explanation": "Niższa niż IPv6."
+    },
+    {
+      "question": "Dlaczego adres docelowy ULA jest zwykle mniej preferowany niż IPv4?",
+      "options": {
+        "A": "Bo wymaga NAT",
+        "B": "Bo jest dłuższy",
+        "C": "Bo nie działa w Internecie",
+        "D": "Ma precedence 3, niższą niż IPv4 (35)"
+      },
+      "correct": "D",
+      "explanation": "RFC 6724."
+    },
+    {
+      "question": "Gdzie w Linuksie zmienia się politykę wyboru adresów getaddrinfo?",
+      "options": {
+        "A": "/etc/gai.conf",
+        "B": "/etc/hosts",
+        "C": "/etc/nsswitch.conf",
+        "D": "/etc/resolv.conf"
+      },
+      "correct": "A",
+      "explanation": "precedence."
+    },
+    {
+      "question": "Jak w Windows zobaczyć tabelę polityki prefiksów?",
+      "options": {
+        "A": "ipconfig /prefix",
+        "B": "netsh interface ipv6 show prefixpolicies",
+        "C": "route print -6",
+        "D": "Get-DnsClient"
+      },
+      "correct": "B",
+      "explanation": "RFC 6724."
+    },
+    {
+      "question": "Czym jest sieć IPv6-only?",
+      "options": {
+        "A": "Siecią, w której hosty nie mają adresów IPv4",
+        "B": "Siecią bez routera",
+        "C": "Siecią bez DNS",
+        "D": "Siecią z samym link-local"
+      },
+      "correct": "A",
+      "explanation": "IPv4 przez translację."
+    },
+    {
+      "question": "Co robi DNS64?",
+      "options": {
+        "A": "Blokuje AAAA",
+        "B": "Syntetyzuje rekordy AAAA dla nazw mających tylko A",
+        "C": "Szyfruje DNS",
+        "D": "Tłumaczy pakiety"
+      },
+      "correct": "B",
+      "explanation": "RFC 6147."
+    },
+    {
+      "question": "Co robi NAT64?",
+      "options": {
+        "A": "Tłumaczy nazwy DNS",
+        "B": "Szyfruje IPv6",
+        "C": "Przydziela adresy",
+        "D": "Tłumaczy pakiety IPv6 na IPv4 i z powrotem"
+      },
+      "correct": "D",
+      "explanation": "RFC 6146."
+    },
+    {
+      "question": "Jaki jest dobrze znany prefiks NAT64?",
+      "options": {
+        "A": "2002::/16",
+        "B": "2001:db8::/32",
+        "C": "64:ff9b::/96",
+        "D": "fe80::/10"
+      },
+      "correct": "C",
+      "explanation": "RFC 6052."
+    },
+    {
+      "question": "Dlaczego literał IPv4 w aplikacji nie działa w IPv6-only z DNS64/NAT64?",
+      "options": {
+        "A": "Bo NAT64 blokuje literały",
+        "B": "Nie ma zapytania DNS, z którego DNS64 mógłby zsyntetyzować AAAA",
+        "C": "Działa zawsze",
+        "D": "Bo IPv4 jest szyfrowane"
+      },
+      "correct": "B",
+      "explanation": "Potrzebny 464XLAT."
+    },
+    {
+      "question": "Czym jest 464XLAT?",
+      "options": {
+        "A": "Protokół routingu",
+        "B": "Tunel 6to4",
+        "C": "CLAT na urządzeniu + NAT64 u operatora — IPv4 dla aplikacji w sieci IPv6-only",
+        "D": "Typ adresu IPv6"
+      },
+      "correct": "C",
+      "explanation": "RFC 6877."
+    },
+    {
+      "question": "Gdzie 464XLAT jest powszechnie używany?",
+      "options": {
+        "A": "W sieciach komórkowych (Android, iOS)",
+        "B": "W sieciach Wi-Fi gości",
+        "C": "Tylko w laboratoriach",
+        "D": "W centrach danych z IPv4"
+      },
+      "correct": "A",
+      "explanation": "IPv6-only u operatorów."
+    },
+    {
+      "question": "Do czego służy zapytanie o ipv4only.arpa?",
+      "options": {
+        "A": "Do testu IPv4",
+        "B": "Do DNSSEC",
+        "C": "Do rejestracji domeny",
+        "D": "Do wykrycia DNS64 i prefiksu NAT64"
+      },
+      "correct": "D",
+      "explanation": "RFC 7050."
+    },
+    {
+      "question": "Dlaczego DNS64 utrudnia DNSSEC?",
+      "options": {
+        "A": "Zsyntetyzowane AAAA nie mają prawidłowego podpisu",
+        "B": "Nie utrudnia",
+        "C": "Bo zmienia TTL na 0",
+        "D": "Bo wyłącza TCP"
+      },
+      "correct": "A",
+      "explanation": "Klient walidujący syntetyzuje sam."
+    },
+    {
+      "question": "Jaki protokół IP przenosi tunele 6in4 i 6to4?",
+      "options": {
+        "A": "47",
+        "B": "17",
+        "C": "50",
+        "D": "41"
+      },
+      "correct": "D",
+      "explanation": "IPv6 w IPv4."
+    },
+    {
+      "question": "Na jakim porcie działa Teredo?",
+      "options": {
+        "A": "UDP 4789",
+        "B": "TCP 443",
+        "C": "UDP 3544",
+        "D": "UDP 500"
+      },
+      "correct": "C",
+      "explanation": "Przez NAT."
+    },
+    {
+      "question": "Jaki prefiks używa 6to4?",
+      "options": {
+        "A": "2001::/32",
+        "B": "2002::/16",
+        "C": "64:ff9b::/96",
+        "D": "fc00::/7"
+      },
+      "correct": "B",
+      "explanation": "Wycofany."
+    },
+    {
+      "question": "Jaki prefiks używa Teredo?",
+      "options": {
+        "A": "ff00::/8",
+        "B": "2001::/32",
+        "C": "2002::/16",
+        "D": "fe80::/10"
+      },
+      "correct": "B",
+      "explanation": "Wycofany."
+    },
+    {
+      "question": "Dlaczego tunele IPv6 są ryzykiem bezpieczeństwa?",
+      "options": {
+        "A": "Bo zmieniają MAC",
+        "B": "Bo są wolne",
+        "C": "Mogą omijać firewalle i monitoring skonfigurowane tylko dla IPv4",
+        "D": "Bo wymagają hasła"
+      },
+      "correct": "C",
+      "explanation": "Blokuj protokół 41 i UDP 3544."
+    },
+    {
+      "question": "Jak wyłączyć Teredo w Windows?",
+      "options": {
+        "A": "netsh interface teredo set state disabled",
+        "B": "route delete ::/0",
+        "C": "Set-DnsClient -Teredo off",
+        "D": "ipconfig /release6"
+      },
+      "correct": "A",
+      "explanation": "Lub GPO."
+    },
+    {
+      "question": "Co należy zrobić z rekordem AAAA, gdy usługa nie działa po IPv6?",
+      "options": {
+        "A": "Zduplikować",
+        "B": "Zostawić — klienci sobie poradzą",
+        "C": "Zmienić TTL na 0",
+        "D": "Usunąć go do czasu naprawy IPv6"
+      },
+      "correct": "D",
+      "explanation": "AAAA = obietnica działania."
+    },
+    {
+      "question": "Jak monitorować osobno IPv4 i IPv6 w blackbox exporter?",
+      "options": {
+        "A": "Jednym modułem z fallbackiem",
+        "B": "Tylko pingiem",
+        "C": "Nie da się",
+        "D": "Moduły z preferred_ip_protocol ip4/ip6 i bez fallbacku"
+      },
+      "correct": "D",
+      "explanation": "ip_protocol_fallback: false."
+    },
+    {
+      "question": "Czym jest PreferDualStack w Kubernetes?",
+      "options": {
+        "A": "Polityką Service przydzielającą adresy obu rodzin, jeśli klaster wspiera dual-stack",
+        "B": "Typem Ingress",
+        "C": "Trybem DNS",
+        "D": "Rodzajem PersistentVolume"
+      },
+      "correct": "A",
+      "explanation": "ipFamilyPolicy."
+    },
+    {
+      "question": "Jaka jest domyślna ipFamilyPolicy Service w Kubernetes?",
+      "options": {
+        "A": "IPv6Only",
+        "B": "RequireDualStack",
+        "C": "SingleStack",
+        "D": "PreferDualStack"
+      },
+      "correct": "C",
+      "explanation": "Jedna rodzina."
+    },
+    {
+      "question": "Na jakim adresie powinna słuchać aplikacja, by przyjmować IPv4 i IPv6?",
+      "options": {
+        "A": "::1",
+        "B": ":: (gniazdo dual-stack)",
+        "C": "127.0.0.1",
+        "D": "0.0.0.0"
+      },
+      "correct": "B",
+      "explanation": "0.0.0.0 to tylko IPv4."
+    },
+    {
+      "question": "Co oznacza w logach serwera klient z adresem 64:ff9b::c000:221?",
+      "options": {
+        "A": "Klient link-local",
+        "B": "Atak spoofingu",
+        "C": "Klient IPv4 192.0.2.33 widziany przez translator lub syntetyczny adres",
+        "D": "Klient z ULA"
+      },
+      "correct": "C",
+      "explanation": "Ostatnie 32 bity."
+    },
+    {
+      "question": "Dlaczego allow-lista partnera musi obejmować IPv4 i IPv6?",
+      "options": {
+        "A": "Klient dual-stack może łączyć się dowolną rodziną",
+        "B": "Bo IPv4 zostanie wyłączony",
+        "C": "Bo IPv6 jest szybszy",
+        "D": "Nie musi"
+      },
+      "correct": "A",
+      "explanation": "Happy Eyeballs wybiera."
+    },
+    {
+      "question": "Co powoduje długi connectionTimeout w HikariCP przy zepsutym IPv6?",
+      "options": {
+        "A": "Mniejsze zużycie pamięci",
+        "B": "Szybsze zapytania",
+        "C": "Nic",
+        "D": "Wątki czekają na połączenia i rośnie kaskada timeoutów"
+      },
+      "correct": "D",
+      "explanation": "Krótkie timeouty."
+    },
+    {
+      "question": "Jaki objaw sugeruje problem z AAAA i zepsutym IPv6?",
+      "options": {
+        "A": "HTTP 404",
+        "B": "Przeglądarka działa normalnie, aplikacja serwerowa raz na jakiś czas czeka kilkadziesiąt sekund",
+        "C": "Brak adresu IP",
+        "D": "Błąd certyfikatu"
+      },
+      "correct": "B",
+      "explanation": "Przeglądarka ma HE."
+    },
+    {
+      "question": "Jak porównać działanie IPv4 i IPv6 do usługi z linii poleceń?",
+      "options": {
+        "A": "ping -n",
+        "B": "dig +trace",
+        "C": "ss -s",
+        "D": "curl -4 i curl -6 z --connect-timeout"
+      },
+      "correct": "D",
+      "explanation": "Osobne testy."
+    },
+    {
+      "question": "Co pokazuje getent ahosts nazwa?",
+      "options": {
+        "A": "Tablicę ARP",
+        "B": "Adresy w kolejności, w jakiej poda je getaddrinfo",
+        "C": "Tylko rekordy MX",
+        "D": "Trasy"
+      },
+      "correct": "B",
+      "explanation": "RFC 6724 + gai.conf."
+    },
+    {
+      "question": "Dlaczego Happy Eyeballs nie startuje obu połączeń jednocześnie?",
+      "options": {
+        "A": "Startuje jednocześnie",
+        "B": "Bo TCP tego nie pozwala",
+        "C": "Aby preferować IPv6 i nie podwajać obciążenia",
+        "D": "Bo jest to zabronione"
+      },
+      "correct": "C",
+      "explanation": "Kompromis 250 ms."
+    },
+    {
+      "question": "Ile maksymalnie czeka Happy Eyeballs v2 na AAAA, gdy A przyszło pierwsze?",
+      "options": {
+        "A": "Około 50 ms (Resolution Delay)",
+        "B": "250 ms",
+        "C": "0 ms",
+        "D": "5 s"
+      },
+      "correct": "A",
+      "explanation": "RFC 8305 §3."
+    },
+    {
+      "question": "Czy curl używa Happy Eyeballs?",
+      "options": {
+        "A": "Tylko na Windows",
+        "B": "Nie",
+        "C": "Tak (od wersji 7.59, domyślnie 200 ms)",
+        "D": "Tylko z opcją -6"
+      },
+      "correct": "C",
+      "explanation": "--happy-eyeballs-timeout-ms."
+    },
+    {
+      "question": "Co się stanie z aplikacją z preferIPv4Stack=true w sieci IPv6-only?",
+      "options": {
+        "A": "Nie połączy się z niczym",
+        "B": "Przełączy się na IPv6",
+        "C": "Użyje NAT64 automatycznie",
+        "D": "Będzie działać normalnie"
+      },
+      "correct": "A",
+      "explanation": "Tylko gniazda IPv4."
+    },
+    {
+      "question": "Czym jest DS-Lite?",
+      "options": {
+        "A": "Szyfrowaniem DNS",
+        "B": "Typem VLAN",
+        "C": "Wersją DHCP",
+        "D": "Dostarczaniem IPv4 klientowi przez tunel IPv4-w-IPv6 do NAT operatora"
+      },
+      "correct": "D",
+      "explanation": "Mechanizm operatorski."
+    },
+    {
+      "question": "Jaki adres zwraca DNS64 dla nazwy, która ma natywny AAAA?",
+      "options": {
+        "A": "Żaden",
+        "B": "Natywny AAAA (synteza tylko przy braku AAAA)",
+        "C": "Oba",
+        "D": "Zawsze syntetyczny"
+      },
+      "correct": "B",
+      "explanation": "Preferencja natywnego IPv6."
+    },
+    {
+      "question": "Jak AWS realizuje NAT64 dla podsieci IPv6-only?",
+      "options": {
+        "A": "Nie obsługuje",
+        "B": "Przez VPC peering",
+        "C": "Przez Internet Gateway",
+        "D": "DNS64 w podsieci i NAT64 w NAT Gateway"
+      },
+      "correct": "D",
+      "explanation": "Prefiks 64:ff9b::/96."
+    },
+    {
+      "question": "Co powinno się logować, by korelować aktywność użytkownika dual-stack?",
+      "options": {
+        "A": "Tylko adres IPv4",
+        "B": "Tylko adres IPv6",
+        "C": "Identyfikator sesji/konta obok adresu IP",
+        "D": "Tylko MAC"
+      },
+      "correct": "C",
+      "explanation": "Adresy się zmieniają."
+    },
+    {
+      "question": "Dlaczego test w sieci IPv6-only jest ważny dla aplikacji mobilnych?",
+      "options": {
+        "A": "Bo jest szybszy",
+        "B": "Operatorzy i sklepy (np. Apple) wymagają działania w IPv6-only",
+        "C": "Bo IPv4 nie istnieje",
+        "D": "Bo tak każe RFC 791"
+      },
+      "correct": "B",
+      "explanation": "Od 2016 w App Store."
+    },
+    {
+      "question": "Co robi Happy Eyeballs po zestawieniu pierwszego połączenia?",
+      "options": {
+        "A": "Zamyka pozostałe próby",
+        "B": "Utrzymuje oba połączenia",
+        "C": "Restartuje DNS",
+        "D": "Wysyła dane obydwoma"
+      },
+      "correct": "A",
+      "explanation": "Wygrywa pierwszy."
+    },
+    {
+      "question": "Dlaczego REJECT zamiast DROP w sieci wewnętrznej pomaga dual-stack?",
+      "options": {
+        "A": "Bo szyfruje ruch",
+        "B": "Nie pomaga",
+        "C": "Klient szybko dostaje błąd i przechodzi do kolejnego adresu",
+        "D": "Bo skraca TTL"
+      },
+      "correct": "C",
+      "explanation": "Szybki fallback."
+    },
+    {
+      "question": "Co to jest SIIT?",
+      "options": {
+        "A": "Stanowy NAT44",
+        "B": "Bezstanowa translacja IPv4/IPv6 (nagłówek po nagłówku)",
+        "C": "Tunel GRE",
+        "D": "Protokół DNS"
+      },
+      "correct": "B",
+      "explanation": "Używany w CLAT."
+    },
+    {
+      "question": "Który mechanizm daje aplikacji lokalny interfejs IPv4 na urządzeniu w sieci IPv6-only?",
+      "options": {
+        "A": "RA Guard",
+        "B": "PLAT",
+        "C": "DNS64",
+        "D": "CLAT (część 464XLAT)"
+      },
+      "correct": "D",
+      "explanation": "Customer-side translator."
+    },
+    {
+      "question": "Czy NAT64 wymaga stanu (jak PAT)?",
+      "options": {
+        "A": "Tak — stanowy NAT64 mapuje wielu klientów IPv6 na adresy IPv4 z portami",
+        "B": "Tylko dla ICMP",
+        "C": "Nie, nigdy",
+        "D": "Tylko dla UDP"
+      },
+      "correct": "A",
+      "explanation": "RFC 6146."
+    },
+    {
+      "question": "Co trzeba uwzględnić w allow-listach po włączeniu NAT64 dla klientów IPv6-only?",
+      "options": {
+        "A": "Ruch do serwerów IPv4 przychodzi z adresów puli NAT64 (IPv4)",
+        "B": "Adresy link-local klientów",
+        "C": "Adresy MAC",
+        "D": "Nic"
+      },
+      "correct": "A",
+      "explanation": "Serwer widzi translator."
+    },
+    {
+      "question": "Jaki błąd JVM zobaczysz, gdy pierwszy adres (IPv6) jest blackhole i minie connectTimeout?",
+      "options": {
+        "A": "MalformedURLException",
+        "B": "UnknownHostException",
+        "C": "BindException",
+        "D": "SocketTimeoutException: Connect timed out"
+      },
+      "correct": "D",
+      "explanation": "Bez prób kolejnych adresów."
+    },
+    {
+      "question": "Co oznacza „Resolution Delay” w RFC 8305?",
+      "options": {
+        "A": "Opóźnienie TTL",
+        "B": "Czas handshake TLS",
+        "C": "Krótkie czekanie na odpowiedź AAAA, gdy A przyszła pierwsza",
+        "D": "Czas cache DNS"
+      },
+      "correct": "C",
+      "explanation": "50 ms."
+    },
+    {
+      "question": "Dlaczego warto publikować AAAA dla usług, które działają po IPv6?",
+      "options": {
+        "A": "Nie warto",
+        "B": "Klienci IPv6-only i mobilni łączą się bez translacji (szybciej, taniej, bez NAT)",
+        "C": "Bo to wymagane prawem",
+        "D": "Bo IPv4 jest wyłączany jutro"
+      },
+      "correct": "B",
+      "explanation": "Mniej NAT64/CGNAT."
+    },
+    {
+      "question": "Jaka właściwość curl ustawia opóźnienie Happy Eyeballs?",
+      "options": {
+        "A": "--ipv6-delay",
+        "B": "--happy-eyeballs-timeout-ms",
+        "C": "--dual-stack",
+        "D": "--he"
+      },
+      "correct": "B",
+      "explanation": "Domyślnie 200."
+    },
+    {
+      "question": "Dlaczego krótki connectTimeout w puli połączeń ogranicza skutki zepsutego IPv6?",
+      "options": {
+        "A": "Nie ogranicza",
+        "B": "Bo przyspiesza zapytania SQL",
+        "C": "Bo martwy adres blokuje wątek tylko przez kilka sekund, a nie kilkadziesiąt",
+        "D": "Bo wyłącza IPv6"
+      },
+      "correct": "C",
+      "explanation": "Plus fallback."
+    },
+    {
+      "question": "Jakie jest najlepsze rozwiązanie problemu „AAAA istnieje, IPv6 nie działa”?",
+      "options": {
+        "A": "Naprawić IPv6 na ścieżce albo usunąć AAAA",
+        "B": "Zwiększyć timeout",
+        "C": "Zmienić port",
+        "D": "Wyłączyć IPv6 we wszystkich JVM"
+      },
+      "correct": "A",
+      "explanation": "Przyczyna, nie objaw."
+    },
+    {
+      "question": "Co mierzy curl -w %{time_connect}?",
+      "options": {
+        "A": "Czas rozwiązania DNS",
+        "B": "Czas TLS",
+        "C": "Czas pobrania całości",
+        "D": "Czas do zestawienia połączenia TCP"
+      },
+      "correct": "D",
+      "explanation": "%{time_appconnect} — TLS."
+    }
+  ]
 }

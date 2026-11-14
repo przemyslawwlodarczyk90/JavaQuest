@@ -1,0 +1,66 @@
+import java.io.IOException;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class HappyEyeballs {
+    // Minimalny Happy Eyeballs v2: przeplata rodziny adresów, startuje kolejne próby co 250 ms
+    // (albo od razu po błędzie poprzedniej), zwraca pierwsze udane połączenie, resztę zamyka.
+    static Socket connect(String host, int port, int attemptDelayMs, int timeoutMs) throws Exception {
+        List<InetAddress> addrs = interleave(Arrays.asList(InetAddress.getAllByName(host)));
+        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        CompletionService<Socket> cs = new ExecutorCompletionService<>(pool);
+        List<Future<Socket>> started = new ArrayList<>();
+        List<Socket> all = Collections.synchronizedList(new ArrayList<>());
+        try {
+            int next = 0, pending = 0;
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+            while (System.nanoTime() < deadline) {
+                if (next < addrs.size()) {
+                    InetAddress a = addrs.get(next++);
+                    started.add(cs.submit(() -> {
+                        Socket s = new Socket(); all.add(s);
+                        s.connect(new InetSocketAddress(a, port), timeoutMs);
+                        return s;
+                    }));
+                    pending++;
+                }
+                Future<Socket> f = cs.poll(next < addrs.size() ? attemptDelayMs : timeoutMs, TimeUnit.MILLISECONDS);
+                if (f == null) continue;                       // nikt jeszcze nie skończył — startuj kolejną próbę
+                pending--;
+                try {
+                    Socket winner = f.get();
+                    for (Socket s : all) if (s != winner) try { s.close(); } catch (IOException ignored) {}
+                    return winner;
+                } catch (ExecutionException e) {
+                    if (next >= addrs.size() && pending == 0) throw e;   // wszystkie zawiodły
+                }
+            }
+            throw new SocketTimeoutException("Happy Eyeballs: timeout " + timeoutMs + " ms");
+        } finally {
+            started.forEach(fu -> fu.cancel(true));
+            pool.shutdownNow();
+        }
+    }
+
+    static List<InetAddress> interleave(List<InetAddress> in) {
+        if (in.isEmpty()) return in;
+        Class<?> first = in.get(0).getClass();
+        Deque<InetAddress> a = new ArrayDeque<>(), b = new ArrayDeque<>();
+        for (InetAddress x : in) (x.getClass() == first ? a : b).add(x);
+        List<InetAddress> out = new ArrayList<>();
+        while (!a.isEmpty() || !b.isEmpty()) { if (!a.isEmpty()) out.add(a.poll()); if (!b.isEmpty()) out.add(b.poll()); }
+        return out;
+    }
+
+    public static void main(String[] args) throws Exception {
+        try (ServerSocket server = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))) {   // usługa tylko na IPv4
+            int port = server.getLocalPort();
+            System.out.println("adresy localhost: " + Arrays.toString(InetAddress.getAllByName("localhost")));
+            long t0 = System.nanoTime();
+            try (Socket s = connect("localhost", port, 250, 3000)) {
+                System.out.printf("połączono z %s w %d ms%n", s.getInetAddress().getHostAddress(), (System.nanoTime() - t0) / 1_000_000);
+            }
+        }
+    }
+}
