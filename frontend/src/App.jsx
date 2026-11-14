@@ -4,6 +4,7 @@ import ChapterListPage from './pages/ChapterListPage'
 import LessonListPage from './pages/LessonListPage'
 import LessonDetailPage from './pages/LessonDetailPage'
 import CriticalTopicsPage from './pages/CriticalTopicsPage'
+import TableOfContentsPage, { trackOfPath } from './pages/TableOfContentsPage'
 import ExpiringLessonsPage from './pages/ExpiringLessonsPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
@@ -25,10 +26,16 @@ const TRACKS = [
 
 function TrackSwitcher() {
   const location = useLocation()
-  const activePath = location.pathname.includes('_ns_') ? '/sieci' : location.pathname.includes('_ocp_') ? '/ocp' : location.pathname.includes('_lx_') ? '/linux' : location.pathname.includes('_react_') ? '/react' : location.pathname.includes('_js_') ? '/js' : TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
+  const onToc = location.pathname.startsWith('/spis-tresci')
+  const tocTrack = onToc ? new URLSearchParams(location.search).get('tor') ?? 'JAVA' : trackOfPath(location.pathname)
+  const activePath = onToc ? null : location.pathname.includes('_ns_') ? '/sieci' : location.pathname.includes('_ocp_') ? '/ocp' : location.pathname.includes('_lx_') ? '/linux' : location.pathname.includes('_react_') ? '/react' : location.pathname.includes('_js_') ? '/js' : TRACKS.find((t) => t.path !== '/' && location.pathname.startsWith(t.path))?.path ?? '/'
 
   return (
     <nav className="track-switcher">
+      <Link to={`/spis-tresci?tor=${tocTrack}`} className={`app-header__toc-button ${onToc ? 'active' : ''}`}>
+        <span className="app-header__toc-icon" aria-hidden="true">☰</span> Spis treści
+      </Link>
+      <span className="track-switcher__divider" aria-hidden="true" />
       {TRACKS.map((t) => (
         <Link key={t.path} to={t.path} className={`track-switcher__button ${activePath === t.path ? 'active' : ''}`}>
           {t.label}
@@ -99,6 +106,7 @@ function App() {
             <Route path="/ocp" element={<ChapterListPage track="OCP" />} />
             <Route path="/sieci" element={<ChapterListPage track="NETWORKING" />} />
             <Route path="/krytyczne" element={<CriticalTopicsPage />} />
+            <Route path="/spis-tresci" element={<TableOfContentsPage />} />
             <Route path="/powtorki" element={<ExpiringLessonsPage />} />
             <Route path="/rozdzial/:chapterSlug" element={<LessonListPage />} />
             <Route path="/rozdzial/:chapterSlug/:lessonSlug" element={<LessonDetailPage />} />

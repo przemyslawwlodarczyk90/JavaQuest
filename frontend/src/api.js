@@ -120,6 +120,11 @@ export function getChapters(track = 'JAVA') {
   return getJson(`/api/chapters?track=${encodeURIComponent(track)}`)
 }
 
+// Spis tresci: wszystkie rozdzialy toru razem z lekcjami (slug, polski tytul) w jednym zapytaniu.
+export function getTableOfContents(track = 'JAVA') {
+  return getJson(`/api/chapters?track=${encodeURIComponent(track)}&withLessons=true`)
+}
+
 export function getLessons(chapterSlug) {
   return getJson(`/api/chapters/${encodeURIComponent(chapterSlug)}/lessons`)
 }
