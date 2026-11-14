@@ -1,5 +1,1350 @@
 {
-  "theory": [],
-  "exercises": [],
-  "quiz": []
+  "theory": [
+    {
+      "type": "INTRO",
+      "heading": "Debug Lab: sieć lokalna nie działa — i masz to udowodnić, nie zgadywać",
+      "image": "netsec/ns02-13-lab.svg",
+      "imageAlt": "Topologia Debug Labu: bridge br-lab z podsiecią 10.13.0.0/24 i routerem 10.13.0.1 prowadzącym do serwera 10.99.0.10; zepsute namespace’y: ns-a i ns-b z tym samym adresem 10.13.0.11, ns-c z maską /28, ns-d bez trasy domyślnej, ns-e z MTU 9000 na łączu 1500. Skrypty setup.sh i check.sh.",
+      "body": "To lekcja zamykająca rozdział o Ethernecie i sieci lokalnej. Zamiast nowej teorii dostajesz **zepsuty lab** i jedno zadanie: znaleźć i naprawić każdy błąd, a na koniec skrypt `check.sh` ma pokazać same **PASS**.\n\nLab buduje się na jednym Linuksie (WSL2, maszyna wirtualna, VPS) z **network namespace’ów** — każdy namespace to osobny „komputer” z własnymi interfejsami, adresami i tablicą routingu. Połączone są parami **veth** do mostu **br-lab** (wirtualny przełącznik), a namespace **ns-router** prowadzi do „serwera” 10.99.0.10 w innej podsieci. Ukryte błędy to klasyka zgłoszeń „nie działa mi sieć”:\n1. **Duplikat adresu IP** — ns-a i ns-b mają 10.13.0.11; połączenia „raz działają, raz nie”.\n2. **Zła maska** — ns-c ma /28 zamiast /24; „do bramy działa, do drukarki nie”.\n3. **Brak trasy domyślnej** — ns-d widzi sąsiadów, ale nie widzi niczego poza podsiecią.\n4. **Niezgodne MTU** — ns-e ma MTU 9000 na łączu 1500; „ping działa, a HTTPS i scp wiszą”.\n\nDo tego w metodyce omawiamy piąty klasyk z planu — **zły VLAN** na porcie przełącznika (w labie odpowiednikiem jest interfejs podpięty do złego mostu).\n\nNajważniejsze, czego uczy ta lekcja, to **metodyka**: od kabla w górę (łącze → adres → sąsiad/ARP → brama i trasa → ścieżka i MTU → DNS i usługa), jedno polecenie na krok i zapis **objaw → hipoteza → dowód → poprawka → test**. Dokładnie tak wygląda dobra notatka z incydentu w zespole SRE i dokładnie tego wymaga egzamin: Network+ N10-009 domena 5 (Network Troubleshooting — metodyka CompTIA i typowe problemy: duplikat IP, zła maska, zła brama, niezgodne MTU, zły VLAN) oraz CCNA 200-301 v2 (weryfikacja adresacji IPv4, łączności L2/L3 i interfejsów).\n\nDla Java developera to codzienność: „aplikacja nie łączy się z bazą” w 80% przypadków jest problemem sieci lub konfiguracji hosta, a nie kodu. Kto umie w pięć minut odróżnić złą maskę od blokady firewalla, ten oszczędza zespołowi godziny.",
+      "code": null
+    },
+    {
+      "type": "DEFINITION",
+      "heading": "Słownik Debug Labu",
+      "body": "- **Network namespace (netns)** — izolowana kopia stosu sieciowego Linuksa: interfejsy, adresy, trasy, reguły firewalla, tablica ARP. `ip netns add`, `ip netns exec <ns> <polecenie>`. Na tym samym mechanizmie stoją kontenery Dockera i pody Kubernetesa.\n- **veth** — para połączonych wirtualnych interfejsów („kabel z dwoma wtyczkami”); co wejdzie jednym końcem, wychodzi drugim.\n- **bridge (most) Linuksa** — programowy przełącznik L2 z tablicą MAC (`bridge fdb`); odpowiednik switcha z lekcji 02.\n- **Duplikat IP (IP conflict)** — dwa hosty z tym samym adresem w jednej domenie rozgłoszeniowej; tablice ARP innych hostów „skaczą” między dwoma MAC-ami.\n- **DAD (Duplicate Address Detection)** — sprawdzenie przed użyciem adresu: w IPv4 ARP probe (RFC 5227, `arping -D`), w IPv6 Neighbor Solicitation (adres w stanie *tentative*, potem *dadfailed*).\n- **Zła maska (prefiks)** — host inaczej niż reszta sieci ocenia, które adresy są „lokalne” (decyzja: ARP do celu czy do bramy).\n- **Trasa domyślna (default route, 0.0.0.0/0)** — dokąd wysłać pakiet do sieci, której nie ma w tablicy routingu; brak = „Network is unreachable”.\n- **MTU** — maksymalny rozmiar pakietu IP na łączu; w jednej domenie L2 wszystkie interfejsy muszą mieć to samo MTU.\n- **PMTUD** — wykrywanie MTU ścieżki przez ICMP „Fragmentation needed” / „Packet too big”; nie działa w obrębie jednej domeny L2 (nie ma routera, który odeśle ICMP).\n- **ICMP Redirect** — router informuje hosta: „do tego celu wysyłaj bezpośrednio / przez innego sąsiada” — typowy ślad złej maski.\n- **Zły VLAN (VLAN mismatch)** — port dostępowy w innym VLAN-ie niż podsieć hosta; łącze UP, adres poprawny, ale ARP nie dostaje odpowiedzi.\n- **Metodyka CompTIA (7 kroków)** — zidentyfikuj problem → ustal teorię prawdopodobnej przyczyny → przetestuj teorię → ustal plan działania → wdroż rozwiązanie → zweryfikuj działanie systemu → udokumentuj.",
+      "code": null
+    },
+    {
+      "type": "ANALOGY",
+      "heading": "Lekarz na izbie przyjęć, nie wróżka",
+      "body": "Pacjent mówi „źle się czuję” — tak jak użytkownik mówi „nie działa internet”. Zły lekarz od razu przepisuje antybiotyk (restart routera, „wyłącz firewall”). Dobry lekarz robi **triaż w stałej kolejności**: oddycha? (łącze UP?) → tętno? (adres i maska?) → reaguje na głos? (ARP do sąsiada?) → widzi i słyszy? (brama i trasa?) → dopiero potem badania specjalistyczne (MTU, DNS, aplikacja).\n\nKażdy objaw ma **różne możliwe przyczyny**, a badanie ma rozstrzygać między nimi:\n- „Raz działa, raz nie” — jak gorączka, która przychodzi i odchodzi: częsty winowajca to **duplikat IP** (dwa hosty walczą o ten sam adres — tablica ARP sąsiadów zmienia zdanie).\n- „Do jednych działa, do innych nie” — pacjent widzi tylko jednym okiem: **zła maska** (host za lokalne uważa mniej lub więcej adresów niż reszta sieci).\n- „Sąsiedzi tak, świat nie” — pacjent słyszy rodzinę, ale nie telefon: **brak bramy/trasy**.\n- „Krótkie zdania tak, długie nie” — pacjent przełyka małe kęsy, duże stają w gardle: **MTU**.\n\nI najważniejsze: **lekarz zapisuje w karcie** wynik każdego badania. Ty też — w notatce z labu i w zgłoszeniu w zespole.",
+      "code": null
+    },
+    {
+      "type": "VISUAL_EXAMPLE",
+      "heading": "Metodyka w sześciu krokach i decyzja „ARP do celu czy do bramy”",
+      "image": "netsec/ns02-13-method.svg",
+      "imageAlt": "Sześć kroków diagnozy sieci lokalnej z poleceniami: łącze (ip -br link, ethtool), adres (ip -br addr), sąsiad (ip neigh, arping), brama i trasa (ip route get), ścieżka i MTU (ping -M do -s, tracepath), nazwy i usługa (resolvectl, ss, curl -v). Zatrzymaj się na pierwszym kroku, który zawodzi.",
+      "body": "Serce diagnozy L3 to jedno pytanie, które host zadaje przy każdym pakiecie: **czy cel jest w mojej podsieci?** Host bierze **swój** adres i **swoją** maskę, wylicza adres sieci dla siebie i dla celu. Równe → ARP o adres celu i wysyłka bezpośrednio. Różne → pakiet do bramy (ARP o adres bramy). Brak bramy → błąd od razu, bez wysyłania czegokolwiek. Poniżej decyzje policzone modelem z lekcji — zwróć uwagę, że liczy się **maska nadawcy**, nie odbiorcy:",
+      "code": "host 10.13.0.13/28, brama 10.13.0.1, cel 10.13.0.14\n  sieć hosta 10.13.0.0/28, sieć celu wg maski hosta 10.13.0.0/28 → bezpośrednio (ARP o adres celu)\nhost 10.13.0.13/28, brama 10.13.0.1, cel 10.13.0.40\n  sieć hosta 10.13.0.0/28, sieć celu wg maski hosta 10.13.0.32/28 → przez bramę (ARP o adres bramy)\nhost 10.13.0.14/24, brama —, cel 10.99.0.10\n  sieć hosta 10.13.0.0/24, sieć celu wg maski hosta 10.99.0.0/24 → brak trasy — „Network is unreachable”\nhost 10.13.0.14/24, brama —, cel 10.13.0.200\n  sieć hosta 10.13.0.0/24, sieć celu wg maski hosta 10.13.0.0/24 → bezpośrednio (ARP o adres celu)\nhost 192.168.1.50/24, brama 192.168.2.1, cel 8.8.8.8\n  sieć hosta 192.168.1.0/24, sieć celu wg maski hosta 8.8.8.0/24 → brama poza podsiecią — trasa domyślna nie zadziała\nhost 172.16.5.20/16, brama 172.16.0.1, cel 172.16.200.9\n  sieć hosta 172.16.0.0/16, sieć celu wg maski hosta 172.16.0.0/16 → bezpośrednio (ARP o adres celu)\n\nTen sam wynik daje Linux — zawsze sprawdzaj decyzję jądra, zamiast liczyć w głowie:\n  ip route get 10.13.0.40            # „10.13.0.40 via 10.13.0.1 dev eth0 src 10.13.0.13” → pójdzie przez bramę\n  ip route get 10.13.0.14            # „10.13.0.14 dev eth0 src 10.13.0.13”                → bezpośrednio"
+    },
+    {
+      "type": "CODE_BASIC",
+      "heading": "setup.sh — zbuduj zepsuty lab na jednym Linuksie",
+      "body": "Skrypt tworzy most, router, serwer i pięć „hostów” z błędami. Wymaga roota (lub `sudo`) i pakietu iproute2; działa na Ubuntu/Debianie, w WSL2 i w maszynie wirtualnej. **Uruchamiaj tylko w izolowanym środowisku labowym** — skrypt dodaje interfejsy do systemu. `reset.sh` (na końcu) sprząta wszystko.",
+      "code": "#!/usr/bin/env bash\nset -euo pipefail\nip link add br-lab type bridge && ip link set br-lab up\n\nhost() {   # host <ns> <adres/prefiks> [brama] [mtu]\n  local ns=$1 addr=$2 gw=${3:-} mtu=${4:-1500}\n  ip netns add \"$ns\"\n  ip link add \"v-$ns\" type veth peer name eth0 netns \"$ns\"\n  ip link set \"v-$ns\" master br-lab up\n  ip -n \"$ns\" link set lo up\n  ip -n \"$ns\" link set eth0 mtu \"$mtu\" up\n  ip -n \"$ns\" addr add \"$addr\" dev eth0\n  [ -n \"$gw\" ] && ip -n \"$ns\" route add default via \"$gw\"\n  true\n}\n\n# router: noga w LAN (10.13.0.1/24) i noga do serwera (10.99.0.1/24)\nip netns add ns-router\nip link add v-router type veth peer name eth0 netns ns-router\nip link set v-router master br-lab up\nip -n ns-router link set eth0 up && ip -n ns-router addr add 10.13.0.1/24 dev eth0\nip netns add ns-srv\nip link add r-srv netns ns-router type veth peer name eth0 netns ns-srv\nip -n ns-router link set r-srv up && ip -n ns-router addr add 10.99.0.1/24 dev r-srv\nip -n ns-srv link set eth0 up && ip -n ns-srv addr add 10.99.0.10/24 dev eth0\nip -n ns-srv route add default via 10.99.0.1\nip netns exec ns-router sysctl -qw net.ipv4.ip_forward=1\nip netns exec ns-srv sh -c 'nohup python3 -m http.server 8080 >/dev/null 2>&1 &'\n\nhost ns-a 10.13.0.11/24 10.13.0.1          # błąd 1: duplikat …\nhost ns-b 10.13.0.11/24 10.13.0.1          # … z ns-b (powinno być .12)\nhost ns-c 10.13.0.13/28 10.13.0.1          # błąd 2: maska /28 zamiast /24\nhost ns-d 10.13.0.14/24                    # błąd 3: brak trasy domyślnej\nhost ns-e 10.13.0.15/24 10.13.0.1 9000     # błąd 4: MTU 9000 na łączu 1500\nhost ns-p 10.13.0.40/24 10.13.0.1          # „drukarka” — poprawny host do testów spoza /28\nip netns exec ns-srv sh -c 'ip link set eth0 mtu 1500'\necho \"lab gotowy — uruchom ./check.sh\"\n\n# reset.sh:\n#   for ns in ns-a ns-b ns-c ns-d ns-e ns-p ns-router ns-srv; do ip netns del $ns 2>/dev/null; done\n#   ip link del br-lab 2>/dev/null"
+    },
+    {
+      "type": "STEP_BY_STEP",
+      "heading": "Błąd 1: duplikat IP — objaw, hipoteza, dowód, poprawka",
+      "body": "**Objaw:** z ns-c ping do 10.13.0.11 czasem działa, a czasem nie; połączenia TCP do usługi na ns-a zrywają się bez powodu; w logach aplikacji „Connection reset”.\n\n1. **Łącze i adres** w obu podejrzanych: `ip -n ns-a -br addr`, `ip -n ns-b -br addr` → oba 10.13.0.11/24. Jeśli nie wiesz, gdzie szukać: `arping -I eth0 -c 3 10.13.0.11` z trzeciego hosta — **odpowiedzi z dwóch różnych MAC** to dowód.\n2. **Tablica ARP sąsiada** zmienia zdanie: `ip -n ns-c neigh show 10.13.0.11` uruchomione kilka razy pokazuje raz jeden, raz drugi `lladdr`. W Wiresharku filtr `arp.duplicate-address-detected` lub alert „Duplicate IP address configured”.\n3. **Test DAD przed nadaniem adresu:** `arping -D -I eth0 -c 2 10.13.0.11` — kod wyjścia 1 oznacza, że ktoś już używa adresu. Tak samo robi klient DHCP (RFC 5227) i systemd-networkd/NetworkManager.\n4. **Przyczyna w realnym świecie:** adres statyczny ręcznie wpisany w zakresie puli DHCP, sklonowana maszyna wirtualna z tą samą konfiguracją, dwa kontenery z `--ip` w tej samej sieci, urządzenie, które po restarcie wzięło stary adres.\n5. **Poprawka:** `ip -n ns-b addr del 10.13.0.11/24 dev eth0 && ip -n ns-b addr add 10.13.0.12/24 dev eth0`; potem **wyczyść cache ARP** sąsiadów (`ip -n ns-c neigh flush dev eth0`) albo wyślij gratuitous ARP (`arping -U -I eth0 10.13.0.12`).\n6. **Zapobieganie:** rezerwacje DHCP zamiast ręcznych adresów, wykluczenia statycznych z puli, IPAM (NetBox), DHCP snooping + Dynamic ARP Inspection na przełącznikach (lekcja 10), alerty z `arpwatch`/IDS o zmianie MAC dla IP.\n7. **Notatka:** „ns-a i ns-b = 10.13.0.11 (dowód: arping 2 MAC). Zmieniono ns-b na .12, flush ARP. check.sh: test 1 PASS.”",
+      "code": null
+    },
+    {
+      "type": "NOTE",
+      "heading": "Błąd 2: zła maska — „do jednych działa, do innych nie”",
+      "image": "netsec/ns02-13-mask.svg",
+      "imageAlt": "Oś adresów 10.13.0.0–255: według routera i hostów sieć to /24, ale host ns-c z maską /28 uważa za lokalne tylko adresy 0–15. Do bramy .1 i hosta .14 wysyła bezpośrednio, a do drukarki .40 i serwera .200 przez bramę, co daje przekierowania ICMP lub brak łączności. Dowód: ip route get 10.13.0.40 pokazuje via 10.13.0.1.",
+      "body": "ns-c ma 10.13.0.13/**28**. Dla niego „moja sieć” to 10.13.0.0/28 (adresy .0–.15, broadcast 10.13.0.15), a dla reszty świata — 10.13.0.0/24 (broadcast 10.13.0.255). Skutki zależą od celu:\n- cel **.1–.14** (brama, ns-d) — w „jego” /28 → ARP, działa normalnie. Dlatego pierwsze testy („ping bramy działa”) **nie wykrywają** błędu.\n- cel **.16–.254** (np. drukarka .40, serwer .200; uwaga: ns-e .15 to jeszcze wnętrze /28) — poza /28 → pakiet do bramy. Router widzi, że cel jest w tej samej sieci, z której przyszedł pakiet: wysyła **ICMP Redirect** i przekazuje pakiet (działa wolniej i asymetrycznie) albo — jeśli redirecty/forwarding na tym interfejsie są zablokowane lub firewall odrzuca ruch „hairpin” — **nie działa**.\n- odwrotny kierunek: hosty /24 odpowiadają do ns-c bezpośrednio — ruch jest **asymetryczny**, co psuje stanowe firewalle.\n- maska **za szeroka** (np. /16 zamiast /24) daje odwrotny objaw: host próbuje ARP do adresów, które są za routerem — brak odpowiedzi ARP, „Destination Host Unreachable” od samego nadawcy.\n\n**Dowód:** `ip -n ns-c -br addr` (widać /28), `ip -n ns-c route` (trasa `10.13.0.0/28 dev eth0` zamiast /24), `ip -n ns-c route get 10.13.0.40` → *via 10.13.0.1*. **Poprawka:** `ip -n ns-c addr del 10.13.0.13/28 dev eth0; ip -n ns-c addr add 10.13.0.13/24 dev eth0` (trasa podsieci tworzy się automatycznie; bramę dodaj ponownie, jeśli zniknęła). W produkcji: popraw źródło prawdy — DHCP, netplan, szablon chmury — inaczej błąd wróci przy restarcie.",
+      "code": null
+    },
+    {
+      "type": "CODE_PRACTICAL",
+      "heading": "check.sh — automatyczny sędzia labu (i wzór testów sieci w CI)",
+      "body": "Skrypt sprawdza z każdego hosta to, czego oczekuje użytkownik: brama, serwer w innej podsieci, usługa HTTP i duży pakiet. Każdy test drukuje PASS/FAIL i zwraca kod wyjścia — tak samo budujesz testy dymne (smoke tests) środowiska w pipeline CI/CD przed wdrożeniem aplikacji.",
+      "code": "#!/usr/bin/env bash\nfail=0\nt() { local name=$1; shift; if \"$@\" >/dev/null 2>&1; then echo \"PASS $name\"; else echo \"FAIL $name\"; fail=1; fi; }\n\nfor ns in ns-a ns-b ns-c ns-d ns-e; do\n  t \"$ns: brama 10.13.0.1\"          ip netns exec $ns ping -c1 -W1 10.13.0.1\n  t \"$ns: serwer 10.99.0.10\"        ip netns exec $ns ping -c1 -W1 10.99.0.10\n  t \"$ns: sąsiad 10.13.0.40 (spoza /28)\" ip netns exec $ns ping -c1 -W1 10.13.0.40\n  t \"$ns: HTTP serwera\"             ip netns exec $ns curl -s -m 3 -o /dev/null http://10.99.0.10:8080/\n  t \"$ns: pakiet 1472 B bez fragm.\" ip netns exec $ns ping -c1 -W1 -M do -s 1472 10.13.0.1\ndone\n# unikalność adresów w LAN: każdy adres IP ma dokładnie jeden MAC\ndups=$(for ns in ns-a ns-b ns-c ns-d ns-e; do ip -n $ns -4 -br addr show eth0 | awk '{print $3}'; done | sort | uniq -d)\nt \"brak duplikatów IP\" test -z \"$dups\"\n# spójne MTU w domenie L2\nt \"jedno MTU w br-lab\" test \"$(for ns in ns-a ns-b ns-c ns-d ns-e; do ip -n $ns -o link show eth0 | grep -o 'mtu [0-9]*'; done | sort -u | wc -l)\" -eq 1\nexit $fail\n\n# 10.13.0.40 to poprawny host ns-p („drukarka”) z setup.sh — cel spoza /28, który wykrywa złą maskę.\n# Ten sam test z Javy (np. w teście integracyjnym środowiska):\n#   InetAddress.getByName(\"10.99.0.10\").isReachable(1000)  — ICMP lub TCP 7 (echo), zależnie od uprawnień\n#   new Socket().connect(new InetSocketAddress(\"10.99.0.10\", 8080), 3000)  — test usługi, nie tylko ping"
+    },
+    {
+      "type": "USAGE",
+      "heading": "Błędy 3 i 4: brak trasy domyślnej i niezgodne MTU",
+      "image": "netsec/ns02-13-mtu.svg",
+      "imageAlt": "Host ns-e ma MTU 9000, a łącze i router MTU 1500: mały ping przechodzi, ramka 4000 bajtów jest odrzucana. Testy ping -M do: 1472 bajty przechodzą, 1473 nie, 3000 host wysyła, ale ramka ginie. TCP wisi po handshake, bo MSS wynegocjowano z MTU 9000. Naprawa: jedno MTU w domenie L2.",
+      "body": "**Błąd 3 — ns-d bez trasy domyślnej.** Objaw: ping do sąsiadów i bramy działa, do 10.99.0.10 natychmiast „connect: Network is unreachable” (bez czekania — jądro nie ma trasy, więc nawet nie wysyła pakietu). Dowód: `ip -n ns-d route` pokazuje tylko `10.13.0.0/24 dev eth0`; `ip -n ns-d route get 10.99.0.10` → *RTNETLINK answers: Network is unreachable*. Poprawka: `ip -n ns-d route add default via 10.13.0.1`. Odmiany w realnym świecie: brama spoza podsieci (*Nexthop has invalid gateway*), DHCP bez opcji 3 (router), dwie trasy domyślne z różnymi metrykami (VPN!), brak trasy powrotnej na routerze lub serwerze — wtedy pakiet dochodzi, a odpowiedź ginie (`tcpdump` na serwerze pokaże przychodzące żądania bez odpowiedzi wychodzących).\n\n**Błąd 4 — ns-e z MTU 9000 na łączu 1500.** Objaw: ping działa, SSH loguje się, ale `scp`, `git clone` i HTTPS wiszą po kilku sekundach. Dowód: `ping -M do -s 1472 10.13.0.1` przechodzi (1472 + 28 = 1500), a `-s 1473` z ns-e jest **wysyłany** (bo lokalne MTU to 9000), ale nie wraca — ramkę odrzuca most/odbiorca (`ip -s link` pokazuje błędy/odrzucenia RX). W obrębie jednej domeny L2 nie ma routera, który odesłałby ICMP „Fragmentation needed”, więc PMTUD **nie pomoże**. Poprawka: `ip -n ns-e link set eth0 mtu 1500`. W produkcji: MTU ustawiaj spójnie w całej domenie L2 (jumbo frames tylko end-to-end: karty, przełączniki, hypervisor), a przy tunelach (VPN, VXLAN, Docker overlay) pamiętaj o narzucie — lekcja 01.\n\n**Bonus — zły VLAN.** Objaw identyczny jak przy odłączonym kablu na wyższej warstwie: łącze UP, adres poprawny, ale `ip neigh` pokazuje FAILED/INCOMPLETE dla bramy. Na przełączniku `show interfaces status` / `show vlan brief` ujawnia port w VLAN 20 zamiast 10. W labie odpowiednik: interfejs podpięty do innego mostu (`bridge link`, `ip link show master br-lab`).\n\n**Gdzie to spotkasz:** kontener nie łączy się z bazą (zła sieć Dockera = zły „VLAN”), pod w Kubernetes widzi serwisy, ale nie Internet (trasa/NAT), aplikacja Java w VPN-ie wisi na dużych odpowiedziach (MTU tunelu), dwie VM-ki z klonu z tym samym IP.",
+      "code": null
+    },
+    {
+      "type": "PITFALL",
+      "heading": "Pułapki diagnozy, które kosztują godziny",
+      "body": "- **Zaczynanie od góry** („to pewnie DNS”, „to firewall”) zamiast od łącza i adresu. Sprawdź warstwy po kolei — pierwszy niedziałający krok jest przyczyną, reszta to skutki.\n- **Ping jako jedyny test.** Ping (ICMP, 84 B) przechodzi przy złym MTU i bywa blokowany tam, gdzie TCP działa. Testuj też usługę (`curl -v`, `nc -vz host port`) i duże pakiety (`ping -M do -s 1472`).\n- **Test z „dobrego” hosta.** ns-c ma działać do bramy — błąd maski widać dopiero przy celu spoza /28. Testuj **kilka celów**: brama, sąsiad, adres na końcu podsieci, host za routerem.\n- **Stary cache ARP** po poprawce duplikatu — sąsiedzi pamiętają zły MAC do kilkudziesięciu sekund (stan STALE/REACHABLE). Wyczyść cache albo wyślij gratuitous ARP.\n- **Poprawka tylko w runtime** (`ip addr`), a źródło prawdy (DHCP, netplan, NetworkManager, cloud-init, docker-compose) zostaje złe — po restarcie błąd wraca.\n- **Zmiana wielu rzeczy naraz** — nie wiesz, co pomogło, i nie umiesz napisać post-mortem. Jedna zmiana → test → notatka.\n- **Wyłączenie firewalla „na chwilę”** jako metoda diagnozy w produkcji. Zamiast tego czytaj liczniki reguł (`nft list ruleset` z licznikami, `iptables -L -v`) i logi odrzuceń.\n- **Ignorowanie asymetrii** — ruch tam idzie inną drogą niż z powrotem (zła maska, dwie bramy); stanowy firewall odrzuca „pakiet spoza połączenia”.\n- **Mylenie „Network is unreachable” z „Destination Host Unreachable”** — pierwsze: brak trasy lokalnie (natychmiast); drugie: trasa jest, ale ARP do celu/bramy nie dostał odpowiedzi (po ~3 s).",
+      "code": null
+    },
+    {
+      "type": "CODE_WRONG",
+      "heading": "Źle: „naprawa” metodą prób i błędów",
+      "body": "Typowy przebieg nieudanej diagnozy — wiele zmian bez dowodów, poprawki psujące bezpieczeństwo i brak notatki. Problem „zniknął”, ale nikt nie wie dlaczego, a po restarcie wróci.",
+      "code": "$ ping 10.99.0.10            # nie działa\n$ sudo systemctl restart NetworkManager\n$ sudo iptables -F            # „może firewall” — właśnie wyłączyłeś całą ochronę hosta\n$ sudo ip link set eth0 mtu 1400\n$ sudo ip addr add 10.13.0.99/16 dev eth0     # drugi adres z inną maską „na wszelki wypadek”\n$ sudo ip route add default via 10.13.0.254   # brama, która nie istnieje\n$ ping 10.99.0.10            # „działa” (bo ktoś w międzyczasie naprawił router)\n# zamknięcie zgłoszenia: „zrestartowałem i działa”"
+    },
+    {
+      "type": "CODE_RIGHT",
+      "heading": "Dobrze: jedna hipoteza, jeden dowód, jedna zmiana, test i notatka",
+      "body": "Ten sam problem rozwiązany metodycznie. Każdy krok ma polecenie i oczekiwany wynik; zmiana jest jedna, odwracalna i utrwalona w źródle prawdy; notatka nadaje się do zgłoszenia i post-mortem.",
+      "code": "$ ip -br link show eth0          # eth0 UP <BROADCAST,MULTICAST,UP,LOWER_UP>     → łącze OK\n$ ip -br addr show eth0          # 10.13.0.14/24                                   → adres i maska OK\n$ ip neigh show 10.13.0.1        # 10.13.0.1 lladdr 02:..:01 REACHABLE             → brama odpowiada na ARP\n$ ip route get 10.99.0.10        # RTNETLINK answers: Network is unreachable      → BRAK TRASY ← pierwszy błąd\n$ ip route                       # tylko 10.13.0.0/24 dev eth0                     → potwierdzenie\n# hipoteza: brak trasy domyślnej (DHCP nie podał opcji 3 / brak gateway4 w netplan)\n$ sudo ip route add default via 10.13.0.1         # zmiana w runtime\n$ ip route get 10.99.0.10        # via 10.13.0.1 dev eth0                          → decyzja jądra OK\n$ curl -s -o /dev/null -w '%{http_code}\\n' http://10.99.0.10:8080/   # 200      → usługa OK\n# utrwalenie: netplan → routes: [{to: default, via: 10.13.0.1}] ; sudo netplan try\n# notatka: „Objaw: brak dostępu poza LAN. Dowód: ip route get → unreachable. Przyczyna: brak trasy domyślnej\n#           (netplan bez routes). Zmiana: dodano trasę w netplan. Test: check.sh PASS. Zapobieganie: szablon netplan w repo.”"
+    },
+    {
+      "type": "WHEN_TO_USE",
+      "heading": "Objaw → najbardziej prawdopodobna przyczyna → pierwsze polecenie",
+      "body": "Ściąga do pracy i na egzamin (Network+ lubi pytania „technik widzi X — co sprawdzi najpierw?”):",
+      "code": "OBJAW                                              PRZYCZYNA (najczęściej)          PIERWSZE POLECENIE\nłącze DOWN / NO-CARRIER                            kabel, port, sterownik, wyłączony ip -br link ; ethtool eth0\nadres 169.254.x.x (APIPA)                          brak odpowiedzi DHCP             ip -br addr ; journalctl -u NetworkManager\n„raz działa, raz nie”, ARP zmienia MAC             duplikat IP                      arping -c3 <ip> (2 różne MAC?)\ndo bramy działa, do części LAN nie                 za wąska maska                   ip -br addr ; ip route get <cel>\nARP do zdalnych adresów, Host Unreachable          za szeroka maska                 ip route ; ip neigh\n„Network is unreachable” natychmiast               brak trasy (default)             ip route get <cel>\nbrama nie odpowiada na ARP, łącze UP               zły VLAN / zły most / zła brama  ip neigh ; show vlan brief\nmały ping OK, duże transfery wiszą                 niezgodne MTU / blackhole PMTUD  ping -M do -s 1472 <cel>\nping po IP działa, po nazwie nie                   DNS                              resolvectl query <nazwa>\nport „Connection refused”                          usługa nie słucha / zły adres    ss -ltnp\nport „timeout”                                     firewall / brak trasy powrotnej  tcpdump -ni eth0 port <p>"
+    },
+    {
+      "type": "SUMMARY",
+      "heading": "Podsumowanie rozdziału i Debug Labu",
+      "body": "- Metodyka od kabla w górę: łącze → adres/maska → sąsiad (ARP) → brama i trasa → ścieżka/MTU → DNS i usługa. Zatrzymaj się na pierwszym kroku, który zawodzi.\n- Każdy krok to jedno polecenie (`ip -br link`, `ip -br addr`, `ip neigh`/`arping`, `ip route get`, `ping -M do -s`, `resolvectl`, `ss`, `curl -v`) i zapis: objaw → hipoteza → dowód → poprawka → test → dokumentacja (7 kroków CompTIA).\n- Duplikat IP: dwa MAC na `arping`, skacząca tablica ARP; zapobiegaj rezerwacjami DHCP, IPAM, DAD, DHCP snooping + DAI.\n- Zła maska: decyzję „lokalny czy przez bramę” podejmuje host swoją maską — za wąska daje redirecty i asymetrię, za szeroka daje ARP w próżnię. Dowód: `ip route get`.\n- Brak trasy domyślnej: „Network is unreachable” natychmiast; pamiętaj też o trasie powrotnej.\n- MTU: w jednej domenie L2 jedno MTU; test `ping -M do -s 1472` (IPv4: rozmiar − 28 B, IPv6: − 48 B); objaw „ping OK, transfery wiszą”.\n- Zły VLAN: łącze UP, adres OK, ARP bez odpowiedzi — sprawdź port na przełączniku.\n- check.sh to wzór testów dymnych sieci w CI; poprawki utrwalaj w źródle prawdy (netplan, DHCP, IaC).\n- Koniec rozdziału 02. Następny rozdział: **adresacja IP i routing** — nagłówek IPv4, maski od zera, CIDR i subnetting.",
+      "code": null
+    }
+  ],
+  "exercises": [
+    {
+      "prompt": "Host 10.13.0.13/28, brama 10.13.0.1. Jak wyśle pakiet do 10.13.0.14? Uzasadnij obliczeniem adresów sieci.",
+      "hint": "Policz adres sieci hosta i celu maską NADAWCY; potem sprawdź bramę.",
+      "solution": "Sieć hosta: 10.13.0.0/28; cel w masce hosta: 10.13.0.0/28 → bezpośrednio (ARP o adres celu). Potwierdzenie na Linuksie: ip route get 10.13.0.14."
+    },
+    {
+      "prompt": "Host 10.13.0.13/28, brama 10.13.0.1. Jak wyśle pakiet do 10.13.0.40? Uzasadnij obliczeniem adresów sieci.",
+      "hint": "Policz adres sieci hosta i celu maską NADAWCY; potem sprawdź bramę.",
+      "solution": "Sieć hosta: 10.13.0.0/28; cel w masce hosta: 10.13.0.32/28 → przez bramę (ARP o adres bramy). Potwierdzenie na Linuksie: ip route get 10.13.0.40."
+    },
+    {
+      "prompt": "Host 10.13.0.14/24, brama (brak). Jak wyśle pakiet do 10.99.0.10? Uzasadnij obliczeniem adresów sieci.",
+      "hint": "Policz adres sieci hosta i celu maską NADAWCY; potem sprawdź bramę.",
+      "solution": "Sieć hosta: 10.13.0.0/24; cel w masce hosta: 10.99.0.0/24 → brak trasy — „Network is unreachable”. Potwierdzenie na Linuksie: ip route get 10.99.0.10."
+    },
+    {
+      "prompt": "Host 10.13.0.14/24, brama (brak). Jak wyśle pakiet do 10.13.0.200? Uzasadnij obliczeniem adresów sieci.",
+      "hint": "Policz adres sieci hosta i celu maską NADAWCY; potem sprawdź bramę.",
+      "solution": "Sieć hosta: 10.13.0.0/24; cel w masce hosta: 10.13.0.0/24 → bezpośrednio (ARP o adres celu). Potwierdzenie na Linuksie: ip route get 10.13.0.200."
+    },
+    {
+      "prompt": "Host 192.168.1.50/24, brama 192.168.2.1. Jak wyśle pakiet do 8.8.8.8? Uzasadnij obliczeniem adresów sieci.",
+      "hint": "Policz adres sieci hosta i celu maską NADAWCY; potem sprawdź bramę.",
+      "solution": "Sieć hosta: 192.168.1.0/24; cel w masce hosta: 8.8.8.0/24 → brama poza podsiecią — trasa domyślna nie zadziała. Potwierdzenie na Linuksie: ip route get 8.8.8.8."
+    },
+    {
+      "prompt": "Host 172.16.5.20/16, brama 172.16.0.1. Jak wyśle pakiet do 172.16.200.9? Uzasadnij obliczeniem adresów sieci.",
+      "hint": "Policz adres sieci hosta i celu maską NADAWCY; potem sprawdź bramę.",
+      "solution": "Sieć hosta: 172.16.0.0/16; cel w masce hosta: 172.16.0.0/16 → bezpośrednio (ARP o adres celu). Potwierdzenie na Linuksie: ip route get 172.16.200.9."
+    },
+    {
+      "prompt": "Dla adresu 10.13.0.13/28 podaj adres sieci, broadcast i zakres hostów.",
+      "hint": "Wyzeruj bity hosta (sieć), ustaw je na 1 (broadcast).",
+      "solution": "Sieć 10.13.0.0/28, broadcast 10.13.0.15, hosty 10.13.0.1 – 10.13.0.14."
+    },
+    {
+      "prompt": "Dla adresu 10.13.0.200/26 podaj adres sieci, broadcast i zakres hostów.",
+      "hint": "Wyzeruj bity hosta (sieć), ustaw je na 1 (broadcast).",
+      "solution": "Sieć 10.13.0.192/26, broadcast 10.13.0.255, hosty 10.13.0.193 – 10.13.0.254."
+    },
+    {
+      "prompt": "Dla adresu 192.168.10.77/27 podaj adres sieci, broadcast i zakres hostów.",
+      "hint": "Wyzeruj bity hosta (sieć), ustaw je na 1 (broadcast).",
+      "solution": "Sieć 192.168.10.64/27, broadcast 192.168.10.95, hosty 192.168.10.65 – 192.168.10.94."
+    },
+    {
+      "prompt": "Dla adresu 172.20.33.5/20 podaj adres sieci, broadcast i zakres hostów.",
+      "hint": "Wyzeruj bity hosta (sieć), ustaw je na 1 (broadcast).",
+      "solution": "Sieć 172.20.32.0/20, broadcast 172.20.47.255, hosty 172.20.32.1 – 172.20.47.254."
+    },
+    {
+      "prompt": "Jaki maksymalny rozmiar danych podasz w ping -M do -s, żeby przetestować MTU 1500 dla IPv4?",
+      "hint": "Nagłówek IPv4 20 B + ICMP 8 B.",
+      "solution": "1500 − 28 = 1472 B (np. ping -M do -s 1472 <cel>); o 1 B więcej musi już nie przejść."
+    },
+    {
+      "prompt": "Jaki maksymalny rozmiar danych podasz w ping -M do -s, żeby przetestować MTU 1500 dla IPv6?",
+      "hint": "Nagłówek IPv6 40 B + ICMPv6 8 B.",
+      "solution": "1500 − 48 = 1452 B (np. ping -6 -M do -s 1452 <cel>); o 1 B więcej musi już nie przejść."
+    },
+    {
+      "prompt": "Jaki maksymalny rozmiar danych podasz w ping -M do -s, żeby przetestować MTU 9000 dla IPv4?",
+      "hint": "Nagłówek IPv4 20 B + ICMP 8 B.",
+      "solution": "9000 − 28 = 8972 B (np. ping -M do -s 8972 <cel>); o 1 B więcej musi już nie przejść."
+    },
+    {
+      "prompt": "Jaki maksymalny rozmiar danych podasz w ping -M do -s, żeby przetestować MTU 1420 dla IPv4?",
+      "hint": "Nagłówek IPv4 20 B + ICMP 8 B.",
+      "solution": "1420 − 28 = 1392 B (np. ping -M do -s 1392 <cel>); o 1 B więcej musi już nie przejść."
+    },
+    {
+      "prompt": "Wykonaj zadanie z planu: uruchom setup.sh, znajdź i napraw wszystkie cztery błędy, a check.sh ma pokazać same PASS. Dla każdego błędu zapisz: objaw, hipoteza, dowód (polecenie i wynik), poprawka, test.",
+      "hint": "Kolejność: łącze → adres → ARP → trasa → MTU.",
+      "solution": "Duplikat: arping -c3 10.13.0.11 z ns-c → odpowiedzi z dwóch MAC; ns-b → 10.13.0.12/24, flush ARP. Maska: ip -n ns-c -br addr → /28, ip route get 10.13.0.40 → via 10.13.0.1; zmiana na /24. Trasa: ip -n ns-d route get 10.99.0.10 → Network is unreachable; route add default via 10.13.0.1. MTU: ip -n ns-e link → mtu 9000; ping -M do -s 1473 nie wraca; mtu 1500. check.sh: wszystkie PASS. Notatka z czterema wpisami objaw/dowód/zmiana/test."
+    },
+    {
+      "prompt": "Użytkownik zgłasza: „połączenie z serwerem plików co kilka minut się zrywa, a potem wraca”. Opisz diagnozę pod kątem duplikatu IP.",
+      "hint": "arping, ip neigh, logi DHCP, tablica MAC przełącznika.",
+      "solution": "Z innego hosta: arping -c5 <IP serwera> — czy odpowiadają dwa MAC? ip neigh show <IP> kilka razy — czy lladdr się zmienia? Na przełączniku: show mac address-table address <MAC> → port drugiego urządzenia; show ip arp. Logi DHCP: czy adres jest w puli i komuś wydany? Windows: zdarzenie 4199 (konflikt adresu). Poprawka: zmiana adresu intruza, rezerwacja, wykluczenie z puli; zapobieganie: DHCP snooping + DAI, IPAM."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego zła maska /28 na ns-c nie psuje pingu do bramy, a psuje komunikację z częścią LAN-u. Podaj polecenie dowodu.",
+      "hint": "Decyzja hosta jego maską.",
+      "solution": "Brama .1 jest w /28 ns-c (.0–.15), więc ARP i ping działają. Cele od .16 wzwyż są dla ns-c poza siecią → idą do bramy; router odsyła ICMP Redirect albo ruch hairpin jest blokowany, a odpowiedzi wracają bezpośrednio (asymetria). Dowód: ip -n ns-c route get 10.13.0.40 → via 10.13.0.1 (a dla .14 → dev eth0)."
+    },
+    {
+      "prompt": "Czym różni się komunikat „connect: Network is unreachable” od „Destination Host Unreachable” i co mówi o miejscu błędu?",
+      "hint": "Lokalna tablica routingu vs ARP.",
+      "solution": "„Network is unreachable” zwraca lokalne jądro natychmiast — brak pasującej trasy (np. brak default). „Destination Host Unreachable” pojawia się po kilku sekundach — trasa istnieje, ale ARP o następny przeskok (cel lub bramę) nie dostał odpowiedzi; jeśli przychodzi „From <router>”, to router nie znalazł celu w swojej sieci."
+    },
+    {
+      "prompt": "Aplikacja Spring Boot w kontenerze łączy się z PostgreSQL, ale zapytania zwracające duże wyniki „wiszą”, a małe działają. Jak potwierdzisz i naprawisz problem z MTU?",
+      "hint": "Overlay/VPN, ping -M do, MTU interfejsów, MSS.",
+      "solution": "Sprawdź MTU interfejsów na ścieżce (ip link w kontenerze, na hoście, w tunelu VPN/VXLAN). Test: ping -M do -s 1472 <db> — nie przechodzi, a -s 1372 przechodzi → ścieżka ma mniejsze MTU. Naprawa: ustaw MTU sieci Dockera (daemon.json \"mtu\" lub driver_opts com.docker.network.driver.mtu) zgodne z tunelem, lub MSS clamping na bramie (iptables TCPMSS --clamp-mss-to-pmtu); upewnij się, że ICMP „Fragmentation needed” nie jest blokowany."
+    },
+    {
+      "prompt": "Laptop dostaje adres 169.254.12.7. Co to znaczy i jakie są kolejne kroki?",
+      "hint": "APIPA, DHCP.",
+      "solution": "Adres link-local (APIPA, RFC 3927) — host nie dostał odpowiedzi DHCP. Kroki: łącze i VLAN (czy port w dobrym VLAN-ie?), czy serwer DHCP działa i ma wolne adresy, czy relay (ip helper-address) jest skonfigurowany, czy DHCP snooping nie blokuje (port zaufany). tcpdump -ni eth0 port 67 or port 68 pokaże, czy DISCOVER wychodzi i czy przychodzi OFFER."
+    },
+    {
+      "prompt": "Opisz, jak rozpoznasz zły VLAN na porcie dostępowym, mając dostęp tylko do hosta (bez przełącznika).",
+      "hint": "ARP, LLDP, DHCP.",
+      "solution": "Łącze UP, adres poprawny, ale ip neigh pokazuje bramę jako INCOMPLETE/FAILED; DHCP daje adres z innej podsieci lub APIPA; lldpctl/tcpdump LLDP pokazuje Port VLAN ID innego VLAN-u; tcpdump -ni eth0 arp pokazuje zapytania ARP obcej podsieci. Wniosek: host jest w innej domenie rozgłoszeniowej — zgłoś port do zespołu sieci z dowodem (VLAN z LLDP)."
+    },
+    {
+      "prompt": "Napisz w Javie prosty test łączności do wielu celów (host:port) z limitem czasu, który odróżnia „odmowa połączenia” od „timeout”.",
+      "hint": "Socket.connect z timeoutem, ConnectException vs SocketTimeoutException.",
+      "solution": "for (var t : targets) { try (var s = new Socket()) { s.connect(new InetSocketAddress(t.host(), t.port()), 3000); System.out.println(\"OK \" + t); } catch (ConnectException e) { System.out.println(\"ODMOWA (usługa nie słucha / RST) \" + t); } catch (SocketTimeoutException e) { System.out.println(\"TIMEOUT (firewall/brak trasy/zgubione pakiety) \" + t); } catch (NoRouteToHostException e) { System.out.println(\"BRAK TRASY \" + t); } }. Odmowa = host osiągalny; timeout = coś po drodze gubi pakiety."
+    },
+    {
+      "prompt": "Wyjaśnij, dlaczego po poprawieniu duplikatu IP niektóre hosty nadal nie mogą się połączyć przez kilkadziesiąt sekund, i jak to przyspieszyć.",
+      "hint": "Cache ARP, stany neighbor.",
+      "solution": "Sąsiedzi mają w cache ARP stary (zły) MAC w stanie REACHABLE/STALE i używają go do czasu ponownej weryfikacji. Przyspieszenie: gratuitous ARP z poprawnego hosta (arping -U / -A), ip neigh flush na sąsiadach, na routerze clear arp; na przełączniku tablica MAC aktualizuje się przy pierwszej ramce."
+    },
+    {
+      "prompt": "Zaplanuj zapobieganie czterem błędom z labu w firmowej sieci (po jednym środku technicznym i jednym procesowym na błąd).",
+      "hint": "IPAM, DHCP, IaC, monitoring.",
+      "solution": "Duplikat: DHCP snooping + DAI / rezerwacje i IPAM (NetBox). Maska: konfiguracja z DHCP lub szablon IaC (netplan, cloud-init) + przegląd zmian. Brak trasy: DHCP opcja 3 / test check.sh w CI po zmianie. MTU: standard MTU per segment w dokumentacji, monitoring błędów interfejsów i test ping -M do po zmianach. Proces: zmiany przez review, testy dymne, runbook diagnozy."
+    },
+    {
+      "prompt": "Jak w Wiresharku/tcpdump zobaczysz każdy z czterech błędów labu? Podaj filtry.",
+      "hint": "arp, icmp, tcp.analysis.",
+      "solution": "Duplikat: arp (dwie odpowiedzi is-at dla jednego IP z różnych MAC; Wireshark: arp.duplicate-address-detected). Maska: icmp.type == 5 (Redirect) z routera. Brak trasy: nic nie wychodzi (błąd lokalny) — sam brak pakietów jest dowodem. MTU: tcp.analysis.retransmission dla dużych segmentów bez ACK, ramki o długości > 1514 w capture po stronie hosta, brak ICMP type 3 code 4."
+    },
+    {
+      "prompt": "Na czym polega 7-krokowa metodyka CompTIA i jak mapuje się na Debug Lab?",
+      "hint": "Network+ domena 5.",
+      "solution": "1) Zidentyfikuj problem (zbierz informacje, objawy, co się zmieniło, odtwórz). 2) Ustal teorię prawdopodobnej przyczyny (od dołu lub od góry modelu OSI). 3) Przetestuj teorię (polecenie i dowód; jeśli nie — nowa teoria lub eskalacja). 4) Ustal plan działania i skutki uboczne. 5) Wdróż rozwiązanie lub eskaluj. 6) Zweryfikuj pełną funkcjonalność i wdroż środki zapobiegawcze. 7) Udokumentuj ustalenia, działania i wyniki. W labie: objaw → hipoteza → dowód → poprawka → check.sh → notatka."
+    },
+    {
+      "prompt": "Serwer otrzymuje żądania (widać je w tcpdump), ale klient nie dostaje odpowiedzi. Jakie są najczęstsze przyczyny?",
+      "hint": "Trasa powrotna, asymetria, firewall.",
+      "solution": "Brak trasy powrotnej na serwerze do sieci klienta (lub odpowiedź wychodzi inną bramą/interfejsem — asymetria odrzucana przez stanowy firewall lub rp_filter), zła maska na serwerze (odpowiada przez ARP zamiast przez bramę), firewall wychodzący, NAT bez śledzenia. Dowód: ip route get <klient> na serwerze, tcpdump na obu interfejsach, sysctl net.ipv4.conf.*.rp_filter."
+    },
+    {
+      "prompt": "Przygotuj szablon notatki z diagnozy sieci, którą można wkleić do zgłoszenia (ticketu) lub post-mortem.",
+      "hint": "Pola: objaw, zakres, oś czasu, dowody, przyczyna, zmiana, test, zapobieganie.",
+      "solution": "Objaw (kto, co, od kiedy, jak odtworzyć) | Zakres (które hosty/sieci) | Oś czasu | Dowody (polecenia i wyniki, capture) | Przyczyna źródłowa | Zmiana (co, gdzie, kto, rollback) | Test (check.sh, curl) | Zapobieganie (monitoring, IaC, proces) | Linki (zgłoszenia, commity)."
+    },
+    {
+      "prompt": "Rozbuduj check.sh o test, który wykrywa złą maskę na dowolnym hoście bez znajomości „poprawnej” maski — porównując prefiks hosta z prefiksem routera.",
+      "hint": "ip -br addr na hoście i routerze.",
+      "solution": "ref=$(ip -n ns-router -4 -br addr show eth0 | awk \"{print $3}\" | cut -d/ -f2); for ns in ...; do p=$(ip -n $ns -4 -br addr show eth0 | awk \"{print $3}\" | cut -d/ -f2); t \"$ns: prefiks /$p = /$ref\" test \"$p\" = \"$ref\"; done. W produkcji to samo robi się w audycie konfiguracji (Ansible facts, NetBox) — maska hosta musi zgadzać się z definicją podsieci w IPAM."
+    },
+    {
+      "prompt": "Kolega naprawił ns-d poleceniem ip route add default via 10.13.0.254. Ping dalej nie działa. Co pokazują ip route get i ip neigh i dlaczego?",
+      "hint": "Brama musi istnieć i odpowiadać na ARP.",
+      "solution": "ip route get 10.99.0.10 → via 10.13.0.254 dev eth0 (trasa jest), ale ip neigh show 10.13.0.254 → INCOMPLETE/FAILED: nikt nie ma tego adresu, więc ARP nie dostaje odpowiedzi i ping zwraca „Destination Host Unreachable” od samego hosta. Poprawka: ip route replace default via 10.13.0.1. Wniosek: po zmianie trasy zawsze sprawdź ARP do bramy."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "Host 10.13.0.13/28, brama 10.13.0.1. Jak host wyśle pakiet do 10.13.0.14?",
+      "options": {
+        "A": "brak trasy — „Network is unreachable”",
+        "B": "bezpośrednio (ARP o adres celu)",
+        "C": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "D": "przez bramę (ARP o adres bramy)"
+      },
+      "correct": "B",
+      "explanation": "Sieć hosta 10.13.0.0/28, cel w masce hosta 10.13.0.0/28. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.13.0.13/28, brama 10.13.0.1. Jak host wyśle pakiet do 10.13.0.40?",
+      "options": {
+        "A": "przez bramę (ARP o adres bramy)",
+        "B": "bezpośrednio (ARP o adres celu)",
+        "C": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "D": "brak trasy — „Network is unreachable”"
+      },
+      "correct": "A",
+      "explanation": "Sieć hosta 10.13.0.0/28, cel w masce hosta 10.13.0.32/28. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.13.0.14/24, brama nieskonfigurowana. Jak host wyśle pakiet do 10.99.0.10?",
+      "options": {
+        "A": "bezpośrednio (ARP o adres celu)",
+        "B": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "C": "brak trasy — „Network is unreachable”",
+        "D": "przez bramę (ARP o adres bramy)"
+      },
+      "correct": "C",
+      "explanation": "Sieć hosta 10.13.0.0/24, cel w masce hosta 10.99.0.0/24. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.13.0.14/24, brama nieskonfigurowana. Jak host wyśle pakiet do 10.13.0.200?",
+      "options": {
+        "A": "przez bramę (ARP o adres bramy)",
+        "B": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "C": "brak trasy — „Network is unreachable”",
+        "D": "bezpośrednio (ARP o adres celu)"
+      },
+      "correct": "D",
+      "explanation": "Sieć hosta 10.13.0.0/24, cel w masce hosta 10.13.0.0/24. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 192.168.1.50/24, brama 192.168.2.1. Jak host wyśle pakiet do 8.8.8.8?",
+      "options": {
+        "A": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "B": "przez bramę (ARP o adres bramy)",
+        "C": "brak trasy — „Network is unreachable”",
+        "D": "bezpośrednio (ARP o adres celu)"
+      },
+      "correct": "A",
+      "explanation": "Sieć hosta 192.168.1.0/24, cel w masce hosta 8.8.8.0/24. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 172.16.5.20/16, brama 172.16.0.1. Jak host wyśle pakiet do 172.16.200.9?",
+      "options": {
+        "A": "przez bramę (ARP o adres bramy)",
+        "B": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "C": "brak trasy — „Network is unreachable”",
+        "D": "bezpośrednio (ARP o adres celu)"
+      },
+      "correct": "D",
+      "explanation": "Sieć hosta 172.16.0.0/16, cel w masce hosta 172.16.0.0/16. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.13.0.13/24, brama 10.13.0.1. Jak host wyśle pakiet do 10.13.0.40?",
+      "options": {
+        "A": "przez bramę (ARP o adres bramy)",
+        "B": "bezpośrednio (ARP o adres celu)",
+        "C": "brak trasy — „Network is unreachable”",
+        "D": "brama poza podsiecią — trasa domyślna nie zadziała"
+      },
+      "correct": "B",
+      "explanation": "Sieć hosta 10.13.0.0/24, cel w masce hosta 10.13.0.0/24. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.13.0.20/28, brama 10.13.0.1. Jak host wyśle pakiet do 10.13.0.25?",
+      "options": {
+        "A": "przez bramę (ARP o adres bramy)",
+        "B": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "C": "bezpośrednio (ARP o adres celu)",
+        "D": "brak trasy — „Network is unreachable”"
+      },
+      "correct": "C",
+      "explanation": "Sieć hosta 10.13.0.16/28, cel w masce hosta 10.13.0.16/28. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.13.0.20/28, brama 10.13.0.17. Jak host wyśle pakiet do 10.13.0.40?",
+      "options": {
+        "A": "przez bramę (ARP o adres bramy)",
+        "B": "bezpośrednio (ARP o adres celu)",
+        "C": "brak trasy — „Network is unreachable”",
+        "D": "brama poza podsiecią — trasa domyślna nie zadziała"
+      },
+      "correct": "A",
+      "explanation": "Sieć hosta 10.13.0.16/28, cel w masce hosta 10.13.0.32/28. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 192.168.1.10/16, brama 192.168.0.1. Jak host wyśle pakiet do 192.168.77.3?",
+      "options": {
+        "A": "brak trasy — „Network is unreachable”",
+        "B": "przez bramę (ARP o adres bramy)",
+        "C": "bezpośrednio (ARP o adres celu)",
+        "D": "brama poza podsiecią — trasa domyślna nie zadziała"
+      },
+      "correct": "C",
+      "explanation": "Sieć hosta 192.168.0.0/16, cel w masce hosta 192.168.0.0/16. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 192.168.1.10/24, brama 192.168.1.1. Jak host wyśle pakiet do 192.168.2.10?",
+      "options": {
+        "A": "bezpośrednio (ARP o adres celu)",
+        "B": "brak trasy — „Network is unreachable”",
+        "C": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "D": "przez bramę (ARP o adres bramy)"
+      },
+      "correct": "D",
+      "explanation": "Sieć hosta 192.168.1.0/24, cel w masce hosta 192.168.2.0/24. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.0.0.5/8, brama nieskonfigurowana. Jak host wyśle pakiet do 10.200.1.1?",
+      "options": {
+        "A": "brak trasy — „Network is unreachable”",
+        "B": "bezpośrednio (ARP o adres celu)",
+        "C": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "D": "przez bramę (ARP o adres bramy)"
+      },
+      "correct": "B",
+      "explanation": "Sieć hosta 10.0.0.0/8, cel w masce hosta 10.0.0.0/8. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 10.0.0.5/24, brama nieskonfigurowana. Jak host wyśle pakiet do 10.0.1.5?",
+      "options": {
+        "A": "brak trasy — „Network is unreachable”",
+        "B": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "C": "bezpośrednio (ARP o adres celu)",
+        "D": "przez bramę (ARP o adres bramy)"
+      },
+      "correct": "A",
+      "explanation": "Sieć hosta 10.0.0.0/24, cel w masce hosta 10.0.1.0/24. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 172.16.1.100/25, brama 172.16.1.129. Jak host wyśle pakiet do 1.1.1.1?",
+      "options": {
+        "A": "brak trasy — „Network is unreachable”",
+        "B": "przez bramę (ARP o adres bramy)",
+        "C": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "D": "bezpośrednio (ARP o adres celu)"
+      },
+      "correct": "C",
+      "explanation": "Sieć hosta 172.16.1.0/25, cel w masce hosta 1.1.1.0/25. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 172.16.1.200/25, brama 172.16.1.129. Jak host wyśle pakiet do 172.16.1.10?",
+      "options": {
+        "A": "bezpośrednio (ARP o adres celu)",
+        "B": "brak trasy — „Network is unreachable”",
+        "C": "brama poza podsiecią — trasa domyślna nie zadziała",
+        "D": "przez bramę (ARP o adres bramy)"
+      },
+      "correct": "D",
+      "explanation": "Sieć hosta 172.16.1.128/25, cel w masce hosta 172.16.1.0/25. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Host 100.64.3.3/22, brama 100.64.0.1. Jak host wyśle pakiet do 100.64.2.200?",
+      "options": {
+        "A": "brak trasy — „Network is unreachable”",
+        "B": "bezpośrednio (ARP o adres celu)",
+        "C": "przez bramę (ARP o adres bramy)",
+        "D": "brama poza podsiecią — trasa domyślna nie zadziała"
+      },
+      "correct": "B",
+      "explanation": "Sieć hosta 100.64.0.0/22, cel w masce hosta 100.64.0.0/22. Decyzję podejmuje nadawca swoją maską."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 10.13.0.13/28?",
+      "options": {
+        "A": "10.13.0.16/28",
+        "B": "10.13.0.13/28",
+        "C": "10.13.0.8/28",
+        "D": "10.13.0.0/28"
+      },
+      "correct": "D",
+      "explanation": "Wyzeruj 4 bitów hosta: 10.13.0.0/28."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 10.13.0.200/26?",
+      "options": {
+        "A": "10.13.0.128/26",
+        "B": "10.13.0.192/26",
+        "C": "10.13.0.0/26",
+        "D": "10.13.0.200/26"
+      },
+      "correct": "B",
+      "explanation": "Wyzeruj 6 bitów hosta: 10.13.0.192/26."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 192.168.10.77/27?",
+      "options": {
+        "A": "192.168.10.77/27",
+        "B": "192.168.10.96/27",
+        "C": "192.168.10.64/27",
+        "D": "192.168.10.0/27"
+      },
+      "correct": "C",
+      "explanation": "Wyzeruj 5 bitów hosta: 192.168.10.64/27."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 172.20.33.5/20?",
+      "options": {
+        "A": "172.20.32.0/20",
+        "B": "172.20.33.5/20",
+        "C": "172.20.0.0/20",
+        "D": "172.20.48.0/20"
+      },
+      "correct": "A",
+      "explanation": "Wyzeruj 12 bitów hosta: 172.20.32.0/20."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 10.1.2.3/30?",
+      "options": {
+        "A": "10.1.2.4/30",
+        "B": "10.1.2.3/30",
+        "C": "10.1.2.0/30",
+        "D": "10.1.2.2/30"
+      },
+      "correct": "C",
+      "explanation": "Wyzeruj 2 bitów hosta: 10.1.2.0/30."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 192.168.5.130/25?",
+      "options": {
+        "A": "192.168.5.128/25",
+        "B": "192.168.4.0/25",
+        "C": "192.168.5.130/25",
+        "D": "192.168.5.0/25"
+      },
+      "correct": "A",
+      "explanation": "Wyzeruj 7 bitów hosta: 192.168.5.128/25."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 10.99.0.10/24?",
+      "options": {
+        "A": "10.99.1.0/24",
+        "B": "10.98.255.0/24",
+        "C": "10.99.0.10/24",
+        "D": "10.99.0.0/24"
+      },
+      "correct": "D",
+      "explanation": "Wyzeruj 8 bitów hosta: 10.99.0.0/24."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 172.31.255.254/19?",
+      "options": {
+        "A": "172.31.240.0/19",
+        "B": "172.31.224.0/19",
+        "C": "172.31.128.0/19",
+        "D": "172.31.192.0/19"
+      },
+      "correct": "B",
+      "explanation": "Wyzeruj 13 bitów hosta: 172.31.224.0/19."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 10.13.0.100/29?",
+      "options": {
+        "A": "10.13.0.104/29",
+        "B": "10.13.0.100/29",
+        "C": "10.13.0.96/29",
+        "D": "10.13.0.88/29"
+      },
+      "correct": "C",
+      "explanation": "Wyzeruj 3 bitów hosta: 10.13.0.96/29."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 192.168.200.9/23?",
+      "options": {
+        "A": "192.168.200.0/23",
+        "B": "192.168.198.0/23",
+        "C": "192.168.202.0/23",
+        "D": "192.168.200.9/23"
+      },
+      "correct": "A",
+      "explanation": "Wyzeruj 9 bitów hosta: 192.168.200.0/23."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 100.64.7.7/21?",
+      "options": {
+        "A": "100.64.8.0/21",
+        "B": "100.64.7.7/21",
+        "C": "100.64.4.0/21",
+        "D": "100.64.0.0/21"
+      },
+      "correct": "D",
+      "explanation": "Wyzeruj 11 bitów hosta: 100.64.0.0/21."
+    },
+    {
+      "question": "Jaki jest adres sieci dla 10.250.10.10/12?",
+      "options": {
+        "A": "10.224.0.0/12",
+        "B": "10.240.0.0/12",
+        "C": "10.248.0.0/12",
+        "D": "10.192.0.0/12"
+      },
+      "correct": "B",
+      "explanation": "Wyzeruj 20 bitów hosta: 10.240.0.0/12."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 10.13.0.13/28?",
+      "options": {
+        "A": "10.13.0.15",
+        "B": "10.13.0.14",
+        "C": "10.13.0.16",
+        "D": "10.13.0.31"
+      },
+      "correct": "A",
+      "explanation": "Ustaw 4 bitów hosta na 1: 10.13.0.15."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 10.13.0.200/26?",
+      "options": {
+        "A": "10.13.0.207",
+        "B": "10.13.0.254",
+        "C": "10.13.0.255",
+        "D": "10.13.0.223"
+      },
+      "correct": "C",
+      "explanation": "Ustaw 6 bitów hosta na 1: 10.13.0.255."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 192.168.10.77/27?",
+      "options": {
+        "A": "192.168.10.79",
+        "B": "192.168.10.94",
+        "C": "192.168.10.127",
+        "D": "192.168.10.95"
+      },
+      "correct": "D",
+      "explanation": "Ustaw 5 bitów hosta na 1: 192.168.10.95."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 172.20.33.5/20?",
+      "options": {
+        "A": "172.20.39.255",
+        "B": "172.20.47.255",
+        "C": "172.20.47.254",
+        "D": "172.20.63.255"
+      },
+      "correct": "B",
+      "explanation": "Ustaw 12 bitów hosta na 1: 172.20.47.255."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 10.1.2.3/30?",
+      "options": {
+        "A": "10.1.2.4",
+        "B": "10.1.2.2",
+        "C": "10.1.2.3",
+        "D": "10.1.2.7"
+      },
+      "correct": "C",
+      "explanation": "Ustaw 2 bitów hosta na 1: 10.1.2.3."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 192.168.5.130/25?",
+      "options": {
+        "A": "192.168.5.255",
+        "B": "192.168.5.159",
+        "C": "192.168.5.191",
+        "D": "192.168.5.254"
+      },
+      "correct": "A",
+      "explanation": "Ustaw 7 bitów hosta na 1: 192.168.5.255."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 10.99.0.10/24?",
+      "options": {
+        "A": "10.99.0.127",
+        "B": "10.99.0.255",
+        "C": "10.99.1.255",
+        "D": "10.99.0.254"
+      },
+      "correct": "B",
+      "explanation": "Ustaw 8 bitów hosta na 1: 10.99.0.255."
+    },
+    {
+      "question": "Jaki jest adres rozgłoszeniowy (broadcast) podsieci 172.31.255.254/19?",
+      "options": {
+        "A": "172.32.0.0",
+        "B": "172.31.224.0",
+        "C": "172.31.255.254",
+        "D": "172.31.255.255"
+      },
+      "correct": "D",
+      "explanation": "Ustaw 13 bitów hosta na 1: 172.31.255.255."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przy MTU 1500 (IPv4)?",
+      "options": {
+        "A": "1500",
+        "B": "1480",
+        "C": "1452",
+        "D": "1472"
+      },
+      "correct": "D",
+      "explanation": "1500 − 20 (IPv4) − 8 (ICMP) = 1472."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -6 -M do przy MTU 1500 (IPv6)?",
+      "options": {
+        "A": "1452",
+        "B": "1480",
+        "C": "1500",
+        "D": "1472"
+      },
+      "correct": "A",
+      "explanation": "1500 − 40 (IPv6) − 8 (ICMPv6) = 1452."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przy MTU 9000 (IPv4)?",
+      "options": {
+        "A": "8980",
+        "B": "8952",
+        "C": "8972",
+        "D": "9000"
+      },
+      "correct": "C",
+      "explanation": "9000 − 20 (IPv4) − 8 (ICMP) = 8972."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przy MTU 1420 (IPv4)?",
+      "options": {
+        "A": "1372",
+        "B": "1392",
+        "C": "1400",
+        "D": "1420"
+      },
+      "correct": "B",
+      "explanation": "1420 − 20 (IPv4) − 8 (ICMP) = 1392."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -6 -M do przy MTU 1400 (IPv6)?",
+      "options": {
+        "A": "1400",
+        "B": "1380",
+        "C": "1372",
+        "D": "1352"
+      },
+      "correct": "D",
+      "explanation": "1400 − 40 (IPv6) − 8 (ICMPv6) = 1352."
+    },
+    {
+      "question": "Jaki największy rozmiar danych (-s) przejdzie w ping -M do przy MTU 1492 (IPv4)?",
+      "options": {
+        "A": "1464",
+        "B": "1444",
+        "C": "1492",
+        "D": "1472"
+      },
+      "correct": "A",
+      "explanation": "1492 − 20 (IPv4) − 8 (ICMP) = 1464."
+    },
+    {
+      "question": "Czy przy prefiksie /28 adresy 10.13.0.13 i 10.13.0.14 są w tej samej podsieci?",
+      "options": {
+        "A": "Nie — 10.13.0.8/29 i 10.13.0.8/29",
+        "B": "Nie da się ustalić bez bramy",
+        "C": "Tak — obie w 10.13.0.0/28",
+        "D": "Nie — różnią się ostatnim oktetem"
+      },
+      "correct": "C",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 10.13.0.0/28 vs 10.13.0.0/28."
+    },
+    {
+      "question": "Czy przy prefiksie /28 adresy 10.13.0.13 i 10.13.0.40 są w tej samej podsieci?",
+      "options": {
+        "A": "Nie da się ustalić bez bramy",
+        "B": "Nie — 10.13.0.0/28 i 10.13.0.32/28",
+        "C": "Tak — różnią się tylko ostatnim oktetem",
+        "D": "Tak — obie w 10.13.0.0/20"
+      },
+      "correct": "B",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 10.13.0.0/28 vs 10.13.0.32/28."
+    },
+    {
+      "question": "Czy przy prefiksie /24 adresy 10.13.0.13 i 10.13.0.40 są w tej samej podsieci?",
+      "options": {
+        "A": "Nie — 10.13.0.0/25 i 10.13.0.0/25",
+        "B": "Nie da się ustalić bez bramy",
+        "C": "Nie — różnią się ostatnim oktetem",
+        "D": "Tak — obie w 10.13.0.0/24"
+      },
+      "correct": "D",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 10.13.0.0/24 vs 10.13.0.0/24."
+    },
+    {
+      "question": "Czy przy prefiksie /25 adresy 192.168.1.130 i 192.168.1.10 są w tej samej podsieci?",
+      "options": {
+        "A": "Nie — 192.168.1.128/25 i 192.168.1.0/25",
+        "B": "Tak — różnią się tylko ostatnim oktetem",
+        "C": "Nie da się ustalić bez bramy",
+        "D": "Tak — obie w 192.168.0.0/17"
+      },
+      "correct": "A",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 192.168.1.128/25 vs 192.168.1.0/25."
+    },
+    {
+      "question": "Czy przy prefiksie /22 adresy 172.16.4.1 i 172.16.7.254 są w tej samej podsieci?",
+      "options": {
+        "A": "Nie — 172.16.4.0/23 i 172.16.6.0/23",
+        "B": "Tak — obie w 172.16.4.0/22",
+        "C": "Nie da się ustalić bez bramy",
+        "D": "Nie — różnią się ostatnim oktetem"
+      },
+      "correct": "B",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 172.16.4.0/22 vs 172.16.4.0/22."
+    },
+    {
+      "question": "Czy przy prefiksie /22 adresy 172.16.4.1 i 172.16.8.1 są w tej samej podsieci?",
+      "options": {
+        "A": "Tak — obie w 172.16.0.0/14",
+        "B": "Nie da się ustalić bez bramy",
+        "C": "Nie — 172.16.4.0/22 i 172.16.8.0/22",
+        "D": "Tak — różnią się tylko ostatnim oktetem"
+      },
+      "correct": "C",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 172.16.4.0/22 vs 172.16.8.0/22."
+    },
+    {
+      "question": "Czy przy prefiksie /30 adresy 10.0.0.1 i 10.0.0.6 są w tej samej podsieci?",
+      "options": {
+        "A": "Tak — różnią się tylko ostatnim oktetem",
+        "B": "Tak — obie w 10.0.0.0/22",
+        "C": "Nie — 10.0.0.0/30 i 10.0.0.4/30",
+        "D": "Nie da się ustalić bez bramy"
+      },
+      "correct": "C",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 10.0.0.0/30 vs 10.0.0.4/30."
+    },
+    {
+      "question": "Czy przy prefiksie /31 adresy 10.0.0.1 i 10.0.0.2 są w tej samej podsieci?",
+      "options": {
+        "A": "Nie da się ustalić bez bramy",
+        "B": "Tak — różnią się tylko ostatnim oktetem",
+        "C": "Tak — obie w 10.0.0.0/23",
+        "D": "Nie — 10.0.0.0/31 i 10.0.0.2/31"
+      },
+      "correct": "D",
+      "explanation": "Porównaj adresy sieci po zamaskowaniu: 10.0.0.0/31 vs 10.0.0.2/31."
+    },
+    {
+      "question": "Od którego kroku zaczyna się metodyczna diagnoza „sieć nie działa” na hoście?",
+      "options": {
+        "A": "Od stanu łącza (ip -br link, ethtool)",
+        "B": "Od DNS",
+        "C": "Od wyłączenia firewalla",
+        "D": "Od restartu routera"
+      },
+      "correct": "A",
+      "explanation": "Od kabla w górę."
+    },
+    {
+      "question": "Które polecenie pokazuje decyzję jądra Linuksa, którędy pójdzie pakiet do konkretnego celu?",
+      "options": {
+        "A": "ip route flush",
+        "B": "ip route get <cel>",
+        "C": "ip neigh flush",
+        "D": "ip link set up"
+      },
+      "correct": "B",
+      "explanation": "Pokazuje bramę, interfejs i adres źródłowy."
+    },
+    {
+      "question": "Co oznacza stan LOWER_UP w wyniku ip link?",
+      "options": {
+        "A": "Warstwa fizyczna ma nośnik (kabel/łącze aktywne)",
+        "B": "Interfejs jest w VLAN 1",
+        "C": "Interfejs ma adres IP",
+        "D": "Działa DHCP"
+      },
+      "correct": "A",
+      "explanation": "UP = włączony administracyjnie, LOWER_UP = jest sygnał."
+    },
+    {
+      "question": "Jak arping pomaga wykryć duplikat IP?",
+      "options": {
+        "A": "Zwraca błąd DNS",
+        "B": "Na zapytanie o jeden adres odpowiadają dwa różne MAC",
+        "C": "Pokazuje dwie trasy domyślne",
+        "D": "Pokazuje MTU"
+      },
+      "correct": "B",
+      "explanation": "Dowód konfliktu adresu."
+    },
+    {
+      "question": "Co robi arping -D?",
+      "options": {
+        "A": "Usuwa wpis ARP",
+        "B": "Wysyła gratuitous ARP",
+        "C": "Zmienia MAC",
+        "D": "Sprawdza, czy adres jest już używany (Duplicate Address Detection, RFC 5227)"
+      },
+      "correct": "D",
+      "explanation": "Kod wyjścia 1 = adres zajęty."
+    },
+    {
+      "question": "Jak nazywa się stan adresu IPv6, którego DAD wykrył konflikt?",
+      "options": {
+        "A": "preferred",
+        "B": "tentative",
+        "C": "dadfailed",
+        "D": "deprecated"
+      },
+      "correct": "C",
+      "explanation": "tentative = w trakcie sprawdzania."
+    },
+    {
+      "question": "Który objaw jest typowy dla duplikatu IP?",
+      "options": {
+        "A": "Natychmiastowe Network is unreachable",
+        "B": "Połączenia raz działają, raz nie; ARP sąsiadów zmienia MAC",
+        "C": "Adres 169.254.x.x",
+        "D": "Brak LOWER_UP"
+      },
+      "correct": "B",
+      "explanation": "Dwa hosty walczą o adres."
+    },
+    {
+      "question": "Co najlepiej zapobiega duplikatom IP w sieci firmowej?",
+      "options": {
+        "A": "Większe MTU",
+        "B": "Krótsza dzierżawa DNS",
+        "C": "Rezerwacje DHCP/IPAM oraz DHCP snooping z Dynamic ARP Inspection",
+        "D": "Wyłączenie ARP"
+      },
+      "correct": "C",
+      "explanation": "Plus wykluczenie adresów statycznych z puli."
+    },
+    {
+      "question": "Jak szybko odświeżyć tablice ARP sąsiadów po zmianie adresu hosta?",
+      "options": {
+        "A": "Wysłać gratuitous ARP (arping -U/-A) z hosta",
+        "B": "Zmienić MTU",
+        "C": "Zrestartować DNS",
+        "D": "Dodać trasę domyślną"
+      },
+      "correct": "A",
+      "explanation": "Sąsiedzi aktualizują wpis."
+    },
+    {
+      "question": "Host z maską /28 zamiast /24 może pingować bramę .1. Dlaczego błąd nie jest od razu widoczny?",
+      "options": {
+        "A": "Bo brama ignoruje maskę",
+        "B": "Bo ping używa UDP",
+        "C": "Bo ARP nie używa maski",
+        "D": "Brama mieści się w jego węższej podsieci, więc ruch do niej działa normalnie"
+      },
+      "correct": "D",
+      "explanation": "Testuj cele spoza /28."
+    },
+    {
+      "question": "Jaki komunikat ICMP często zdradza za wąską maskę hosta?",
+      "options": {
+        "A": "ICMP Redirect (typ 5) od routera",
+        "B": "ICMP Source Quench",
+        "C": "ICMP Time Exceeded",
+        "D": "ICMP Echo Reply"
+      },
+      "correct": "A",
+      "explanation": "Router wskazuje bezpośrednią drogę."
+    },
+    {
+      "question": "Co się dzieje przy za szerokiej masce (np. /16 zamiast /24)?",
+      "options": {
+        "A": "Host wysyła wszystko do bramy",
+        "B": "DNS przestaje działać",
+        "C": "Host przestaje mieć łącze",
+        "D": "Host wysyła ARP o adresy, które są za routerem, i nie dostaje odpowiedzi"
+      },
+      "correct": "D",
+      "explanation": "Destination Host Unreachable od nadawcy."
+    },
+    {
+      "question": "Kiedy pojawia się komunikat „connect: Network is unreachable”?",
+      "options": {
+        "A": "Gdy DNS nie zna nazwy",
+        "B": "Gdy cel odrzuca połączenie",
+        "C": "Gdy w lokalnej tablicy routingu nie ma pasującej trasy",
+        "D": "Gdy ARP nie dostał odpowiedzi"
+      },
+      "correct": "C",
+      "explanation": "Błąd natychmiastowy, bez wysyłki."
+    },
+    {
+      "question": "Kiedy host sam zgłasza „Destination Host Unreachable”?",
+      "options": {
+        "A": "Brak trasy domyślnej",
+        "B": "Trasa istnieje, ale ARP o następny przeskok nie dostał odpowiedzi",
+        "C": "Port zamknięty",
+        "D": "Zły rekord DNS"
+      },
+      "correct": "B",
+      "explanation": "Po ok. 3 s prób ARP."
+    },
+    {
+      "question": "Którą opcję DHCP należy sprawdzić, gdy klient dostaje adres, ale nie ma trasy domyślnej?",
+      "options": {
+        "A": "Opcja 82",
+        "B": "Opcja 3 (Router)",
+        "C": "Opcja 6 (DNS)",
+        "D": "Opcja 43"
+      },
+      "correct": "B",
+      "explanation": "Bez niej klient nie zna bramy."
+    },
+    {
+      "question": "Jaki błąd zwróci Linux przy próbie dodania bramy spoza podsieci interfejsu?",
+      "options": {
+        "A": "No buffer space available",
+        "B": "File exists",
+        "C": "Nexthop has invalid gateway",
+        "D": "Permission denied"
+      },
+      "correct": "C",
+      "explanation": "Brama musi być osiągalna bezpośrednio."
+    },
+    {
+      "question": "Serwer widzi żądania w tcpdump, ale klient nie dostaje odpowiedzi. Co sprawdzisz w pierwszej kolejności?",
+      "options": {
+        "A": "Trasę powrotną na serwerze (ip route get <klient>)",
+        "B": "DNS klienta",
+        "C": "Licencję serwera",
+        "D": "MTU klienta"
+      },
+      "correct": "A",
+      "explanation": "Lub asymetrię i rp_filter."
+    },
+    {
+      "question": "Co jest klasycznym objawem niezgodnego MTU?",
+      "options": {
+        "A": "Adres 169.254.x.x",
+        "B": "Brak adresu IP",
+        "C": "Natychmiastowe Network is unreachable",
+        "D": "Ping i logowanie SSH działają, a transfery i HTTPS wiszą"
+      },
+      "correct": "D",
+      "explanation": "Małe pakiety przechodzą, duże giną."
+    },
+    {
+      "question": "Dlaczego PMTUD nie pomoże przy różnym MTU w jednej domenie L2?",
+      "options": {
+        "A": "Bo PMTUD działa tylko w IPv6",
+        "B": "Bo przełącznik fragmentuje ramki",
+        "C": "Bo TCP nie używa MTU",
+        "D": "Nie ma routera, który odesłałby ICMP Fragmentation needed"
+      },
+      "correct": "D",
+      "explanation": "Ramka jest po prostu odrzucana."
+    },
+    {
+      "question": "Co robi flaga -M do w poleceniu ping na Linuksie?",
+      "options": {
+        "A": "Ustawia bit DF — zakazuje fragmentacji",
+        "B": "Wyłącza ICMP",
+        "C": "Wymusza IPv6",
+        "D": "Ustawia TTL na 1"
+      },
+      "correct": "A",
+      "explanation": "Pozwala testować MTU."
+    },
+    {
+      "question": "Ile bajtów nagłówków dodaje ping IPv4 do rozmiaru danych z -s?",
+      "options": {
+        "A": "48",
+        "B": "20",
+        "C": "28 (20 IPv4 + 8 ICMP)",
+        "D": "40"
+      },
+      "correct": "C",
+      "explanation": "1472 + 28 = 1500."
+    },
+    {
+      "question": "Gdzie najczęściej pojawia się problem z MTU w środowisku developera?",
+      "options": {
+        "A": "W NTP",
+        "B": "W tunelach: VPN, VXLAN, sieci overlay Dockera i Kubernetesa",
+        "C": "W DNS",
+        "D": "W pętli zwrotnej 127.0.0.1"
+      },
+      "correct": "B",
+      "explanation": "Narzut enkapsulacji zmniejsza MTU."
+    },
+    {
+      "question": "Co robi MSS clamping na bramie?",
+      "options": {
+        "A": "Zwiększa MTU",
+        "B": "Wyłącza fragmentację w IPv6",
+        "C": "Zmniejsza wartość MSS w pakietach SYN, aby segmenty TCP mieściły się w MTU ścieżki",
+        "D": "Blokuje ICMP"
+      },
+      "correct": "C",
+      "explanation": "iptables TCPMSS --clamp-mss-to-pmtu."
+    },
+    {
+      "question": "Host ma łącze UP i poprawny adres, ale ARP do bramy jest INCOMPLETE. Co jest częstą przyczyną?",
+      "options": {
+        "A": "Port przełącznika w złym VLAN-ie",
+        "B": "Za duże MTU",
+        "C": "Zła maska DNS",
+        "D": "Brak IPv6"
+      },
+      "correct": "A",
+      "explanation": "Host jest w innej domenie rozgłoszeniowej."
+    },
+    {
+      "question": "Jak z poziomu hosta sprawdzić VLAN portu przełącznika?",
+      "options": {
+        "A": "resolvectl",
+        "B": "ip route get",
+        "C": "ss -ltnp",
+        "D": "Odczytać LLDP (lldpctl lub tcpdump), pole Port VLAN ID"
+      },
+      "correct": "D",
+      "explanation": "Jeśli przełącznik wysyła LLDP."
+    },
+    {
+      "question": "Co oznacza adres 169.254.x.x na interfejsie?",
+      "options": {
+        "A": "Adres multicast",
+        "B": "Host nie dostał odpowiedzi DHCP i nadał sobie adres link-local (APIPA)",
+        "C": "Adres publiczny",
+        "D": "Adres pętli zwrotnej"
+      },
+      "correct": "B",
+      "explanation": "RFC 3927."
+    },
+    {
+      "question": "Który krok metodyki CompTIA następuje po przetestowaniu teorii?",
+      "options": {
+        "A": "Udokumentowanie wyników",
+        "B": "Zidentyfikowanie problemu",
+        "C": "Weryfikacja pełnej funkcjonalności",
+        "D": "Ustalenie planu działania i identyfikacja potencjalnych skutków"
+      },
+      "correct": "D",
+      "explanation": "Kolejność z Network+."
+    },
+    {
+      "question": "Jaki jest ostatni krok metodyki rozwiązywania problemów CompTIA?",
+      "options": {
+        "A": "Eskalacja",
+        "B": "Udokumentowanie ustaleń, działań i wyników",
+        "C": "Restart urządzenia",
+        "D": "Zmiana konfiguracji"
+      },
+      "correct": "B",
+      "explanation": "Dokumentacja to część procesu."
+    },
+    {
+      "question": "Dlaczego nie zmienia się kilku rzeczy naraz podczas diagnozy?",
+      "options": {
+        "A": "Bo DNS się wyczyści",
+        "B": "Bo przełącznik się zrestartuje",
+        "C": "Nie wiadomo, która zmiana pomogła, i trudno ją odwrócić lub opisać",
+        "D": "Bo konfiguracja się nie zapisze"
+      },
+      "correct": "C",
+      "explanation": "Jedna zmiana → test."
+    },
+    {
+      "question": "Czym jest network namespace w Linuksie?",
+      "options": {
+        "A": "Izolowaną kopią stosu sieciowego: interfejsy, adresy, trasy, firewall",
+        "B": "Plikiem konfiguracyjnym netplan",
+        "C": "Typem VLAN-u",
+        "D": "Nazwą domeny DNS"
+      },
+      "correct": "A",
+      "explanation": "Podstawa kontenerów."
+    },
+    {
+      "question": "Do czego służy para veth?",
+      "options": {
+        "A": "Tłumaczy adresy NAT",
+        "B": "Szyfruje ruch",
+        "C": "Łączy dwa namespace’y lub namespace z mostem jak wirtualny kabel",
+        "D": "Nadaje adresy IP"
+      },
+      "correct": "C",
+      "explanation": "Dwa końce jednego „kabla”."
+    },
+    {
+      "question": "Jakie polecenie uruchamia program w konkretnym namespace?",
+      "options": {
+        "A": "ip netns exec <ns> <polecenie>",
+        "B": "nsenter --vlan",
+        "C": "netns start",
+        "D": "ip ns run"
+      },
+      "correct": "A",
+      "explanation": "Lub ip -n <ns> dla poleceń ip."
+    },
+    {
+      "question": "Które polecenie pokazuje tablicę MAC mostu Linuksa?",
+      "options": {
+        "A": "ip route show",
+        "B": "arp -a",
+        "C": "ss -tan",
+        "D": "bridge fdb show"
+      },
+      "correct": "D",
+      "explanation": "Odpowiednik show mac address-table."
+    },
+    {
+      "question": "Dlaczego poprawka „ip addr add” na serwerze może nie przetrwać?",
+      "options": {
+        "A": "Bo DNS nadpisuje adres",
+        "B": "To zmiana w runtime; po restarcie wraca konfiguracja ze źródła prawdy (netplan, DHCP, cloud-init)",
+        "C": "Bo jądro usuwa adresy co godzinę",
+        "D": "Bo ip wymaga licencji"
+      },
+      "correct": "B",
+      "explanation": "Utrwal w źródle prawdy."
+    },
+    {
+      "question": "Dlaczego „iptables -F” jako krok diagnozy na produkcji to zły pomysł?",
+      "options": {
+        "A": "Bo kasuje trasy",
+        "B": "Bo zmienia MTU",
+        "C": "Bo spowalnia DNS",
+        "D": "Usuwa całą ochronę hosta i niczego nie dowodzi"
+      },
+      "correct": "D",
+      "explanation": "Czytaj liczniki reguł i logi."
+    },
+    {
+      "question": "Co pokaże ss -ltnp przy błędzie „Connection refused”?",
+      "options": {
+        "A": "Tablicę ARP",
+        "B": "Trasę domyślną",
+        "C": "Czy usługa w ogóle nasłuchuje i na jakim adresie/porcie",
+        "D": "MTU interfejsu"
+      },
+      "correct": "C",
+      "explanation": "Np. nasłuch tylko na 127.0.0.1."
+    },
+    {
+      "question": "Co zwykle oznacza „Connection refused” w odróżnieniu od timeoutu?",
+      "options": {
+        "A": "Firewall gubi pakiety",
+        "B": "Host jest osiągalny, ale na porcie nic nie słucha (RST)",
+        "C": "Brak trasy",
+        "D": "Zły DNS"
+      },
+      "correct": "B",
+      "explanation": "Timeout = coś po drodze gubi pakiety."
+    },
+    {
+      "question": "Który wyjątek Javy oznacza przekroczenie czasu przy Socket.connect z timeoutem?",
+      "options": {
+        "A": "SocketTimeoutException",
+        "B": "ConnectException",
+        "C": "BindException",
+        "D": "UnknownHostException"
+      },
+      "correct": "A",
+      "explanation": "ConnectException = odmowa (RST)."
+    },
+    {
+      "question": "Który wyjątek Javy oznacza, że nazwa hosta nie została rozwiązana?",
+      "options": {
+        "A": "NoRouteToHostException",
+        "B": "PortUnreachableException",
+        "C": "UnknownHostException",
+        "D": "SocketTimeoutException"
+      },
+      "correct": "C",
+      "explanation": "Problem DNS, nie routingu."
+    },
+    {
+      "question": "Jaki filtr Wiresharka pokaże przekierowania ICMP?",
+      "options": {
+        "A": "icmp.type == 8",
+        "B": "icmp.type == 5",
+        "C": "arp.opcode == 1",
+        "D": "tcp.flags.syn == 1"
+      },
+      "correct": "B",
+      "explanation": "Typ 8 to Echo Request."
+    },
+    {
+      "question": "Jaki filtr tcpdump przechwyci ruch DHCP?",
+      "options": {
+        "A": "port 161",
+        "B": "port 53",
+        "C": "port 123",
+        "D": "port 67 or port 68"
+      },
+      "correct": "D",
+      "explanation": "Serwer 67, klient 68."
+    },
+    {
+      "question": "Co oznacza asymetryczny ruch i dlaczego szkodzi?",
+      "options": {
+        "A": "Pakiety w obie strony idą różnymi drogami; stanowy firewall odrzuca odpowiedzi „spoza połączenia”",
+        "B": "Różne wersje TLS",
+        "C": "Różne MTU w obie strony",
+        "D": "Różne serwery DNS"
+      },
+      "correct": "A",
+      "explanation": "Częsty skutek złej maski lub dwóch bram."
+    },
+    {
+      "question": "Co robi parametr rp_filter w Linuksie?",
+      "options": {
+        "A": "Odrzuca pakiety, których adres źródłowy nie pasuje do trasy powrotnej przez interfejs wejściowy",
+        "B": "Ogranicza MTU",
+        "C": "Filtruje DNS",
+        "D": "Szyfruje ARP"
+      },
+      "correct": "A",
+      "explanation": "Reverse path filtering — psuje ruch asymetryczny."
+    },
+    {
+      "question": "Jak check.sh pomaga w pracy zespołu poza labem?",
+      "options": {
+        "A": "Generuje certyfikaty",
+        "B": "Zastępuje firewall",
+        "C": "Konfiguruje DHCP",
+        "D": "Jako test dymny środowiska w CI/CD przed wdrożeniem aplikacji"
+      },
+      "correct": "D",
+      "explanation": "Automatyczny sędzia gotowości sieci."
+    },
+    {
+      "question": "Jaki test potwierdza naprawę MTU 1500 na ścieżce IPv4?",
+      "options": {
+        "A": "ping bez opcji przechodzi",
+        "B": "dig zwraca rekord A",
+        "C": "ping -M do -s 1472 przechodzi, a -s 1473 nie",
+        "D": "traceroute pokazuje 3 skoki"
+      },
+      "correct": "C",
+      "explanation": "Test granicy z obu stron."
+    },
+    {
+      "question": "Po co w Debug Labie host „drukarka” 10.13.0.40?",
+      "options": {
+        "A": "Jako serwer DHCP",
+        "B": "To cel spoza /28, który ujawnia złą maskę ns-c",
+        "C": "Do testu MTU",
+        "D": "Do testu DNS"
+      },
+      "correct": "B",
+      "explanation": "Testuj kilka celów."
+    },
+    {
+      "question": "Czym jest IPAM?",
+      "options": {
+        "A": "Protokół routingu",
+        "B": "System zarządzania adresacją IP (np. NetBox) — źródło prawdy o podsieciach i przydziałach",
+        "C": "Rodzaj ataku",
+        "D": "Typ kabla"
+      },
+      "correct": "B",
+      "explanation": "Zapobiega duplikatom i złym maskom."
+    },
+    {
+      "question": "Dlaczego test z jednego „dobrego” celu (bramy) nie wystarcza?",
+      "options": {
+        "A": "Bo ARP działa tylko raz",
+        "B": "Bo ICMP jest zawsze blokowany",
+        "C": "Niektóre błędy (zła maska) ujawniają się tylko dla części adresów",
+        "D": "Bo brama nie odpowiada na ping"
+      },
+      "correct": "C",
+      "explanation": "Brama, sąsiad, koniec podsieci, host za routerem."
+    },
+    {
+      "question": "Które narzędzie śledzi zmiany par IP–MAC w sieci i alarmuje?",
+      "options": {
+        "A": "arpwatch",
+        "B": "ethtool",
+        "C": "netplan",
+        "D": "dig"
+      },
+      "correct": "A",
+      "explanation": "Wykrywa konflikty i spoofing."
+    },
+    {
+      "question": "Co powinna zawierać notatka z diagnozy?",
+      "options": {
+        "A": "Tylko „zrestartowano i działa”",
+        "B": "Pełną konfigurację wszystkich urządzeń",
+        "C": "Hasła administratora",
+        "D": "Objaw, dowody (polecenia i wyniki), przyczynę, zmianę, test i zapobieganie"
+      },
+      "correct": "D",
+      "explanation": "Wzór post-mortem."
+    }
+  ]
 }
